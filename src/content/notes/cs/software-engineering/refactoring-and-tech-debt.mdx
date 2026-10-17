@@ -1,0 +1,110 @@
+---
+title: "Refactoring and Tech Debt"
+description: "How to change the structure of working code without changing what it does, and how to decide which messes are worth paying down."
+order: 4
+tier: core
+takeaways:
+  - "**Refactoring** changes structure and keeps behaviour. If the outputs change, it is a feature or a fix, not a refactor, and it needs its own review."
+  - "Protect a refactor with a **characterization test**: record what the code does now across a range of inputs, then change it until the record still matches."
+  - "Take **small steps** and commit each one. A change you can revert in seconds is a change you can afford to make."
+  - "**Tech debt** is a cost you pay later for a shortcut now. Like financial debt it has **principal** (the work to fix it) and **interest** (the extra cost each time you touch it)."
+  - "Pay down debt where you already work, in the code you are changing, and where the interest is high. Do not schedule a cleanup project for code nobody touches."
+resources:
+  - title: "Technical Debt (Martin Fowler)"
+    url: "https://martinfowler.com/bliki/TechnicalDebt.html"
+    note: "Where the metaphor comes from and why it is useful."
+  - title: "Technical Debt Quadrant (Martin Fowler)"
+    url: "https://martinfowler.com/bliki/TechnicalDebtQuadrant.html"
+    note: "Separates deliberate from inadvertent debt, and prudent from reckless."
+  - title: "Refactoring catalog (Martin Fowler)"
+    url: "https://refactoring.com/catalog/"
+    note: "Named refactorings, each with the mechanical steps to apply it safely."
+---
+
+Every codebase accumulates structure that no longer fits what it does: a function that grew three responsibilities, two names for the same concept, a module everyone imports and nobody understands. Two separate activities deal with that. **Refactoring** changes the structure without changing behaviour. **Managing tech debt** decides which structural problems are worth fixing and when. This note covers both. The [Coding Practices](../coding-practices/) note lists the smells; this one shows how to act on them.
+
+## What Refactoring Means
+
+A refactoring keeps the observable behaviour the same. Tests pass before and after, the same inputs give the same outputs, and the program does what its users expect. Renaming a variable, extracting a function, or replacing a chain of `if` statements with a table are refactorings. Adding a feature, fixing a bug or changing an error message are not, even if they touch the same lines.
+
+Keeping the two separate matters for review. A commit that mixes a refactor and a behaviour change is hard to check, because the reviewer cannot rely on "nothing changed" for the structural part.
+
+## Protect the Change With a Test
+
+Before you refactor code with no tests, write characterization tests. You do not need to know the correct behaviour; you need to record the current behaviour so you notice when it changes. Then take small steps, running the tests after each one.
+
+The script below refactors a shipping-cost function from a chain of conditionals to a table. Before trusting the new version, it compares the two over a grid of weights and both express settings.
+
+```python
+# Before: one tangled function. Behaviour must not change.
+def shipping_before(weight, express):
+    if weight <= 0:
+        return 0
+    if weight <= 1:
+        cost = 5
+    elif weight <= 5:
+        cost = 8
+    else:
+        cost = 8 + (weight - 5) * 2
+    if express:
+        cost = cost * 2
+    return cost
+
+# After: table-driven, with the same rules named.
+BANDS = [(1, 5), (5, 8)]  # (up to this weight, flat cost)
+
+def shipping_after(weight, express):
+    if weight <= 0:
+        return 0
+    base = next((cost for limit, cost in BANDS if weight <= limit), None)
+    if base is None:
+        base = 8 + (weight - 5) * 2
+    return base * 2 if express else base
+
+# Characterization check: compare old and new over a grid before trusting the change.
+checked = 0
+for w in range(-2, 200):
+    for express in (False, True):
+        assert shipping_before(w, express) == shipping_after(w, express), (w, express)
+        checked += 1
+print("equivalent for", checked, "inputs")
+```
+
+```text
+equivalent for 404 inputs
+```
+
+In words: the grid covers negative weights, the band boundaries (1 and 5), values just past each boundary, and both express settings. A grid cannot prove equivalence, but it catches the boundary mistakes that cause most refactoring bugs. The new version is easier to extend: adding a band means adding a line to `BANDS`, not editing the branching.
+
+Once the characterization test has passed, keep it only if it still tells you something useful. Replace it with proper tests that state the rules, then delete the grid.
+
+## Small Steps, Committed Often
+
+Each refactoring should be one named move: extract a function, rename a symbol, inline a variable, move a function to the module that uses it. Run the tests after each move. Commit when the tests pass and the code is in a better state, not when the whole job is finished. If a later step goes wrong, you revert one small commit instead of untangling a day's work.
+
+Modern editors and language servers perform many of these moves mechanically. Prefer the tool: it does not make typos in the names it changes.
+
+## What Tech Debt Is
+
+Ward Cunningham introduced the metaphor. Shipping a quick solution is like borrowing money: you move faster now and pay interest later. Interest is the extra time every future change takes because of the shortcut. Principal is the work to remove the shortcut.
+
+Martin Fowler's quadrant sorts debt two ways. **Deliberate** debt is a conscious choice ("we ship without the cache, and we will add it when traffic demands it"). **Inadvertent** debt comes from learning the problem better after the code was written. **Reckless** debt comes from not caring about design at all. **Prudent** debt is a reasoned trade-off. Deliberate prudent debt is often the right call; reckless debt almost never is.
+
+## Deciding What to Pay Down
+
+Pay down debt where the interest is high. A messy module that changes every week costs more than an uglier one that has not changed in three years. Useful signals:
+
+- **Change frequency.** Code that churns is where interest accrues. Git history shows this directly.
+- **Defect density.** Bugs clustered in one area point to a structure that is hard to reason about.
+- **Onboarding time.** If new people take a week to make a safe change, the cost is paid every time someone joins.
+- **Risk.** A security-sensitive path with no tests is debt with a high price if it fails.
+
+Two habits keep the cost down without a separate project. The first is the boy scout rule: leave the code a little better than you found it, in the area you are changing anyway. The second is to fund a small, steady share of each iteration for cleanup, rather than asking for a big rewrite that never gets approved. Big rewrites usually fail because they stop feature work for months and drift from the moving target.
+
+<Callout type="pitfall">
+"Refactor everything" is the most expensive kind of cleanup. It changes code nobody needed to change, has no clear finish line, and makes review impossible. Refactor the code you are working on, and stop when the change you came for is easy.
+</Callout>
+
+## When Not to Refactor
+
+Do not refactor code that is about to be deleted, and do not refactor to match a style you prefer when the code works and is not touched. Do not refactor code that has no tests unless you first add characterization tests. And do not refactor in the same change as a feature or a fix: the reviewer should be able to see which lines changed behaviour.

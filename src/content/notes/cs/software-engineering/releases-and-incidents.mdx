@@ -1,0 +1,101 @@
+---
+title: "Releases and Incidents"
+description: "How to ship changes safely with flags, staged rollouts and rollbacks, and how to respond to a failure and learn from it."
+order: 13
+tier: core
+takeaways:
+  - "**Deploying** puts code on servers. **releasing** makes a feature visible to users. Separate them with **feature flags**, so a bad feature can be turned off without a rollback."
+  - "Roll out in **stages** (a small percentage, then more) and watch the metrics at each stage. Use a **stable bucket** per user so the same people see the same behaviour."
+  - "During an incident, **restore service first** and find the root cause second. A rollback is usually faster and safer than a fix written under pressure."
+  - "Assign clear roles during an incident: one person coordinates, others investigate and communicate. Confusion about who decides costs more time than the bug."
+  - "A **blameless postmortem** asks how the system allowed the failure, not who caused it. Each one should end with owned, dated actions."
+resources:
+  - title: "Postmortem culture: learning from failure (Google SRE book)"
+    url: "https://sre.google/sre-book/postmortem-culture/"
+    note: "Why postmortems are blameless and what a good one contains."
+  - title: "Feature Toggles (Martin Fowler)"
+    url: "https://martinfowler.com/articles/feature-toggles.html"
+    note: "The kinds of flags, and how to remove them once they have done their job."
+  - title: "PagerDuty incident response documentation"
+    url: "https://response.pagerduty.com/"
+    note: "Roles, severity levels and communication during a live incident."
+---
+
+Software changes in two moments. The first is the **deploy**, when new code reaches production. The second is the **release**, when users start to depend on it. Keeping them separate is the most useful habit in this note, because it lets you ship often and expose carefully. When something does go wrong, the same separation gives you a quick way out. The [Observability](../observability/) note explains how to see that something is wrong; this note covers what to do about it.
+
+## Deploy Is Not Release
+
+A **feature flag** is a switch in code that turns a behaviour on or off, usually read from configuration. Code can be deployed with the flag off, so it reaches production but no one sees it. Turning the flag on is a release, and turning it off again is a rollback that takes seconds.
+
+Flags need an owner and a removal plan. A flag that outlives its launch becomes a permanent branch that nobody tests. When a rollout completes, delete the flag and the code path it guarded.
+
+## Staged Rollouts
+
+A staged rollout exposes a change to a small share of users first, watches the metrics (errors, latency, conversions), and widens the share only when the numbers stay healthy. The share has to be stable: the same user should get the same answer on every request, or the experience flickers and the metrics are meaningless.
+
+The usual method is to hash the user and the flag name into a fixed bucket. The script below does this with SHA-256. Users are placed in buckets 0 to 99, and a flag is on for buckets below the rollout percentage.
+
+```python
+import hashlib
+
+def in_rollout(user_id, flag, percent):
+    # Stable bucket: the same user always lands in the same 0-99 bucket for a flag.
+    digest = hashlib.sha256(f"{flag}:{user_id}".encode()).hexdigest()
+    return int(digest, 16) % 100 < percent
+
+users = [f"user-{i}" for i in range(10_000)]
+at_10 = {u for u in users if in_rollout(u, "new-checkout", 10)}
+at_20 = {u for u in users if in_rollout(u, "new-checkout", 20)}
+
+print("enabled at 10%:", len(at_10))
+print("enabled at 20%:", len(at_20))
+print("everyone at 10% still in at 20%:", at_10 <= at_20)
+print("users added by moving 10% -> 20%:", len(at_20 - at_10))
+```
+
+```text
+enabled at 10%: 1021
+enabled at 20%: 1985
+everyone at 10% still in at 20%: True
+users added by moving 10% -> 20%: 964
+```
+
+<RolloutSlider />
+
+In words: the 10% group is a subset of the 20% group, so a user who had the feature keeps it as the rollout widens. The counts are close to the targets but not exact, because the hash spreads users roughly evenly rather than perfectly. Use the flag name in the hash so each rollout is independent: a user unlucky in one experiment is not unlucky in all of them.
+
+Watch the numbers at each stage. Compare the treated group with the control group over the same period, and wait long enough for the slow failures to show: a memory leak or a nightly job may not appear in the first ten minutes.
+
+## Rolling Back and Migrating
+
+Rollback is only fast if the previous version still works with the data the new version wrote. Database changes need the **expand and contract** pattern: first add the new column or table and write to both, then move reads, then remove the old one in a later release. Each step can be rolled back, because the old code still works after each one.
+
+Keep the rollback path tested. A rollback that has never been run is a hope, and it usually fails at the moment you need it.
+
+## Incidents
+
+An incident is an unplanned event that degrades a service users depend on. Most are small, and a few are not. Whatever the size, the response follows the same order.
+
+**Declare and assign roles.** Name an incident commander who makes decisions and keeps a timeline. Name people to investigate and someone to communicate with users and stakeholders. Confusion over who decides is one of the most common ways a short incident becomes a long one.
+
+**Restore service first.** Roll back, disable the flag, scale up, or fail over. The question is how to stop the harm, not why it happened. A rollback is usually the fastest safe option because it returns to a state you already know.
+
+**Find the cause second.** With service restored, work out why. Use the timeline, the deploy history, the logs and the traces. Compare against the last known good state rather than guessing.
+
+**Communicate on a schedule.** Post updates at a fixed interval, even when there is no news, so people stop asking. State what is known, what is being done and when the next update will come.
+
+Severity levels help decide who is paged and how fast. Define them in advance, in terms of user impact (for example "all customers cannot pay" is higher than "one report page is slow"), so the decision is not made under pressure.
+
+## Postmortems
+
+A postmortem records what happened, why, and what changes. A good one is **blameless**: it asks how the system and process allowed a mistake to reach users, not who made it. People make mistakes; a system that turns one mistake into an outage has a design problem that is worth fixing.
+
+A useful postmortem contains a timeline with times, the impact in users and money, the contributing factors (not one root cause, since real failures have several), what went well, and action items. Each action has an owner and a date. Actions that say "be more careful" are not actions. Actions that add an automated check, a missing alert, or a rollback test are.
+
+<Callout type="pitfall">
+A postmortem with no action items is a story, not a fix. Also avoid a list of action items that nobody owns: schedule a review date and close each item explicitly, even if the answer is "accepted risk".
+</Callout>
+
+## Checking Before You Ship
+
+Before a release, confirm the rollback plan, the flag state and the alerts that would fire if the change misbehaves. Then roll out in stages and watch. The goal is not zero incidents; it is small, reversible changes that fail in ways you can see and undo.

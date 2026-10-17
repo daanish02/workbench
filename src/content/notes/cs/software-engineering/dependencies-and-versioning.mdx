@@ -1,0 +1,110 @@
+---
+title: "Dependencies and Versioning"
+description: "How version numbers promise compatibility, how ranges and lockfiles decide which code actually runs, and how to keep third-party code safe to use."
+order: 8
+tier: core
+takeaways:
+  - "**Semantic versioning** (`MAJOR.MINOR.PATCH`) promises that a patch fixes bugs, a minor adds compatible features, and a major may break you. Real libraries do not always keep that promise."
+  - "A **version range** says which versions are allowed; a **lockfile** says which exact versions were installed. Ship the lockfile, so every machine runs the same code."
+  - "Most of the code you run is **transitive**: dependencies of your dependencies. Audit the whole tree, not only the packages you named."
+  - "Update **small and often**. A monthly bump of one package is a short diff; a two-year-old lockfile is a migration project."
+  - "A dependency is code you run without reading. Treat each one as a supply-chain risk: check its maintainers, its advisories and what it can access."
+resources:
+  - title: "Semantic Versioning 2.0.0"
+    url: "https://semver.org/"
+    note: "The versioning rules, in one page."
+  - title: "PEP 440: Version identification and dependency specification"
+    url: "https://peps.python.org/pep-0440/"
+    note: "How Python defines versions, pre-releases and specifiers."
+  - title: "uv: syncing a project from its lockfile"
+    url: "https://docs.astral.sh/uv/concepts/projects/sync/"
+    note: "How a lockfile makes an install reproducible."
+  - title: "OWASP Dependency-Check"
+    url: "https://owasp.org/www-project-dependency-check/"
+    note: "Finds dependencies with known vulnerabilities in a project."
+  - title: "OpenSSF Scorecard"
+    url: "https://securityscorecards.dev/"
+    note: "Automated checks of a project's security practices, such as branch protection and pinned dependencies."
+---
+
+Almost every program is mostly other people's code. The libraries you import, the packages they import, and the base image or runtime under all of it decide what your program does and how safe it is. Dependencies are cheap to add and expensive to keep. This note covers how versions are supposed to mean something, how to make installs repeatable, and how to keep the tree current without breaking things. The [CI/CD](../ci-cd/) note shows where these checks run in a pipeline.
+
+## What a Version Number Promises
+
+Semantic versioning gives each number a meaning. Given `2.4.1`:
+
+- **MAJOR (2)** changes when the public interface breaks. Callers may need to change code.
+- **MINOR (4)** adds features without breaking existing callers.
+- **PATCH (1)** fixes bugs without changing the interface.
+
+The promise is only as good as the maintainer. Bugs ship in patch releases; minor releases sometimes break things. Read the changelog before a bump, and run the tests after it, rather than trusting the number alone.
+
+Version ranges say which releases are acceptable. Python's specifier syntax, defined in [PEP 440](https://peps.python.org/pep-0440/), is one example. The script below uses the `packaging` library, which implements that standard, to check which versions satisfy `>=1.2,<2.0`.
+
+```python
+# /// script
+# dependencies = ["packaging==25.0"]
+# ///
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
+requirement = SpecifierSet(">=1.2,<2.0")
+for v in ["1.1.9", "1.2.0", "1.9.3", "2.0.0", "2.0.0rc1"]:
+    print(f"{v:>9}  allowed={requirement.contains(v)}")
+
+print("pre-releases are excluded unless asked:", SpecifierSet(">=2.0").contains("2.0.0rc1"))
+print("2.0.0rc1 sorts before 2.0.0:", Version("2.0.0rc1") < Version("2.0.0"))
+```
+
+```text
+    1.1.9  allowed=False
+    1.2.0  allowed=True
+    1.9.3  allowed=True
+    2.0.0  allowed=False
+ 2.0.0rc1  allowed=False
+pre-releases are excluded unless asked: False
+2.0.0rc1 sorts before 2.0.0: True
+```
+
+<VersionRange />
+
+In words: `1.2.0` is the lowest allowed version, `2.0.0` is the first excluded one, and a release candidate such as `2.0.0rc1` is treated as older than the release it precedes, so it is skipped unless you ask for pre-releases. The range is a statement of what you tested against. Widen it only when you have tested the wider range.
+
+## Ranges and Lockfiles
+
+A range in your project file is a request. A lockfile is a record. The range might say `requests>=2.31`; the lockfile says "install `requests` 2.32.3 with these exact hashes". Without a lockfile, two installs a week apart can get different code, and a bug can appear that nobody can reproduce.
+
+Commit the lockfile for applications, so deployments and teammates get the same tree. Libraries that other projects import usually do not ship a lockfile, because their users resolve versions with their own constraints. In both cases, the install command should use the lockfile when it exists, and the update command should be a deliberate step.
+
+With [uv](https://docs.astral.sh/uv/concepts/projects/sync/), `uv lock` writes the lockfile and `uv sync` installs exactly what it records. Updating a package is a separate action, so the diff in the lockfile shows exactly what changed.
+
+## Transitive Dependencies
+
+You declared five packages; the install pulled in forty. Those extra packages are **transitive dependencies**, and they run in your process with the same privileges as your own code. Most vulnerabilities and most surprise breakages live there.
+
+Read the full tree (`uv tree`, `npm ls`, the equivalent in your ecosystem) at least occasionally. Look for duplicates, for packages nobody has updated in years, and for packages that do far more than you need. A small dependency that does one function is often easier to vendor or replace than a large one you use for a single call.
+
+## Keeping Current
+
+Old dependencies accumulate risk and migration cost. The cheapest way to stay current is to update often in small steps:
+
+1. Update one package or one group at a time.
+2. Read the changelog for breaking changes.
+3. Run the test suite, including any integration tests that touch the package.
+4. Commit the lockfile change with a message that names the package and both versions.
+
+Automated update bots help here. They open a small pull request per update, and your CI runs the tests on it. The pull request is the review: you approve or close it, and nothing changes without a check.
+
+## Supply-Chain Risk
+
+A dependency is code you run without reading. Attackers use that gap in several ways. A **typosquat** publishes a package with a name one letter away from a popular one. A **compromised maintainer account** pushes a malicious release to a trusted package. A **dependency confusion** attack publishes a public package with the same name as a private internal one, so the installer picks the public copy.
+
+Defences are routine. Check that a package has active maintainers, a clear source repository and a reasonable number of users before adding it. Scan for known vulnerabilities in CI; OWASP Dependency-Check and similar tools do this. Pin versions in lockfiles and verify hashes, so a silently replaced release fails the install. Keep private package names in a private registry or scope them so they cannot be replaced. The [Authentication](../../security/authentication/) and [Threat Modeling](../../security/threat-modeling/) notes cover the broader threat model.
+
+<Callout type="pitfall">
+Pinning to an exact version in a range file (`requests==2.32.3`) is not the same as having a lockfile. The exact pin stops your own file from drifting, but it does not pin the transitive dependencies it pulls in. Use a lockfile that covers the whole tree.
+</Callout>
+
+## Choosing a Dependency
+
+Before adding a package, ask whether the standard library or the existing code already does the job, how many transitive dependencies it brings, how often it is released, how it handles security reports, and how easy it would be to replace. Adding a dependency is a long-term commitment. The cost of the first install is small; the cost of carrying it for years is not.

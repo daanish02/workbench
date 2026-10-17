@@ -1,0 +1,109 @@
+---
+title: "Documentation"
+description: "What to write down, where to put it, and how to keep it correct: READMEs, architecture decisions, reference docs and examples that run."
+order: 14
+tier: core
+takeaways:
+  - "Documentation answers questions the code cannot: **why** it is built this way, **how** to use it, and **what** to do when it breaks. Do not restate what the code already says."
+  - "Good documentation has four kinds, by what the reader needs: **tutorials** (learning), **how-to guides** (a task), **reference** (facts to look up) and **explanation** (why it works)."
+  - "Record significant decisions as **architecture decision records (ADRs)**: the context, the decision, and its consequences. Future readers need the reasoning more than the outcome."
+  - "Examples in documentation should **run**. Doctests and tested snippets stop docs from quietly going wrong."
+  - "Keep docs close to the code and review them in the same pull request. Docs that live far from the code are the first to rot."
+resources:
+  - title: "Diátaxis: a systematic approach to technical documentation"
+    url: "https://diataxis.fr/"
+    note: "The four kinds of documentation and how to tell them apart."
+  - title: "Architecture Decision Records"
+    url: "https://adr.github.io/"
+    note: "The ADR format, examples, and tools for keeping them."
+  - title: "Write the Docs: documentation guide"
+    url: "https://www.writethedocs.org/guide/"
+    note: "Practical advice on writing, maintaining and reviewing documentation."
+  - title: "doctest: test interactive examples in docstrings"
+    url: "https://docs.python.org/3/library/doctest.html"
+    note: "How examples in docstrings become tests."
+---
+
+Documentation is part of the product. A feature nobody can use, or a service nobody can operate, has failed even if the code is perfect. Yet documentation is also the first thing to go stale, because it is written once and read many times, and nothing forces it to match the code. This note covers what is worth writing down, the forms it takes, and the habits that keep it correct. The [Coding Practices](../coding-practices/) note covers comments, which are the smallest unit of documentation.
+
+## What to Write
+
+Documentation is worth its cost when it answers a question the code cannot. The code shows what the system does. Documentation should say:
+
+- **Why** it is built this way, and what was rejected.
+- **How** to use it, with a working example.
+- **What to do** when it fails: the symptoms, the diagnosis and the fix.
+- **What the rules are** that are not obvious from a single function, such as the order of operations or the units of a field.
+
+Skip what the reader can get faster from the code: a paragraph that repeats a function's signature, or a diagram that duplicates the module structure. Those go stale first.
+
+## Four Kinds of Documentation
+
+The Diátaxis framework sorts documentation by what the reader is trying to do. Mixing the kinds is the most common reason a document is hard to use.
+
+| Kind | Reader's goal | Shape |
+| --- | --- | --- |
+| Tutorial | Learn by doing | A guided path with a result at each step |
+| How-to guide | Accomplish a task | Steps for a specific goal, assuming some knowledge |
+| Reference | Look up a fact | Complete, consistent, organized for scanning |
+| Explanation | Understand why | Discussion of design, trade-offs and context |
+
+A tutorial that stops to explain every design choice loses the beginner. A reference page that tells a story is slow to scan. Pick the kind first, then write only what fits it, and link to the others.
+
+## The README
+
+Every project needs a README that answers, in order: what this is, who it is for, how to install and run it, and where to go next. Keep the first screen short. Put the one command that works first, so a newcomer sees success quickly. Link to the longer docs rather than inlining them.
+
+A README that will not run cleanly is worse than none, so test the install steps on a clean machine or in a clean container when you change them.
+
+## Architecture Decision Records
+
+A decision record captures one significant choice: the context that made it necessary, the decision, and the consequences, good and bad. The format is short on purpose, so people actually write them. Store each record in the repository, numbered and never edited after it is accepted. If the decision changes, write a new record that supersedes the old one.
+
+A record is valuable a year later, when someone asks "why do we use this queue?" and the answer is the context that no longer exists in anyone's head. It is also valuable at the time, because writing down the alternatives often exposes a better option.
+
+## Examples That Run
+
+An example that does not run is a bug waiting to be found. Python's `doctest` module runs the examples in docstrings and fails when the output changes. The function below documents its behaviour with two examples, and the `doctest` run checks them.
+
+```python
+def average(values):
+    """Return the arithmetic mean of a non-empty sequence.
+
+    >>> average([2, 4, 6])
+    4.0
+    >>> average([1])
+    1.0
+    """
+    if not values:
+        raise ValueError("average() needs at least one value")
+    return sum(values) / len(values)
+
+if __name__ == "__main__":
+    import doctest
+    print(doctest.testmod())
+```
+
+```text
+TestResults(failed=0, attempted=2)
+```
+
+In words: `doctest` found two examples, ran both, and got the outputs written in the docstring. If someone changed `average` to return an integer, the example would fail and the change would be caught in the test suite. The same idea applies to README snippets and tutorial code: extract them into tests, or run them in CI.
+
+## Keeping Docs Correct
+
+Documentation drifts unless something pulls it back. Three habits do most of the work.
+
+**Put it in the same change as the code.** A pull request that changes behaviour should change the docs in the same diff. The [Code Review](../code-review/) note covers how reviewers should check this.
+
+**Treat a wrong document as a bug.** If you find a page that is wrong, fix it or delete it. A confidently wrong doc does more harm than a missing one.
+
+**Delete what is dead.** Old pages about features that were removed, tools no longer used, and setup steps that no longer work should go, not sit next to the current ones.
+
+<Callout type="pitfall">
+Documentation written for the author's future self, using the author's shorthand, is a common failure. Before publishing, read it as someone who has never seen the project. Ask one colleague to follow it cold; the first place they get stuck is the place to fix.
+</Callout>
+
+## Where Docs Live
+
+Keep docs next to the code they describe: in the repository, in the same language and format as the code, and reviewed in the same way. A wiki is easy to start and hard to keep in step with a changing system. Use it for things that are not tied to one repository, such as team processes and on-call guides, and link from the code to it.

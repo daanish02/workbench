@@ -1,0 +1,104 @@
+---
+title: "Debugging"
+description: "A method for finding the cause of a bug: reproduce it, shrink it, bisect it, then test one hypothesis at a time."
+order: 3
+tier: core
+takeaways:
+  - "**Reproduce before you fix.** A bug you cannot trigger on demand is a bug you cannot prove fixed. Write the failing case down first."
+  - "**Shrink the input.** The smallest input that still fails usually points straight at the cause."
+  - "**Bisect** in time (which commit broke it) and in data (which input breaks it). Halving the search space takes about log₂ n steps instead of n."
+  - "**Change one thing at a time** and predict the result before you run it. If you cannot predict what a change will do, you do not yet understand the bug."
+  - "Fix the **cause**, not the symptom. A patch that hides the error (a retry, a `try` with no logging) moves the bug somewhere harder to see."
+resources:
+  - title: "Python debugger (pdb)"
+    url: "https://docs.python.org/3/library/pdb.html"
+    note: "Breakpoints, stepping and inspecting variables from the command line."
+  - title: "git bisect"
+    url: "https://git-scm.com/docs/git-bisect"
+    note: "Binary search through commit history for the change that introduced a bug."
+  - title: "Rubber duck debugging (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Rubber_duck_debugging"
+    note: "Explaining the code aloud, line by line, often exposes the wrong assumption."
+---
+
+Debugging is a search problem. The program is in a state you did not expect, and you need to find the first point where reality and your understanding split. Random edits search badly. A method searches well: make the failure reliable, make it small, then halve the space until one cause is left. The [Coding Practices](../coding-practices/) note covers how to write code that is easier to debug; this note covers what to do when it is not.
+
+## Reproduce It First
+
+Write down three things before touching the code: the input that fails, the output you got, and the output you expected. If the bug happens only sometimes, find out what varies. Timing, the order of requests, a dependency version, the machine's locale and an environment variable are common culprits.
+
+A bug you can reproduce in a test is a bug you can prove is fixed. Put the failing case in the [test suite](../testing-strategy/) before changing the code. If the test passes after your change and fails before it, you have evidence; if it was never red, you have a hope.
+
+## Shrink the Input
+
+Large inputs hide causes. Remove half the data, then half again, keeping the failure. What remains is usually the cause or very close to it. This is delta debugging in its simplest form, and it works on files, requests, configurations and test cases.
+
+## Bisect
+
+Bisection halves a search each step, so a search over `n` candidates takes about `log₂ n` checks. Two places use it routinely.
+
+**In data.** Find the first input that breaks a property. The script below finds the first prefix whose running total is wrong. The buggy function caps the total at 1000, so the failure is monotone: once it starts, it never stops. That property is what makes bisection valid. A scan would check 200 prefixes; bisection checks about 8.
+
+```python
+def reference_total(values):
+    return sum(values)
+
+def buggy_total(values):
+    # bug: running total is capped at 1000 (a silent overflow guard added years ago)
+    total = 0
+    for v in values:
+        total = min(total + v, 1000)
+    return total
+
+def first_failing_length(values):
+    # The failure is monotone: once the running total passes 1000 it stays wrong.
+    # Bisect on the prefix length instead of scanning every prefix.
+    lo, hi = 0, len(values)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if buggy_total(values[:mid + 1]) != reference_total(values[:mid + 1]):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo + 1
+
+data = list(range(1, 201))  # 1, 2, 3, ... 200
+n = first_failing_length(data)
+print("first failing prefix length:", n)
+print("prefix ends at value:", data[n - 1])
+print("reference:", reference_total(data[:n]), "buggy:", buggy_total(data[:n]))
+```
+
+```text
+first failing prefix length: 45
+prefix ends at value: 45
+reference: 1035 buggy: 1000
+```
+
+In words: the first 44 values sum to 990, which is under the cap, and adding 45 takes the total to 1035, which the buggy version clamps to 1000. The bisection found the boundary without looking at every prefix. The same reasoning finds the commit that broke a feature: `git bisect` checks out the midpoint of the history, you mark it good or bad, and it halves again.
+
+<BisectStepper />
+
+**In time.** When you know a version worked and the current one does not, `git bisect start`, `git bisect bad` and `git bisect good <commit>` do the search for you. Pair it with a script that exits `0` on success and non-zero on failure, and it runs unattended.
+
+## Form a Hypothesis and Test It
+
+Write the hypothesis as a sentence: "The discount is applied twice when the cart has two coupons." Then design the cheapest observation that would prove it wrong. Print the value at the suspect line. Set a breakpoint with `breakpoint()` or `pdb` and step through. Add an assertion that should hold if the hypothesis is right.
+
+Do not change three things at once. If the bug disappears, you will not know which change fixed it, and the next person will not either.
+
+## Read the Evidence
+
+The error message and stack trace are the cheapest evidence you have. Read the last line first (the exception type and message), then the frame that raised it, then the frames above it to see how the bad value got there. Logs help when the failure happens somewhere you cannot step into: in production, in a worker, or in a different service. Log the inputs and decisions, not only the errors, and include an identifier so one request can be followed end to end. The [Observability](../observability/) note covers this at system scale.
+
+## Heisenbugs
+
+Some bugs change or vanish when observed: a race between two threads, a cache that expires at a certain time, a loop that runs only when the machine is loaded. Adding a `print` can hide them because it slows the code and changes the timing. For these, prefer tools that record without pausing (structured logs, traces, a sanitizer or race detector) over a breakpoint, and make the timing explicit in the test with controlled delays or a fixed random seed.
+
+<Callout type="pitfall">
+A fix you cannot explain is not a fix. If the test went green but you cannot say which line was wrong and why, keep looking. The bug is probably still there, just no longer tested.
+</Callout>
+
+## After the Fix
+
+Keep the failing test. Look for the same mistake elsewhere: a pattern that caused one bug often causes others. If the cause was a missing check, consider where else the check belongs. If the search took a long time, record what would have made it faster, such as a better log line or an earlier validation, and make that change while the context is still fresh.
