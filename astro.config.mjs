@@ -34,7 +34,8 @@ function languageBadges() {
         color: #8ab4f8; background: rgba(138, 180, 248, 0.1);
         border: 1px solid rgba(138, 180, 248, 0.25); border-top: 0; border-right: 0;
         border-radius: 0 12px 0 8px; /* top-right matches the frame's 12px corner */
-        padding: 0.4rem 0.7rem; pointer-events: none;
+        /* extra right padding clears the rounded corner; letter-spacing adds a little trailing space */
+        padding: 0.45rem 0.9rem 0.4rem 0.85rem; pointer-events: none;
         transition: opacity 0.15s;
       }
       .frame[data-lang]:hover::after, .frame[data-lang]:focus-within::after { opacity: 0; }
