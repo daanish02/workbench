@@ -1,0 +1,76 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Coding blocks approaches the entropy"
+  caption="A coin with P(heads) = p, coded with a Huffman code for blocks of k flips at a time. With k = 1 every flip costs a whole bit, however predictable the coin. Grouping flips lets common blocks get short codewords, and the bits per flip fall toward the entropy H(p), always staying within 1/k of it."
+>
+  <block-coding>
+    <div class="bk-ctl">
+      <label class="bk-lbl">P(heads) <input type="range" min="0.5" max="0.99" step="0.01" value="0.9" data-p /> <b data-pv>0.90</b></label>
+      <label class="bk-lbl">block length k <input type="range" min="1" max="10" step="1" value="1" data-k /> <b data-kv>1</b></label>
+    </div>
+    <div class="bk-bars">
+      <div class="bk-row"><span>Huffman</span><div class="bk-bar h" data-hb></div><b data-hv></b></div>
+      <div class="bk-row"><span>entropy</span><div class="bk-bar e" data-eb></div><b data-ev></b></div>
+    </div>
+    <p class="bk-stat" data-stat></p>
+  </block-coding>
+</Figure>
+
+<style>
+  .bk-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .bk-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .bk-lbl input { flex: 1; }
+  .bk-bars { display: grid; gap: 8px; }
+  .bk-row { display: grid; grid-template-columns: 70px 1fr 120px; gap: 8px; align-items: center; font: 0.8rem var(--font-mono); color: var(--text-muted); }
+  .bk-bar { height: 14px; border-radius: 4px; }
+  .h { background: var(--g-blue); } .e { background: var(--g-green); }
+  .bk-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // Huffman average length for a list of probabilities, via repeated merging (fine for up to 1024 symbols)
+  function huffmanLength(ps: number[]): number {
+    const heap = ps.slice().sort((a, b) => a - b);
+    let total = 0;
+    while (heap.length > 1) {
+      const a = heap.shift()!, b = heap.shift()!;
+      total += a + b; // each merge adds one bit to every symbol below it
+      const s = a + b;
+      let i = 0;
+      while (i < heap.length && heap[i] < s) i++;
+      heap.splice(i, 0, s);
+    }
+    return total;
+  }
+  const binom = (n: number, r: number) => { let v = 1; for (let i = 1; i <= r; i++) v = (v * (n - r + i)) / i; return v; };
+  class BlockCoding extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-pv]')!.textContent = p.toFixed(2);
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      const ps: number[] = [];
+      for (let h = 0; h <= k; h++) {
+        const pr = p ** h * (1 - p) ** (k - h);
+        const count = binom(k, h);
+        for (let c = 0; c < count; c++) ps.push(pr);
+      }
+      const perFlip = huffmanLength(ps) / k;
+      const H = p >= 1 ? 0 : -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
+      const w = (v: number) => `${Math.max(1, v * 100)}%`;
+      this.querySelector<HTMLElement>('[data-hb]')!.style.width = w(perFlip);
+      this.querySelector<HTMLElement>('[data-eb]')!.style.width = w(H);
+      this.querySelector('[data-hv]')!.textContent = `${perFlip.toFixed(3)} bits/flip`;
+      this.querySelector('[data-ev]')!.textContent = `${H.toFixed(3)} bits/flip`;
+      this.querySelector('[data-stat]')!.textContent = `${2 ** k} blocks · gap above entropy ${(perFlip - H).toFixed(3)} (bound 1/k = ${(1 / k).toFixed(3)})`;
+    }
+  }
+  customElements.define('block-coding', BlockCoding);
+</script>
