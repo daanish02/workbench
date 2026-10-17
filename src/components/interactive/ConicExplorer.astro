@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One family, changing eccentricity"
+  caption="Slide the eccentricity e. At e = 0 the conic is a circle, between 0 and 1 it is an ellipse, at e = 1 it is a parabola, and above 1 it is a hyperbola. The dots are the foci: every point on the curve has a distance ratio of e to a focus and a directrix."
+>
+  <conic-explorer>
+    <div class="ctl-row">
+      <label class="lbl">Eccentricity e <input type="range" min="0" max="2" step="0.02" value="0.6" data-e /> <b data-ev>0.60</b></label>
+    </div>
+    <svg class="ce-svg" viewBox="-6 -6 12 12" role="img" aria-label="Conic section for the chosen eccentricity, with its focus">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="ce-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="ce-axis"></line>
+        <path data-curve class="ce-curve"></path>
+        <circle data-f1 r="0.2" class="ce-focus"></circle>
+        <circle data-f2 r="0.2" class="ce-focus"></circle>
+      </g>
+    </svg>
+    <p class="ce-stat" data-stat></p>
+  </conic-explorer>
+</Figure>
+
+<style>
+  .ctl-row {
+    margin-bottom: 10px;
+  }
+  .lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    flex: 1;
+  }
+  .ce-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .ce-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .ce-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.1;
+    stroke-linejoin: round;
+  }
+  .ce-focus {
+    fill: var(--g-red);
+  }
+  .ce-stat {
+    margin: 12px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Standard forms centred on the origin:
+  //   e < 1 ellipse   x²/a² + y²/b² = 1, b = a·√(1 − e²), foci ±a·e   (a = 4)
+  //   e = 1 parabola  y² = 4·p·x with p = 2, focus (p, 0)
+  //   e > 1 hyperbola x²/a² − y²/b² = 1, a = 2, foci ±a·e, b = √(c² − a²)
+  //   e = 0 is the circle of radius 4 (the e < 1 case with b = a)
+  const A_ELLIPSE = 4;
+  const A_HYPER = 2;
+  const P_PARA = 2;
+
+  class ConicExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-e]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const e = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-ev]')!.textContent = e.toFixed(2);
+      const curve = this.querySelector('[data-curve]')!;
+      const f1 = this.querySelector('[data-f1]')!;
+      const f2 = this.querySelector('[data-f2]')!;
+      const pts: string[] = [];
+      const move = (x: number, y: number, first: boolean) =>
+        pts.push(`${first ? 'M' : 'L'}${x.toFixed(3)},${y.toFixed(3)}`);
+
+      let kind: string;
+      let foci: number[] = [];
+      if (e < 1) {
+        const a = A_ELLIPSE;
+        const b = a * Math.sqrt(1 - e * e);
+        for (let i = 0; i <= 360; i++) {
+          const t = (i / 360) * 2 * Math.PI;
+          move(a * Math.cos(t), b * Math.sin(t), i === 0);
+        }
+        foci = e === 0 ? [] : [-a * e, a * e];
+        kind = e === 0 ? 'circle (e = 0)' : 'ellipse (0 < e < 1)';
+      } else if (Math.abs(e - 1) < 1e-9) {
+        for (let i = -60; i <= 60; i++) {
+          const y = i / 10;
+          move(y * y / (4 * P_PARA), y, i === -60);
+        }
+        foci = [P_PARA];
+        kind = 'parabola (e = 1)';
+      } else {
+        const a = A_HYPER;
+        const c = a * e;
+        const b = Math.sqrt(c * c - a * a);
+        let first = true;
+        for (let i = -200; i <= 200; i++) {
+          const t = i / 100;
+          move(a * Math.cosh(t), b * Math.sinh(t), first);
+          first = false;
+        }
+        first = true;
+        for (let i = -200; i <= 200; i++) {
+          const t = i / 100;
+          move(-a * Math.cosh(t), b * Math.sinh(t), first);
+          first = false;
+        }
+        foci = [-c, c];
+        kind = 'hyperbola (e > 1)';
+      }
+      curve.setAttribute('d', pts.join(' '));
+
+      const place = (el: Element, x: number | null) => {
+        if (x === null) el.setAttribute('visibility', 'hidden');
+        else {
+          el.setAttribute('visibility', 'visible');
+          el.setAttribute('cx', x.toFixed(3));
+          el.setAttribute('cy', '0');
+        }
+      };
+      place(f1, foci[0] ?? null);
+      place(f2, foci[1] ?? null);
+
+      this.querySelector('[data-stat]')!.textContent = kind;
+    }
+  }
+  customElements.define('conic-explorer', ConicExplorer);
+</script>

@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Curvature: the circle that hugs the curve"
+  caption="Slide along an ellipse. The dashed circle is the circle of curvature at that point: it touches the curve and bends with it. Its radius is 1/κ. On the flat ends of the ellipse it is large, and at the sharp ends it is small."
+>
+  <curvature-circle>
+    <div class="ctl">
+      <label>t <input type="range" min="0" max="6.283" step="0.01" value="0.6" data-t /> <b data-tv>0.60</b></label>
+    </div>
+    <svg class="cc-svg" viewBox="-6 -6 12 12" role="img" aria-label="Ellipse with a point, its tangent, and the circle of curvature">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="cc-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="cc-axis"></line>
+        <path data-curve class="cc-curve"></path>
+        <circle data-osc cx="0" cy="0" r="1" class="cc-osc"></circle>
+        <line data-tan x1="0" y1="0" x2="1" y2="0" class="cc-tan"></line>
+        <line data-normal x1="0" y1="0" x2="1" y2="0" class="cc-normal"></line>
+        <circle data-pt cx="3" cy="0" r="0.2" class="cc-pt"></circle>
+        <circle data-center cx="0" cy="0" r="0.12" class="cc-center"></circle>
+      </g>
+    </svg>
+    <p class="cc-stat" data-stat></p>
+  </curvature-circle>
+</Figure>
+
+<style>
+  .ctl {
+    margin-bottom: 12px;
+  }
+  .ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ctl input {
+    flex: 1;
+  }
+  .ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .cc-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .cc-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .cc-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.08;
+  }
+  .cc-osc {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 0.05;
+    stroke-dasharray: 0.15 0.12;
+  }
+  .cc-tan {
+    stroke: var(--g-green);
+    stroke-width: 0.05;
+  }
+  .cc-normal {
+    stroke: var(--g-red);
+    stroke-width: 0.05;
+  }
+  .cc-pt {
+    fill: var(--text);
+  }
+  .cc-center {
+    fill: var(--g-yellow);
+  }
+  .cc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Ellipse (a cos t, b sin t) with a = 3, b = 1 (matches the note).
+  // Curvature κ = a·b / (a² sin²t + b² cos²t)^(3/2); centre of curvature = P + (1/κ)·n, n the inward unit normal.
+  const A = 3;
+  const B = 1;
+
+  class CurvatureCircle extends HTMLElement {
+    connectedCallback() {
+      const pts: string[] = [];
+      for (let i = 0; i <= 240; i++) {
+        const t = (i / 240) * 2 * Math.PI;
+        pts.push(`${i ? 'L' : 'M'}${(A * Math.cos(t)).toFixed(3)},${(B * Math.sin(t)).toFixed(3)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' ') + ' Z');
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = t.toFixed(2);
+
+      const px = A * Math.cos(t);
+      const py = B * Math.sin(t);
+      const dx = -A * Math.sin(t);
+      const dy = B * Math.cos(t);
+      const speed = Math.hypot(dx, dy);
+      const tx = dx / speed;
+      const ty = dy / speed;
+      // inward normal: rotate the tangent by +90 degrees, then flip if it points outward
+      let nx = -ty;
+      let ny = tx;
+      if (nx * px + ny * py > 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      const kappa = (A * B) / Math.pow(A * A * Math.sin(t) ** 2 + B * B * Math.cos(t) ** 2, 1.5);
+      const radius = 1 / kappa;
+      const cx = px + radius * nx;
+      const cy = py + radius * ny;
+
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v.toFixed(3));
+      };
+      set('[data-pt]', { cx: px, cy: py });
+      set('[data-osc]', { cx, cy, r: radius });
+      set('[data-center]', { cx, cy });
+      set('[data-tan]', { x1: px - tx, y1: py - ty, x2: px + tx, y2: py + ty });
+      set('[data-normal]', { x1: px, y1: py, x2: px + nx * 0.8, y2: py + ny * 0.8 });
+
+      this.querySelector('[data-stat]')!.textContent =
+        `κ = ${kappa.toFixed(3)} · radius 1/κ = ${radius.toFixed(3)} · centre (${cx.toFixed(2)}, ${cy.toFixed(2)})`;
+    }
+  }
+  customElements.define('curvature-circle', CurvatureCircle);
+</script>

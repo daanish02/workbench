@@ -1,0 +1,141 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The same point, two addresses"
+  caption="Move r (distance from the origin) and θ (angle from the positive x-axis). The point has Cartesian coordinates (x, y) = (r cos θ, r sin θ). Polar coordinates are natural when the picture is a circle or a spiral, and Cartesian when it is a grid."
+>
+  <polar-point>
+    <div class="ctl">
+      <label>r <input type="range" min="0" max="5" step="0.05" value="3" data-r /> <b data-rv>3.00</b></label>
+      <label>θ <input type="range" min="0" max="360" step="1" value="50" data-t /> <b data-tv>50°</b></label>
+    </div>
+    <svg class="pp-svg" viewBox="-6 -6 12 12" role="img" aria-label="A point at polar coordinates r and theta, with its Cartesian projections">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="pp-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="pp-axis"></line>
+        <circle data-ring cx="0" cy="0" r="3" class="pp-ring"></circle>
+        <path data-arc class="pp-arc"></path>
+        <line data-radius x1="0" y1="0" x2="3" y2="0" class="pp-radius"></line>
+        <line data-xline x1="0" y1="0" x2="3" y2="0" class="pp-x"></line>
+        <line data-yline x1="3" y1="0" x2="3" y2="0" class="pp-y"></line>
+        <circle data-pt cx="3" cy="0" r="0.22" class="pp-pt"></circle>
+      </g>
+    </svg>
+    <p class="pp-stat" data-stat></p>
+  </polar-point>
+</Figure>
+
+<style>
+  .ctl {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ctl input {
+    flex: 1;
+  }
+  .ctl b {
+    min-width: 3.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .pp-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .pp-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .pp-ring {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 0.03;
+    stroke-dasharray: 0.15 0.15;
+  }
+  .pp-arc {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 0.08;
+  }
+  .pp-radius {
+    stroke: var(--g-blue);
+    stroke-width: 0.07;
+  }
+  .pp-x {
+    stroke: var(--g-green);
+    stroke-width: 0.06;
+    stroke-dasharray: 0.2 0.15;
+  }
+  .pp-y {
+    stroke: var(--g-red);
+    stroke-width: 0.06;
+    stroke-dasharray: 0.2 0.15;
+  }
+  .pp-pt {
+    fill: var(--text);
+  }
+  .pp-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class PolarPoint extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-r]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      const deg = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      const th = (deg * Math.PI) / 180;
+      const x = r * Math.cos(th);
+      const y = r * Math.sin(th);
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(2);
+      this.querySelector('[data-tv]')!.textContent = `${deg}°`;
+
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v.toFixed(3));
+      };
+      set('[data-ring]', { r });
+      set('[data-radius]', { x2: x, y2: y });
+      set('[data-xline]', { x1: 0, y1: 0, x2: x, y2: 0 });
+      set('[data-yline]', { x1: x, y1: 0, x2: x, y2: y });
+      set('[data-pt]', { cx: x, cy: y });
+
+      // arc from the x-axis to the point, drawn at radius min(r, 1.5)
+      const ar = Math.min(r, 1.5);
+      const arc = this.querySelector('[data-arc]')!;
+      if (ar < 0.01 || deg === 0) {
+        arc.setAttribute('d', '');
+      } else {
+        const ex = ar * Math.cos(th);
+        const ey = ar * Math.sin(th);
+        const large = deg > 180 ? 1 : 0;
+        arc.setAttribute('d', `M${ar.toFixed(3)},0 A${ar.toFixed(3)},${ar.toFixed(3)} 0 ${large} 1 ${ex.toFixed(3)},${ey.toFixed(3)}`);
+      }
+
+      this.querySelector('[data-stat]')!.textContent =
+        `(r, θ) = (${r.toFixed(2)}, ${deg}°) → (x, y) = (${x.toFixed(2)}, ${y.toFixed(2)})`;
+    }
+  }
+  customElements.define('polar-point', PolarPoint);
+</script>

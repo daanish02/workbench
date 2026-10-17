@@ -1,0 +1,151 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Drag the corners: the angles always add to 180°"
+  caption="Move any vertex. The three interior angles change, but their sum stays 180°. The side lengths and the area change too, and the largest angle always faces the longest side."
+>
+  <triangle-explorer>
+    <svg class="te-svg" viewBox="-6 -6 12 12" role="img" aria-label="A triangle with three draggable vertices and its angles">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="te-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="te-axis"></line>
+        <polygon data-tri class="te-tri"></polygon>
+        <circle data-v="0" r="0.28" class="te-v te-v0"></circle>
+        <circle data-v="1" r="0.28" class="te-v te-v1"></circle>
+        <circle data-v="2" r="0.28" class="te-v te-v2"></circle>
+      </g>
+    </svg>
+    <ul class="te-list" data-list></ul>
+    <p class="te-stat" data-stat></p>
+  </triangle-explorer>
+</Figure>
+
+<style>
+  .te-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .te-svg :global(circle) {
+    cursor: grab;
+  }
+  .te-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .te-tri {
+    fill: rgba(66, 133, 244, 0.15);
+    stroke: var(--g-blue);
+    stroke-width: 0.06;
+    stroke-linejoin: round;
+  }
+  .te-v0 {
+    fill: var(--g-red);
+  }
+  .te-v1 {
+    fill: var(--g-green);
+  }
+  .te-v2 {
+    fill: var(--g-yellow);
+  }
+  .te-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px auto 0;
+    max-width: 300px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    font: 0.8125rem var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+  .te-list :global(li) {
+    margin: 0;
+    padding: 0;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .te-stat {
+    margin: 8px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type P = { x: number; y: number };
+
+  const dist = (p: P, q: P) => Math.hypot(q.x - p.x, q.y - p.y);
+  // interior angle at vertex b, in degrees, from the law of cosines
+  const angleAt = (a: P, b: P, c: P) => {
+    const ab = dist(b, a);
+    const bc = dist(b, c);
+    const ac = dist(a, c);
+    const cos = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
+    return (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+  };
+
+  class TriangleExplorer extends HTMLElement {
+    pts: P[] = [
+      { x: -3, y: -2 },
+      { x: 3, y: -1.5 },
+      { x: 0.5, y: 3 },
+    ];
+    drag = -1;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.te-svg')!;
+      this.querySelectorAll<SVGCircleElement>('[data-v]').forEach((c) =>
+        c.addEventListener('pointerdown', (e) => {
+          this.drag = +c.dataset.v!;
+          svg.setPointerCapture(e.pointerId);
+        }),
+      );
+      svg.addEventListener('pointermove', (e) => {
+        if (this.drag < 0) return;
+        const r = svg.getBoundingClientRect();
+        const s = 12 / r.width;
+        const x = (e.clientX - (r.left + r.width / 2)) * s;
+        const y = -(e.clientY - (r.top + r.height / 2)) * s;
+        this.pts[this.drag] = { x: Math.max(-5.5, Math.min(5.5, x)), y: Math.max(-5.5, Math.min(5.5, y)) };
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = -1));
+      this.draw();
+    }
+
+    draw() {
+      const [A, B, C] = this.pts;
+      this.querySelectorAll<SVGCircleElement>('[data-v]').forEach((c, i) => {
+        c.setAttribute('cx', this.pts[i].x.toFixed(3));
+        c.setAttribute('cy', this.pts[i].y.toFixed(3));
+      });
+      this.querySelector('[data-tri]')!.setAttribute(
+        'points',
+        this.pts.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(' '),
+      );
+
+      const alpha = angleAt(B, A, C);
+      const beta = angleAt(A, B, C);
+      const gamma = angleAt(A, C, B);
+      const sum = alpha + beta + gamma;
+      this.querySelector('[data-list]')!.innerHTML = [
+        `<li style="color:var(--g-red)">A ${alpha.toFixed(1)}°</li>`,
+        `<li style="color:var(--g-green)">B ${beta.toFixed(1)}°</li>`,
+        `<li style="color:var(--g-yellow)">C ${gamma.toFixed(1)}°</li>`,
+      ].join('');
+
+      const area = Math.abs((B.x - A.x) * (C.y - A.y) - (C.x - A.x) * (B.y - A.y)) / 2;
+      const sides = `${dist(B, C).toFixed(2)}, ${dist(A, C).toFixed(2)}, ${dist(A, B).toFixed(2)}`;
+      this.querySelector('[data-stat]')!.textContent =
+        `sum of angles = ${sum.toFixed(2)}° · sides a, b, c = ${sides} · area = ${area.toFixed(2)}`;
+    }
+  }
+  customElements.define('triangle-explorer', TriangleExplorer);
+</script>

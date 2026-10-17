@@ -1,0 +1,222 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The shortest path on a sphere bends toward the pole"
+  caption="Two cities on the globe. The gold arc is the great circle between them, the shortest path on the sphere. The grey dashed path runs along the first city's latitude, which looks shorter on a flat map but is longer. Turn the globe with the view slider."
+>
+  <great-circle>
+    <div class="gc-ctl">
+      <label>A latitude <input type="range" min="-80" max="80" step="1" value="45" data-la /> <b data-lav>45°</b></label>
+      <label>A longitude <input type="range" min="-180" max="180" step="1" value="0" data-lo /> <b data-lov>0°</b></label>
+      <label>B latitude <input type="range" min="-80" max="80" step="1" value="45" data-lb /> <b data-lbv>45°</b></label>
+      <label>B longitude <input type="range" min="-180" max="180" step="1" value="90" data-lp /> <b data-lpv>90°</b></label>
+      <label>view longitude <input type="range" min="-180" max="180" step="1" value="45" data-view /> <b data-viewv>45°</b></label>
+    </div>
+    <svg class="gc-svg" viewBox="-1.1 -1.1 2.2 2.2" role="img" aria-label="Globe with two cities, the great circle arc between them, and the parallel path">
+      <circle cx="0" cy="0" r="1" class="gc-globe"></circle>
+      <g data-grid></g>
+      <path data-parallel class="gc-parallel"></path>
+      <path data-arc class="gc-arc"></path>
+      <circle data-pa r="0.04" class="gc-a"></circle>
+      <circle data-pb r="0.04" class="gc-b"></circle>
+    </svg>
+    <p class="gc-stat" data-stat></p>
+  </great-circle>
+</Figure>
+
+<style>
+  .gc-ctl {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+    margin-bottom: 12px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .gc-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .gc-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .gc-ctl b {
+    min-width: 3.2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .gc-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .gc-globe {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke: #5f6368;
+    stroke-width: 0.012;
+  }
+  .gc-svg :global(.gc-grid) {
+    fill: none;
+    stroke: #2c2c2c;
+    stroke-width: 0.008;
+  }
+  .gc-parallel {
+    fill: none;
+    stroke: #9aa0a6;
+    stroke-width: 0.014;
+    stroke-dasharray: 0.03 0.025;
+  }
+  .gc-arc {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 0.022;
+  }
+  .gc-a {
+    fill: var(--g-red);
+  }
+  .gc-b {
+    fill: var(--g-green);
+  }
+  .gc-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const D2R = Math.PI / 180;
+
+  // unit vector for latitude, longitude (degrees)
+  const vec = (lat: number, lon: number): [number, number, number] => [
+    Math.cos(lat * D2R) * Math.cos(lon * D2R),
+    Math.cos(lat * D2R) * Math.sin(lon * D2R),
+    Math.sin(lat * D2R),
+  ];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  // orthographic projection centred on (latLon0); returns null if the point is on the far side
+  function project(p: number[], c: number[]): [number, number] | null {
+    if (dot(p, c) < 0) return null;
+    // local east and north axes at the view centre
+    const east = [-c[1], c[0], 0];
+    const en = Math.hypot(east[0], east[1]) || 1;
+    const e = [east[0] / en, east[1] / en, 0];
+    const n = [-c[2] * c[0], -c[2] * c[1], 1 - c[2] * c[2]];
+    const nn = Math.hypot(n[0], n[1], n[2]) || 1;
+    const nu = [n[0] / nn, n[1] / nn, n[2] / nn];
+    return [dot(p, e), dot(p, nu)];
+  }
+
+  // points along the great circle from p to q, slerped
+  function arcPoints(p: number[], q: number[], steps: number): number[][] {
+    const omega = Math.acos(Math.max(-1, Math.min(1, dot(p, q))));
+    const out: number[][] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      if (omega < 1e-9) {
+        out.push(p);
+        continue;
+      }
+      const a = Math.sin((1 - t) * omega) / Math.sin(omega);
+      const b = Math.sin(t * omega) / Math.sin(omega);
+      out.push([a * p[0] + b * q[0], a * p[1] + b * q[1], a * p[2] + b * q[2]]);
+    }
+    return out;
+  }
+
+  // SVG path that breaks where the curve passes behind the globe
+  function toPath(pts: number[][], c: number[]): string {
+    let d = '';
+    let open = false;
+    for (const p of pts) {
+      const xy = project(p, c);
+      if (!xy) {
+        open = false;
+        continue;
+      }
+      d += `${open ? 'L' : 'M'}${xy[0].toFixed(4)},${(-xy[1]).toFixed(4)}`;
+      open = true;
+    }
+    return d;
+  }
+
+  class GreatCircle extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+
+    draw() {
+      const v = (sel: string) => +this.querySelector<HTMLInputElement>(sel)!.value;
+      const la = v('[data-la]'), lo = v('[data-lo]'), lb = v('[data-lb]'), lp = v('[data-lp]'), view = v('[data-view]');
+      this.querySelector('[data-lav]')!.textContent = `${la}°`;
+      this.querySelector('[data-lov]')!.textContent = `${lo}°`;
+      this.querySelector('[data-lbv]')!.textContent = `${lb}°`;
+      this.querySelector('[data-lpv]')!.textContent = `${lp}°`;
+      this.querySelector('[data-viewv]')!.textContent = `${view}°`;
+
+      const c = vec(0, view);
+      const A = vec(la, lo);
+      const B = vec(lb, lp);
+
+      // grid lines
+      const lines: string[] = [];
+      for (let lat = -60; lat <= 60; lat += 30) {
+        const pts: number[][] = [];
+        for (let lon = -180; lon <= 180; lon += 3) pts.push(vec(lat, lon));
+        lines.push(`<path class="gc-grid" d="${toPath(pts, c)}"></path>`);
+      }
+      for (let lon = -150; lon <= 180; lon += 30) {
+        const pts: number[][] = [];
+        for (let lat = -90; lat <= 90; lat += 3) pts.push(vec(lat, lon));
+        lines.push(`<path class="gc-grid" d="${toPath(pts, c)}"></path>`);
+      }
+      this.querySelector('[data-grid]')!.innerHTML = lines.join('');
+
+      // great circle arc: the shortest path
+      const arc = arcPoints(A, B, 180);
+      this.querySelector('[data-arc]')!.setAttribute('d', toPath(arc, c));
+
+      // parallel at A's latitude, from A's longitude to B's longitude the short way
+      let dl = ((lp - lo + 540) % 360) - 180;
+      const par: number[][] = [];
+      for (let i = 0; i <= 180; i++) par.push(vec(la, lo + (dl * i) / 180));
+      this.querySelector('[data-parallel]')!.setAttribute('d', toPath(par, c));
+
+      const pa = project(A, c);
+      const pb = project(B, c);
+      const setDot = (sel: string, p: [number, number] | null) => {
+        const el = this.querySelector(sel)!;
+        if (!p) el.setAttribute('visibility', 'hidden');
+        else {
+          el.setAttribute('visibility', 'visible');
+          el.setAttribute('cx', p[0].toFixed(4));
+          el.setAttribute('cy', (-p[1]).toFixed(4));
+        }
+      };
+      setDot('[data-pa]', pa);
+      setDot('[data-pb]', pb);
+
+      const central = Math.acos(Math.max(-1, Math.min(1, dot(A, B))));
+      const stat = this.querySelector('[data-stat]')!;
+      if (Math.abs(la - lb) > 1e-9) {
+        // the parallel only reaches B when both cities share a latitude
+        stat.textContent = `great circle ${central.toFixed(3)} (radius 1) · set both cities to the same latitude to compare with the parallel`;
+      } else {
+        const parallelLen = Math.abs(dl) * D2R * Math.cos(la * D2R);
+        stat.textContent =
+          `great circle ${central.toFixed(3)} · parallel ${parallelLen.toFixed(3)} · shorter: ${
+            central <= parallelLen ? 'great circle' : 'parallel'
+          } (radius 1)`;
+      }
+    }
+  }
+  customElements.define('great-circle', GreatCircle);
+</script>

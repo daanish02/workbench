@@ -1,0 +1,134 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two points determine a line"
+  caption="Drag either point. The segment between them gives the distance and the midpoint, and the slope is the rise over the run. The line through both points is y = mx + c."
+>
+  <line-explorer>
+    <svg class="le-svg" viewBox="-6 -6 12 12" role="img" aria-label="Two draggable points, the line through them, and the midpoint">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="le-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="le-axis"></line>
+        <line data-line x1="0" y1="0" x2="1" y2="1" class="le-line"></line>
+        <line data-seg x1="0" y1="0" x2="1" y2="1" class="le-seg"></line>
+        <circle data-mid cx="0" cy="0" r="0.22" class="le-mid"></circle>
+        <circle data-p cx="-3" cy="-2" r="0.28" class="le-p"></circle>
+        <circle data-q cx="2" cy="3" r="0.28" class="le-q"></circle>
+      </g>
+    </svg>
+    <p class="le-stat" data-stat></p>
+  </line-explorer>
+</Figure>
+
+<style>
+  .le-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .le-svg :global(circle) {
+    cursor: grab;
+  }
+  .le-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .le-line {
+    stroke: #5f6368;
+    stroke-width: 0.04;
+    stroke-dasharray: 0.2 0.15;
+  }
+  .le-seg {
+    stroke: var(--g-blue);
+    stroke-width: 0.08;
+  }
+  .le-mid {
+    fill: var(--g-yellow);
+  }
+  .le-p {
+    fill: var(--g-red);
+  }
+  .le-q {
+    fill: var(--g-green);
+  }
+  .le-stat {
+    margin: 12px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type P = { x: number; y: number };
+
+  class LineExplorer extends HTMLElement {
+    p: P = { x: -3, y: -2 };
+    q: P = { x: 2, y: 3 };
+    drag: 'p' | 'q' | null = null;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.le-svg')!;
+      const toWorld = (e: PointerEvent): P => {
+        const r = svg.getBoundingClientRect();
+        const s = 12 / r.width;
+        return {
+          x: (e.clientX - (r.left + r.width / 2)) * s,
+          y: -(e.clientY - (r.top + r.height / 2)) * s,
+        };
+      };
+      const clamp = (v: number) => Math.max(-5.5, Math.min(5.5, v));
+      this.querySelector('[data-p]')!.addEventListener('pointerdown', (e) => {
+        this.drag = 'p';
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      this.querySelector('[data-q]')!.addEventListener('pointerdown', (e) => {
+        this.drag = 'q';
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const w = toWorld(e);
+        const pt = { x: clamp(w.x), y: clamp(w.y) };
+        if (this.drag === 'p') this.p = pt;
+        else this.q = pt;
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = null));
+      this.draw();
+    }
+
+    draw() {
+      const { p, q } = this;
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v.toFixed(3));
+      };
+      set('[data-p]', { cx: p.x, cy: p.y });
+      set('[data-q]', { cx: q.x, cy: q.y });
+      set('[data-seg]', { x1: p.x, y1: p.y, x2: q.x, y2: q.y });
+      set('[data-mid]', { cx: (p.x + q.x) / 2, cy: (p.y + q.y) / 2 });
+
+      const dist = Math.hypot(q.x - p.x, q.y - p.y);
+      const mid = [(p.x + q.x) / 2, (p.y + q.y) / 2];
+      const vertical = Math.abs(q.x - p.x) < 1e-6;
+      let text: string;
+      if (vertical) {
+        text = `x = ${p.x.toFixed(2)} (vertical line, slope undefined)`;
+        set('[data-line]', { x1: p.x, y1: -6, x2: p.x, y2: 6 });
+      } else {
+        const m = (q.y - p.y) / (q.x - p.x);
+        const c = p.y - m * p.x;
+        text = `y = ${m.toFixed(2)}x ${c >= 0 ? '+' : '−'} ${Math.abs(c).toFixed(2)}`;
+        set('[data-line]', { x1: -6, y1: m * -6 + c, x2: 6, y2: m * 6 + c });
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `distance ${dist.toFixed(2)} · midpoint (${mid[0].toFixed(2)}, ${mid[1].toFixed(2)}) · ${text}`;
+    }
+  }
+  customElements.define('line-explorer', LineExplorer);
+</script>

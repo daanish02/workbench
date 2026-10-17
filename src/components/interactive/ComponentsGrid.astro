@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Paint cells and count the pieces"
+  caption="Click cells to paint or unpaint them. Two painted cells belong to the same piece when you can walk between them through shared edges. Each piece gets its own colour, and the count is the number of connected components."
+>
+  <components-grid>
+    <div class="cg" data-grid></div>
+    <div class="ctl-row">
+      <button class="btn" data-clear>Clear</button>
+      <button class="btn" data-demo>Load example</button>
+    </div>
+    <p class="cg-stat" data-stat></p>
+  </components-grid>
+</Figure>
+
+<style>
+  .cg {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+  .cg :global(.cg-cell) {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    background: #1d1d1d;
+    border: 1px solid #2c2c2c;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .cg :global(.cg-cell.on) {
+    border-color: transparent;
+  }
+  .ctl-row {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .cg-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 8;
+  const PALETTE = ['#4285f4', '#ea4335', '#fbbc04', '#34a853', '#a142f4', '#24c1e0', '#ff6d01', '#e8710a'];
+
+  class ComponentsGrid extends HTMLElement {
+    on = new Set<string>();
+
+    connectedCallback() {
+      const grid = this.querySelector('[data-grid]')!;
+      grid.innerHTML = Array.from({ length: N * N }, (_, i) => {
+        const x = i % N;
+        const y = Math.floor(i / N);
+        return `<span class="cg-cell" data-x="${x}" data-y="${y}"></span>`;
+      }).join('');
+      grid.querySelectorAll<HTMLElement>('.cg-cell').forEach((cell) =>
+        cell.addEventListener('click', () => {
+          const key = `${cell.dataset.x},${cell.dataset.y}`;
+          if (this.on.has(key)) this.on.delete(key);
+          else this.on.add(key);
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-clear]')!.addEventListener('click', () => {
+        this.on.clear();
+        this.draw();
+      });
+      this.querySelector('[data-demo]')!.addEventListener('click', () => {
+        // two blocks that touch only at a corner, plus a separate single cell
+        this.on = new Set(['1,1', '2,1', '3,1', '1,2', '2,2', '3,2', '4,3', '4,4', '5,4', '5,5', '6,5', '6,6', '0,6']);
+        this.draw();
+      });
+      this.on = new Set(['1,1', '2,1', '3,1', '1,2', '2,2', '3,2', '4,3', '4,4']);
+      this.draw();
+    }
+
+    // flood fill over the painted cells, moving only through shared edges
+    components(): Map<string, number> {
+      const comp = new Map<string, number>();
+      let id = 0;
+      for (const start of this.on) {
+        if (comp.has(start)) continue;
+        const stack = [start];
+        comp.set(start, id);
+        while (stack.length) {
+          const [x, y] = stack.pop()!.split(',').map(Number);
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nb = `${x + dx},${y + dy}`;
+            if (this.on.has(nb) && !comp.has(nb)) {
+              comp.set(nb, id);
+              stack.push(nb);
+            }
+          }
+        }
+        id++;
+      }
+      return comp;
+    }
+
+    draw() {
+      const comp = this.components();
+      const count = new Set(comp.values()).size;
+      this.querySelectorAll<HTMLElement>('.cg-cell').forEach((cell) => {
+        const key = `${cell.dataset.x},${cell.dataset.y}`;
+        const c = comp.get(key);
+        const on = c !== undefined;
+        cell.classList.toggle('on', on);
+        cell.style.background = on ? PALETTE[c! % PALETTE.length] : '';
+      });
+      const word = count === 1 ? 'component' : 'components';
+      this.querySelector('[data-stat]')!.textContent =
+        this.on.size === 0 ? 'no painted cells yet' : `${count} connected ${word}`;
+    }
+  }
+  customElements.define('components-grid', ComponentsGrid);
+</script>

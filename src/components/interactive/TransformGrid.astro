@@ -1,0 +1,127 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A 2×2 matrix moves the whole plane"
+  caption="The grid is the plane, and the square is the unit square. Set the four entries of the matrix. Every grid line is carried to its image, so you see the transformation act on all points at once. The area factor is |det|: the square's area becomes that many times larger."
+>
+  <transform-grid>
+    <div class="mx">
+      <label>a <input type="range" min="-2" max="2" step="0.1" value="1" data-m="a" /><b data-v="a">1.0</b></label>
+      <label>b <input type="range" min="-2" max="2" step="0.1" value="0.5" data-m="b" /><b data-v="b">0.5</b></label>
+      <label>c <input type="range" min="-2" max="2" step="0.1" value="0" data-m="c" /><b data-v="c">0.0</b></label>
+      <label>d <input type="range" min="-2" max="2" step="0.1" value="1" data-m="d" /><b data-v="d">1.0</b></label>
+    </div>
+    <svg class="tg-svg" viewBox="-8 -8 16 16" role="img" aria-label="Grid transformed by a 2 by 2 matrix, with the unit square in colour">
+      <g transform="scale(1, -1)">
+        <g data-grid></g>
+        <polygon data-square points="0,0 1,0 1,1 0,1" class="tg-square"></polygon>
+      </g>
+    </svg>
+    <p class="tg-stat" data-stat></p>
+  </transform-grid>
+</Figure>
+
+<style>
+  .mx {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+    margin-bottom: 12px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .mx label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mx input {
+    flex: 1;
+    min-width: 0;
+  }
+  .mx b {
+    min-width: 2.8em;
+    text-align: right;
+    color: var(--text);
+  }
+  .tg-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .tg-svg :global(.tg-line) {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+    fill: none;
+  }
+  .tg-svg :global(.tg-line.axis) {
+    stroke: #5f6368;
+    stroke-width: 0.05;
+  }
+  .tg-square {
+    fill: rgba(251, 188, 4, 0.25);
+    stroke: var(--g-yellow);
+    stroke-width: 0.05;
+  }
+  .tg-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const RANGE = 4;
+
+  class TransformGrid extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) =>
+        i.addEventListener('input', () => this.draw()),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const m: Record<string, number> = {};
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) => {
+        m[i.dataset.m!] = +i.value;
+        this.querySelector(`[data-v="${i.dataset.m}"]`)!.textContent = (+i.value).toFixed(1);
+      });
+      const { a, b, c, d } = m;
+      const tf = (x: number, y: number): [number, number] => [a * x + b * y, c * x + d * y];
+
+      // grid lines x = k and y = k, sampled so curves stay curved under the map
+      const lines: string[] = [];
+      const pathFor = (pts: [number, number][]) =>
+        pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(3)},${y.toFixed(3)}`).join(' ');
+      for (let k = -RANGE; k <= RANGE; k++) {
+        const v: [number, number][] = [];
+        const h: [number, number][] = [];
+        for (let s = -RANGE; s <= RANGE + 1e-9; s += 0.1) {
+          v.push(tf(k, s));
+          h.push(tf(s, k));
+        }
+        const cls = k === 0 ? 'tg-line axis' : 'tg-line';
+        lines.push(`<path class="${cls}" d="${pathFor(v)}"></path>`);
+        lines.push(`<path class="${cls}" d="${pathFor(h)}"></path>`);
+      }
+      this.querySelector('[data-grid]')!.innerHTML = lines.join('');
+
+      const square = [tf(0, 0), tf(1, 0), tf(1, 1), tf(0, 1)];
+      this.querySelector('[data-square]')!.setAttribute(
+        'points',
+        square.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' '),
+      );
+
+      const det = a * d - b * c;
+      const orient = det < 0 ? 'orientation flips' : det === 0 ? 'squashes onto a line' : 'orientation kept';
+      this.querySelector('[data-stat]')!.textContent =
+        `det = ${det.toFixed(2)} · area factor ${Math.abs(det).toFixed(2)} · ${orient}`;
+    }
+  }
+  customElements.define('transform-grid', TransformGrid);
+</script>
