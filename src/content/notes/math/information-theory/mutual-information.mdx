@@ -1,8 +1,87 @@
 ---
 title: "Mutual information"
-description: "How much knowing one variable tells you about another, and why it matters."
+description: "How much knowing one variable reduces uncertainty about another, computed from a joint table, and its relation to entropy and independence."
 order: 4
 tier: core
+takeaways:
+  - "The **mutual information** $I(X; Y) = \\sum_{x,y} p(x,y)\\log_2\\frac{p(x,y)}{p(x)p(y)}$ is the reduction in uncertainty about $X$ from learning $Y$, and it is symmetric in $X$ and $Y$."
+  - "Equivalently, $I(X; Y) = H(X) - H(X \\mid Y) = H(X) + H(Y) - H(X, Y)$. Mutual information is the shared part of the two entropies."
+  - "$I(X; Y) = 0$ exactly when $X$ and $Y$ are independent. Mutual information detects non-linear dependence that correlation can miss."
+  - "Mutual information is the quantity behind feature selection, information bottleneck arguments and many estimators of dependence."
+resources:
+  - title: "Mutual information (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Mutual_information"
+    note: "Definition, the entropy identities, and examples."
+  - title: "Conditional entropy (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conditional_entropy"
+    note: "The uncertainty remaining in X after learning Y."
+  - title: "Pointwise mutual information (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Pointwise_mutual_information"
+    note: "The per-outcome version used in language models."
 ---
 
-_Placeholder. Content not written yet._
+Correlation asks whether two variables move together in a straight-line way. Mutual information asks a broader question: how much does learning one variable reduce your uncertainty about the other? It is zero exactly when the variables are independent, and it catches dependencies that a correlation coefficient misses. This note defines mutual information from a joint table, checks the entropy identities, and contrasts it with independence.
+
+## Definition from a joint table
+
+Take the joint distribution from the joint-distributions note, with $p(0,0) = 0.1$, $p(0,1) = 0.4$, $p(1,0) = 0.2$ and $p(1,1) = 0.3$. The script below computes the marginals, the entropies, and the mutual information.
+
+```python
+import math
+
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
+pX = {x: sum(p for (a, b), p in joint.items() if a == x) for x in (0, 1)}
+pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
+H = lambda d: -sum(p * math.log2(p) for p in d.values() if p > 0)
+I = sum(p * math.log2(p / (pX[x] * pY[y])) for (x, y), p in joint.items())
+print("H(X) =", round(H(pX), 4), " H(Y) =", round(H(pY), 4), " H(X,Y) =", round(H(joint), 4))  # prints: H(X) = 1.0 H(Y) = 0.8813 H(X,Y) = 1.8464
+print("I(X;Y) =", round(I, 4))  # prints: I(X;Y) = 0.0349
+```
+
+In words: knowing $Y$ reduces the uncertainty about $X$ by about $0.0349$ bits. That is small, because the joint table is close to independent, which the marginals alone do not show.
+
+<MutualInfoExplorer />
+
+## The entropy identities
+
+The same number follows from the entropies: $I(X;Y) = H(X) + H(Y) - H(X,Y)$. The check below compares the two routes.
+
+```python
+import math
+
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
+pX = {x: sum(p for (a, b), p in joint.items() if a == x) for x in (0, 1)}
+pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
+H = lambda d: -sum(p * math.log2(p) for p in d.values() if p > 0)
+direct = sum(p * math.log2(p / (pX[x] * pY[y])) for (x, y), p in joint.items())
+via_entropies = H(pX) + H(pY) - H(joint)
+print("direct:", round(direct, 6), " via entropies:", round(via_entropies, 6))  # prints: direct: 0.034852 via entropies: 0.034852
+```
+
+In words: the two routes agree. Mutual information is what the two entropies share, once the joint entropy is removed.
+
+<InfoVenn />
+
+## Independence gives zero
+
+If $p(x,y) = p(x)p(y)$ for every pair, every log-ratio is $\log 1 = 0$, so the mutual information is zero. The check below builds an independent table from the same marginals and confirms this.
+
+```python
+import math
+
+pX = {0: 0.5, 1: 0.5}
+pY = {0: 0.3, 1: 0.7}
+indep = {(x, y): pX[x] * pY[y] for x in (0, 1) for y in (0, 1)}
+I = sum(p * math.log2(p / (pX[x] * pY[y])) for (x, y), p in indep.items())
+print("mutual information of independent variables:", round(I, 12))  # prints: mutual information of independent variables: 0.0
+```
+
+In words: independent variables share no information. Correlation can also be zero for dependent variables, for example $Y = X^2$ with $X$ symmetric, but mutual information is positive there, so it is the more sensitive measure.
+
+<Callout type="pitfall">
+Mutual information is not a measure of how strong or how positive a relationship is. A large value says the variables are informative about each other, but not whether the relationship is linear, causal, or useful for prediction. Estimating it from finite samples is also biased upward unless corrected.
+</Callout>
+
+## Where it is used
+
+Feature selection keeps inputs with high mutual information about the target. The information bottleneck views learning as compressing an input while keeping information about the label. Pointwise mutual information underlies many word association scores in language models.

@@ -1,8 +1,95 @@
 ---
 title: "KL divergence"
-description: "Measuring the difference between two distributions, why it's not symmetric."
+description: "The Kullback-Leibler divergence as the extra code length from using the wrong distribution, why it is never negative, and why it is not symmetric."
 order: 3
 tier: core
+takeaways:
+  - "The **KL divergence** $D(p \\,\\|\\, q) = \\sum_x p(x)\\log_2\\frac{p(x)}{q(x)}$ measures how much worse a code for $q$ does on data from $p$. It is the extra bits per symbol."
+  - "**Gibbs' inequality** says $D(p \\,\\|\\, q) \\ge 0$, with equality exactly when $p = q$. A divergence of zero means the distributions are identical."
+  - "KL divergence is **not symmetric**: $D(p \\,\\|\\, q) \\neq D(q \\,\\|\\, p)$ in general, so it is not a distance in the mathematical sense. The direction matters for which mistakes it punishes."
+  - "If $q$ puts zero probability on an outcome that $p$ can produce, the divergence is infinite. The model has ruled out something that happens."
+resources:
+  - title: "Kullback-Leibler divergence (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence"
+    note: "Definition, properties, and the asymmetry."
+  - title: "Gibbs' inequality (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gibbs%27_inequality"
+    note: "The non-negativity of KL divergence."
+  - title: "Relative entropy (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Relative_entropy"
+    note: "Another name for KL divergence and its interpretations."
 ---
 
-_Placeholder. Content not written yet._
+Cross-entropy says how many bits you waste when you use the wrong distribution. KL divergence isolates the waste: it is the cross-entropy minus the entropy you could never avoid anyway. It appears wherever one probability model is compared with another, from comparing a fitted model to data to measuring how much a variational approximation loses. This note defines the divergence, proves it is non-negative, and shows the asymmetry with a concrete pair of distributions.
+
+## Definition
+
+$$
+D(p \,\|\, q) = \sum_x p(x)\log_2\frac{p(x)}{q(x)} = H(p, q) - H(p).
+$$
+
+Each term compares the true probability $p(x)$ with the believed probability $q(x)$ and weights the log-ratio by how often $x$ occurs. The script below computes it for two distributions over two outcomes.
+
+```python
+import math
+
+p = [0.5, 0.5]
+q = [0.9, 0.1]
+D_pq = sum(a * math.log2(a / b) for a, b in zip(p, q))
+print("D(p || q) =", round(D_pq, 4), "bits")  # prints: D(p || q) = 0.737 bits
+```
+
+In words: if the data are fair coin flips but you model them as a coin that lands heads $90\%$ of the time, you waste about $0.737$ bits per flip.
+
+<KLVisualizer />
+
+## Never negative
+
+Gibbs' inequality says $D(p \,\|\, q) \ge 0$. The reason is that $\log$ is concave, so $\sum p \log(q/p) \le \log \sum q = 0$. The check below tests the inequality on random pairs of distributions over four outcomes.
+
+```python
+import math
+import random
+
+random.seed(5)
+
+def normalise(v):
+    s = sum(v)
+    return [x / s for x in v]
+
+ok = True
+for _ in range(10000):
+    p = normalise([random.random() + 1e-9 for _ in range(4)])
+    q = normalise([random.random() + 1e-9 for _ in range(4)])
+    if sum(a * math.log2(a / b) for a, b in zip(p, q)) < -1e-12:
+        ok = False
+print("KL divergence is never negative on 10000 random pairs:", ok)  # prints: KL divergence is never negative on 10000 random pairs: True
+```
+
+In words: no random pair produced a negative divergence, and the value is zero only when the two distributions coincide.
+
+## Not symmetric
+
+Swap the arguments and the answer changes. The divergence from $q$ to $p$ weights the log-ratio by $q$'s probabilities instead.
+
+```python
+import math
+
+p = [0.5, 0.5]
+q = [0.9, 0.1]
+D_pq = sum(a * math.log2(a / b) for a, b in zip(p, q))
+D_qp = sum(a * math.log2(a / b) for a, b in zip(q, p))
+print("D(p || q) =", round(D_pq, 4), " D(q || p) =", round(D_qp, 4))  # prints: D(p || q) = 0.737 D(q || p) = 0.531
+```
+
+In words: $0.737$ and $0.531$ differ. Penalising the believed distribution for ruling out outcomes that happen (the $p \,\|\, q$ direction) is harsher than the reverse, and the choice of direction decides which mistakes a fitting procedure avoids.
+
+<Callout type="pitfall">
+A zero in $q$ where $p$ is positive makes $D(p \,\|\, q)$ infinite, while the reverse direction may be finite. A model that assigns zero probability to something that can happen will be infinitely wrong in this sense, so smoothing or mixing with a broader distribution is common practice.
+</Callout>
+
+<AsymmetryBars />
+
+## Where it is used
+
+Maximum likelihood fitting minimises $D(\text{data} \,\|\, \text{model})$, because the entropy of the data is fixed. Variational methods minimise $D(\text{approximation} \,\|\, \text{posterior})$. In both cases the asymmetry tells you which direction of error the method cares about.

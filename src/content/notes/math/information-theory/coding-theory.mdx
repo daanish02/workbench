@@ -1,8 +1,100 @@
 ---
 title: "Coding theory"
-description: "Huffman coding, the connection between entropy and compression."
+description: "Prefix codes, Huffman's algorithm for optimal codes, and why entropy is the lower bound on average code length."
 order: 5
 tier: advanced
+takeaways:
+  - "A **prefix code** assigns each symbol a binary string so that no codeword is the start of another. Such a code can be decoded without separators, and a prefix code exists for any lengths satisfying the Kraft inequality."
+  - "The **average code length** $L = \\sum_x p(x)\\,\\ell(x)$ is the number of bits per symbol. No uniquely decodable code can beat the entropy: $L \\ge H(p)$."
+  - "**Huffman's algorithm** builds an optimal prefix code by repeatedly merging the two least likely symbols. Its average length is within one bit of the entropy, and exactly equal when all probabilities are powers of one half."
+  - "Compression works because the entropy of a source is the limit of how few bits per symbol can be used, on average, over long sequences."
+resources:
+  - title: "Huffman coding (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Huffman_coding"
+    note: "The algorithm, its optimality, and examples."
+  - title: "Prefix code (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Prefix_code"
+    note: "Prefix-free codes and why they decode uniquely."
+  - title: "Source coding theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Shannon%27s_source_coding_theorem"
+    note: "Entropy as the limit of lossless compression."
 ---
 
-_Placeholder. Content not written yet._
+Every time you save a file or stream a video, a code turns symbols into bits. The question is how short the bits can be on average. Shannon showed that the answer is the entropy of the source, and Huffman gave a simple algorithm that gets close to it for a single symbol at a time. This note defines prefix codes, proves that entropy is a lower bound on average length, and runs Huffman's algorithm on a small source where the bound is reached exactly.
+
+## Prefix codes
+
+A prefix code gives each symbol a binary codeword so that no codeword is a prefix of another. For example $\{0, 10, 11\}$ is a prefix code: reading bits left to right, you always know where a codeword ends. The script below checks the prefix property and decodes a message.
+
+```python
+code = {'a': '0', 'b': '10', 'c': '11'}
+words = list(code.values())
+is_prefix_free = not any(u != v and v.startswith(u) for u in words for v in words)
+print("prefix-free:", is_prefix_free)  # prints: prefix-free: True
+
+def decode(bits):
+    inverse = {v: k for k, v in code.items()}
+    out, cur = [], ''
+    for b in bits:
+        cur += b
+        if cur in inverse:
+            out.append(inverse[cur])
+            cur = ''
+    return ''.join(out)
+
+print("decoded 0 10 11 0:", decode('010110'))  # prints: decoded 0 10 11 0: abca
+```
+
+In words: the message $abca$ encodes as $0\,10\,11\,0$, and the decoder recovers it without any separators, because the prefix property guarantees each codeword is complete the moment it matches.
+
+<PrefixTree />
+
+## Average length and the entropy bound
+
+Let $\ell(x)$ be the length of $x$'s codeword. The average length is $L = \sum_x p(x)\ell(x)$. Shannon's source coding theorem says $L \ge H(p)$ for any uniquely decodable code. The script below compares the average length of a fixed code with the entropy for a source with probabilities $\frac{1}{2}, \frac{1}{4}, \frac{1}{8}, \frac{1}{8}$.
+
+```python
+import math
+
+p = {'a': 0.5, 'b': 0.25, 'c': 0.125, 'd': 0.125}
+H = -sum(v * math.log2(v) for v in p.values())
+fixed_len = 2  # a fixed-length code over four symbols
+print("entropy:", H, " fixed-length average:", fixed_len)  # prints: entropy: 1.75 fixed-length average: 2
+```
+
+In words: the entropy is $1.75$ bits, and a fixed two-bit code wastes a quarter of a bit per symbol. A variable-length code can do better, and Huffman's algorithm finds the best one.
+
+<HuffmanBuilder />
+
+## Huffman's algorithm
+
+Huffman's algorithm repeatedly takes the two least likely items, gives them a common parent with one extra bit each, and merges them into a single item with their combined probability. The script below runs it on the source above.
+
+```python
+import heapq
+
+p = {'a': 0.5, 'b': 0.25, 'c': 0.125, 'd': 0.125}
+heap = [(v, i, {k: "" }) for i, (k, v) in enumerate(p.items())]
+heapq.heapify(heap)
+counter = len(heap)
+while len(heap) > 1:
+    p1, _, c1 = heapq.heappop(heap)
+    p2, _, c2 = heapq.heappop(heap)
+    merged = {k: '0' + v for k, v in c1.items()}
+    merged.update({k: '1' + v for k, v in c2.items()})
+    counter += 1
+    heapq.heappush(heap, (p1 + p2, counter, merged))
+code = heap[0][2]
+avg = sum(p[k] * len(code[k]) for k in p)
+print("Huffman code:", dict(sorted(code.items())), " average length:", avg)  # prints: Huffman code: {'a': '0', 'b': '10', 'c': '110', 'd': '111'} average length: 1.75
+```
+
+In words: the algorithm gives $a$ a one-bit code, $b$ two bits, and $c$ and $d$ three bits. The average length is $1.75$, exactly the entropy. Probabilities that are powers of one half are the case where the bound is attained with equality.
+
+<Callout type="pitfall">
+Huffman coding is optimal among codes that encode one symbol at a time, but not for every source. When probabilities are not powers of one half, the average length is within one bit of the entropy, and the gap can be recovered by coding blocks of symbols together, as arithmetic coding does.
+</Callout>
+
+## Where it is used
+
+DEFLATE, the format behind ZIP and gzip, combines Huffman coding with a dictionary method. Entropy coding stages in image and video compression do the same job, and the entropy bound explains how much any of them can save in principle.

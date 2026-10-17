@@ -1,8 +1,98 @@
 ---
 title: "Cross-entropy"
-description: "The connection to entropy, why it's used as a loss function."
+description: "Cross-entropy as the expected code length when the wrong distribution is used, its link to entropy, and why it is the standard classification loss."
 order: 2
 tier: core
+takeaways:
+  - "The **cross-entropy** $H(p, q) = -\\sum_x p(x)\\log_2 q(x)$ is the average code length when outcomes drawn from $p$ are encoded with a code designed for $q$."
+  - "Cross-entropy is never smaller than the entropy: $H(p, q) \\ge H(p)$, with equality exactly when $q = p$. The excess is the KL divergence, $H(p, q) = H(p) + D(p \\| q)$."
+  - "For a one-hot target $p$ (a single correct class), cross-entropy reduces to $-\\log q(\\text{correct class})$. Minimising it pushes the predicted probability of the correct class toward one."
+  - "The natural logarithm is used in most machine learning code. Changing the base only rescales the loss by a constant, so the minimiser does not change."
+resources:
+  - title: "Cross-entropy (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cross-entropy"
+    note: "Definition, the link to KL divergence, and use as a loss."
+  - title: "Loss functions for classification (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cross-entropy#Cross-entropy_loss_function_and_logistic_regression"
+    note: "How cross-entropy becomes the logistic regression loss."
+  - title: "Kraft-McMillan inequality (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Kraft%E2%80%93McMillan_inequality"
+    note: "The code-length constraints behind the coding interpretation."
 ---
 
-_Placeholder. Content not written yet._
+Entropy measures uncertainty when you know the true distribution. Cross-entropy measures what happens when you do not: you believe the outcomes follow a distribution $q$, but they actually follow $p$. Its cost is paid in extra bits, which makes it the right quantity to minimise when training a classifier to match the true labels. This note defines cross-entropy as a code length, shows its gap above entropy, and derives the familiar classification loss.
+
+## Cross-entropy as code length
+
+Suppose a code is designed for a distribution $q$, so an outcome $x$ gets a code of about $\log_2(1/q(x))$ bits. If outcomes actually follow $p$, the average length is
+
+$$
+H(p, q) = -\sum_x p(x)\log_2 q(x).
+$$
+
+The script below encodes a biased source with a code designed for the wrong distribution, and compares the average length with the entropy.
+
+```python
+import math
+
+p = [0.9, 0.1]
+q = [0.5, 0.5]
+H_p = -sum(a * math.log2(a) for a in p)
+H_pq = -sum(a * math.log2(b) for a, b in zip(p, q))
+print("entropy H(p):", round(H_p, 3), " cross-entropy H(p, q):", round(H_pq, 3))  # prints: entropy H(p): 0.469 cross-entropy H(p, q): 1.0
+```
+
+In words: a code designed for a fair coin spends one bit per flip on a source that is really loaded. The optimal code, matched to $p$, needs only $0.469$ bits. The extra $0.531$ bits per flip is the price of the wrong belief.
+
+## The gap is the KL divergence
+
+The difference between the two is the KL divergence, the subject of the next note:
+
+$$
+H(p, q) = H(p) + D(p \,\|\, q).
+$$
+
+Since $D(p \,\|\, q) \ge 0$, cross-entropy is never below entropy, and it reaches entropy only when $q = p$. The check below confirms the identity on the same example.
+
+```python
+import math
+
+p, q = [0.9, 0.1], [0.5, 0.5]
+H_p = -sum(a * math.log2(a) for a in p)
+H_pq = -sum(a * math.log2(b) for a, b in zip(p, q))
+D = sum(a * math.log2(a / b) for a, b in zip(p, q))
+print("H(p) + D(p || q) =", round(H_p + D, 3), " H(p, q) =", round(H_pq, 3))  # prints: H(p) + D(p || q) = 1.0 H(p, q) = 1.0
+```
+
+In words: the two sides agree, so minimising cross-entropy over $q$ is the same as minimising the KL divergence from $p$, because $H(p)$ does not depend on $q$.
+
+<CrossEntropyExplorer />
+
+## The classification loss
+
+For a classifier, the true label is a one-hot distribution $p$: probability one on the correct class $y$ and zero elsewhere. Then the cross-entropy collapses to
+
+$$
+H(p, q) = -\log q(y),
+$$
+
+the negative log of the probability the model gave the correct class. A confident correct prediction costs almost nothing, and a confident wrong one costs a lot.
+
+```python
+import math
+
+q = [0.7, 0.2, 0.1]  # model's predicted probabilities over three classes
+y = 0                # the correct class
+print("loss when correct class has 0.7:", round(-math.log(q[y]), 4), "nats")  # prints: loss when correct class has 0.7: 0.3567 nats
+print("loss when correct class has 0.1:", round(-math.log(q[2]), 4), "nats")  # prints: loss when correct class has 0.1: 2.3026 nats
+```
+
+In words: moving the correct class from $0.7$ to $0.1$ raises the loss from $0.357$ to $2.303$ nats. Gradient descent on this loss is what teaches the model to put its probability mass on the right answer.
+
+<Callout type="pitfall">
+Cross-entropy assumes the model outputs a probability distribution. Feeding unnormalised scores directly into the logarithm gives meaningless numbers, and the softmax function is normally applied first to turn scores into probabilities.
+</Callout>
+
+## Why it is used
+
+Cross-entropy with a softmax output has a simple gradient, and it penalises confident mistakes strongly. It is the loss behind logistic regression and most neural network classifiers, and the coding interpretation explains why it is the natural measure of how well predictions match outcomes.
