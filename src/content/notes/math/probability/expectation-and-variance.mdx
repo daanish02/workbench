@@ -1,8 +1,115 @@
 ---
 title: "Expectation and variance"
-description: "Mean, variance, standard deviation, linearity of expectation."
+description: "Expected value and variance as summaries of a random variable: linearity of expectation, the variance formula, and how scaling and sums change them."
 order: 3
 tier: core
+takeaways:
+  - "The **expectation** $E[X] = \\sum_x x\\,p(x)$ is the probability-weighted average. For a function of $X$, $E[g(X)] = \\sum_x g(x)\\,p(x)$, with no need to find the distribution of $g(X)$ first."
+  - "**Linearity of expectation** holds always: $E[X + Y] = E[X] + E[Y]$ and $E[aX + b] = aE[X] + b$, even when $X$ and $Y$ are dependent."
+  - "The **variance** $\\operatorname{Var}(X) = E[(X - \\mu)^2] = E[X^2] - \\mu^2$ measures spread. The **standard deviation** $\\sigma$ is its square root and has the same units as $X$."
+  - "Scaling multiplies the variance by the square of the scale: $\\operatorname{Var}(aX + b) = a^2 \\operatorname{Var}(X)$. Variances add for independent variables, but not in general."
+resources:
+  - title: "Expected value (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Expected_value"
+    note: "Definitions for discrete and continuous variables, and linearity."
+  - title: "Variance (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Variance"
+    note: "The variance formula, its properties, and its interpretation as spread."
+  - title: "Linearity of expectation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Expected_value#Linearity"
+    note: "The property that makes many counting arguments easy."
 ---
 
-_Placeholder. Content not written yet._
+Expectation and variance are the two numbers that summarise a random variable. The expectation says where the distribution is centred, and the variance says how far values typically sit from that centre. Both have a simple algebra that makes many calculations short, and the most useful property, linearity, holds even when the variables are related. This note states the rules and checks each one by direct computation.
+
+## Expectation of a function
+
+The expectation of a function $g(X)$ is found from the distribution of $X$ alone:
+
+$$
+E[g(X)] = \sum_x g(x)\,p(x).
+$$
+
+You never need the distribution of $g(X)$ itself. The script below computes the expected value of a die and of its square, using the same six probabilities.
+
+```python
+faces = range(1, 7)
+EX = sum(k / 6 for k in faces)
+EX2 = sum(k ** 2 / 6 for k in faces)
+print("E[X] =", round(EX, 4), " E[X^2] =", round(EX2, 4))  # prints: E[X] = 3.5  E[X^2] = 15.1667
+```
+
+In words: $E[X^2] = \frac{91}{6} \approx 15.1667$ comes straight from the die's six probabilities. The expectation of the square is not the square of the expectation, which the next section makes precise.
+
+## Linearity of expectation
+
+The most useful rule is linearity:
+
+$$
+E[aX + bY + c] = aE[X] + bE[Y] + c.
+$$
+
+It holds whether $X$ and $Y$ are independent or not. A standard application is the expected number of fixed points of a random permutation. Each position $i$ contributes $1$ when $\sigma(i) = i$, and that happens with probability $\frac{1}{n}$, so the expected count is $n \cdot \frac{1}{n} = 1$ for every $n$. The script below checks this for $n = 5$ by listing all $120$ permutations.
+
+```python
+from itertools import permutations
+
+n = 5
+perms = list(permutations(range(n)))
+avg_fixed = sum(sum(1 for i, v in enumerate(p) if i == v) for p in perms) / len(perms)
+print("average fixed points for n = 5:", avg_fixed)  # prints: average fixed points for n = 5: 1.0
+```
+
+In words: the average over all $120$ permutations is exactly $1$, as linearity predicts. No calculation of the joint distribution of the fixed-point indicators was needed.
+
+## Variance
+
+The variance measures spread around the mean $\mu = E[X]$:
+
+$$
+\operatorname{Var}(X) = E[(X - \mu)^2] = E[X^2] - \mu^2.
+$$
+
+The second form is usually easier to compute. For the die, $E[X^2] - \mu^2 = \frac{91}{6} - \left(\frac{7}{2}\right)^2 = \frac{35}{12}$.
+
+```python
+mu = sum(k / 6 for k in range(1, 7))
+var_direct = sum((k - mu) ** 2 / 6 for k in range(1, 7))
+var_shortcut = sum(k ** 2 / 6 for k in range(1, 7)) - mu ** 2
+print("variance direct:", round(var_direct, 4), " shortcut:", round(var_shortcut, 4), " 35/12 =", round(35 / 12, 4))  # prints: variance direct: 2.9167  shortcut: 2.9167  35/12 = 2.9167
+print("standard deviation:", round(var_direct ** 0.5, 4))  # prints: standard deviation: 1.7078
+```
+
+In words: the two formulas agree, and the standard deviation of a die roll is about $1.71$ faces. Most rolls lie within about two of the mean of $3.5$.
+
+## Scaling and sums
+
+Scaling a variable scales its spread by the same factor, so the variance scales by its square:
+
+$$
+\operatorname{Var}(aX + b) = a^2\,\operatorname{Var}(X).
+$$
+
+The constant $b$ shifts the mean and leaves the spread unchanged. For independent $X$ and $Y$, variances add: $\operatorname{Var}(X + Y) = \operatorname{Var}(X) + \operatorname{Var}(Y)$. The script below checks both rules for the sum of two independent dice.
+
+```python
+pair_var = 2 * (35 / 12)
+direct = 0
+pairs = [(a, b) for a in range(1, 7) for b in range(1, 7)]
+mean_sum = sum(a + b for a, b in pairs) / 36
+direct = sum((a + b - mean_sum) ** 2 for a, b in pairs) / 36
+print("variance of sum of two dice, direct:", round(direct, 4), " via independence:", round(pair_var, 4))  # prints: variance of sum of two dice, direct: 5.8333  via independence: 5.8333
+print("variance of 2X for one die:", round(4 * 35 / 12, 4))  # prints: variance of 2X for one die: 11.6667
+```
+
+In words: the two dice add to variance $5.8333$, twice the single-die value, because the rolls are independent. Doubling one die multiplies its variance by $4$, not $2$.
+
+<Callout type="pitfall">
+Variances add only for uncorrelated variables. If $Y = X$, then $\operatorname{Var}(X + Y) = 4\operatorname{Var}(X)$, not $2\operatorname{Var}(X)$. Linearity of expectation has no such condition, but variance does, so check independence before adding variances.
+</Callout>
+
+<StaticDieSpread />
+
+## Why it matters
+
+The mean and variance are what most later methods estimate. The sample mean of $n$ independent values has variance $\frac{\sigma^2}{n}$, so its spread shrinks with the square root of the sample size. The law of large numbers and the central limit theorem both come from this one fact.

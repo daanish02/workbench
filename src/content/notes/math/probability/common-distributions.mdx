@@ -1,8 +1,125 @@
 ---
 title: "Common distributions"
-description: "Uniform, binomial, Poisson, normal/Gaussian, exponential."
+description: "Uniform, binomial, Poisson, normal and exponential distributions: where each comes from, its formula, and the checks that tie them together."
 order: 2
 tier: core
+takeaways:
+  - "The **binomial** distribution counts successes in $n$ independent trials with success probability $p$: $P(X = k) = \\binom{n}{k} p^k (1 - p)^{n - k}$."
+  - "The **Poisson** distribution counts events in a fixed interval when they arrive at a steady average rate $\\lambda$: $P(X = k) = e^{-\\lambda}\\frac{\\lambda^k}{k!}$. It is the limit of the binomial when $n$ is large and $p$ is small."
+  - "The **normal** distribution, with mean $\\mu$ and variance $\\sigma^2$, has the bell-shaped density. About $68\\%$ of its mass lies within one standard deviation of the mean."
+  - "The **exponential** distribution models waiting times with no memory: $P(X > s + t \\mid X > s) = P(X > t)$."
+  - "The **uniform** distribution gives equal density across an interval. Probabilities are just lengths divided by the total length."
+resources:
+  - title: "List of probability distributions (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/List_of_probability_distributions"
+    note: "A catalogue of the common families, with their formulas and uses."
+  - title: "Poisson distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Poisson_distribution"
+    note: "The limit of the binomial, and examples from arrivals and defects."
+  - title: "Normal distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Normal_distribution"
+    note: "The Gaussian density, its properties, and where it comes from."
 ---
 
-_Placeholder. Content not written yet._
+Most probability problems reuse a small set of distributions. Each one is the right model for a particular kind of experiment: counting successes in fixed trials, counting arrivals in a time window, measuring a quantity that is the sum of many small effects, or waiting for something to happen. This note defines the five most common distributions, computes probabilities with them, and checks the links between them.
+
+## The binomial distribution
+
+Run $n$ independent trials, each succeeding with probability $p$, and count the successes $X$. The probability of exactly $k$ successes is
+
+$$
+P(X = k) = \binom{n}{k} p^k (1 - p)^{n - k}.
+$$
+
+The factor $\binom{n}{k}$ counts the orderings of the $k$ successes among $n$ trials. The script below computes $P(X = 3)$ for ten trials with $p = 0.3$.
+
+```python
+import math
+
+def binom_pmf(k, n, p):
+    return math.comb(n, k) * p ** k * (1 - p) ** (n - k)
+
+print("binomial P(X = 3), n = 10, p = 0.3:", round(binom_pmf(3, 10, 0.3), 4))  # prints: binomial P(X = 3), n = 10, p = 0.3: 0.2668
+print("mean n p =", 10 * 0.3, " variance n p (1 - p) =", round(10 * 0.3 * 0.7, 2))  # prints: mean n p = 3.0  variance n p (1 - p) = 2.1
+```
+
+In words: with ten trials at $30\%$ each, three successes is the single most likely count near the mean of $3$. The mean is $np$ and the variance is $np(1 - p)$, which you can derive from the sum of $n$ independent trials.
+
+## The Poisson distribution
+
+The Poisson distribution counts events in a fixed window when they happen at a steady average rate $\lambda$: calls to a switchboard in an hour, typos on a page, photons on a sensor. Its probabilities are
+
+$$
+P(X = k) = e^{-\lambda}\,\frac{\lambda^k}{k!}, \qquad k = 0, 1, 2, \dots
+$$
+
+The mean and variance are both $\lambda$. The script below checks $P(X = 2)$ for $\lambda = 3$ and then shows the binomial approaching the Poisson when there are many trials with small $p$.
+
+```python
+import math
+
+lam = 3
+print("Poisson P(X = 2), lambda = 3:", round(math.exp(-lam) * lam ** 2 / math.factorial(2), 4))  # prints: Poisson P(X = 2), lambda = 3: 0.224
+n = 1000
+print("binomial n = 1000, p = 0.003, P(X = 2):", round(binom_pmf(2, n, lam / n), 4))  # prints: binomial n = 1000, p = 0.003, P(X = 2): 0.2242
+```
+
+In words: a thousand trials with a tiny chance each give almost the same answer as the Poisson formula. That is why the Poisson describes rare events in a large number of opportunities.
+
+## The normal distribution
+
+The normal distribution with mean $\mu$ and variance $\sigma^2$ has the density
+
+$$
+f(x) = \frac{1}{\sigma\sqrt{2\pi}}\,e^{-\frac{(x - \mu)^2}{2\sigma^2}}.
+$$
+
+Its CDF has no elementary formula, so it is written $\Phi$ for the standard case $\mu = 0$, $\sigma = 1$. The function $\Phi$ is available through the error function in Python's `math` module.
+
+```python
+import math
+
+def Phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+print("normal P(-1 < Z < 1):", round(Phi(1) - Phi(-1), 6))  # prints: normal P(-1 < Z < 1): 0.682689
+print("normal P(-2 < Z < 2):", round(Phi(2) - Phi(-2), 6))  # prints: normal P(-2 < Z < 2): 0.9545
+```
+
+In words: about $68\%$ of the mass lies within one standard deviation of the mean, and about $95\%$ within two. These are the numbers behind most confidence intervals later in the course.
+
+## The exponential distribution
+
+The exponential distribution with rate $\lambda$ has density $f(x) = \lambda e^{-\lambda x}$ for $x \ge 0$. Its tail is $P(X > t) = e^{-\lambda t}$. It is the waiting time between events in a Poisson process, and it is the only continuous distribution with no memory.
+
+```python
+import math
+
+rate = 2
+print("exponential P(X > 1), rate 2:", round(math.exp(-rate * 1), 6))  # prints: exponential P(X > 1), rate 2: 0.135335
+s, t = 0.5, 1.0
+print("memoryless: P(X > s + t | X > s) =", round(math.exp(-rate * (s + t)) / math.exp(-rate * s), 6), " P(X > t) =", round(math.exp(-rate * t), 6))  # prints: memoryless: P(X > s + t | X > s) = 0.135335  P(X > t) = 0.135335
+```
+
+In words: knowing you have already waited half a unit changes nothing about the remaining wait. The two printed values match, which is the memoryless property written as a check.
+
+## The uniform distribution
+
+The uniform distribution on $[a, b]$ has constant density $\frac{1}{b - a}$. A probability is just a length divided by the total length.
+
+```python
+a, b = 2, 5
+print("uniform(2, 5) P(3 <= X <= 4):", (4 - 3) / (b - a))  # prints: uniform(2, 5) P(3 <= X <= 4): 0.3333333333333333
+```
+
+In words: the interval $[3, 4]$ has length $1$ out of a total length $3$, so it has probability one third.
+
+<Callout type="pitfall">
+Do not model everything as normal. Counts are not normal when they are small or bounded, and waiting times are not normal because they cannot be negative. Choose the distribution from how the data are generated, then check its shape against the data.
+</Callout>
+
+<DistributionExplorer />
+
+## Choosing a distribution
+
+Ask how the randomness arises. Yes-or-no trials with a fixed count give the binomial. Events at a steady rate in a window give the Poisson. Waiting times with no memory give the exponential. Sums of many small independent effects give the normal, a claim the central limit theorem makes precise later in this section.

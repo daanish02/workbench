@@ -1,8 +1,104 @@
 ---
 title: "Stochastic calculus"
-description: "Brownian motion and It\u00f4's lemma, which ties into finance."
+description: "Brownian motion as the continuous-time random walk, its scaling and quadratic variation, and Itô's lemma, the chain rule that includes a second-order term."
 order: 11
 tier: advanced
+takeaways:
+  - "**Brownian motion** $W_t$ starts at $0$, has independent Gaussian increments, and has $W_t - W_s \\sim N(0, t - s)$. Its paths are continuous but nowhere differentiable."
+  - "Brownian motion has **quadratic variation** $t$: the sum of squared increments over $[0, t]$ tends to $t$. This is why $dW^2 = dt$ in the calculus of these paths."
+  - "**Itô's lemma** is the chain rule for Brownian motion: $df(W_t) = f'(W_t)\\,dW_t + \\frac{1}{2} f''(W_t)\\,dt$. The extra $\\frac{1}{2} f''\\,dt$ term is what ordinary calculus misses."
+  - "Stochastic calculus underpins models of noisy prices and random growth. Its key difference from ordinary calculus is that the second-order term does not vanish."
+resources:
+  - title: "Brownian motion (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Brownian_motion"
+    note: "Definition, scaling, and the continuous-time limit of random walks."
+  - title: "Itô calculus (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/It%C3%B4_calculus"
+    note: "The stochastic integral, Itô's lemma, and applications."
+  - title: "Quadratic variation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Quadratic_variation"
+    note: "Why squared increments of Brownian motion add up to time."
 ---
 
-_Placeholder. Content not written yet._
+Prices, particle positions and many physical signals jitter at every scale. Ordinary calculus assumes smooth paths, so it cannot describe them directly. Stochastic calculus is the version built for paths that move randomly at all scales, and its central object is Brownian motion. This note introduces Brownian motion as the limit of a random walk, checks its scaling and quadratic variation by simulation, and states Itô's lemma with a check on a simple function.
+
+## Brownian motion
+
+Brownian motion is a continuous-time process $W_t$ with three properties: $W_0 = 0$, the increments $W_t - W_s$ over disjoint intervals are independent, and $W_t - W_s$ is normal with mean $0$ and variance $t - s$. It is the limit of a random walk with steps of size $\sqrt{\Delta t}$ taken every $\Delta t$ time units. The scaling is chosen so the variance per unit time stays fixed.
+
+The script below simulates $2000$ paths of $W_1$ with $1000$ steps each, using a seed, and checks that $W_1$ has mean $0$ and variance $1$.
+
+```python
+import math
+import random
+
+random.seed(3)
+steps, paths = 1000, 2000
+dt = 1.0 / steps
+finals = []
+for _ in range(paths):
+    w = 0.0
+    for _ in range(steps):
+        w += random.gauss(0.0, math.sqrt(dt))
+    finals.append(w)
+mean = sum(finals) / paths
+var = sum((x - mean) ** 2 for x in finals) / paths
+print("mean of W_1:", round(mean, 2), " variance of W_1:", round(var, 2))  # prints: mean of W_1: -0.03 variance of W_1: 0.98
+```
+
+In words: the endpoint at time $1$ has mean near $0$ and variance near $1$, as the definition requires. The small gaps are sampling error from $2000$ paths. The increments were drawn with standard deviation $\sqrt{\Delta t}$, which is what makes the total variance equal to $t$.
+
+## Quadratic variation
+
+The key feature of Brownian paths is that the sum of squared increments over $[0, 1]$ tends to $1$, even though the path length itself is infinite. Ordinary smooth functions have squared increments that vanish in the limit. Brownian motion keeps a fixed amount of squared variation at every scale.
+
+```python
+import math
+import random
+
+random.seed(3)
+steps = 100000
+dt = 1.0 / steps
+qv = sum(random.gauss(0.0, math.sqrt(dt)) ** 2 for _ in range(steps))
+print("sum of squared increments over [0, 1]:", round(qv, 3))  # prints: sum of squared increments over [0, 1]: 0.999
+```
+
+In words: a single path with a hundred thousand steps gives a total squared variation of $0.999$ to three places. This is why the rule $(dW)^2 = dt$ is used in the calculus: the squared increment is not negligible, it is of the same order as the time step.
+
+<BrownianPaths />
+
+## Itô's lemma
+
+For an ordinary smooth function $f$, the chain rule says $df(x) = f'(x)\,dx$. For Brownian motion the second-order term survives because $(dW)^2 = dt$:
+
+$$
+df(W_t) = f'(W_t)\,dW_t + \frac{1}{2} f''(W_t)\,dt.
+$$
+
+Take $f(w) = w^2$. Then $f' = 2w$ and $f'' = 2$, and the lemma says $d(W_t^2) = 2W_t\,dW_t + dt$. Integrating from $0$ to $t$ gives $E[W_t^2] = t$, which the next check verifies.
+
+```python
+import math
+import random
+
+random.seed(3)
+steps, paths = 1000, 4000
+dt = 1.0 / steps
+total = 0.0
+for _ in range(paths):
+    w = 0.0
+    for _ in range(steps):
+        w += random.gauss(0.0, math.sqrt(dt))
+    total += w * w
+print("estimate of E[W_1^2]:", round(total / paths, 2), " Itô predicts 1.0")  # prints: estimate of E[W_1^2]: 0.98 Itô predicts 1.0
+```
+
+In words: the simulated mean of $W_1^2$ is $0.98$, close to $1$, matching the Itô term. Without the $\frac{1}{2} f''\,dt$ correction, the calculation would give $E[W_t^2] = 0$, which is wrong. The extra term is the difference between stochastic and ordinary calculus.
+
+<Callout type="pitfall">
+Do not apply the ordinary chain rule to Brownian motion. Writing $d(W^2) = 2W\,dW$ drops the $dt$ term and gives the wrong expectation. Always use Itô's lemma, which includes the second derivative whenever the path has nonzero quadratic variation.
+</Callout>
+
+## Where it is used
+
+Option pricing, interest-rate models and filtering all use stochastic differential equations of the form $dX_t = \mu(X_t)\,dt + \sigma(X_t)\,dW_t$. Itô's lemma is how you find the equation satisfied by a function of such a process, which is the main technique in the finance applications this section points to.

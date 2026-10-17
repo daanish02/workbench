@@ -1,8 +1,101 @@
 ---
 title: "Random variables"
-description: "Discrete vs. continuous, probability mass/density functions."
+description: "A random variable turns outcomes into numbers. Discrete variables have probability mass functions, continuous ones have density functions, and both have a cumulative distribution function."
 order: 1
 tier: core
+takeaways:
+  - "A **random variable** $X$ is a function from outcomes to numbers. The question 'what is $P(X = x)$?' is always a question about the outcomes that give that number."
+  - "For a **discrete** $X$, the **probability mass function** $p(x) = P(X = x)$ is nonnegative and sums to $1$."
+  - "For a **continuous** $X$, the **probability density function** $f$ gives probabilities as areas: $P(a \\le X \\le b) = \\int_a^b f(x)\\,dx$. A single point has probability $0$, and a density value can be larger than $1$."
+  - "The **cumulative distribution function** $F(x) = P(X \\le x)$ works for both kinds. It rises from $0$ to $1$ and never decreases."
+  - "The **expected value** $E[X]$ is the probability-weighted average of the values: $\\sum_x x\\,p(x)$ for discrete variables and $\\int x\\,f(x)\\,dx$ for continuous ones."
+resources:
+  - title: "Random variable (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Random_variable"
+    note: "Definitions, discrete and continuous cases, and examples."
+  - title: "Probability mass function (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Probability_mass_function"
+    note: "The discrete case in detail."
+  - title: "Probability density function (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Probability_density_function"
+    note: "The continuous case and its relation to the CDF."
 ---
 
-_Placeholder. Content not written yet._
+Probability starts with outcomes: the faces of a die, the result of a coin flip, the time a bus arrives. Most questions are about numbers attached to those outcomes, such as the total on two dice or the waiting time in minutes. A random variable is the rule that attaches the number. This note defines the two kinds of random variable, the functions that describe each, and the expected value that summarises a variable in one number.
+
+## Outcomes and numbers
+
+Flip two fair coins and let $X$ be the number of heads. The four outcomes $HH$, $HT$, $TH$, $TT$ are equally likely, and $X$ takes the values $2$, $1$, $1$, $0$ on them. So $P(X = 1) = \frac{2}{4}$. The script below builds this table by counting.
+
+```python
+from itertools import product
+from collections import Counter
+
+outcomes = list(product("HT", repeat=2))
+counts = Counter(sum(1 for c in o if c == "H") for o in outcomes)
+pmf = {x: counts[x] / len(outcomes) for x in sorted(counts)}
+print("PMF of heads in two flips:", pmf)  # prints: PMF of heads in two flips: {0: 0.25, 1: 0.5, 2: 0.25}
+print("sum of probabilities:", sum(pmf.values()))  # prints: sum of probabilities: 1.0
+```
+
+In words: the probabilities $0.25$, $0.5$ and $0.25$ add to $1$, as every probability distribution must. The table is the **probability mass function** of $X$.
+
+## Discrete random variables: the PMF
+
+For a discrete $X$ the probability mass function is $p(x) = P(X = x)$. It is nonnegative and its values over all possible $x$ sum to $1$. A fair die has $p(k) = \frac{1}{6}$ for $k = 1, \dots, 6$. Probabilities of events are sums of the mass: $P(X \ge 5) = p(5) + p(6)$.
+
+```python
+pmf_die = {k: 1 / 6 for k in range(1, 7)}
+print("P(X = 4) =", round(pmf_die[4], 4))  # prints: P(X = 4) = 0.1667
+print("P(X >= 5) =", round(sum(p for k, p in pmf_die.items() if k >= 5), 4))  # prints: P(X >= 5) = 0.3333
+```
+
+In words: one face in six is a $4$, and two faces in six are $5$ or $6$. Adding the mass over a set of values gives the probability of that set.
+
+<StaticDieDistribution />
+
+## Continuous random variables: the density
+
+A continuous variable can take any value in an interval, so each single value has probability $0$. Probability comes from the **density** $f$, through areas: $P(a \le X \le b) = \int_a^b f(x)\,dx$. The density must be nonnegative and integrate to $1$ over the whole line.
+
+The exponential density $f(x) = e^{-x}$ on $x \ge 0$ is a standard example. The script below approximates $P(1 \le X \le 2)$ with a midpoint sum and compares it with the exact area $e^{-1} - e^{-2}$.
+
+```python
+import math
+
+f = lambda x: math.exp(-x)
+n, a, b = 100000, 1.0, 2.0
+h = (b - a) / n
+area = sum(f(a + (i + 0.5) * h) for i in range(n)) * h
+exact = math.exp(-1) - math.exp(-2)
+print("area under e^-x on [1, 2]:", round(area, 6), " exact:", round(exact, 6))  # prints: area under e^-x on [1, 2]: 0.232544  exact: 0.232544
+```
+
+In words: the numerical area and the exact area agree to six places. The density at $x = 1$ is about $0.37$, and the probability of the whole interval $[1, 2]$ is about $0.23$. The density is not a probability; it is a rate of probability per unit length.
+
+<Callout type="pitfall">
+A density value is not a probability. A uniform density on $[0, 0.5]$ equals $2$ everywhere on that interval, which is legitimate because the interval has length $0.5$. Only areas under the density are probabilities, and they never exceed $1$.
+</Callout>
+
+## The cumulative distribution function
+
+The **cumulative distribution function** $F(x) = P(X \le x)$ is defined for every random variable. For the die it steps up by $\frac{1}{6}$ at each face. For a continuous variable it is smooth, and $F'(x) = f(x)$ wherever the density is continuous.
+
+```python
+def F(x):
+    return sum(p for k, p in pmf_die.items() if k <= x)
+
+print("F(3.5) =", round(F(3.5), 4), " F(6) =", round(F(6), 4))  # prints: F(3.5) = 0.5  F(6) = 1.0
+```
+
+In words: $F(3.5) = P(X \le 3.5)$ counts the faces $1, 2, 3$, which is half the die. $F$ starts at $0$, ends at $1$, and never decreases, and every random variable has a CDF with those properties.
+
+## Expected value
+
+The **expected value** $E[X]$ is the average the variable takes in the long run, weighted by probability. For a discrete variable, $E[X] = \sum_x x\,p(x)$.
+
+```python
+print("E[X] for a die:", round(sum(k * p for k, p in pmf_die.items()), 4))  # prints: E[X] for a die: 3.5
+```
+
+In words: the average of the six faces is $3.5$. No single roll equals $3.5$, which is normal: the expected value is a centre of mass, not a possible outcome. The next note covers expectation and variance in more detail.

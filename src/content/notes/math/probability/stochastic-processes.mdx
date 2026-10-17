@@ -1,8 +1,83 @@
 ---
 title: "Stochastic processes"
-description: "Generalizing beyond Markov chains, continuous-time processes."
+description: "A stochastic process is a random quantity indexed by time. Random walks and Poisson processes are the basic examples, with exact and simulated checks of their means and variances."
 order: 9
 tier: optional
+takeaways:
+  - "A **stochastic process** is a family of random variables $X_t$ indexed by time. Each run of the process is a **path**, and the process describes the whole collection of paths."
+  - "A **simple random walk** adds $\\pm 1$ at each step with equal chance. After $n$ steps its mean is $0$ and its variance is $n$."
+  - "A **Poisson process** counts arrivals at rate $\\lambda$. The number of arrivals in an interval of length $T$ has mean $\\lambda T$, and the waiting times between arrivals are exponential."
+  - "Markov chains are processes with no memory beyond the current state. Many processes, including the random walk and the Poisson process, have that property, but some, such as a process with a long memory, do not."
+resources:
+  - title: "Stochastic process (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Stochastic_process"
+    note: "The general definition and the main families of processes."
+  - title: "Random walk (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Random_walk"
+    note: "Simple and general random walks and their limits."
+  - title: "Poisson point process (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Poisson_point_process"
+    note: "Arrivals at a steady rate and the exponential waiting times."
 ---
 
-_Placeholder. Content not written yet._
+A single random variable describes one uncertain number. A stochastic process describes an uncertain quantity that changes over time, such as the price of a stock, the position of a particle, or the number of customers who have arrived by noon. This note introduces the idea through two examples, the simple random walk and the Poisson process, and checks their basic properties both exactly and by simulation.
+
+## What a process is
+
+A stochastic process is a collection of random variables $\{X_t\}$ indexed by time $t$. Time can be discrete ($t = 0, 1, 2, \dots$) or continuous. Fixing one outcome of all the randomness gives a **path**, a function of time. The process is the rule that generates these paths and assigns them probabilities.
+
+## The simple random walk
+
+Start at $S_0 = 0$ and at each step add $+1$ or $-1$ with equal probability. After $n$ steps, $S_n$ is a sum of $n$ independent $\pm 1$ values. Each step has mean $0$ and variance $1$, so $S_n$ has mean $0$ and variance $n$.
+
+The script below enumerates all $2^{10} = 1024$ paths of length $10$ and checks these two facts, along with $P(S_{10} = 0)$.
+
+```python
+from itertools import product
+
+n = 10
+ends = [sum(steps) for steps in product((-1, 1), repeat=n)]
+mean = sum(ends) / len(ends)
+var = sum((e - mean) ** 2 for e in ends) / len(ends)
+p_zero = sum(1 for e in ends if e == 0) / len(ends)
+print("mean of S_10:", mean, " variance of S_10:", var)  # prints: mean of S_10: 0.0  variance of S_10: 10.0
+print("P(S_10 = 0):", round(p_zero, 4), " = C(10,5)/1024 =", round(252 / 1024, 4))  # prints: P(S_10 = 0): 0.2461  = C(10,5)/1024 = 0.2461
+```
+
+In words: the variance grows linearly in time, so the typical distance from the start grows like $\sqrt{n}$. That square-root growth is the signature of a random walk, and it is why the walk wanders further than a deterministic drift would suggest only slowly.
+
+<RandomWalkPaths />
+
+## The Poisson process
+
+The Poisson process counts arrivals at rate $\lambda$ per unit time. Two facts describe it. The number of arrivals in an interval of length $T$ is Poisson with mean $\lambda T$, and the gaps between consecutive arrivals are independent exponential variables with mean $\frac{1}{\lambda}$.
+
+The script below simulates gaps with a fixed seed and counts arrivals in an interval of length $10$ at rate $2$, where the mean count should be $20$.
+
+```python
+import random
+
+random.seed(5)
+lam, T, runs = 2.0, 10.0, 5000
+counts = []
+for _ in range(runs):
+    t, k = 0.0, 0
+    while True:
+        t += random.expovariate(lam)
+        if t > T:
+            break
+        k += 1
+    counts.append(k)
+mean_count = sum(counts) / runs
+print("mean arrivals in [0, 10]:", round(mean_count, 2), " predicted lambda T = 20")  # prints: mean arrivals in [0, 10]: 20.02 predicted lambda T = 20
+```
+
+In words: the simulated mean of $20.02$ is close to the predicted $20$, and the gaps being exponential is what lets the simulation produce the right count without tracking the whole timeline at once.
+
+<Callout type="pitfall">
+A process is more than its marginal distributions. Two processes can have the same distribution at each fixed time and still have very different paths. The random walk and a process that jumps to a fresh random value each step can have similar marginal spreads but look nothing alike when you plot them.
+</Callout>
+
+## Connections to the rest of the course
+
+The random walk is the discrete-time version of Brownian motion, which the stochastic calculus note takes up in continuous time. The Poisson process is the model behind the exponential waiting times in the common distributions note. Markov chains are processes whose next step depends only on the current state, and the next note in this section generalises them.

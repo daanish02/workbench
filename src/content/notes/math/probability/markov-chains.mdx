@@ -1,8 +1,91 @@
 ---
 title: "Markov chains"
-description: "States, transition matrices, and stationary distributions."
+description: "States, transition matrices and the Markov property, the evolution of a distribution over time, and stationary distributions reached by repeated multiplication."
 order: 8
 tier: core
+takeaways:
+  - "A **Markov chain** moves between states with probabilities that depend only on the current state. This is the **Markov property**: the future given the present does not depend on the past."
+  - "The **transition matrix** $P$ has entries $P_{ij} = P(X_{t+1} = j \\mid X_t = i)$. Its rows sum to $1$."
+  - "If $\\pi_t$ is the row vector of probabilities at time $t$, then $\\pi_{t+1} = \\pi_t P$, so $\\pi_t = \\pi_0 P^t$."
+  - "A **stationary distribution** $\\pi$ satisfies $\\pi P = \\pi$. For a well-behaved chain, every starting distribution converges to it."
+resources:
+  - title: "Markov chain (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Markov_chain"
+    note: "States, transition matrices, and the long-run behaviour of chains."
+  - title: "Stationary distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Stationary_distribution"
+    note: "The fixed-point condition and when it is unique."
+  - title: "Markov property (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Markov_property"
+    note: "The memorylessness condition that defines the chains in this note."
 ---
 
-_Placeholder. Content not written yet._
+A Markov chain is a system that hops between a set of states, where each hop depends only on where it is now. Weather models, web browsing, queueing systems and the word-by-word prediction in language models all use this idea. The chain is described by a transition matrix, and the long-run behaviour is found by repeatedly multiplying a probability vector by that matrix. This note sets up the matrix, runs a two-state weather chain, and finds its stationary distribution.
+
+## States and the transition matrix
+
+Take two weather states, Sunny and Rainy. Tomorrow's weather depends only on today's. Suppose a sunny day is followed by a sunny day with probability $0.8$, and a rainy day by a rainy day with probability $0.6$. The transition matrix, with states ordered Sunny and Rainy, is
+
+$$
+P = \begin{pmatrix} 0.8 & 0.2 \\ 0.4 & 0.6 \end{pmatrix}.
+$$
+
+Each row sums to $1$, because from any state the chain must go somewhere. The script below checks this and stores the matrix.
+
+```python
+P = [[0.8, 0.2], [0.4, 0.6]]
+print("row sums:", [round(sum(row), 10) for row in P])  # prints: row sums: [1.0, 1.0]
+```
+
+In words: the first row gives tomorrow's chances starting from Sunny, and the second row gives them starting from Rainy.
+
+## Evolving a distribution
+
+Start with certainty, say Sunny today, so $\pi_0 = (1, 0)$. The distribution after one step is $\pi_1 = \pi_0 P$, and after $t$ steps it is $\pi_0 P^t$. The script below applies the matrix repeatedly and prints the probability of Sunny at each step.
+
+```python
+def step(pi, P):
+    return [sum(pi[i] * P[i][j] for i in range(len(pi))) for j in range(len(P[0]))]
+
+pi = [1.0, 0.0]
+for t in range(1, 11):
+    pi = step(pi, P)
+    if t in (1, 2, 5, 10):
+        print(f"t = {t:>2}: P(sunny) = {pi[0]:.4f}, P(rainy) = {pi[1]:.4f}")  # prints: t =  1: P(sunny) = 0.8000, P(rainy) = 0.2000
+```
+
+In words: after one day the chance of sunshine is $0.8$, as the matrix says. The values drift toward a fixed point. By day ten the distribution is already close to the long-run value found next.
+
+<WeatherChain />
+
+## The stationary distribution
+
+A stationary distribution is a probability vector that the chain leaves unchanged: $\pi P = \pi$. For the two-state chain, write $\pi = (a, 1 - a)$. The condition on the first coordinate is $0.8a + 0.4(1 - a) = a$, which gives $a = \frac{2}{3}$.
+
+```python
+a = 2 / 3
+pi_star = [a, 1 - a]
+after = step(pi_star, P)
+print("pi P =", [round(x, 6) for x in after], " pi =", [round(x, 6) for x in pi_star])  # prints: pi P = [0.666667, 0.333333]  pi = [0.666667, 0.333333]
+```
+
+In words: multiplying $\pi$ by $P$ returns $\pi$, so once the chain reaches this distribution it stays there. Long-run, the weather is sunny two days in three.
+
+The distribution converges to $\pi$ from any start. Starting from Rainy instead of Sunny gives the same limit, which the next check confirms by running a long time.
+
+```python
+pi = [0.0, 1.0]
+for _ in range(200):
+    pi = step(pi, P)
+print("starting from rainy, after 200 steps:", [round(x, 6) for x in pi])  # prints: starting from rainy, after 200 steps: [0.666667, 0.333333]
+```
+
+In words: the long-run value does not depend on the starting state. This is the behaviour a stationary distribution describes: it is the limit of $\pi_0 P^t$ for every $\pi_0$, provided the chain is irreducible and aperiodic.
+
+<Callout type="pitfall">
+Convergence needs the chain to mix. A chain that alternates deterministically between two states, with $P = \begin{pmatrix} 0 & 1 \\ 1 & 0 \end{pmatrix}$, has a stationary distribution $(\frac{1}{2}, \frac{1}{2})$, but starting from one state the distribution never settles. Its powers flip back and forth.
+</Callout>
+
+## Where chains are used
+
+Page-ranking, queueing, and Markov chain Monte Carlo methods for sampling from hard distributions all rely on a chain whose stationary distribution is the target. Designing the transition matrix so that its stationary distribution is the one you want is the core technique, and the next note extends the idea beyond finite chains.

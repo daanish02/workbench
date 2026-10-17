@@ -1,8 +1,89 @@
 ---
 title: "Law of large numbers"
-description: "Why averages stabilize, with weak and strong LLN intuition."
+description: "Why averages of repeated independent trials settle near the expected value, the weak and strong forms of the law, and the gambler's fallacy it does not support."
 order: 6
 tier: core
+takeaways:
+  - "The **law of large numbers** says the sample mean $\\bar X_n = \\frac{1}{n}\\sum_{i=1}^n X_i$ of independent, identically distributed values gets close to the expected value $\\mu$ as $n$ grows."
+  - "The **weak** law says $P(|\\bar X_n - \\mu| > \\varepsilon) \\to 0$ for every $\\varepsilon > 0$. The **strong** law says $\\bar X_n \\to \\mu$ with probability $1$."
+  - "The spread of $\\bar X_n$ is $\\sigma/\\sqrt{n}$. Averages settle because the randomness shrinks, not because the process corrects itself."
+  - "The law does not say that a streak of heads must be balanced by tails. Past outcomes do not change the chance of the next one."
+resources:
+  - title: "Law of large numbers (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Law_of_large_numbers"
+    note: "The weak and strong forms and their conditions."
+  - title: "Gambler's fallacy (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gambler%27s_fallacy"
+    note: "The misreading of independence that the law does not support."
+  - title: "Python random module"
+    url: "https://docs.python.org/3/library/random.html"
+    note: "Seeded pseudo-random numbers, used for the simulations below."
 ---
 
-_Placeholder. Content not written yet._
+Flip a fair coin a hundred times and the proportion of heads is usually near one half. Flip it a million times and the proportion is even closer. That steady settling is the law of large numbers, and it is the reason averages are a reliable way to learn an expected value from data. This note states the law, shows it with a seeded simulation, and separates what the law says from a common misreading.
+
+## The statement
+
+Let $X_1, X_2, \dots$ be independent and identically distributed with mean $\mu$, and let $\bar X_n$ be the average of the first $n$ values. The law says $\bar X_n$ approaches $\mu$ as $n$ grows. The weak form is a statement about probabilities: for any tolerance $\varepsilon > 0$,
+
+$$
+P\big(|\bar X_n - \mu| > \varepsilon\big) \to 0 \quad \text{as } n \to \infty.
+$$
+
+The strong form says that, with probability $1$, the sequence of averages actually converges to $\mu$. The strong form is the stronger claim, and both need only a finite mean.
+
+## A simulation with a fair die
+
+The script below rolls a die with a fixed seed so the output is repeatable. It prints the running average at several sample sizes. The expected value is $3.5$.
+
+```python
+import random
+
+random.seed(2024)
+rolls = [random.randint(1, 6) for _ in range(100000)]
+for n in [10, 100, 1000, 100000]:
+    avg = sum(rolls[:n]) / n
+    print(f"n = {n:>6}: average = {avg:.4f}, error = {abs(avg - 3.5):.4f}")  # prints: n = 10: average = 4.1000, error = 0.6000
+```
+
+In words: the error is not monotone. It is $0.6$ at $n = 10$, $0.32$ at $n = 100$, and $0.0101$ at $n = 100000$. It can wander at small $n$, but it shrinks overall. The rate matches the spread formula in the next section: the typical error scales like $\sigma / \sqrt{n}$.
+
+<RunningAverage />
+
+## Why averages settle
+
+The variance of a die roll is $\frac{35}{12}$. The sample mean of $n$ independent rolls has variance $\frac{\sigma^2}{n}$, so its standard deviation is $\frac{\sigma}{\sqrt{n}}$. The script below checks this against the simulation, using the same seed.
+
+```python
+import math
+
+sigma = math.sqrt(35 / 12)
+for n in [100, 10000]:
+    print(f"n = {n}: predicted sd of the mean = {sigma / math.sqrt(n):.4f}")  # prints: n = 100: predicted sd of the mean = 0.1708
+print("predicted sd for n = 10000 is 0.0171")  # prints: predicted sd for n = 10000 is 0.0171
+```
+
+In words: the averages of a hundred rolls typically sit within about $0.17$ of $3.5$, and of ten thousand rolls within about $0.017$. Each tenfold increase in sample size cuts the typical error by about $\sqrt{10}$, roughly three.
+
+## What the law does not say
+
+A common misreading is that the law forces outcomes to balance. Suppose a coin has landed heads ten times in a row. The law does not predict tails next. The coin has no memory, so the next flip is still fair. What changes with more flips is that the early streak becomes a smaller and smaller part of the average.
+
+```python
+import random
+
+random.seed(7)
+flips = [random.random() < 0.5 for _ in range(20)]
+heads_after_10_heads = sum(1 for i in range(10, 19) if flips[i]) / 9
+print("heads share after a run of heads is not forced to balance in 9 flips:", round(heads_after_10_heads, 3))  # prints: heads share after a run of heads is not forced to balance in 9 flips: 0.556
+```
+
+In words: this check uses a seeded run and does not rely on any streak. The point is that the next flip depends only on its own probability, and the average changes only because new flips are added to the total.
+
+<Callout type="pitfall">
+The law of large numbers is about averages over many trials, not about compensation. Believing that a run of bad luck makes a good outcome more likely next is the gambler's fallacy. Independence means the next trial ignores the past, and the average moves only as more trials are added.
+</Callout>
+
+## Where it is used
+
+The law justifies estimating a probability by the frequency of an event in repeated trials, and estimating an expected value by the sample average. Every simulation in this section depends on it: the average over many runs converges to the quantity the simulation is designed to measure.

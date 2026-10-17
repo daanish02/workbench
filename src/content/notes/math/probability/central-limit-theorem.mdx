@@ -1,8 +1,99 @@
 ---
 title: "Central limit theorem"
-description: "Why so many things end up normally distributed, simulation-based intuition."
+description: "Why sums and averages of many independent variables look normal whatever the starting distribution, with an exact binomial check and a seeded simulation."
 order: 7
 tier: core
+takeaways:
+  - "The **central limit theorem** says that for independent, identically distributed values with mean $\\mu$ and variance $\\sigma^2$, the standardised sum $\\frac{\\sum X_i - n\\mu}{\\sigma\\sqrt{n}}$ approaches the standard normal as $n$ grows."
+  - "The starting distribution does not need to be normal. Uniform, exponential and die-roll values all produce normal-looking averages once $n$ is moderate."
+  - "The **standard error** of a sample mean is $\\sigma/\\sqrt{n}$. Under the CLT, about $95\\%$ of sample means lie within $1.96$ standard errors of $\\mu$."
+  - "For sums of discrete values, a **continuity correction** of $\\pm\\frac{1}{2}$ improves the normal approximation to a binomial."
+resources:
+  - title: "Central limit theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Central_limit_theorem"
+    note: "Statement, conditions, and the history of the result."
+  - title: "Standard error (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Standard_error"
+    note: "The spread of a sample statistic and its use in intervals."
+  - title: "Continuity correction (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Continuity_correction"
+    note: "Why the discrete-to-continuous adjustment works."
 ---
 
-_Placeholder. Content not written yet._
+Add up many small independent effects and the total looks like a bell curve, whatever each effect looked like. Heights, measurement errors, the total of many small transactions, and the average of many dice all share this shape. The central limit theorem explains why, and it is the reason the normal distribution appears in statistics so often. This note states the theorem, checks it against the exact binomial, and then shows the convergence with a simulation that starts from a flat distribution.
+
+## The statement
+
+Let $X_1, \dots, X_n$ be independent with the same mean $\mu$ and variance $\sigma^2$. Then the standardised sum
+
+$$
+Z_n = \frac{\sum_{i=1}^n X_i - n\mu}{\sigma\sqrt{n}}
+$$
+
+has a distribution that approaches the standard normal as $n \to \infty$. Equivalently, the sample mean $\bar X_n$ is approximately normal with mean $\mu$ and standard deviation $\sigma/\sqrt{n}$.
+
+## An exact check with coin flips
+
+A sum of $n$ fair coin flips is binomial. For $n = 50$ the exact probability that the sum is at most $25$ is computable, and the normal approximation with a continuity correction should match it closely.
+
+```python
+import math
+
+def Phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+n, p = 50, 0.5
+exact = sum(math.comb(n, k) * p ** k * (1 - p) ** (n - k) for k in range(0, 26))
+mu, sd = n * p, math.sqrt(n * p * (1 - p))
+approx = Phi((25.5 - mu) / sd)
+print("exact P(X <= 25):", round(exact, 6), " normal approximation:", round(approx, 6))  # prints: exact P(X <= 25): 0.556138 normal approximation: 0.556231
+```
+
+In words: the exact value $0.556138$ and the approximation $0.556231$ agree to about four decimal places, even though the sum is discrete and the normal is continuous. The continuity correction adds $\frac{1}{2}$ because $X \le 25$ on integers covers the continuous range up to $25.5$.
+
+## A simulation from a flat start
+
+The uniform distribution on $[0, 1]$ has mean $\frac{1}{2}$ and variance $\frac{1}{12}$, and its density is flat, not bell-shaped. The script below averages $30$ uniform values, repeats that $20000$ times with a fixed seed, and compares the spread of the averages with the prediction $\sigma/\sqrt{n}$.
+
+```python
+import math
+import random
+
+random.seed(11)
+n, reps = 30, 20000
+means = [sum(random.random() for _ in range(n)) / n for _ in range(reps)]
+m = sum(means) / reps
+sd = math.sqrt(sum((x - m) ** 2 for x in means) / reps)
+predicted = math.sqrt(1 / 12) / math.sqrt(n)
+print("mean of averages:", round(m, 4), " sd of averages:", round(sd, 4), " predicted sd:", round(predicted, 4))  # prints: mean of averages: 0.4997 sd of averages: 0.0533 predicted sd: 0.0527
+```
+
+In words: the averages centre on $0.5$, and their spread, $0.0533$, is close to the predicted $\sigma / \sqrt{n} \approx 0.0527$. The check does not show the shape. A histogram would show a bell curve even though each uniform value is flat.
+
+<CLTSimulator />
+
+## How much the shape matters
+
+The shape of the average is normal, but only roughly, and the approximation is slowest in the tails. A useful check counts how many simulated means fall within two standard errors of $\frac{1}{2}$. The CLT predicts about $95\%$.
+
+```python
+import math
+import random
+
+random.seed(11)
+n, reps = 30, 20000
+means = [sum(random.random() for _ in range(n)) / n for _ in range(reps)]
+se = math.sqrt(1 / 12) / math.sqrt(n)
+share = sum(1 for x in means if abs(x - 0.5) <= 1.96 * se) / reps
+print("share of means within 1.96 standard errors:", round(share, 3))  # prints: share of means within 1.96 standard errors: 0.95
+```
+
+In words: $0.95$ matches the predicted $95\%$ for a sample of thirty. For a skewed starting distribution, such as the exponential, the approximation needs more terms to reach the same accuracy, so the convergence is real but its speed depends on the shape.
+
+<Callout type="pitfall">
+The CLT needs finite variance and independent terms. It does not say that every large dataset is normal, and it does not apply to the raw data. It applies to averages or sums of independent values. Heavy-tailed data, such as incomes or some financial returns, can have infinite variance, and then the normal approximation fails.
+</Callout>
+
+## Why it matters
+
+Confidence intervals, hypothesis tests and most of classical statistics rest on the CLT. It is why you can say how far a sample mean is likely to be from the true mean without knowing the underlying distribution, provided the sample is large enough and the variance is finite.

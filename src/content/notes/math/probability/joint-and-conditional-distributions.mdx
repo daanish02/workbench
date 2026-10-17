@@ -1,8 +1,102 @@
 ---
 title: "Joint and conditional distributions"
-description: "Joint and marginal distributions, conditioning, and independence."
+description: "Joint distributions of several variables, marginals obtained by summing or integrating out, conditional distributions, covariance, and independence."
 order: 5
 tier: core
+takeaways:
+  - "The **joint** distribution $p(x, y) = P(X = x, Y = y)$ gives the probability of every pair of values. Its entries sum to $1$."
+  - "The **marginal** distribution of $X$ is $p_X(x) = \\sum_y p(x, y)$: sum over the other variable to remove it."
+  - "The **conditional** distribution is $p(y \\mid x) = \\frac{p(x, y)}{p_X(x)}$, a slice of the joint table rescaled to sum to $1$."
+  - "$X$ and $Y$ are **independent** exactly when $p(x, y) = p_X(x)\\,p_Y(y)$ for every pair. Zero **covariance** is necessary for independence but not sufficient."
+resources:
+  - title: "Joint probability distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Joint_probability_distribution"
+    note: "Joint, marginal and conditional distributions with examples."
+  - title: "Independence (probability) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Independence_(probability_theory)"
+    note: "The definition of independent events and random variables."
+  - title: "Covariance (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Covariance"
+    note: "Covariance, correlation, and why zero correlation is not independence."
 ---
 
-_Placeholder. Content not written yet._
+Most real questions involve several quantities at once: height and weight, the score on two exams, the state of a system now and a moment later. A joint distribution describes them together. From it you recover each variable on its own (the marginals), the distribution of one given the other (the conditionals), and whether the variables are unrelated (independence). This note works with a small table, which makes every rule a visible sum.
+
+## The joint table
+
+Let $X$ and $Y$ each take the values $0$ and $1$. Their joint probabilities form a table whose entries sum to $1$:
+
+| | $Y = 0$ | $Y = 1$ |
+|---|---|---|
+| $X = 0$ | $0.1$ | $0.4$ |
+| $X = 1$ | $0.2$ | $0.3$ |
+
+The script below stores the table and checks that it is a valid joint distribution.
+
+```python
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
+print("total probability:", round(sum(joint.values()), 10))  # prints: total probability: 1.0
+```
+
+In words: each pair has a probability between $0$ and $1$, and the four add to exactly $1$, so the table describes every outcome of the pair.
+
+<StaticJointTable />
+
+## Marginal distributions
+
+The marginal of $X$ is found by summing the joint over every value of $Y$. Geometrically you sum each row of the table, and the marginal of $Y$ sums each column.
+
+```python
+pX = {x: sum(p for (a, b), p in joint.items() if a == x) for x in (0, 1)}
+pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
+print("marginal of X:", {k: round(v, 4) for k, v in pX.items()}, " marginal of Y:", {k: round(v, 4) for k, v in pY.items()})  # prints: marginal of X: {0: 0.5, 1: 0.5}  marginal of Y: {0: 0.3, 1: 0.7}
+```
+
+In words: $X$ is $0$ half the time and $1$ half the time, and $Y$ is $1$ seventy percent of the time. The marginals lose the link between the two variables, which the joint keeps.
+
+## Conditional distributions
+
+The conditional distribution of $Y$ given $X = x$ is the row of the joint divided by the marginal: $p(y \mid x) = \frac{p(x, y)}{p_X(x)}$. Conditioning on $Y = 1$ asks for the probability that $X = 1$ within the column $Y = 1$.
+
+```python
+p_x1_given_y1 = joint[(1, 1)] / pY[1]
+print("P(X = 1 | Y = 1) =", round(p_x1_given_y1, 4))  # prints: P(X = 1 | Y = 1) = 0.4286
+```
+
+In words: among the outcomes with $Y = 1$, the column holds $0.4$ and $0.3$, so $X = 1$ carries $\frac{0.3}{0.7} \approx 0.4286$ of the weight. This is Bayes' rule applied to a table.
+
+## Covariance
+
+The **covariance** measures whether large values of $X$ tend to come with large values of $Y$:
+
+$$
+\operatorname{Cov}(X, Y) = E[XY] - E[X]\,E[Y].
+$$
+
+```python
+EX = sum(a * p for (a, b), p in joint.items())
+EY = sum(b * p for (a, b), p in joint.items())
+EXY = sum(a * b * p for (a, b), p in joint.items())
+print("E[X] =", round(EX, 4), " E[Y] =", round(EY, 4), " Cov(X, Y) =", round(EXY - EX * EY, 4))  # prints: E[X] = 0.5  E[Y] = 0.7  Cov(X, Y) = -0.05
+```
+
+In words: the covariance is $-0.05$, negative, so the variables tend to move in opposite directions. Only the outcome $(1, 1)$ contributes to $E[XY]$, which is why it is so small here.
+
+## Independence
+
+$X$ and $Y$ are independent when every entry of the joint factors into the marginals. Test the table at one cell:
+
+```python
+print("P(0,0) =", joint[(0, 0)], " vs P(X=0) P(Y=0) =", round(pX[0] * pY[0], 4))  # prints: P(0,0) = 0.1  vs P(X=0) P(Y=0) = 0.15
+print("independent?", all(abs(joint[(x, y)] - pX[x] * pY[y]) < 1e-12 for x in (0, 1) for y in (0, 1)))  # prints: independent? False
+```
+
+In words: $0.1 \ne 0.15$, so this table is not independent. Knowing $X$ changes what you should expect of $Y$, which is also what the nonzero covariance says.
+
+<Callout type="pitfall">
+Zero covariance does not prove independence. If $X$ takes values $-1, 0, 1$ equally often and $Y = X^2$, then $E[XY] = E[X^3] = 0$ and $E[X] = 0$, so the covariance is zero, yet $Y$ is completely determined by $X$. Independence must hold for every pair of values, not just on average.
+</Callout>
+
+## Continuous variables
+
+The same ideas hold with a joint density $f(x, y)$. The marginal is $f_X(x) = \int f(x, y)\,dy$, the conditional is $f(y \mid x) = \frac{f(x, y)}{f_X(x)}$, and independence means $f(x, y) = f_X(x) f_Y(y)$. Sums become integrals, and nothing else changes in the logic.
