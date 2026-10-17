@@ -1,0 +1,223 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Backtracking through N-Queens"
+  caption="The solver fills one row at a time, trying columns left to right. A blue square is a safe placement; a red square is rejected, with the queen that attacks it outlined. When a row runs out of columns, the queen above is removed (backtrack) and moved on. Watch how rarely it gets near the bottom: pruning kills most branches after two or three rows."
+>
+  <nqueens-step>
+    <div class="ctl-row">
+      <span class="ctl-label">N</span>
+      {[4, 5, 6, 8].map((k) => <button class="btn" data-k={k} aria-pressed={k === 4 ? 'true' : 'false'}>{k}</button>)}
+      <span style="flex:1"></span>
+      <label class="ctl-label">Speed <input type="range" min="1" max="10" value="4" data-speed /></label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-next>Next solution</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="nq-wrap">
+      <div class="board" data-board></div>
+      <div class="side">
+        <div class="stat">checks <b data-tries>0</b></div>
+        <div class="stat">placements <b data-places>0</b></div>
+        <div class="stat">backtracks <b data-backs>0</b></div>
+        <div class="stat">solutions <b data-sols>0</b></div>
+        <div class="stat mono">Q = <b data-q>[]</b></div>
+        <p class="msg" data-msg></p>
+      </div>
+    </div>
+  </nqueens-step>
+</Figure>
+
+<style>
+  .nq-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 14px;
+    align-items: flex-start;
+  }
+  .board {
+    display: grid;
+    width: min(100%, 300px);
+    aspect-ratio: 1;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .board :global(div) {
+    display: grid;
+    place-items: center;
+    color: #fff;
+    line-height: 1;
+  }
+  .board :global(div.dk) {
+    background: #1a1a1a;
+  }
+  .board :global(div.lt) {
+    background: #262626;
+  }
+  .board :global(div.ok) {
+    background: rgba(66, 133, 244, 0.55);
+  }
+  .board :global(div.bad) {
+    background: rgba(234, 67, 53, 0.55);
+  }
+  .board :global(div.att) {
+    box-shadow: inset 0 0 0 3px var(--g-red);
+  }
+  .board :global(div.win) {
+    background: rgba(52, 168, 83, 0.5);
+  }
+  .side {
+    flex: 1;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .msg {
+    margin: 8px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  type Ev = { q: number[]; kind: 'ok' | 'bad' | 'back' | 'sol' | 'end'; r: number; c: number; att?: [number, number]; t: number; p: number; b: number; s: number };
+
+  // Record every check, placement, undo and solution of the textbook solver.
+  function record(n: number): Ev[] {
+    const q: number[] = [];
+    const evs: Ev[] = [];
+    let t = 0, p = 0, b = 0, s = 0;
+    const push = (kind: Ev['kind'], r: number, c: number, att?: [number, number]) => evs.push({ q: [...q], kind, r, c, att, t, p, b, s });
+    const go = (row: number) => {
+      if (row === n) {
+        s++;
+        push('sol', -1, -1);
+        return;
+      }
+      for (let col = 0; col < n; col++) {
+        t++;
+        let att: [number, number] | undefined;
+        for (let pr = 0; pr < row; pr++)
+          if (q[pr] === col || Math.abs(pr - row) === Math.abs(q[pr] - col)) {
+            att = [pr, q[pr]];
+            break;
+          }
+        if (att) {
+          push('bad', row, col, att);
+          continue;
+        }
+        q.push(col);
+        p++;
+        push('ok', row, col);
+        go(row + 1);
+        q.pop();
+        b++;
+        push('back', row, col);
+      }
+    };
+    go(0);
+    push('end', -1, -1);
+    return evs;
+  }
+
+  const QUEEN = '♛︎'; // text presentation, not emoji
+  class NQueensStep extends HTMLElement {
+    n = 4;
+    evs: Ev[] = [];
+    i = -1;
+    timer = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-k]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.n = +b.dataset.k!;
+          this.reset();
+        }),
+      );
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-next]').addEventListener('click', () => {
+        this.pause();
+        do this.i++;
+        while (this.i < this.evs.length - 1 && this.evs[this.i].kind !== 'sol');
+        this.draw();
+      });
+      this.q('[data-reset]').addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    reset() {
+      this.pause();
+      this.evs = record(this.n);
+      this.i = -1;
+      const board = this.q('[data-board]');
+      board.style.gridTemplateColumns = `repeat(${this.n}, 1fr)`;
+      board.style.fontSize = `${Math.round(Math.min(300, board.clientWidth || 300) / this.n * 0.62)}px`;
+      board.replaceChildren(...Array.from({ length: this.n * this.n }, () => document.createElement('div')));
+      this.draw();
+    }
+    step() {
+      if (this.i < this.evs.length - 1) this.i++;
+      this.draw();
+    }
+    play() {
+      if (this.i >= this.evs.length - 1) this.i = -1;
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        const e = this.evs[this.i];
+        if (this.i >= this.evs.length - 1) return this.pause();
+        const speed = +this.querySelector<HTMLInputElement>('[data-speed]')!.value;
+        this.timer = window.setTimeout(tick, (e.kind === 'sol' ? 1400 : 700) / speed ** 1.3);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    draw() {
+      const n = this.n;
+      const e: Ev = this.i >= 0 ? this.evs[this.i] : { q: [], kind: 'end', r: -1, c: -1, t: 0, p: 0, b: 0, s: 0 };
+      const cells = this.q('[data-board]').children;
+      for (let r = 0; r < n; r++)
+        for (let c = 0; c < n; c++) {
+          const el = cells[r * n + c] as HTMLElement;
+          let cls = (r + c) % 2 ? 'dk' : 'lt';
+          let txt = e.q[r] === c ? QUEEN : '';
+          if (e.kind === 'sol' && e.q[r] === c) cls = 'win';
+          else if (e.r === r && e.c === c && e.kind === 'ok') cls = 'ok';
+          else if (e.r === r && e.c === c && e.kind === 'bad') (cls = 'bad'), (txt = QUEEN);
+          if (e.att && e.att[0] === r && e.att[1] === c) cls += ' att';
+          el.className = cls;
+          el.textContent = txt;
+        }
+      const col = (k: number) => String(k);
+      const msgs: Record<Ev['kind'], string> = {
+        ok: `Row ${e.r}: column ${col(e.c)} is safe. Place a queen and move to row ${e.r + 1}.`,
+        bad: e.att ? `Row ${e.r}, column ${col(e.c)} is attacked by the queen in row ${e.att[0]} (${e.att[1] === e.c ? 'same column' : 'same diagonal'}). Prune.` : '',
+        back: `Undo: remove the queen from row ${e.r}, column ${col(e.c)}, and try the next column.`,
+        sol: `Solution found: Q = [${e.q.join(', ')}]. Record it and keep searching.`,
+        end: this.i < 0 ? 'Press Step or Play.' : `Search complete: ${e.s} solution${e.s === 1 ? '' : 's'} for N = ${n}.`,
+      };
+      this.q('[data-msg]').textContent = msgs[e.kind];
+      this.q('[data-tries]').textContent = String(e.t);
+      this.q('[data-places]').textContent = String(e.p);
+      this.q('[data-backs]').textContent = String(e.b);
+      this.q('[data-sols]').textContent = String(e.s);
+      this.q('[data-q]').textContent = `[${e.q.join(', ')}]`;
+    }
+  }
+  customElements.define('nqueens-step', NQueensStep);
+</script>

@@ -1,0 +1,158 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Checking a certificate vs. searching for one"
+  caption="Subset sum: is there a subset of these numbers that adds up exactly to the target? Click numbers to propose a certificate; checking it costs one addition per chosen number. Brute-force search instead tries subsets in order until one works, and in the worst case (an unreachable target) it must try all 2ⁿ. Add numbers to watch the search space double each time while verification stays linear."
+>
+  <np-vs>
+    <div class="nums" data-nums></div>
+    <div class="ctl-row" style="margin-top:12px">
+      <label class="ctl-label" for="np-t">Target</label>
+      <input class="input mono" id="np-t" data-t type="number" value="53" min="0" style="width:6em" />
+      <button class="btn" data-less aria-label="Fewer numbers">− number</button>
+      <button class="btn" data-more aria-label="More numbers">+ number</button>
+      <button class="btn primary" data-search>Brute-force search</button>
+      <button class="btn" data-clear>Clear</button>
+    </div>
+    <div class="cards">
+      <div class="card"><span class="ctl-label">Verify the certificate</span><b data-vres></b><small data-vsum></small></div>
+      <div class="card"><span class="ctl-label">Search all subsets</span><b data-sres>not run</b><small data-ssum></small></div>
+    </div>
+  </np-vs>
+</Figure>
+
+<style>
+  .nums {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .nums :global(button) {
+    min-width: 44px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    font: 600 1rem var(--font-mono);
+    cursor: pointer;
+  }
+  .nums :global(button[aria-pressed='true']) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.2);
+    color: #fff;
+  }
+  .cards {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+  .card b {
+    display: block;
+    font: 700 1.125rem var(--font-mono);
+    margin: 2px 0;
+  }
+  .card small {
+    display: block;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+  .card :global(.ok) {
+    color: var(--g-green);
+  }
+  .card :global(.no) {
+    color: var(--g-red);
+  }
+</style>
+
+<script>
+  const POOL = [3, 34, 4, 12, 5, 2, 27, 18, 9, 41, 15, 7, 22, 30, 11, 6, 19, 25];
+
+  class NpVs extends HTMLElement {
+    n = 10;
+    chosen = new Set<number>();
+
+    connectedCallback() {
+      this.querySelector('[data-more]')!.addEventListener('click', () => this.resize(1));
+      this.querySelector('[data-less]')!.addEventListener('click', () => this.resize(-1));
+      this.querySelector('[data-clear]')!.addEventListener('click', () => (this.chosen.clear(), this.draw()));
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw(true));
+      this.querySelector('[data-search]')!.addEventListener('click', () => this.search());
+      this.querySelector('[data-nums]')!.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-k]');
+        if (!b) return;
+        const k = +b.dataset.k!;
+        this.chosen.has(k) ? this.chosen.delete(k) : this.chosen.add(k);
+        this.draw();
+      });
+      this.draw(true);
+    }
+    target() {
+      return Math.trunc(+this.querySelector<HTMLInputElement>('[data-t]')!.value) || 0;
+    }
+    resize(d: number) {
+      this.n = Math.min(POOL.length, Math.max(4, this.n + d));
+      for (const k of [...this.chosen]) if (k >= this.n) this.chosen.delete(k);
+      this.draw(true);
+    }
+    search() {
+      const nums = POOL.slice(0, this.n);
+      const t = this.target();
+      const total = 2 ** this.n;
+      let found = -1;
+      let tries = 0;
+      for (let mask = 0; mask < total; mask++) {
+        tries++;
+        let s = 0;
+        for (let k = 0; k < this.n; k++) if (mask & (1 << k)) s += nums[k];
+        if (s === t) {
+          found = mask;
+          break;
+        }
+      }
+      const res = this.querySelector('[data-sres]')!;
+      if (found >= 0) {
+        this.chosen = new Set([...Array(this.n).keys()].filter((k) => found & (1 << k)));
+        res.innerHTML = `<span class="ok">found after ${tries.toLocaleString('en-US')} tries</span>`;
+      } else {
+        res.innerHTML = `<span class="no">none: tried all ${tries.toLocaleString('en-US')}</span>`;
+      }
+      this.querySelector('[data-ssum]')!.textContent = `worst case 2^${this.n} = ${total.toLocaleString('en-US')} subsets`;
+      this.draw();
+    }
+    draw(resetSearch = false) {
+      const nums = POOL.slice(0, this.n);
+      const box = this.querySelector('[data-nums]')!;
+      // add or remove buttons at the end so existing ones stay in place
+      while (box.children.length > this.n) box.lastElementChild!.remove();
+      while (box.children.length < this.n) {
+        const k = box.children.length;
+        box.insertAdjacentHTML('beforeend', `<button type="button" data-k="${k}">${nums[k]}</button>`);
+      }
+      box.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.setAttribute('aria-pressed', String(this.chosen.has(+b.dataset.k!))));
+      const picked = [...this.chosen].sort((a, b) => a - b).map((k) => nums[k]);
+      const sum = picked.reduce((a, b) => a + b, 0);
+      const t = this.target();
+      this.querySelector('[data-vres]')!.innerHTML = picked.length
+        ? `<span class="${sum === t ? 'ok' : 'no'}">${sum} ${sum === t ? '=' : '≠'} ${t}: ${sum === t ? 'valid' : 'invalid'}</span>`
+        : 'pick some numbers';
+      this.querySelector('[data-vsum]')!.textContent = picked.length
+        ? `${picked.join(' + ')}  (${Math.max(0, picked.length - 1)} additions, 1 comparison)`
+        : `at most ${this.n - 1} additions for any certificate`;
+      if (resetSearch) {
+        this.querySelector('[data-sres]')!.textContent = 'not run';
+        this.querySelector('[data-ssum]')!.textContent = `${this.n} numbers → 2^${this.n} = ${(2 ** this.n).toLocaleString('en-US')} subsets`;
+      }
+    }
+  }
+  customElements.define('np-vs', NpVs);
+</script>

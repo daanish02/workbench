@@ -1,0 +1,131 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where the decisions live"
+  caption="Apply one policy ('isolate payments from guest traffic') to four switches. In a traditional network each device carries its own control logic and is configured one by one. In SDN the controller holds the control logic and pushes rules to every switch's data plane."
+>
+  <sdn-planes>
+    <div class="ctl-row">
+      <button class="btn" data-mode="trad" aria-pressed="true">Traditional</button>
+      <button class="btn" data-mode="sdn" aria-pressed="false">SDN</button>
+      <button class="btn primary" data-apply>Apply policy</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="sp" data-view></div>
+    <p class="sp-msg" data-msg aria-live="polite"></p>
+  </sdn-planes>
+</Figure>
+
+<style>
+  .sp {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .sp :global(.ctrl) {
+    border: 1px solid var(--g-blue);
+    background: rgba(66, 133, 244, 0.14);
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+    font: 0.75rem var(--font-mono);
+  }
+  .sp :global(.row) {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .sp :global(.sw) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 8px;
+    font: 0.6875rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .sp :global(.sw b) {
+    color: var(--text);
+  }
+  .sp :global(.cp),
+  .sp :global(.dp) {
+    border-radius: 6px;
+    padding: 3px 4px;
+    border: 1px dashed var(--border-strong);
+  }
+  .sp :global(.cp) {
+    border-color: var(--g-yellow);
+  }
+  .sp :global(.dp) {
+    border-color: var(--g-green);
+  }
+  .sp :global(.done) {
+    background: rgba(52, 168, 83, 0.28);
+    color: #fff;
+  }
+  .sp-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  @media (max-width: 520px) {
+    .sp :global(.row) {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+</style>
+
+<script>
+  class SdnPlanes extends HTMLElement {
+    mode = 'trad';
+    applied = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-apply]')!.addEventListener('click', () => this.apply());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.applied = 0;
+      this.say(this.mode === 'trad' ? 'Each switch has its own control plane (yellow) beside its data plane (green).' : 'The switches keep only a data plane (green): they match and forward packets using rules the controller installs.');
+      this.draw();
+    }
+    apply() {
+      if (this.mode === 'sdn') {
+        this.applied = 4;
+        this.say('One change at the controller. It translated the policy into forwarding rules and installed them on all four switches. Consistent by construction.');
+      } else {
+        if (this.applied >= 4) return this.say('All four devices configured. Each had to be logged into and edited separately; a typo on any one leaves a gap.');
+        this.applied++;
+        this.say(`Device ${this.applied} of 4 configured by hand. Until the last one is done, the network enforces the policy only partly.`);
+      }
+      this.draw();
+    }
+    draw() {
+      const sw = (i: number) => {
+        const d = i < this.applied ? 'done' : '';
+        return this.mode === 'trad'
+          ? `<div class="sw"><b>Switch ${i + 1}</b><div class="cp ${d}">control plane${d ? ' ✓' : ''}</div><div class="dp">data plane</div></div>`
+          : `<div class="sw"><b>Switch ${i + 1}</b><div class="dp ${d}">data plane${d ? ' ✓ rule' : ''}</div></div>`;
+      };
+      const ctrl = this.mode === 'sdn' ? `<div class="ctrl">SDN controller · control plane<br>policy: isolate payments</div>` : '';
+      this.querySelector('[data-view]')!.innerHTML = `${ctrl}<div class="row">${[0, 1, 2, 3].map(sw).join('')}</div>`;
+    }
+  }
+  customElements.define('sdn-planes', SdnPlanes);
+</script>

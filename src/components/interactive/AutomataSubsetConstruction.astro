@@ -1,0 +1,194 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Subset construction, one DFA state at a time"
+  caption="The NFA accepts binary strings whose third symbol from the end is 1: q0 can loop forever, and on a 1 it may guess 'this is the one'. Each step takes the next unprocessed set S from the worklist and computes δ_D(S, a) as the union of the NFA moves from every state in S. Yellow sets are discovered for the first time; green rows contain q3 and so are accepting. It stops at 8 of the 16 possible subsets."
+>
+  <subset-con>
+    <svg class="nfa" viewBox="0 0 420 120" role="img" aria-label="NFA with states q0 to q3">
+      <defs>
+        <marker id="sc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--border-strong)"></path></marker>
+      </defs>
+      <path class="e" d="M16,80 L40,80" marker-end="url(#sc-arrow)"></path>
+      <path class="e" d="M54,60 C38,10 86,10 70,60" marker-end="url(#sc-arrow)"></path>
+      <text class="l" x="62" y="22">0,1</text>
+      <path class="e" d="M86,80 L162,80" marker-end="url(#sc-arrow)"></path>
+      <text class="l" x="124" y="72">1</text>
+      <path class="e" d="M206,80 L282,80" marker-end="url(#sc-arrow)"></path>
+      <text class="l" x="244" y="72">0,1</text>
+      <path class="e" d="M326,80 L378,80" marker-end="url(#sc-arrow)"></path>
+      <text class="l" x="354" y="72">0,1</text>
+      <circle class="n" cx="62" cy="80" r="21"></circle><text class="t" x="62" y="80">q0</text>
+      <circle class="n" cx="184" cy="80" r="21"></circle><text class="t" x="184" y="80">q1</text>
+      <circle class="n" cx="304" cy="80" r="21"></circle><text class="t" x="304" y="80">q2</text>
+      <circle class="n" cx="398" cy="80" r="19"></circle><circle class="ring" cx="398" cy="80" r="15"></circle><text class="t" x="398" y="80">q3</text>
+    </svg>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Process next set</button>
+      <button class="btn" data-all>Finish</button>
+      <button class="btn" data-reset>Reset</button>
+      <span class="stat mono" data-count></span>
+    </div>
+    <div class="wrap">
+      <table class="mono">
+        <thead><tr><th>DFA state S</th><th>on 0</th><th>on 1</th></tr></thead>
+        <tbody data-rows></tbody>
+      </table>
+    </div>
+    <p class="todo" data-todo></p>
+  </subset-con>
+</Figure>
+
+<style>
+  .nfa {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto 8px;
+  }
+  .e {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .l {
+    font: 600 12px var(--font-mono);
+    fill: var(--text-muted);
+    text-anchor: middle;
+  }
+  .n {
+    fill: var(--bg-soft);
+    stroke: var(--text-faint);
+    stroke-width: 1.6;
+  }
+  .ring {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.2;
+  }
+  .t {
+    font: 600 12px var(--font-mono);
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .wrap {
+    overflow-x: auto;
+    margin-top: 10px;
+  }
+  table {
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    width: 100%;
+  }
+  th {
+    text-align: left;
+    color: var(--text-faint);
+    font-weight: 600;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  td :global(*),
+  td {
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+  tbody :global(tr) {
+    border-bottom: 1px solid var(--border);
+  }
+  tbody :global(tr.acc td:first-child) {
+    color: var(--g-green);
+  }
+  tbody :global(tr.cur) {
+    background: rgba(66, 133, 244, 0.14);
+  }
+  tbody :global(.new) {
+    color: var(--g-yellow);
+    font-weight: 700;
+  }
+  tbody :global(.pending) {
+    color: var(--text-faint);
+  }
+  .todo {
+    margin: 10px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  // NFA for "third symbol from the end is 1"
+  const NFA: Record<string, string[]> = {
+    'q0,0': ['q0'],
+    'q0,1': ['q0', 'q1'],
+    'q1,0': ['q2'],
+    'q1,1': ['q2'],
+    'q2,0': ['q3'],
+    'q2,1': ['q3'],
+  };
+  const key = (s: string[]) => [...s].sort().join(',');
+  const show = (k: string) => `{${k}}`;
+  const move = (k: string, a: string) => {
+    const out = new Set<string>();
+    for (const q of k.split(',')) for (const r of NFA[`${q},${a}`] ?? []) out.add(r);
+    return key([...out]);
+  };
+
+  class SubsetCon extends HTMLElement {
+    rows: { s: string; t0?: string; t1?: string; n0?: boolean; n1?: boolean }[] = [];
+    queue: string[] = [];
+    seen = new Set<string>();
+    cur = -1;
+
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-all]')!.addEventListener('click', () => {
+        while (this.step());
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.rows = [{ s: 'q0' }];
+      this.queue = ['q0'];
+      this.seen = new Set(['q0']);
+      this.cur = -1;
+      this.draw();
+    }
+    step() {
+      const s = this.queue.shift();
+      if (s === undefined) return false;
+      const row = this.rows.find((r) => r.s === s)!;
+      this.cur = this.rows.indexOf(row);
+      for (const a of ['0', '1'] as const) {
+        const t = move(s, a);
+        const isNew = !this.seen.has(t);
+        if (isNew) {
+          this.seen.add(t);
+          this.queue.push(t);
+          this.rows.push({ s: t });
+        }
+        if (a === '0') (row.t0 = t), (row.n0 = isNew);
+        else (row.t1 = t), (row.n1 = isNew);
+      }
+      this.draw();
+      return this.queue.length > 0;
+    }
+    draw() {
+      this.querySelector('[data-rows]')!.innerHTML = this.rows
+        .map((r, i) => {
+          const cls = [r.s.includes('q3') ? 'acc' : '', i === this.cur ? 'cur' : ''].join(' ');
+          const cell = (t?: string, n?: boolean) => (t === undefined ? '<td class="pending">?</td>' : `<td class="${n ? 'new' : ''}">${show(t)}</td>`);
+          return `<tr class="${cls}"><td>${i === 0 ? '→ ' : ''}${show(r.s)}</td>${cell(r.t0, r.n0)}${cell(r.t1, r.n1)}</tr>`;
+        })
+        .join('');
+      this.querySelector('[data-count]')!.textContent = `${this.rows.length} DFA states found`;
+      this.querySelector('[data-todo]')!.textContent = this.queue.length
+        ? `Worklist: ${this.queue.map(show).join('  ')}`
+        : 'Worklist empty: every reachable set has been processed. The DFA has 8 states, one for each possible last-three-symbols pattern.';
+    }
+  }
+  customElements.define('subset-con', SubsetCon);
+</script>

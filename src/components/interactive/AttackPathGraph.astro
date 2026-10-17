@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Chaining weaknesses into an attack path"
+  caption="Each arrow exists only because of one weakness. Fix a weakness (toggle it) and see whether any path from the internet to the database survives. There are two independent routes, each made of modest issues: closing one leaves the other, and breaking any single link on a route cuts that route."
+>
+  <attack-path>
+    <svg viewBox="0 0 560 250" class="ap-svg" data-svg aria-label="Attack graph"></svg>
+    <div class="ap-fixes" data-fixes></div>
+    <p class="ap-msg" data-msg aria-live="polite"></p>
+  </attack-path>
+</Figure>
+
+<style>
+  .ap-svg {
+    width: 100%;
+    max-width: 680px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .ap-svg :global(.e) {
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .ap-svg :global(.e.fixed) {
+    stroke: var(--g-green);
+    stroke-dasharray: 4 4;
+    opacity: 0.6;
+  }
+  .ap-svg :global(.e.path) {
+    stroke: var(--g-red);
+    stroke-width: 3.5;
+  }
+  .ap-svg :global(rect) {
+    stroke-width: 2;
+  }
+  .ap-svg :global(text) {
+    font: 700 11.5px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+  }
+  .ap-svg :global(text.lbl) {
+    font-size: 8px;
+    font-weight: 500;
+    fill: var(--text-muted);
+  }
+  .ap-fixes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .ap-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    min-height: 3.2em;
+    color: var(--text-muted);
+  }
+  .ap-msg.bad {
+    color: var(--g-red-l);
+  }
+  .ap-msg.good {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  const NODES: Record<string, [number, number, string]> = {
+    internet: [70, 125, 'internet user'], api: [225, 55, 'public API'], admin: [225, 195, 'admin console'], upload: [385, 55, 'upload worker'], db: [490, 125, 'database'],
+  };
+  const EDGES: { id: string; from: string; to: string; why: string }[] = [
+    { id: 'ssrf', from: 'api', to: 'upload', why: 'API accepts unvalidated uploads' },
+    { id: 'priv', from: 'upload', to: 'db', why: 'Worker runs with DB admin rights' },
+    { id: 'pw', from: 'internet', to: 'admin', why: 'Admin console reachable with default password' },
+    { id: 'adm', from: 'admin', to: 'db', why: 'Console can read the database directly' },
+    { id: 'pub', from: 'internet', to: 'api', why: 'API is public (by design)' },
+  ];
+  class AttackPath extends HTMLElement {
+    fixed = new Set<string>();
+    connectedCallback() {
+      this.draw();
+    }
+    findPath(): string[] | null {
+      const q: [string, string[]][] = [['internet', []]];
+      const seen = new Set(['internet']);
+      while (q.length) {
+        const [n, p] = q.shift()!;
+        if (n === 'db') return p;
+        for (const e of EDGES) if (e.from === n && !this.fixed.has(e.id) && !seen.has(e.to)) (seen.add(e.to), q.push([e.to, [...p, e.id]]));
+      }
+      return null;
+    }
+    draw() {
+      const path = this.findPath();
+      const on = new Set(path ?? []);
+      let h = EDGES.map((e) => {
+        const [x1, y1] = NODES[e.from];
+        const [x2, y2] = NODES[e.to];
+        return `<line class="e ${this.fixed.has(e.id) ? 'fixed' : on.has(e.id) ? 'path' : ''}" x1="${x1 + 54}" y1="${y1}" x2="${x2 - 54}" y2="${y2}"></line>`;
+      }).join('');
+      h += Object.entries(NODES)
+        .map(([k, [x, y, l]]) => `<rect x="${x - 54}" y="${y - 17}" width="108" height="34" rx="8" fill="${k === 'db' ? '#ea4335' : k === 'internet' ? '#fbbc05' : '#4285f4'}" fill-opacity="0.3" stroke="${k === 'db' ? '#ea4335' : k === 'internet' ? '#fbbc05' : '#4285f4'}"></rect><text x="${x}" y="${y + 4}">${l}</text>`)
+        .join('');
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const fx = this.querySelector('[data-fixes]')!;
+      fx.innerHTML = EDGES.filter((e) => e.id !== 'pub')
+        .map((e) => `<button class="btn" data-f="${e.id}" aria-pressed="${this.fixed.has(e.id)}">Fix: ${e.why}</button>`)
+        .join('');
+      fx.querySelectorAll<HTMLButtonElement>('[data-f]').forEach((b) => b.addEventListener('click', () => (this.fixed.has(b.dataset.f!) ? this.fixed.delete(b.dataset.f!) : this.fixed.add(b.dataset.f!), this.draw())));
+      const m = this.querySelector('[data-msg]') as HTMLElement;
+      if (path) {
+        m.className = 'ap-msg bad';
+        m.textContent = `Attack path exists (${path.length} steps): ${['internet', ...path.map((id) => NODES[EDGES.find((e) => e.id === id)!.to][2])].join(' → ')}. ${path.length > 1 ? 'No single step is dramatic; the chain is the finding.' : ''}`;
+      } else {
+        m.className = 'ap-msg good';
+        m.textContent = 'No path from the internet to the database remains. A good test reports the whole chain, and retesting confirms the fix worked.';
+      }
+    }
+  }
+  customElements.define('attack-path', AttackPath);
+</script>

@@ -1,0 +1,98 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Proving you know x without revealing it"
+  caption="A toy Schnorr proof over a tiny group (p = 23, order q = 11, g = 4): the prover knows a secret x with y = g^x. Run a round: commit, challenge, respond, verify. Then try a cheating prover who does not know x. The response s = r + c·x is masked by the fresh random r, so it reveals nothing about x on its own."
+>
+  <schnorr-zkp>
+    <div class="ctl-row">
+      <label class="stat">Secret x <input type="range" min="1" max="10" value="7" data-x /> <b data-xv>7</b></label>
+      <span class="stat" data-pub></span>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-run="honest">Honest prover: run a round</button>
+      <button class="btn primary" data-run="cheat">Cheater (doesn't know x): run a round</button>
+    </div>
+    <ol class="sz-log" data-log></ol>
+    <p class="sz-msg" data-msg aria-live="polite"></p>
+  </schnorr-zkp>
+</Figure>
+
+<style>
+  .sz-log {
+    margin: 12px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.9 var(--font-mono);
+    color: var(--text-muted);
+    min-height: 7em;
+  }
+  .sz-log :global(.ok) {
+    color: var(--g-green-l);
+  }
+  .sz-log :global(.no) {
+    color: var(--g-red-l);
+  }
+  .sz-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  input[type='range'] {
+    width: 120px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const P = 23;
+  const Q = 11;
+  const G = 4;
+  const pw = (b: number, e: number) => {
+    let r = 1;
+    for (let i = 0; i < e; i++) r = (r * b) % P;
+    return r;
+  };
+  const rnd = (lo: number, hi: number) => lo + Math.floor(Math.random() * (hi - lo + 1));
+  class SchnorrZkp extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-x]')!.addEventListener('input', () => this.pub());
+      this.querySelectorAll<HTMLButtonElement>('[data-run]').forEach((b) => b.addEventListener('click', () => this.run(b.dataset.run === 'honest')));
+      this.pub();
+    }
+    x() {
+      return +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+    }
+    pub() {
+      this.querySelector('[data-xv]')!.textContent = String(this.x());
+      this.querySelector('[data-pub]')!.innerHTML = `public key y = 4^${this.x()} mod 23 = <b>${pw(G, this.x())}</b>`;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'The verifier knows only y. Run a round.';
+    }
+    run(honest: boolean) {
+      const y = pw(G, this.x());
+      const r = rnd(1, Q - 1);
+      const t = pw(G, r);
+      const c = rnd(1, Q - 1);
+      // an honest prover answers s = r + c*x; a cheater does not know x, so after seeing c it can only guess s
+      const s = honest ? (r + c * this.x()) % Q : rnd(0, Q - 1);
+      const lhs = pw(G, s);
+      const rhs = (t * pw(y, c)) % P;
+      const ok = lhs === rhs;
+      this.querySelector('[data-log]')!.innerHTML = [
+        `prover commits: t = g^r = 4^${r} mod 23 = <b>${t}</b>  (r is random and stays secret)`,
+        `verifier challenges: c = <b>${c}</b>  (random)`,
+        `prover responds: s = ${honest ? 'r + c·x mod 11' : 'a guess (does not know x)'} = <b>${s}</b>`,
+        `verifier checks g^s = ${lhs}  vs  t · y^c = ${t} · ${y}^${c} = ${rhs}  →  <span class="${ok ? 'ok' : 'no'}">${ok ? 'ACCEPT' : 'REJECT'}</span>`,
+      ].map((l) => `<li>${l}</li>`).join('');
+      this.querySelector('[data-msg]')!.textContent = honest
+        ? 'Completeness: an honest prover always passes, because g^s = g^(r+cx) = g^r · (g^x)^c = t · y^c. The verifier saw t, c and s, but s is hidden by the random r, so x is not revealed.'
+        : ok
+          ? 'The cheater got lucky: its guessed response happened to be right, which in this tiny group happens 1 time in 11. Real groups are enormous (and proofs repeat), so the chance becomes negligible.'
+          : 'Soundness: after seeing the challenge, a prover without x cannot compute the right response, so it is rejected (except for a 1/11 lucky guess here). Press the cheater button a few times to see an occasional pass.';
+    }
+  }
+  customElements.define('schnorr-zkp', SchnorrZkp);
+</script>

@@ -1,0 +1,224 @@
+---
+import Figure from '../Figure.astro';
+
+// One computation, "add two numbers", seen at every layer.
+const layers = [
+  {
+    id: 'app',
+    name: 'Application',
+    color: 'var(--g-blue)',
+    via: null,
+    think: 'Buttons, documents, results. “Show me 7 + 5.”',
+    hidden: 'Everything below: language, runtime, OS, instructions, circuits.',
+    code: 'Calculator\n\n  keys pressed:   7  +  5  =\n  display:        12',
+  },
+  {
+    id: 'hll',
+    name: 'High-level language',
+    color: 'var(--g-red)',
+    via: 'written by a programmer',
+    think: 'Variables, functions, types. Python here; any language would do.',
+    hidden: 'Registers, memory addresses, how + is carried out.',
+    code: 'def add(a, b):\n    return a + b\n\nadd(7, 5)   # 12',
+  },
+  {
+    id: 'vm',
+    name: 'Bytecode / runtime',
+    color: 'var(--g-yellow)',
+    via: 'compiled to bytecode by CPython',
+    think: 'Instructions for a virtual machine. Real output of dis.dis(add) on CPython 3.14.',
+    hidden: 'Which CPU this runs on. The interpreter loop that executes it is itself machine code.',
+    code: 'RESUME                    0\nLOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)\nBINARY_OP                 0 (+)\nRETURN_VALUE',
+  },
+  {
+    id: 'asm',
+    name: 'Assembly',
+    color: 'var(--g-green)',
+    via: 'a C compiler would emit this directly (x86-64, gcc -O2)',
+    think: 'Registers and single CPU instructions. a arrives in rdi, b in rsi.',
+    hidden: 'The binary encoding, and how the ALU performs the addition.',
+    code: '; int add(int a, int b) { return a + b; }\nadd:\n    lea  eax, [rdi + rsi]   ; eax = a + b\n    ret                     ; result returned in eax',
+  },
+  {
+    id: 'mc',
+    name: 'Machine code',
+    color: 'var(--g-blue)',
+    via: 'assembled into bytes',
+    think: 'Bit patterns the processor decodes. Exactly what sits in memory.',
+    hidden: 'Nothing at the instruction level; only the circuitry remains.',
+    code: '8D 04 37    lea eax, [rdi+rsi]\nC3          ret\n\n10001101 00000100 00110111 11000011',
+  },
+  {
+    id: 'hw',
+    name: 'Hardware',
+    color: 'var(--g-red)',
+    via: 'decoded and executed by the CPU',
+    think: 'An adder circuit: XOR/AND gates passing carries from bit to bit.',
+    hidden: 'Below this: transistors and voltages.',
+    code: '  carry   1 1 1\n      a   0 1 1 1    (7)\n  +   b   0 1 0 1    (5)\n  ─────────────────\n          1 1 0 0    (12)',
+  },
+];
+---
+
+<Figure
+  title="One addition, six layers"
+  caption="Pick a layer to see the same computation, adding 7 and 5, expressed at that level. Each layer only needs the interface of the one below it; the arrows name the tool that bridges the gap."
+>
+  <abstraction-stack>
+    <div class="as-grid">
+      <ol class="stack">
+        {
+          layers.map((l, i) => (
+            <li>
+              {l.via && <span class="via">↓ {l.via}</span>}
+              <button class="layer" data-layer={i} aria-pressed={i === 0 ? 'true' : 'false'} style={`--c:${l.color}`}>
+                <span class="idx">{String(i + 1)}</span>
+                {l.name}
+              </button>
+            </li>
+          ))
+        }
+      </ol>
+      <div class="detail">
+        {
+          layers.map((l, i) => (
+            <div class="panel" data-panel={i} hidden={i !== 0}>
+              <h4 style={`color:${l.color}`}>{l.name}</h4>
+              <pre class="code">{l.code}</pre>
+              <dl>
+                <dt>You think about</dt>
+                <dd>{l.think}</dd>
+                <dt>Hidden from you</dt>
+                <dd>{l.hidden}</dd>
+              </dl>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+    <div class="ctl-row" style="margin-top:12px">
+      <button class="btn primary" data-walk>Walk down the stack</button>
+    </div>
+  </abstraction-stack>
+</Figure>
+
+<style>
+  .as-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 16px;
+  }
+  @media (max-width: 640px) {
+    .as-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .stack {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .via {
+    display: block;
+    font-size: 0.6875rem;
+    color: var(--text-faint);
+    padding: 3px 0 3px 14px;
+  }
+  .layer {
+    appearance: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--c);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    font: 600 0.875rem var(--font-sans);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .layer:hover {
+    color: var(--text);
+  }
+  .layer[aria-pressed='true'] {
+    color: var(--text);
+    background: #1a1a1a;
+    border-color: var(--c);
+  }
+  .idx {
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .detail {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    min-width: 0;
+  }
+  h4 {
+    margin: 0 0 10px;
+    font-size: 0.9375rem;
+  }
+  .code {
+    margin: 0;
+    padding: 12px;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: 0.8125rem/1.5 var(--font-mono);
+    color: #e8eaed;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  dl {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  dt {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-top: 8px;
+  }
+  dd {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  class AbstractionStack extends HTMLElement {
+    timer = 0;
+    connectedCallback() {
+      const btns = [...this.querySelectorAll<HTMLButtonElement>('[data-layer]')];
+      btns.forEach((b) => b.addEventListener('click', () => (this.stop(), this.show(+b.dataset.layer!))));
+      this.querySelector('[data-walk]')!.addEventListener('click', () => {
+        if (this.timer) return this.stop();
+        let i = 0;
+        this.show(0);
+        this.querySelector('[data-walk]')!.textContent = 'Stop';
+        this.timer = window.setInterval(() => {
+          if (++i >= btns.length) return this.stop();
+          this.show(i);
+        }, 2200);
+      });
+    }
+    stop() {
+      clearInterval(this.timer);
+      this.timer = 0;
+      this.querySelector('[data-walk]')!.textContent = 'Walk down the stack';
+    }
+    show(i: number) {
+      this.querySelectorAll('[data-layer]').forEach((b) => b.setAttribute('aria-pressed', String(+(b as HTMLElement).dataset.layer! === i)));
+      this.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = +p.dataset.panel! !== i));
+    }
+  }
+  customElements.define('abstraction-stack', AbstractionStack);
+</script>

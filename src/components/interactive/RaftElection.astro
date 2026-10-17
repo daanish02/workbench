@@ -1,0 +1,194 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Raft leader election"
+  caption="Five nodes with random election timeouts. A follower that hears no heartbeat becomes a candidate, bumps the term and asks for votes; a majority (3) wins. Click a node to crash or revive it, or kill the leader and watch a new term begin. Crash three nodes and no leader can ever be elected."
+>
+  <raft-election>
+    <div class="ctl-row">
+      <button class="btn" data-act="run" aria-pressed="true">Running</button>
+      <button class="btn" data-act="kill">Kill leader</button>
+      <button class="btn" data-act="reset">Reset</button>
+      <span class="stat" data-stat></span>
+    </div>
+    <svg viewBox="0 0 320 210" class="re-svg" aria-label="Five Raft nodes in a circle" data-svg></svg>
+    <ol class="re-log" data-log></ol>
+  </raft-election>
+</Figure>
+
+<style>
+  .re-svg {
+    width: 100%;
+    max-width: 380px;
+    display: block;
+    margin: 8px auto 0;
+  }
+  .re-svg :global(circle) {
+    stroke-width: 2;
+    cursor: pointer;
+    transition: fill 0.2s;
+  }
+  .re-svg :global(text) {
+    font: 700 11px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .re-svg :global(text.sm) {
+    font-size: 8.5px;
+    font-weight: 500;
+    fill: var(--text-muted);
+  }
+  .re-log {
+    margin: 8px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-muted);
+    min-height: 9em;
+  }
+  .re-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+  .re-log :global(li.warn) {
+    color: var(--g-yellow-l);
+  }
+  .re-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  type Role = 'F' | 'C' | 'L';
+  interface Node {
+    role: Role;
+    term: number;
+    voted: number | null;
+    alive: boolean;
+    timer: number;
+    votes: number;
+  }
+  interface Msg {
+    at: number;
+    to: number;
+    from: number;
+    kind: 'rv' | 'vote' | 'hb';
+    term: number;
+  }
+  class RaftElection extends HTMLElement {
+    nodes: Node[] = [];
+    msgs: Msg[] = [];
+    tick = 0;
+    run = true;
+    iv = 0;
+    connectedCallback() {
+      this.querySelector('[data-act="run"]')!.addEventListener('click', (e) => {
+        this.run = !this.run;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.run));
+        (e.currentTarget as HTMLElement).textContent = this.run ? 'Running' : 'Paused';
+      });
+      this.querySelector('[data-act="kill"]')!.addEventListener('click', () => {
+        const l = this.nodes.findIndex((n) => n.alive && n.role === 'L');
+        if (l >= 0) this.toggle(l);
+      });
+      this.querySelector('[data-act="reset"]')!.addEventListener('click', () => this.reset());
+      this.reset();
+      this.iv = window.setInterval(() => this.run && this.step(), 100);
+    }
+    disconnectedCallback() {
+      clearInterval(this.iv);
+    }
+    rnd() {
+      return 15 + Math.floor(Math.random() * 16); // 1.5 to 3.0 s
+    }
+    log(t: string, c = '') {
+      const ol = this.querySelector('[data-log]')!;
+      ol.insertAdjacentHTML('afterbegin', `<li class="${c}">${t}</li>`);
+      while (ol.children.length > 7) ol.lastElementChild!.remove();
+    }
+    reset() {
+      this.nodes = Array.from({ length: 5 }, () => ({ role: 'F' as Role, term: 0, voted: null, alive: true, timer: this.rnd(), votes: 0 }));
+      this.msgs = [];
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.log('five followers, term 0, random timeouts');
+      this.draw();
+    }
+    toggle(i: number) {
+      const n = this.nodes[i];
+      n.alive = !n.alive;
+      if (n.alive) {
+        n.role = 'F';
+        n.timer = this.rnd();
+        this.log(`node ${i} revived as follower`, 'good');
+      } else this.log(`node ${i} crashed`, 'bad');
+      this.draw();
+    }
+    send(from: number, to: number, kind: Msg['kind'], term: number) {
+      this.msgs.push({ at: this.tick + 2, to, from, kind, term });
+    }
+    step() {
+      this.tick++;
+      const due = this.msgs.filter((m) => m.at <= this.tick);
+      this.msgs = this.msgs.filter((m) => m.at > this.tick);
+      for (const m of due) this.deliver(m);
+      this.nodes.forEach((n, i) => {
+        if (!n.alive) return;
+        if (n.role === 'L') {
+          if (this.tick % 5 === 0) this.nodes.forEach((_, j) => j !== i && this.send(i, j, 'hb', n.term));
+        } else if (--n.timer <= 0) {
+          n.role = 'C';
+          n.term++;
+          n.voted = i;
+          n.votes = 1;
+          n.timer = this.rnd();
+          this.log(`node ${i} times out: candidate for term ${n.term}`, 'warn');
+          this.nodes.forEach((_, j) => j !== i && this.send(i, j, 'rv', n.term));
+        }
+      });
+      this.draw();
+    }
+    deliver(m: Msg) {
+      const n = this.nodes[m.to];
+      if (!n.alive) return;
+      if (m.term > n.term) {
+        n.term = m.term;
+        n.voted = null;
+        if (n.role !== 'F') n.role = 'F';
+      }
+      if (m.kind === 'rv') {
+        if (m.term === n.term && (n.voted === null || n.voted === m.from) && n.role !== 'L') {
+          n.voted = m.from;
+          n.timer = this.rnd();
+          this.send(m.to, m.from, 'vote', n.term);
+        }
+      } else if (m.kind === 'vote') {
+        if (n.role === 'C' && m.term === n.term && ++n.votes >= 3) {
+          n.role = 'L';
+          this.log(`node ${m.to} wins ${n.votes} votes: LEADER of term ${n.term}`, 'good');
+          this.nodes.forEach((_, j) => j !== m.to && this.send(m.to, j, 'hb', n.term));
+        }
+      } else if (m.kind === 'hb' && m.term >= n.term) {
+        n.role = 'F';
+        n.timer = this.rnd();
+      }
+    }
+    draw() {
+      const svg = this.querySelector('[data-svg]')!;
+      const col: Record<Role, string> = { F: '#4285f4', C: '#fbbc05', L: '#34a853' };
+      svg.innerHTML = this.nodes
+        .map((n, i) => {
+          const a = (-Math.PI / 2) + (i * 2 * Math.PI) / 5;
+          const x = 160 + 70 * Math.cos(a);
+          const y = 105 + 75 * Math.sin(a);
+          const fill = n.alive ? col[n.role] : '#444';
+          return `<g data-i="${i}"><circle cx="${x}" cy="${y}" r="24" fill="${fill}33" stroke="${fill}"></circle><text x="${x}" y="${y - 2}">${i}${n.alive ? n.role : '✕'}</text><text class="sm" x="${x}" y="${y + 10}">term ${n.term}</text></g>`;
+        })
+        .join('');
+      svg.querySelectorAll<SVGGElement>('g[data-i]').forEach((g) => g.addEventListener('click', () => this.toggle(+g.dataset.i!)));
+      const lead = this.nodes.findIndex((n) => n.alive && n.role === 'L');
+      this.querySelector('[data-stat]')!.innerHTML = `leader: <b>${lead >= 0 ? 'node ' + lead : 'none'}</b> · up <b>${this.nodes.filter((n) => n.alive).length}</b>/5`;
+    }
+  }
+  customElements.define('raft-election', RaftElection);
+</script>

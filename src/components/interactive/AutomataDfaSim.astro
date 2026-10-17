@@ -1,0 +1,268 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Running a DFA one symbol at a time"
+  caption="Type a binary string and step through it. The blue state is where the machine is now and the highlighted arrow is the transition it just took; double circles are accepting states. The verdict depends only on the state after the last symbol. Switch machines: 'multiple of 3' tracks the remainder of the binary number read so far, since appending bit b turns remainder r into (2r + b) mod 3."
+>
+  <dfa-sim>
+    <div class="ctl-row">
+      <span class="ctl-label">Machine</span>
+      <button class="btn" data-preset="even" aria-pressed="true">Even number of 1s</button>
+      <button class="btn" data-preset="mod3" aria-pressed="false">Multiple of 3</button>
+    </div>
+    <div class="ctl-row">
+      <label class="ctl-label" for="dfa-in">Input</label>
+      <input class="input mono" id="dfa-in" data-in value="1011" spellcheck="false" maxlength="24" style="width:12em" />
+      <button class="btn primary" data-step>Step</button>
+      <button class="btn" data-run>Run</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="graph" viewBox="0 0 360 190" role="img" aria-label="State diagram" data-svg></svg>
+    <div class="tape mono" data-tape></div>
+    <div class="status" data-status></div>
+  </dfa-sim>
+</Figure>
+
+<style>
+  .graph {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 10px auto 0;
+  }
+  .graph :global(.edge) {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .graph :global(.edge.hot) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.6;
+  }
+  .graph :global(.elabel) {
+    font: 600 13px var(--font-mono);
+    fill: var(--text-muted);
+    text-anchor: middle;
+  }
+  .graph :global(.elabel.hot) {
+    fill: var(--g-yellow);
+  }
+  .graph :global(.node) {
+    fill: var(--bg-soft);
+    stroke: var(--text-faint);
+    stroke-width: 1.6;
+  }
+  .graph :global(.node.cur) {
+    fill: rgba(66, 133, 244, 0.25);
+    stroke: var(--g-blue);
+    stroke-width: 2.4;
+  }
+  .graph :global(.ring) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.2;
+  }
+  .graph :global(.nlabel) {
+    font: 600 12px var(--font-mono);
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .tape {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: center;
+    margin-top: 8px;
+    min-height: 30px;
+  }
+  .tape :global(span) {
+    width: 24px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+  }
+  .tape :global(span.done) {
+    color: var(--text-faint);
+    background: var(--bg-soft);
+  }
+  .tape :global(span.next) {
+    border-color: var(--g-blue);
+    color: #fff;
+  }
+  .status {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    min-height: 1.4em;
+  }
+  .status :global(.acc) {
+    color: var(--g-green);
+    font-weight: 700;
+  }
+  .status :global(.rej) {
+    color: var(--g-red);
+    font-weight: 700;
+  }
+</style>
+
+<script>
+  type Machine = {
+    states: string[];
+    labels: string[];
+    start: string;
+    accept: string[];
+    delta: Record<string, string>; // "state,symbol" -> state
+  };
+  const MACHINES: Record<string, Machine> = {
+    even: {
+      states: ['E', 'O'],
+      labels: ['Even', 'Odd'],
+      start: 'E',
+      accept: ['E'],
+      delta: { 'E,0': 'E', 'E,1': 'O', 'O,0': 'O', 'O,1': 'E' },
+    },
+    mod3: {
+      states: ['0', '1', '2'],
+      labels: ['r=0', 'r=1', 'r=2'],
+      start: '0',
+      accept: ['0'],
+      // remainder r, read bit b: new remainder (2r + b) mod 3
+      delta: { '0,0': '0', '0,1': '1', '1,0': '2', '1,1': '0', '2,0': '1', '2,1': '2' },
+    },
+  };
+  const Y = 105;
+  const R = 24;
+
+  class DfaSim extends HTMLElement {
+    m: Machine = MACHINES.even;
+    pos = 0;
+    state = 'E';
+    last = '';
+    timer: number | undefined;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-preset]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.m = MACHINES[b.dataset.preset!];
+          this.reset();
+        }),
+      );
+      const input = this.querySelector<HTMLInputElement>('[data-in]')!;
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(/[^01]/g, '');
+        this.reset();
+      });
+      this.querySelector('[data-step]')!.addEventListener('click', () => (this.stop(), this.step()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-run]')!.addEventListener('click', () => {
+        this.stop();
+        if (this.pos >= this.input().length) this.reset();
+        this.timer = window.setInterval(() => {
+          if (!this.step()) this.stop();
+        }, 450);
+      });
+      this.reset();
+    }
+    disconnectedCallback() {
+      this.stop();
+    }
+    input() {
+      return this.querySelector<HTMLInputElement>('[data-in]')!.value;
+    }
+    stop() {
+      if (this.timer !== undefined) window.clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    reset() {
+      this.stop();
+      this.pos = 0;
+      this.state = this.m.start;
+      this.last = '';
+      this.draw();
+    }
+    step() {
+      const s = this.input();
+      if (this.pos >= s.length) return false;
+      const key = `${this.state},${s[this.pos]}`;
+      this.last = key;
+      this.state = this.m.delta[key];
+      this.pos++;
+      this.draw();
+      return this.pos < s.length;
+    }
+    xs() {
+      const n = this.m.states.length;
+      const gap = n === 2 ? 180 : 115;
+      const x0 = 180 - (gap * (n - 1)) / 2;
+      return this.m.states.map((_, i) => x0 + i * gap);
+    }
+    draw() {
+      const m = this.m;
+      const xs = this.xs();
+      const idx = (q: string) => m.states.indexOf(q);
+      // group transitions by (from,to) so parallel labels merge, e.g. "0,1"
+      const groups = new Map<string, string[]>();
+      for (const [key, to] of Object.entries(m.delta)) {
+        const [from, sym] = key.split(',');
+        const g = `${from}>${to}`;
+        groups.set(g, [...(groups.get(g) ?? []), sym]);
+      }
+      let svg = `<defs><marker id="dfa-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--border-strong)"/></marker><marker id="dfa-arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--g-yellow)"/></marker></defs>`;
+      for (const [g, syms] of groups) {
+        const [from, to] = g.split('>');
+        const a = xs[idx(from)];
+        const b = xs[idx(to)];
+        const hot = syms.some((s) => this.last === `${from},${s}`) ? ' hot' : '';
+        let d: string, lx: number, ly: number;
+        if (from === to) {
+          d = `M${a - 12},${Y - R + 4} C${a - 34},${Y - 82} ${a + 34},${Y - 82} ${a + 12},${Y - R + 4}`;
+          lx = a;
+          ly = Y - 70;
+        } else if (a < b) {
+          const mid = (a + b) / 2;
+          d = `M${a + R - 2},${Y - 10} Q${mid},${Y - 52} ${b - R + 2},${Y - 10}`;
+          lx = mid;
+          ly = Y - 36;
+        } else {
+          const mid = (a + b) / 2;
+          d = `M${a - R + 2},${Y + 10} Q${mid},${Y + 52} ${b + R - 2},${Y + 10}`;
+          lx = mid;
+          ly = Y + 46;
+        }
+        svg += `<path class="edge${hot}" d="${d}" marker-end="url(#dfa-arrow${hot ? '-hot' : ''})"/>`;
+        svg += `<text class="elabel${hot}" x="${lx}" y="${ly}">${syms.join(',')}</text>`;
+      }
+      const sx = xs[idx(m.start)];
+      svg += `<path class="edge" d="M${sx - R - 34},${Y} L${sx - R - 2},${Y}" marker-end="url(#dfa-arrow)"/>`;
+      m.states.forEach((q, i) => {
+        const cur = q === this.state ? ' cur' : '';
+        svg += `<circle class="node${cur}" cx="${xs[i]}" cy="${Y}" r="${R}"/>`;
+        if (m.accept.includes(q)) svg += `<circle class="ring" cx="${xs[i]}" cy="${Y}" r="${R - 4}"/>`;
+        svg += `<text class="nlabel" x="${xs[i]}" y="${Y}">${m.labels[i]}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = svg;
+
+      const s = this.input();
+      this.querySelector('[data-tape]')!.innerHTML = s.length
+        ? [...s].map((c, i) => `<span class="${i < this.pos ? 'done' : i === this.pos ? 'next' : ''}">${c}</span>`).join('')
+        : '<em style="color:var(--text-faint)">empty string</em>';
+      const name = m.labels[idx(this.state)];
+      const ok = m.accept.includes(this.state);
+      const st = this.querySelector('[data-status]')!;
+      if (this.pos >= s.length) {
+        st.innerHTML = `Input consumed in state <b>${name}</b>: <span class="${ok ? 'acc' : 'rej'}">${ok ? 'ACCEPT' : 'REJECT'}</span>`;
+      } else {
+        st.innerHTML = `Read ${this.pos} of ${s.length} symbols; current state <b>${name}</b>${this.last ? ` (took δ(${this.last.replace(',', ', ')}))` : ''}`;
+      }
+    }
+  }
+  customElements.define('dfa-sim', DfaSim);
+</script>

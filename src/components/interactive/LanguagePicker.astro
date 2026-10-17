@@ -1,0 +1,164 @@
+---
+import Figure from '../Figure.astro';
+
+// job -> ranked picks [language, why]; `also` = viable but less common choices
+const jobs = [
+  {
+    id: 'frontend', label: 'Web frontend',
+    picks: [['TypeScript', 'Types catch whole classes of bugs in large UI codebases'], ['JavaScript', 'The only language browsers run natively']],
+    also: 'Rust or C++ compiled to WebAssembly for heavy in-browser computation',
+  },
+  {
+    id: 'backend', label: 'Web backend & APIs',
+    picks: [['Go', 'Simple, fast, excellent concurrency, one static binary'], ['TypeScript', 'One language across frontend and backend (Node, Bun, Deno)'], ['Python', 'Fastest to build with (FastAPI, Django)'], ['Java', 'Mature, huge ecosystem, built for big teams'], ['C#', 'ASP.NET Core is fast and well-tooled']],
+    also: 'Kotlin, PHP (Laravel), Ruby (Rails), Elixir (Phoenix)',
+  },
+  {
+    id: 'data', label: 'Data analysis & ML',
+    picks: [['Python', 'NumPy, pandas, PyTorch: the ecosystem is the reason'], ['SQL', 'Most data lives in databases; query it where it sits'], ['R', 'Statistics and plotting with decades of specialist packages']],
+    also: 'Julia for numerical computing; Scala for Spark pipelines',
+  },
+  {
+    id: 'systems', label: 'Systems & embedded',
+    picks: [['C', 'Smallest runtime, a compiler for every chip, the ABI everything speaks'], ['Rust', 'Memory safety without a garbage collector'], ['C++', 'Zero-cost abstractions; most existing engines and toolchains']],
+    also: 'Zig as a modern C alternative',
+  },
+  {
+    id: 'mobile', label: 'Mobile apps',
+    picks: [['Kotlin', 'The default language for Android'], ['Swift', 'The default language for iOS and macOS']],
+    also: 'Dart (Flutter) or TypeScript (React Native) for one cross-platform codebase',
+  },
+  {
+    id: 'infra', label: 'Cloud tooling & CLIs',
+    picks: [['Go', 'Docker, Kubernetes and Terraform are written in it; ships as one binary'], ['Rust', 'Very fast CLIs with tiny memory use'], ['Python', 'Automation, cloud SDKs, glue code'], ['Bash', 'Wiring existing commands together']],
+    also: 'PowerShell on Windows',
+  },
+  {
+    id: 'games', label: 'Games',
+    picks: [['C++', 'Unreal and most engines; full control over performance'], ['C#', 'Unity, the most widely used engine for indie and mobile']],
+    also: 'Lua for scripting inside engines; Rust (Bevy); GDScript (Godot)',
+  },
+  {
+    id: 'scripts', label: 'Scripting & automation',
+    picks: [['Python', 'Readable, batteries included, runs everywhere'], ['Bash', 'Already on every Linux/macOS machine; ideal for short command glue']],
+    also: 'Ruby, PowerShell',
+  },
+  {
+    id: 'enterprise', label: 'Large enterprise systems',
+    picks: [['Java', 'Decades of libraries, tooling and hiring pool'], ['C#', 'The .NET equivalent, strong on Windows and Azure'], ['Kotlin', 'Modern JVM language, interoperates with all Java code']],
+    also: 'TypeScript for the web tier',
+  },
+  {
+    id: 'perf', label: 'Low latency & HPC',
+    picks: [['C++', 'Trading systems, simulations, game engines'], ['Rust', 'Same speed class with compile-time safety'], ['C', 'Kernels, drivers, numeric libraries']],
+    also: 'Java with careful tuning; Fortran in scientific computing',
+  },
+];
+---
+
+<Figure
+  title="What are you building?"
+  caption="Pick a job to see the languages most teams would reach for, in rough order. These are defaults, not rules: an existing codebase, your team's skills or one critical library can outweigh all of them. Click a language to jump to its entry."
+>
+  <lang-picker>
+    <div class="ctl-row jobs">
+      {jobs.map((j, i) => <button class="btn" data-job={j.id} aria-pressed={i === 0 ? 'true' : 'false'}>{j.label}</button>)}
+    </div>
+    {
+      jobs.map((j, i) => (
+        <div class="result" data-panel={j.id} hidden={i !== 0}>
+          <ol class="picks">
+            {j.picks.map(([name, why], k) => (
+              <li style={`--c: var(${['--g-blue', '--g-red', '--g-yellow', '--g-green'][k % 4]})`}>
+                <button class="lang" data-lang={name}>{name}</button>
+                <span>{why}</span>
+              </li>
+            ))}
+          </ol>
+          <p class="also"><b>Also viable:</b> {j.also}</p>
+        </div>
+      ))
+    }
+  </lang-picker>
+</Figure>
+
+<style>
+  .jobs .btn {
+    font-size: 0.75rem;
+    padding: 5px 10px;
+  }
+  .result {
+    margin-top: 14px;
+  }
+  .picks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .picks li {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--c);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  @media (max-width: 480px) {
+    .picks li {
+      grid-template-columns: 1fr;
+      gap: 2px;
+    }
+  }
+  .lang {
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    font: 700 0.9375rem var(--font-sans);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .lang:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  .also {
+    margin: 10px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-faint);
+  }
+  .also b {
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+</style>
+
+<script>
+  class LangPicker extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-job]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-job]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.querySelectorAll<HTMLElement>('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== b.dataset.job));
+        }),
+      );
+      // jump to the language's entry: match the h3 text instead of guessing slugs (C and C# collide)
+      this.querySelectorAll<HTMLButtonElement>('[data-lang]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const h = [...document.querySelectorAll<HTMLElement>('.prose h3')].find((x) => x.textContent?.trim() === b.dataset.lang);
+          h?.scrollIntoView({ behavior: 'smooth' });
+          if (h) history.replaceState(null, '', '#' + h.id);
+        }),
+      );
+    }
+  }
+  customElements.define('lang-picker', LangPicker);
+</script>

@@ -1,0 +1,176 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Banker's safety check, one step at a time"
+  caption="Each step scans the processes in order for one whose Need fits inside Work (the resources free right now). If it finishes, its Allocation is added back to Work. The state is safe if every process can finish. Edit Available to find states that are unsafe."
+>
+  <bankers-safety>
+    <div class="ctl-row">
+      <span class="ctl-label">Available (A, B, C)</span>
+      <input class="input" data-avail value="3, 3, 2" style="width:8em" />
+      <button class="btn" data-preset="3, 3, 2">3,3,2</button>
+      <button class="btn" data-preset="2, 1, 0">2,1,0</button>
+    </div>
+    <div class="tw">
+      <table class="bk">
+        <thead><tr><th>Process</th><th>Allocation</th><th>Need</th><th>Status</th></tr></thead>
+        <tbody data-rows></tbody>
+      </table>
+    </div>
+    <p class="work">Work = <b data-work></b> &nbsp; Sequence: <b data-seq>—</b></p>
+    <p class="say" data-say aria-live="polite"></p>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Step</button>
+      <button class="btn" data-run>Run to end</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </bankers-safety>
+</Figure>
+
+<style>
+  .tw {
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  .bk {
+    border-collapse: collapse;
+    width: 100%;
+    font: 0.8125rem var(--font-mono);
+  }
+  .bk th {
+    font: 600 0.6875rem var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+    padding: 4px 8px;
+  }
+  .bk :global(td) {
+    padding: 5px 8px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+  }
+  .bk :global(tr.check td) {
+    background: rgba(251, 188, 5, 0.1);
+  }
+  .bk :global(tr.done td) {
+    color: var(--g-green-l);
+  }
+  .bk :global(tr.fail td:last-child) {
+    color: var(--g-red-l);
+  }
+  .work {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .work b {
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+  .say {
+    margin: 6px 0 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.8em;
+  }
+</style>
+
+<script>
+  type V = number[];
+  const ALLOC: V[] = [[0, 1, 0], [2, 0, 0], [3, 0, 2], [2, 1, 1], [0, 0, 2]];
+  const MAX: V[] = [[7, 5, 3], [3, 2, 2], [9, 0, 2], [2, 2, 2], [4, 3, 3]];
+  const NEED = MAX.map((m, i) => m.map((x, k) => x - ALLOC[i][k]));
+  const fmt = (v: V) => `(${v.join(',')})`;
+  const fits = (need: V, work: V) => need.every((x, k) => x <= work[k]);
+
+  class BankersSafety extends HTMLElement {
+    avail: V = [3, 3, 2];
+    work: V = [];
+    finished: boolean[] = [];
+    seq: number[] = [];
+    i = 0; // scan position within the current pass
+    progress = false; // did anything finish during this pass?
+    over = false;
+    checking = -1;
+    failed = false;
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-avail]')!;
+      const load = () => {
+        const v = input.value.split(/[\s,()]+/).filter(Boolean).map(Number);
+        if (v.length === 3 && v.every((x) => Number.isInteger(x) && x >= 0 && x < 20)) ((this.avail = v), this.reset());
+      };
+      input.addEventListener('input', load);
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) => b.addEventListener('click', () => ((input.value = b.dataset.preset!), load())));
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-run]')!.addEventListener('click', () => {
+        while (!this.over) this.step(false);
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.work = [...this.avail];
+      this.finished = ALLOC.map(() => false);
+      this.seq = [];
+      this.i = 0;
+      this.progress = false;
+      this.over = false;
+      this.checking = -1;
+      this.failed = false;
+      this.say(`Start with Work = Available = ${fmt(this.work)}.`);
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-say]')!.textContent = s;
+    }
+    // One step = examine one unfinished process. A full pass with no progress means unsafe.
+    step(redraw = true) {
+      if (this.over) return;
+      while (this.i < ALLOC.length && this.finished[this.i]) this.i++;
+      if (this.i >= ALLOC.length) {
+        if (this.finished.every(Boolean)) {
+          this.over = true;
+          this.say(`Safe: every process can finish, in the order ${this.seq.map((p) => 'P' + p).join(' → ')}.`);
+        } else if (!this.progress) {
+          this.over = true;
+          this.failed = true;
+          this.say(`Unsafe: no remaining process's Need fits in Work ${fmt(this.work)}. The system cannot guarantee they all finish.`);
+        } else {
+          this.i = 0;
+          this.progress = false;
+          return this.step(redraw);
+        }
+        if (redraw) this.draw();
+        return;
+      }
+      const p = this.i;
+      this.checking = p;
+      if (fits(NEED[p], this.work)) {
+        const before = fmt(this.work);
+        this.work = this.work.map((x, k) => x + ALLOC[p][k]);
+        this.finished[p] = true;
+        this.seq.push(p);
+        this.progress = true;
+        this.say(`P${p}: Need ${fmt(NEED[p])} ≤ Work ${before}, so P${p} can finish and release ${fmt(ALLOC[p])}. Work becomes ${fmt(this.work)}.`);
+      } else this.say(`P${p}: Need ${fmt(NEED[p])} does not fit in Work ${fmt(this.work)}. Skip it for now.`);
+      this.i++;
+      if (this.finished.every(Boolean)) {
+        this.over = true;
+        this.say(`Safe: every process can finish, in the order ${this.seq.map((q) => 'P' + q).join(' → ')}.`);
+      }
+      if (redraw) this.draw();
+    }
+    draw() {
+      this.querySelector('[data-rows]')!.innerHTML = ALLOC.map(
+        (a, p) =>
+          `<tr class="${this.finished[p] ? 'done' : ''} ${p === this.checking && !this.over ? 'check' : ''} ${this.failed && !this.finished[p] ? 'fail' : ''}"><td>P${p}</td><td>${fmt(a)}</td><td>${fmt(NEED[p])}</td><td>${this.finished[p] ? `finished #${this.seq.indexOf(p) + 1}` : this.failed ? 'stuck' : 'waiting'}</td></tr>`,
+      ).join('');
+      this.querySelector('[data-work]')!.textContent = fmt(this.work);
+      this.querySelector('[data-seq]')!.textContent = this.seq.length ? this.seq.map((p) => 'P' + p).join(' → ') : '—';
+    }
+  }
+  customElements.define('bankers-safety', BankersSafety);
+</script>

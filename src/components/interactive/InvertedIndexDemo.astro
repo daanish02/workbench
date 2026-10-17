@@ -1,0 +1,141 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An inverted index, and BM25 ranking"
+  caption="The index maps each word to the documents containing it, so a query looks up a few short lists instead of reading every document. Type a query: see each term's postings list, which documents match under AND or OR, and the BM25 score that ranks them (rare terms and short, focused documents score higher)."
+>
+  <inverted-index>
+    <div class="ctl-row">
+      <label class="stat">Query <input class="input ii-q" data-q value="red waterproof jacket" aria-label="Search query" /></label>
+      <button class="btn" data-mode="or" aria-pressed="true">Any term (OR)</button>
+      <button class="btn" data-mode="and" aria-pressed="false">All terms (AND)</button>
+    </div>
+    <div class="ii-docs" data-docs></div>
+    <div class="ii-post" data-post></div>
+    <ol class="ii-res" data-res></ol>
+    <p class="ii-msg" data-msg></p>
+  </inverted-index>
+</Figure>
+
+<style>
+  .ii-q {
+    width: 18em;
+    max-width: 100%;
+  }
+  .ii-docs {
+    margin-top: 12px;
+    display: grid;
+    gap: 3px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ii-docs :global(div) {
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+  .ii-docs :global(.hit) {
+    background: rgba(52, 168, 83, 0.18);
+    color: #fff;
+  }
+  .ii-docs :global(b) {
+    color: var(--text);
+    margin-right: 6px;
+  }
+  .ii-post {
+    margin-top: 12px;
+    font: 0.75rem/1.9 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ii-post :global(.t) {
+    display: inline-block;
+    border: 1px solid var(--g-blue);
+    border-radius: 6px;
+    padding: 1px 8px;
+    margin-right: 6px;
+    color: #fff;
+  }
+  .ii-res {
+    margin: 10px 0 0;
+    padding-left: 1.6em;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+  .ii-res :global(b) {
+    font-family: var(--font-mono);
+    color: var(--g-green-l);
+  }
+  .ii-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  const CORPUS: Record<number, string> = {
+    1: 'red running shoes for men',
+    2: 'blue running jacket waterproof',
+    3: 'waterproof hiking boots for men',
+    4: 'red leather boots',
+    5: 'running shoes red and blue',
+    6: 'kids red rain jacket waterproof',
+  };
+  const tok = (s: string) => s.toLowerCase().match(/[a-z]+/g) ?? [];
+  const INDEX: Record<string, Record<number, number>> = {};
+  for (const [id, text] of Object.entries(CORPUS))
+    for (const t of tok(text)) (INDEX[t] ??= {})[+id] = ((INDEX[t] ??= {})[+id] ?? 0) + 1;
+  const N = Object.keys(CORPUS).length;
+  const AVG = Object.values(CORPUS).reduce((a, t) => a + tok(t).length, 0) / N;
+  class InvertedIndex extends HTMLElement {
+    mode = 'or';
+    connectedCallback() {
+      this.querySelector('[data-q]')!.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const q = tok(this.querySelector<HTMLInputElement>('[data-q]')!.value);
+      const terms = [...new Set(q)];
+      const postings = terms.map((t) => Object.keys(INDEX[t] ?? {}).map(Number));
+      let match: number[];
+      if (!terms.length) match = [];
+      else if (this.mode === 'and') match = postings.reduce((a, b) => a.filter((x) => b.includes(x)));
+      else match = [...new Set(postings.flat())];
+      const k1 = 1.2;
+      const b = 0.75;
+      const score = (id: number) => {
+        let s = 0;
+        for (const t of terms) {
+          const df = Object.keys(INDEX[t] ?? {}).length;
+          const tf = INDEX[t]?.[id];
+          if (!df || !tf) continue;
+          const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5));
+          s += (idf * tf * (k1 + 1)) / (tf + k1 * (1 - b + (b * tok(CORPUS[id]).length) / AVG));
+        }
+        return s;
+      };
+      this.querySelector('[data-docs]')!.innerHTML = Object.entries(CORPUS)
+        .map(([id, text]) => `<div class="${match.includes(+id) ? 'hit' : ''}"><b>doc ${id}</b>${text}</div>`)
+        .join('');
+      this.querySelector('[data-post]')!.innerHTML = terms.length
+        ? terms.map((t) => `<div><span class="t">${t}</span> → ${postings[terms.indexOf(t)].length ? '[' + postings[terms.indexOf(t)].join(', ') + ']' : '[ ] (no document contains it)'}</div>`).join('')
+        : '<i>type a query</i>';
+      const ranked = match.map((id) => ({ id, s: score(id) })).sort((a, c) => c.s - a.s);
+      this.querySelector('[data-res]')!.innerHTML = ranked.map(({ id, s }) => `<li><b>${s.toFixed(2)}</b> doc ${id}: ${CORPUS[id]}</li>`).join('');
+      const looked = postings.reduce((a, p) => a + p.length, 0);
+      this.querySelector('[data-msg]')!.textContent = terms.length
+        ? `${match.length} match${match.length === 1 ? '' : 'es'}. The index touched ${looked} postings entries; a scan would read all ${N} documents. At a billion documents that difference is the whole point. ${this.mode === 'and' ? 'AND intersects the sorted postings lists.' : 'OR unions them; BM25 puts documents that match more (and rarer) terms first.'}`
+        : 'Enter one or more words.';
+    }
+  }
+  customElements.define('inverted-index', InvertedIndex);
+</script>

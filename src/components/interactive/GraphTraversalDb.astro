@@ -1,0 +1,180 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Follow the relationships"
+  caption="A friendship graph. Click a person to start there and choose how many hops to follow: rings of colour show who is 1, 2, 3 hops away. Compare 'people reached' with the rows a SQL self-join would build (every walk, duplicates included). Switch to Shortest path and click two people."
+>
+  <graph-traversal>
+    <div class="ctl-row">
+      <span class="ctl-label">Mode</span>
+      <button class="btn" data-mode="hops" aria-pressed="true">Within N hops</button>
+      <button class="btn" data-mode="path" aria-pressed="false">Shortest path</button>
+      <span class="ctl-label" data-hoplabel>Hops</span>
+      <button class="btn" data-h="1" aria-pressed="false">1</button>
+      <button class="btn" data-h="2" aria-pressed="true">2</button>
+      <button class="btn" data-h="3" aria-pressed="false">3</button>
+    </div>
+    <svg viewBox="0 0 360 240" class="gt-svg" data-svg aria-label="Friendship graph"></svg>
+    <div class="gt-stat" data-stat></div>
+    <p class="gt-msg" data-msg aria-live="polite"></p>
+  </graph-traversal>
+</Figure>
+
+<style>
+  .gt-svg {
+    width: 100%;
+    max-width: 560px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .gt-svg :global(.e) {
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .gt-svg :global(.e.on) {
+    stroke: var(--text-muted);
+    stroke-width: 2;
+  }
+  .gt-svg :global(.e.path) {
+    stroke: var(--g-yellow);
+    stroke-width: 3.5;
+  }
+  .gt-svg :global(.n) {
+    cursor: pointer;
+  }
+  .gt-svg :global(.n circle) {
+    stroke-width: 2;
+    transition: fill 0.2s;
+  }
+  .gt-svg :global(text) {
+    font: 700 9.5px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .gt-stat {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    justify-content: center;
+    margin-top: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .gt-stat :global(b) {
+    color: var(--text);
+  }
+  .gt-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  const NODES: Record<string, [number, number]> = {
+    Ana: [40, 120], Ben: [100, 52], Cy: [100, 188], Dee: [175, 120], Eli: [240, 55],
+    Fay: [315, 62], Gus: [325, 135], Hal: [170, 212], Ivy: [245, 200], Jo: [320, 208],
+  };
+  const EDGES: [string, string][] = [['Ana', 'Ben'], ['Ana', 'Cy'], ['Ben', 'Dee'], ['Cy', 'Dee'], ['Dee', 'Eli'], ['Eli', 'Fay'], ['Fay', 'Gus'], ['Cy', 'Hal'], ['Hal', 'Ivy'], ['Ivy', 'Jo'], ['Gus', 'Jo']];
+  const ADJ: Record<string, string[]> = {};
+  for (const [a, b] of EDGES) ((ADJ[a] ??= []).push(b), (ADJ[b] ??= []).push(a));
+  const COL = ['#ffffff', '#fbbc05', '#34a853', '#4285f4'];
+  class GraphTraversal extends HTMLElement {
+    mode = 'hops';
+    hops = 2;
+    start = 'Ana';
+    end: string | null = null;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.end = null;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-h]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.hops = +b.dataset.h!;
+          this.querySelectorAll('[data-h]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    click(n: string) {
+      if (this.mode === 'hops') this.start = n;
+      else if (this.end === null && n !== this.start && this.start) this.end = n;
+      else (this.start = n), (this.end = null);
+      this.draw();
+    }
+    bfs(src: string) {
+      const dist: Record<string, number> = { [src]: 0 };
+      const prev: Record<string, string> = {};
+      const q = [src];
+      while (q.length) {
+        const c = q.shift()!;
+        for (const n of [...ADJ[c]].sort()) if (!(n in dist)) ((dist[n] = dist[c] + 1), (prev[n] = c), q.push(n));
+      }
+      return { dist, prev };
+    }
+    walks(src: string, k: number) {
+      let w: Record<string, number> = { [src]: 1 };
+      for (let i = 0; i < k; i++) {
+        const nx: Record<string, number> = {};
+        for (const [n, c] of Object.entries(w)) for (const m of ADJ[n]) nx[m] = (nx[m] ?? 0) + c;
+        w = nx;
+      }
+      return Object.values(w).reduce((a, b) => a + b, 0);
+    }
+    draw() {
+      const { dist, prev } = this.bfs(this.start);
+      const path: string[] = [];
+      if (this.mode === 'path' && this.end) for (let c: string | undefined = this.end; c; c = prev[c]) path.unshift(c);
+      const pathEdges = new Set(path.slice(1).map((n, i) => [path[i], n].sort().join('-')));
+      const inRange = (n: string) => (this.mode === 'hops' ? dist[n] <= this.hops : path.includes(n) || n === this.start);
+      const svg = this.querySelector('[data-svg]')!;
+      let h = EDGES.map(([a, b]) => {
+        const on = this.mode === 'hops' && dist[a] <= this.hops && dist[b] <= this.hops && Math.min(dist[a], dist[b]) < this.hops;
+        const p = pathEdges.has([a, b].sort().join('-'));
+        return `<line class="e ${p ? 'path' : on ? 'on' : ''}" x1="${NODES[a][0]}" y1="${NODES[a][1]}" x2="${NODES[b][0]}" y2="${NODES[b][1]}"></line>`;
+      }).join('');
+      h += Object.entries(NODES)
+        .map(([n, [x, y]]) => {
+          const d = dist[n];
+          const colour = this.mode === 'hops' ? (d <= this.hops ? COL[d] : '#444') : n === this.start ? COL[0] : n === this.end ? COL[3] : path.includes(n) ? COL[1] : '#444';
+          const lit = inRange(n);
+          return `<g class="n" data-n="${n}"><circle cx="${x}" cy="${y}" r="17" fill="${colour}" fill-opacity="${lit ? 0.45 : 0.12}" stroke="${colour}"></circle><text x="${x}" y="${y + 3.5}">${n}</text></g>`;
+        })
+        .join('');
+      svg.innerHTML = h;
+      svg.querySelectorAll<SVGGElement>('g.n').forEach((g) => g.addEventListener('click', () => this.click(g.dataset.n!)));
+      const hl = this.querySelector('[data-hoplabel]') as HTMLElement;
+      this.querySelectorAll<HTMLElement>('[data-h]').forEach((b) => (b.style.display = this.mode === 'hops' ? '' : 'none'));
+      hl.style.display = this.mode === 'hops' ? '' : 'none';
+      const stat = this.querySelector('[data-stat]')!;
+      const msg = this.querySelector('[data-msg]')!;
+      if (this.mode === 'hops') {
+        const reached = Object.entries(dist).filter(([, d]) => d >= 1 && d <= this.hops);
+        const rows = this.walks(this.start, this.hops);
+        stat.innerHTML = `start <b>${this.start}</b> · people reached <b>${reached.length}</b> · SQL self-join rows at hop ${this.hops}: <b>${rows}</b> (${this.hops} join${this.hops > 1 ? 's' : ''})`;
+        const byHop = [1, 2, 3].filter((k) => k <= this.hops).map((k) => `${k} hop: ${Object.entries(dist).filter(([, d]) => d === k).map(([n]) => n).join(', ') || 'none'}`);
+        msg.textContent = `${byHop.join(' · ')}. A graph database follows stored neighbour links from ${this.start}, touching only the nearby part of the graph; a relational query rebuilds each hop with another self-join.`;
+      } else if (!this.end) {
+        stat.innerHTML = `from <b>${this.start}</b>`;
+        msg.textContent = `Start is ${this.start}. Click a second person to find the shortest chain of friendships between them.`;
+      } else {
+        stat.innerHTML = `<b>${this.start}</b> → <b>${this.end}</b> · <b>${path.length - 1}</b> hops`;
+        msg.textContent = `Shortest path: ${path.join(' → ')}. Breadth-first search finds it by expanding outward one hop at a time. In SQL this needs a recursive query; in a graph database it is a built-in operation.`;
+      }
+    }
+  }
+  customElements.define('graph-traversal', GraphTraversal);
+</script>

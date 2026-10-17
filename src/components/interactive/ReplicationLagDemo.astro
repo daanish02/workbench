@@ -1,0 +1,183 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Leader and two followers"
+  caption="Write, then read from a follower straight away: with asynchronous replication it is stale. Raise a follower's lag, switch the acknowledgement rule, and crash the leader to see which acknowledged writes disappear."
+>
+  <repl-lag>
+    <div class="ctl-row">
+      <span class="ctl-label">Ack rule</span>
+      <button class="btn" data-mode="async" aria-pressed="true">Async (leader only)</button>
+      <button class="btn" data-mode="semi" aria-pressed="false">Semi-sync (1 follower)</button>
+      <button class="btn" data-mode="sync" aria-pressed="false">Sync (all followers)</button>
+    </div>
+    <div class="ctl-row">
+      <label class="stat">F1 lag <input type="range" min="100" max="2000" step="100" value="300" data-lag="1" /> <b data-lagv="1">300</b> ms</label>
+      <label class="stat">F2 lag <input type="range" min="100" max="2000" step="100" value="1500" data-lag="2" /> <b data-lagv="2">1,500</b> ms</label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-act="write">Write next value</button>
+      <button class="btn" data-act="crash">Crash leader</button>
+      <button class="btn" data-act="reset">Reset</button>
+    </div>
+    <div class="rl">
+      <div class="rl-node" data-node="L"><b>Leader</b><span class="mono" data-val></span><button class="btn" data-read="L">Read</button></div>
+      <div class="rl-node" data-node="1"><b>Follower 1</b><span class="mono" data-val></span><button class="btn" data-read="1">Read</button></div>
+      <div class="rl-node" data-node="2"><b>Follower 2</b><span class="mono" data-val></span><button class="btn" data-read="2">Read</button></div>
+    </div>
+    <ol class="rl-log" data-log></ol>
+  </repl-lag>
+</Figure>
+
+<style>
+  .rl {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .rl {
+      grid-template-columns: 1fr;
+    }
+  }
+  .rl-node {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+    font-size: 0.8125rem;
+  }
+  .rl-node.dead {
+    opacity: 0.4;
+  }
+  .rl-node.lead {
+    border-color: var(--g-green);
+  }
+  .rl-log {
+    margin: 12px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-muted);
+    max-height: 12.5em;
+    overflow-y: auto;
+  }
+  .rl-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+  .rl-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+  .rl-log :global(li.warn) {
+    color: var(--g-yellow-l);
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  class ReplLag extends HTMLElement {
+    mode = 'async';
+    ver: Record<string, number> = { L: 0, 1: 0, 2: 0 };
+    acked = 0;
+    leader = 'L';
+    dead = new Set<string>();
+    timers: number[] = [];
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLInputElement>('[data-lag]').forEach((r) =>
+        r.addEventListener('input', () => (this.querySelector(`[data-lagv="${r.dataset.lag}"]`)!.textContent = (+r.value).toLocaleString('en-US'))),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-read]').forEach((b) => b.addEventListener('click', () => this.read(b.dataset.read!)));
+      this.querySelector('[data-act="write"]')!.addEventListener('click', () => this.write());
+      this.querySelector('[data-act="crash"]')!.addEventListener('click', () => this.crash());
+      this.querySelector('[data-act="reset"]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    disconnectedCallback() {
+      this.timers.forEach(clearTimeout);
+    }
+    lag(f: string) {
+      return +(this.querySelector<HTMLInputElement>(`[data-lag="${f}"]`)!.value);
+    }
+    log(t: string, c = '') {
+      const ol = this.querySelector('[data-log]')!;
+      ol.insertAdjacentHTML('afterbegin', `<li class="${c}">${t}</li>`);
+    }
+    reset() {
+      this.timers.forEach(clearTimeout);
+      this.timers = [];
+      this.ver = { L: 0, 1: 0, 2: 0 };
+      this.acked = 0;
+      this.leader = 'L';
+      this.dead.clear();
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.log('Cluster ready. Value is v0 everywhere.');
+      this.draw();
+    }
+    after(ms: number, fn: () => void) {
+      this.timers.push(window.setTimeout(fn, ms));
+    }
+    write() {
+      if (this.dead.has(this.leader)) return this.log('Leader is down: writes fail until a new leader exists.', 'bad');
+      const L = this.leader;
+      const followers = ['L', '1', '2'].filter((n) => n !== L && !this.dead.has(n));
+      const v = ++this.ver[L];
+      const lags = followers.map((f) => this.lag(f === '1' ? '1' : '2'));
+      this.log(`write v${v} applied on leader`);
+      followers.forEach((f, i) =>
+        this.after(lags[i], () => {
+          if (this.dead.has(f)) return;
+          this.ver[f] = Math.max(this.ver[f], v);
+          this.log(`v${v} reaches follower ${f} after ${lags[i]} ms`);
+          this.draw();
+        }),
+      );
+      const wait = this.mode === 'async' || !lags.length ? 0 : this.mode === 'semi' ? Math.min(...lags) : Math.max(...lags);
+      this.after(wait, () => {
+        this.acked = Math.max(this.acked, v);
+        this.log(`client acknowledged for v${v} after ${wait} ms`, 'good');
+      });
+      this.draw();
+    }
+    read(n: string) {
+      if (this.dead.has(n)) return this.log(`node ${n} is down`, 'bad');
+      const top = this.ver[this.leader];
+      const v = this.ver[n];
+      this.log(v < top ? `read on ${n} returned v${v}, but the leader has v${top}: STALE` : `read on ${n} returned v${v} (current)`, v < top ? 'warn' : 'good');
+    }
+    crash() {
+      if (this.dead.has(this.leader)) return;
+      const old = this.leader;
+      this.dead.add(old);
+      const cand = ['L', '1', '2'].filter((n) => !this.dead.has(n)).sort((a, b) => this.ver[b] - this.ver[a])[0];
+      this.leader = cand;
+      const lost = Math.max(0, this.acked - this.ver[cand]);
+      this.log(`leader crashed; follower ${cand} (at v${this.ver[cand]}) promoted`, 'bad');
+      this.log(lost ? `${lost} acknowledged write(s) are GONE: the client was told they were safe` : 'no acknowledged write was lost', lost ? 'bad' : 'good');
+      this.draw();
+    }
+    draw() {
+      for (const n of ['L', '1', '2']) {
+        const el = this.querySelector(`[data-node="${n}"]`)!;
+        el.classList.toggle('dead', this.dead.has(n));
+        el.classList.toggle('lead', this.leader === n && !this.dead.has(n));
+        el.querySelector('[data-val]')!.textContent = `v${this.ver[n]}${this.dead.has(n) ? ' (down)' : this.leader === n ? ' · leader' : ''}`;
+      }
+    }
+  }
+  customElements.define('repl-lag', ReplLag);
+</script>

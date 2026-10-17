@@ -1,0 +1,184 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Tuning a Dynamo-style store: N, W and R"
+  caption="Key 'cart:42' is stored on three replicas (B, C, D); E, F and A are spares. A write is acknowledged after W replicas have it (the rest catch up later); a read asks R replicas and takes the newest. Click nodes to fail them. When W + R > N a read is guaranteed to meet the latest write; turn on sloppy quorum and a down replica's write goes to a stand-in with a hint, keeping the store writable at the price of weaker guarantees."
+>
+  <dynamo-quorum>
+    <div class="ctl-row">
+      <label class="stat">W <input type="range" min="1" max="3" value="2" data-w /> <b data-wv>2</b></label>
+      <label class="stat">R <input type="range" min="1" max="3" value="2" data-r /> <b data-rv>2</b></label>
+      <span class="stat">N = 3</span>
+      <button class="btn" data-sloppy aria-pressed="false">Sloppy quorum + hinted handoff</button>
+    </div>
+    <div class="dq" data-nodes></div>
+    <div class="ctl-row">
+      <button class="btn primary" data-put>Put v2</button>
+      <button class="btn primary" data-get>Get</button>
+      <button class="btn" data-sync>Anti-entropy (sync replicas)</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="dq-msg" data-msg aria-live="polite"></p>
+  </dynamo-quorum>
+</Figure>
+
+<style>
+  .dq {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 6px;
+    margin: 12px 0;
+  }
+  @media (max-width: 520px) {
+    .dq {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+  .dq :global(button.n) {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 8px 4px;
+    cursor: pointer;
+    font: 0.75rem/1.5 var(--font-mono);
+    text-align: center;
+  }
+  .dq :global(button.n b) {
+    display: block;
+    font-size: 0.9375rem;
+  }
+  .dq :global(button.n.rep) {
+    border-color: var(--g-blue);
+  }
+  .dq :global(button.n.down) {
+    opacity: 0.4;
+    text-decoration: line-through;
+  }
+  .dq :global(button.n.new) {
+    background: rgba(52, 168, 83, 0.25);
+  }
+  .dq :global(button.n.hint) {
+    border-color: var(--g-yellow);
+  }
+  .dq-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.8em;
+  }
+  input[type='range'] {
+    width: 80px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const NAMES = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const PREF = ['B', 'C', 'D'];
+  const SPARE = ['E', 'F', 'A'];
+  class DynamoQuorum extends HTMLElement {
+    ver: Record<string, number> = {};
+    hint: Record<string, string | null> = {}; // stand-in node -> replica it holds a write for
+    down = new Set<string>();
+    sloppy = false;
+    msg = '';
+    connectedCallback() {
+      this.querySelectorAll('input[type=range]').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-sloppy]')!.addEventListener('click', (e) => {
+        this.sloppy = !this.sloppy;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.sloppy));
+      });
+      this.querySelector('[data-put]')!.addEventListener('click', () => this.put());
+      this.querySelector('[data-get]')!.addEventListener('click', () => this.get());
+      this.querySelector('[data-sync]')!.addEventListener('click', () => this.sync());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    q(s: string) {
+      return +this.querySelector<HTMLInputElement>(s)!.value;
+    }
+    reset() {
+      this.ver = Object.fromEntries(NAMES.map((n) => [n, PREF.includes(n) ? 1 : 0]));
+      this.hint = {};
+      this.down.clear();
+      this.msg = 'All three replicas hold v1. Click nodes to fail them, press Put v2, then Get.';
+      this.draw();
+    }
+    put() {
+      const W = this.q('[data-w]');
+      const up = PREF.filter((n) => !this.down.has(n));
+      let acks = 0;
+      const touched: string[] = [];
+      // the write reaches the first W healthy replicas now; the rest are still catching up
+      for (const n of up.slice(0, W)) {
+        this.ver[n] = 2;
+        acks++;
+        touched.push(n);
+      }
+      const missing = W - acks;
+      if (missing > 0 && this.sloppy) {
+        const downPref = PREF.filter((n) => this.down.has(n));
+        const spares = SPARE.filter((s) => !this.down.has(s) && !this.hint[s]);
+        for (let i = 0; i < missing && i < downPref.length && i < spares.length; i++) {
+          this.hint[spares[i]] = downPref[i];
+          acks++;
+          touched.push(`${spares[i]} (hint for ${downPref[i]})`);
+        }
+      }
+      this.msg = acks >= W ? `Put acknowledged: ${acks} of the required W=${W} acks (${touched.join(', ')}). The other replicas have not seen v2 yet.${touched.some((t) => t.includes('hint')) ? ' A stand-in node is holding the write for a failed replica, to hand it back on recovery.' : ''}` : `Put FAILED: only ${acks} of the W=${W} acks possible. With strict quorums the store refuses writes it cannot replicate widely enough (turn on sloppy quorum to accept them via stand-ins).`;
+      this.draw();
+    }
+    get() {
+      const R = this.q('[data-r]');
+      const W = this.q('[data-w]');
+      const up = PREF.filter((n) => !this.down.has(n));
+      if (up.length < R) {
+        this.msg = `Get FAILED: only ${up.length} of the ${R} replicas needed are reachable. Reads here use only the real replicas, never stand-ins.`;
+        return this.draw();
+      }
+      // worst case: the coordinator happens to pick the R replicas with the OLDEST data
+      const chosen = [...up].sort((a, b) => this.ver[a] - this.ver[b]).slice(0, R);
+      const newest = Math.max(...chosen.map((n) => this.ver[n]));
+      const latest = Math.max(...PREF.map((n) => this.ver[n]));
+      const guaranteed = W + R > 3;
+      this.msg = `Get asked ${chosen.join(', ')} (the worst-case set) and returns v${newest}. ${newest < latest ? `That is STALE: v${latest} exists elsewhere. W + R = ${W + R} is not greater than N = 3, so the read set can miss every up-to-date replica.` : guaranteed ? `W + R = ${W + R} > N = 3, so every read set overlaps every write set: this read is guaranteed to see the latest write.` : `Fresh this time, but with W + R = ${W + R} ≤ 3 it was not guaranteed.`} ${newest < latest ? 'A real store would also repair the stale replica on read (read repair).' : ''}`;
+      for (const n of chosen) if (this.ver[n] < newest) this.ver[n] = newest; // read repair
+      this.draw(chosen);
+    }
+    sync() {
+      const latest = Math.max(...PREF.map((n) => this.ver[n]));
+      for (const n of PREF) if (!this.down.has(n)) this.ver[n] = latest;
+      for (const [stand, owner] of Object.entries(this.hint)) if (owner && !this.down.has(owner)) {
+        this.ver[owner] = latest;
+        delete this.hint[stand];
+      }
+      this.msg = 'Anti-entropy ran: replicas compare data (in practice via Merkle trees) and copy what they are missing; stand-ins hand hinted writes back to recovered owners.';
+      this.draw();
+    }
+    draw(readSet: string[] = []) {
+      this.querySelector('[data-wv]')!.textContent = String(this.q('[data-w]'));
+      this.querySelector('[data-rv]')!.textContent = String(this.q('[data-r]'));
+      const latest = Math.max(...Object.values(this.ver));
+      const el = this.querySelector('[data-nodes]')!;
+      el.innerHTML = NAMES.map((n) => {
+        const cls = `n ${PREF.includes(n) ? 'rep' : ''} ${this.down.has(n) ? 'down' : ''} ${this.ver[n] === latest && latest > 1 ? 'new' : ''} ${this.hint[n] ? 'hint' : ''}`;
+        const v = this.hint[n] ? `hint v2 → ${this.hint[n]}` : PREF.includes(n) ? `v${this.ver[n]}` : 'spare';
+        return `<button class="${cls}" data-n="${n}" aria-label="Toggle node ${n}"><b>${n}</b>${v}${readSet.includes(n) ? ' ◀ read' : ''}</button>`;
+      }).join('');
+      el.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          const n = b.dataset.n!;
+          this.down.has(n) ? this.down.delete(n) : this.down.add(n);
+          this.msg = `Node ${n} is now ${this.down.has(n) ? 'DOWN' : 'up'}.`;
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-msg]')!.textContent = this.msg;
+    }
+  }
+  customElements.define('dynamo-quorum', DynamoQuorum);
+</script>

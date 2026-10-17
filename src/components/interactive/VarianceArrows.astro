@@ -1,0 +1,153 @@
+---
+import Figure from '../Figure.astro';
+const modes = [
+  {
+    id: 'co', label: 'Covariant', ex: 'ReadonlyArray<T> · Sequence[T]', arrow: '↑', note: 'same direction',
+    up: { ok: true, why: 'Every value you can read out is a Cat, and every Cat is an Animal.' },
+    down: { ok: false, why: 'Reading could hand a Dog to code that was promised only cats.' },
+  },
+  {
+    id: 'contra', label: 'Contravariant', ex: '(x: T) => void · Callable[[T], None]', arrow: '↓', note: 'reversed',
+    up: { ok: false, why: 'A Cat handler would be called with any Animal, including a Dog it cannot handle.' },
+    down: { ok: true, why: 'An Animal handler will only ever be given cats here, and it can handle any animal.' },
+  },
+  {
+    id: 'inv', label: 'Invariant', ex: 'Array<T> · list[T] (mutable)', arrow: '✕', note: 'neither direction',
+    up: { ok: false, why: 'Code holding it as List<Animal> could insert a Dog into the cat list.' },
+    down: { ok: false, why: 'Code holding it as List<Cat> could read out a Dog.' },
+  },
+];
+---
+
+<Figure
+  title="Which way does the arrow go?"
+  caption="Read A → B as “an A can be used where a B is expected”. The left arrow is fixed: Cat <: Animal. Pick how the generic type uses T and see whether the arrow is lifted in the same direction (producers), reversed (consumers), or lost (both)."
+>
+  <variance-arrows>
+    <div class="ctl-row">
+      {modes.map((m, i) => <button class="btn" data-mode={m.id} aria-pressed={i === 0 ? 'true' : 'false'}>{m.label}</button>)}
+    </div>
+    <div class="cols">
+      <div class="col">
+        <div class="t">Animal</div>
+        <div class="ar">↑</div>
+        <div class="t">Cat</div>
+        <div class="cap">Cat &lt;: Animal</div>
+      </div>
+      <div class="lift">⟹</div>
+      <div class="col">
+        <div class="t" data-top>F&lt;Animal&gt;</div>
+        <div class="ar" data-ar>↑</div>
+        <div class="t" data-bot>F&lt;Cat&gt;</div>
+        <div class="cap" data-note></div>
+      </div>
+    </div>
+    <div class="mono ex" data-ex></div>
+    <ul class="checks">
+      <li data-up><b></b><span></span></li>
+      <li data-down><b></b><span></span></li>
+    </ul>
+    <script type="application/json" data-modes set:html={JSON.stringify(modes)} />
+  </variance-arrows>
+</Figure>
+
+<style>
+  .cols {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin: 14px 0 8px;
+  }
+  .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+  .t {
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: 700 0.9375rem var(--font-mono);
+  }
+  .ar {
+    font-size: 1.75rem;
+    line-height: 1;
+    color: var(--g-green);
+  }
+  .ar.bad {
+    color: var(--g-red);
+  }
+  .lift {
+    color: var(--text-faint);
+    font-size: 1.25rem;
+  }
+  .cap {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+    margin-top: 2px;
+  }
+  .ex {
+    text-align: center;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  .checks {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+    display: grid;
+    gap: 6px;
+  }
+  variance-arrows .checks li {
+    text-align: left;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--c);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.8125rem;
+  }
+  .checks b {
+    display: block;
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+  .checks span {
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  type Check = { ok: boolean; why: string };
+  type Mode = { id: string; label: string; ex: string; arrow: string; note: string; up: Check; down: Check };
+
+  class VarianceArrows extends HTMLElement {
+    connectedCallback() {
+      const modes: Mode[] = JSON.parse(this.querySelector('[data-modes]')!.textContent!);
+      const btns = [...this.querySelectorAll<HTMLButtonElement>('[data-mode]')];
+      const show = (m: Mode) => {
+        btns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === m.id)));
+        const ar = this.querySelector<HTMLElement>('[data-ar]')!;
+        ar.textContent = m.arrow;
+        ar.classList.toggle('bad', m.id === 'inv');
+        this.querySelector('[data-note]')!.textContent = m.note;
+        this.querySelector('[data-ex]')!.textContent = 'F<T> = ' + m.ex;
+        const put = (sel: string, c: Check, text: string) => {
+          const li = this.querySelector<HTMLElement>(sel)!;
+          li.style.setProperty('--c', c.ok ? 'var(--g-green)' : 'var(--g-red)');
+          li.querySelector('b')!.textContent = `${c.ok ? '✓' : '✗'} ${text}`;
+          li.querySelector('span')!.textContent = c.why;
+        };
+        put('[data-up]', m.up, 'F<Cat> where F<Animal> is expected');
+        put('[data-down]', m.down, 'F<Animal> where F<Cat> is expected');
+      };
+      btns.forEach((b) => b.addEventListener('click', () => show(modes.find((m) => m.id === b.dataset.mode)!)));
+      show(modes[0]);
+    }
+  }
+  customElements.define('variance-arrows', VarianceArrows);
+</script>

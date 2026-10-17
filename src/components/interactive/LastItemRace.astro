@@ -1,0 +1,136 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two buyers, one item left"
+  caption="Step the two transactions in any order. With read-then-write, both can read stock = 1 and both 'succeed': a lost update. With a single conditional UPDATE the database serializes the two writes, so exactly one buyer wins."
+>
+  <last-item-race>
+    <div class="ctl-row">
+      <button class="btn" data-mode="naive" aria-pressed="true">Read, then write</button>
+      <button class="btn" data-mode="atomic" aria-pressed="false">Conditional UPDATE</button>
+      <span class="stat">stock: <b data-stock>1</b></span>
+    </div>
+    <div class="lr">
+      <div class="lr-t"><b>Buyer A</b><ol data-ol="A"></ol></div>
+      <div class="lr-t"><b>Buyer B</b><ol data-ol="B"></ol></div>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step="A">Step A</button>
+      <button class="btn primary" data-step="B">Step B</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="lr-msg" data-msg aria-live="polite"></p>
+  </last-item-race>
+</Figure>
+
+<style>
+  .lr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .lr-t {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+  }
+  .lr-t ol {
+    margin: 6px 0 0;
+    padding-left: 1.2em;
+    font: 0.6875rem/1.9 var(--font-mono);
+    color: var(--text-faint);
+  }
+  .lr-t :global(li.done) {
+    color: var(--text-muted);
+  }
+  .lr-t :global(li.next) {
+    color: #fff;
+    font-weight: 700;
+  }
+  .lr-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  @media (max-width: 420px) {
+    .lr {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  type T = 'A' | 'B';
+  class LastItemRace extends HTMLElement {
+    mode = 'naive';
+    stock = 1;
+    pc: Record<T, number> = { A: 0, B: 0 };
+    seen: Record<T, number | null> = { A: null, B: null };
+    won: Record<T, boolean | null> = { A: null, B: null };
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-step]').forEach((b) => b.addEventListener('click', () => this.step(b.dataset.step as T)));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    prog() {
+      return this.mode === 'naive' ? ['SELECT stock', 'if stock > 0:', 'UPDATE stock = stock - 1'] : ['UPDATE stock = stock - 1\n WHERE stock > 0', 'check rows affected'];
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.stock = 1;
+      this.pc = { A: 0, B: 0 };
+      this.seen = { A: null, B: null };
+      this.won = { A: null, B: null };
+      this.say(this.mode === 'naive' ? 'Each buyer reads the stock, decides, then writes. Try A, B, A, B.' : 'Each buyer sends one atomic statement. Step A then B.');
+      this.draw();
+    }
+    step(t: T) {
+      const p = this.prog();
+      if (this.pc[t] >= p.length) return this.say(`Buyer ${t} is finished.`);
+      const i = this.pc[t]++;
+      if (this.mode === 'naive') {
+        if (i === 0) {
+          this.seen[t] = this.stock;
+          this.say(`Buyer ${t} reads stock = ${this.stock}.`);
+        } else if (i === 1) {
+          if ((this.seen[t] ?? 0) <= 0) (this.won[t] = false), (this.pc[t] = p.length), this.say(`Buyer ${t} saw no stock and gives up.`);
+          else this.say(`Buyer ${t} decides the item is available (based on the value it read earlier).`);
+        } else {
+          this.stock -= 1;
+          this.won[t] = true;
+          this.say(`Buyer ${t} writes stock = ${this.stock}.`);
+        }
+      } else if (i === 0) {
+        const ok = this.stock > 0;
+        if (ok) this.stock -= 1;
+        this.won[t] = ok;
+        this.say(`Buyer ${t}'s UPDATE ${ok ? 'matched 1 row: stock is now ' + this.stock : 'matched 0 rows: stock was already 0'}.`);
+      } else this.say(`Buyer ${t} ${this.won[t] ? 'got the item' : 'learns there is none left'}.`);
+      const wins = (['A', 'B'] as T[]).filter((x) => this.won[x]).length;
+      if (wins === 2) this.say('Both buyers believe they bought the last unit, and stock is now −1. The check and the write were not atomic: a lost update / oversell.');
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-stock]')!.textContent = String(this.stock);
+      for (const t of ['A', 'B'] as T[])
+        this.querySelector(`[data-ol="${t}"]`)!.innerHTML = this.prog()
+          .map((s, i) => `<li class="${i < this.pc[t] ? 'done' : i === this.pc[t] ? 'next' : ''}"><span style="white-space:pre-wrap">${s}</span></li>`)
+          .join('');
+    }
+  }
+  customElements.define('last-item-race', LastItemRace);
+</script>

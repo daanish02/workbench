@@ -1,0 +1,247 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Build a commit graph"
+  caption="Each circle is a commit; lines point back to its parent. Commit, branch, switch, then combine work three ways. A merge adds a commit with two parents. A rebase replays your commits on a new base and gives them new IDs (the faded originals are no longer reachable from any branch). A squash merge adds one ordinary commit and keeps no link to the source branch. Try the diverged scenario first."
+>
+  <git-graph>
+    <div class="ctl-row">
+      <button class="btn primary" data-act="commit">Commit</button>
+      <button class="btn" data-act="branch">New branch</button>
+      <button class="btn" data-act="undo">Undo</button>
+      <button class="btn" data-act="diverge">Reset to scenario</button>
+      <button class="btn" data-act="reset">Empty repo</button>
+    </div>
+    <div class="ctl-row" data-switch></div>
+    <div class="ctl-row" data-combine></div>
+    <pre class="gg-cmd" data-cmd></pre>
+    <div class="gg-wrap"><svg class="gg-svg" data-svg aria-label="Commit graph"></svg></div>
+    <p class="gg-msg" data-msg aria-live="polite"></p>
+    <p class="gg-hint" data-hint></p>
+  </git-graph>
+</Figure>
+
+<style>
+  .gg-wrap {
+    overflow-x: auto;
+    margin-top: 10px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .gg-svg {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+  }
+  .gg-wrap {
+    padding: 8px 0;
+  }
+  .gg-cmd {
+    margin: 10px 0 0;
+    padding: 8px 12px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--g-green);
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    white-space: pre-wrap;
+    min-height: 2.4em;
+  }
+  .gg-hint {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    font-size: 0.8125rem;
+    color: var(--text);
+    border-left: 3px solid var(--g-yellow);
+    background: var(--bg-elev);
+    border-radius: 0 8px 8px 0;
+  }
+  .gg-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .gg-svg :global(.tag) {
+    font-weight: 700;
+  }
+  .gg-svg :global(.edge) {
+    fill: none;
+    stroke-width: 2;
+  }
+  .gg-svg :global(.dim) {
+    opacity: 0.25;
+  }
+  .gg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  .ctl-row[data-switch],
+  .ctl-row[data-combine] {
+    margin-top: 6px;
+  }
+  .ctl-row[data-switch]:empty,
+  .ctl-row[data-combine]:empty {
+    display: none;
+  }
+</style>
+
+<script>
+  type C = { id: string; parents: string[]; lane: number; msg: string; gen: number };
+  const COLORS = ['var(--g-blue)', 'var(--g-green)', 'var(--g-yellow)', 'var(--g-red)', '#c58af9', '#78d9ec'];
+  const hash = (s: string) => {
+    let h = 2166136261;
+    for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+    return (h >>> 0).toString(16).padStart(8, '0').slice(0, 5);
+  };
+  class GitGraph extends HTMLElement {
+    commits: Record<string, C> = {};
+    order: string[] = [];
+    branches: Record<string, { tip: string; lane: number }> = {};
+    head = 'main';
+    lanes = 1;
+    n = 0;
+    msg = '';
+    cmd = '';
+    hist: string[] = [];
+    snap() { return JSON.stringify({ c: this.commits, o: this.order, b: this.branches, h: this.head, l: this.lanes, n: this.n, m: this.msg }); }
+    load(t: string) { const d = JSON.parse(t); this.commits = d.c; this.order = d.o; this.branches = d.b; this.head = d.h; this.lanes = d.l; this.n = d.n; this.msg = d.m; }
+    connectedCallback() {
+      this.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest('button[data-act]') as HTMLElement | null;
+        if (!b) return;
+        const a = b.dataset.act!;
+        const arg = b.dataset.arg!;
+        if (a === 'undo') {
+          const prev = this.hist.pop();
+          if (prev) { this.load(prev); this.cmd = '(undone)'; }
+          this.draw();
+          return;
+        }
+        this.hist.push(this.snap());
+        this.cmd = ({ commit: `git commit -m "c${this.n}"`, branch: `git switch -c feature${Object.keys(this.branches).length}`, diverge: '(scenario: main and feature1 have diverged)', reset: '(empty repository with one commit)', switch: `git switch ${arg}`, merge: `git merge ${arg}`, rebase: `git rebase ${arg}`, squash: `git merge --squash ${arg} && git commit` } as Record<string, string>)[a];
+        if (a === 'commit') this.commit();
+        else if (a === 'branch') this.branch();
+        else if (a === 'reset') this.reset();
+        else if (a === 'diverge') this.diverge();
+        else if (a === 'switch') { this.head = arg; this.msg = `Switched to ${arg}. New commits now advance ${arg}.`; }
+        else if (a === 'merge') this.merge(arg);
+        else if (a === 'rebase') this.rebase(arg);
+        else if (a === 'squash') this.squash(arg);
+        this.draw();
+      });
+      this.diverge();
+      this.hist = [];
+      this.cmd = '(starting state: main and feature1 have diverged from a shared commit)';
+      this.draw();
+    }
+    tip(b: string) { return this.branches[b].tip; }
+    make(parents: string[], lane: number, msg: string) {
+      const id = hash(parents.join('') + msg + this.n++);
+      const gen = 1 + Math.max(0, ...parents.map((p) => this.commits[p].gen));
+      this.commits[id] = { id, parents, lane, msg, gen };
+      this.order.push(id);
+      return id;
+    }
+    reset() {
+      this.commits = {}; this.order = []; this.branches = {}; this.n = 0; this.lanes = 1; this.head = 'main';
+      const root = this.make([], 0, 'init');
+      this.branches.main = { tip: root, lane: 0 };
+      this.msg = 'One commit on main. Make commits, branch, and combine them.';
+    }
+    commit() {
+      const b = this.branches[this.head];
+      b.tip = this.make([b.tip], b.lane, `c${this.n}`);
+      this.msg = `New commit on ${this.head}: its parent is the previous tip, and the branch label moved forward. That is all a branch is.`;
+    }
+    branch() {
+      const name = `feature${Object.keys(this.branches).length}`;
+      this.branches[name] = { tip: this.tip(this.head), lane: this.lanes++ };
+      this.head = name;
+      this.msg = `Created ${name} at the current commit: a new label, no files copied. You are now on ${name}.`;
+    }
+    diverge() {
+      this.reset();
+      this.commit(); this.commit();
+      this.branch(); this.commit(); this.commit();
+      this.head = 'main'; this.commit();
+      this.msg = 'main and feature1 have diverged from a shared ancestor.';
+    }
+    anc(a: string, b: string): boolean {
+      if (a === b) return true;
+      return this.commits[b].parents.some((p) => this.anc(a, p));
+    }
+    reach() {
+      const r = new Set<string>();
+      const walk = (id: string) => { if (r.has(id)) return; r.add(id); this.commits[id].parents.forEach(walk); };
+      Object.values(this.branches).forEach((b) => walk(b.tip));
+      return r;
+    }
+    merge(o: string) {
+      const h = this.branches[this.head], t = this.tip(o);
+      if (this.anc(t, h.tip)) this.msg = `${o} is already contained in ${this.head}: nothing to merge.`;
+      else if (this.anc(h.tip, t)) { h.tip = t; this.msg = `Fast-forward: ${this.head} had not diverged, so its label simply moved to ${o}'s commit. No merge commit.`; }
+      else { h.tip = this.make([h.tip, t], h.lane, `merge ${o}`); this.msg = `Merge commit with two parents (${this.head}'s tip and ${o}'s tip). Both lines of history are preserved.`; }
+    }
+    rebase(o: string) {
+      const h = this.branches[this.head], base = this.tip(o);
+      const mine = new Set<string>();
+      const walk = (id: string) => { if (this.anc(id, base) || mine.has(id)) return; mine.add(id); this.commits[id].parents.forEach(walk); };
+      walk(h.tip);
+      const replay = [...mine].filter((id) => this.commits[id].parents.length === 1).sort((a, b) => this.commits[a].gen - this.commits[b].gen);
+      if (!replay.length) { this.msg = `${this.head} has no commits of its own beyond ${o}: nothing to replay.`; return; }
+      if (this.anc(base, h.tip)) { this.msg = `${this.head} is already based on ${o}'s tip.`; return; }
+      let parent = base;
+      for (const id of replay) parent = this.make([parent], h.lane, this.commits[id].msg + "'");
+      h.tip = parent;
+      this.msg = `Rebased: ${replay.length} commit(s) were replayed on top of ${o} and got NEW IDs (same changes, new parents). The faded originals are unreachable now. Never do this to commits others already pulled.`;
+    }
+    squash(o: string) {
+      const h = this.branches[this.head], t = this.tip(o);
+      if (this.anc(t, h.tip)) { this.msg = `${o} is already contained in ${this.head}.`; return; }
+      h.tip = this.make([h.tip], h.lane, `squash ${o}`);
+      this.msg = `Squash: one new ordinary commit holds ${o}'s combined changes. It has a single parent, so ${o}'s commits are not part of ${this.head}'s ancestry.`;
+    }
+    draw() {
+      const names = Object.keys(this.branches);
+      this.querySelector('[data-switch]')!.innerHTML = '<span class="stat">On:</span>' + names.map((n) => `<button class="btn" data-act="switch" data-arg="${n}" aria-pressed="${n === this.head}">${n}</button>`).join('');
+      const others = names.filter((n) => n !== this.head);
+      this.querySelector('[data-combine]')!.innerHTML = others.length ? others.map((n) => `<button class="btn" data-act="merge" data-arg="${n}">Merge ${n}</button><button class="btn" data-act="rebase" data-arg="${n}">Rebase onto ${n}</button><button class="btn" data-act="squash" data-arg="${n}">Squash ${n}</button>`).join('') : '';
+      const reach = this.reach();
+      const used = [...new Set(this.order.map((i) => this.commits[i].lane))].sort((a, b) => a - b); // only lanes that hold commits take space
+      const X = (g: number) => 30 + g * 46, Y = (l: number) => 44 + used.indexOf(l) * 42;
+      const maxG = Math.max(...this.order.map((i) => this.commits[i].gen));
+      const W = Math.max(260, X(maxG) + 70), H = Y(used[used.length - 1]) + 34;
+      let h = '';
+      for (const id of this.order) {
+        const c = this.commits[id];
+        c.parents.forEach((p, k) => {
+          const a = this.commits[p];
+          const x1 = X(a.gen), y1 = Y(a.lane), x2 = X(c.gen), y2 = Y(c.lane), mx = (x1 + x2) / 2;
+          h += `<path class="edge ${reach.has(id) ? '' : 'dim'}" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}" stroke="${k ? COLORS[a.lane % 6] : COLORS[c.lane % 6]}"></path>`;
+        });
+      }
+      for (const id of this.order) {
+        const c = this.commits[id];
+        h += `<g class="${reach.has(id) ? '' : 'dim'}"><circle cx="${X(c.gen)}" cy="${Y(c.lane)}" r="9" fill="${COLORS[c.lane % 6]}"></circle><text x="${X(c.gen) - 14}" y="${Y(c.lane) + 22}">${c.id}</text></g>`;
+      }
+      const at: Record<string, number> = {};
+      names.forEach((n) => {
+        const b = this.branches[n], c = this.commits[b.tip], k = (at[b.tip] = (at[b.tip] ?? -1) + 1);
+        h += `<text class="tag" x="${X(c.gen) - 12}" y="${Y(c.lane) - 15 - k * 11}" style="fill:${n === this.head ? 'var(--text)' : COLORS[b.lane % 6]}">${n === this.head ? '▶ ' : ''}${n}</text>`;
+      });
+      const svg = this.querySelector('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${W} ${H + 12}`);
+      svg.setAttribute('width', String(W));
+      svg.innerHTML = h;
+      this.querySelector('[data-msg]')!.textContent = this.msg;
+      this.querySelector('[data-cmd]')!.textContent = this.cmd ? (this.cmd.startsWith('(') ? this.cmd : `$ ${this.cmd}`) : '';
+      const diverged = names.length > 1 && names.some((x) => names.some((y) => x !== y && !this.anc(this.tip(x), this.tip(y)) && !this.anc(this.tip(y), this.tip(x))));
+      (this.querySelector('[data-hint]') as HTMLElement).textContent = names.length === 1 ? 'Try it: press Commit a few times, then New branch and commit on it.' : diverged ? 'The branches have diverged. Switch to main and try Merge feature1, then press Undo and try Squash, or switch to feature1 and try Rebase onto main. Compare the graphs each time.' : 'These branches are now in a line (nothing diverged). Press Undo to try another way, or Start empty to build your own.';
+    }
+  }
+  customElements.define('git-graph', GitGraph);
+</script>

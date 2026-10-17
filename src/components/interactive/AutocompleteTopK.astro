@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Autocomplete from precomputed top suggestions"
+  caption="Type a prefix. Every prefix node in the trie already stores its top three popular queries (computed offline from query logs), so answering a keystroke is just walking the prefix and reading the list: no scanning, no sorting. Turn on a trending boost and notice that nothing changes until the offline job recomputes."
+>
+  <autocomplete-topk>
+    <div class="ctl-row">
+      <label class="stat">Prefix <input class="input" data-p value="ip" autocomplete="off" aria-label="Search prefix" /></label>
+      <button class="btn" data-boost aria-pressed="false">Trending: boost "ice cream maker" ×10</button>
+      <button class="btn" data-job disabled>Recompute (offline job)</button>
+    </div>
+    <div class="ac-path" data-path></div>
+    <ol class="ac-res" data-res></ol>
+    <p class="ac-msg" data-msg></p>
+  </autocomplete-topk>
+</Figure>
+
+<style>
+  .ac-path {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .ac-path :global(span) {
+    border: 1px solid var(--g-blue);
+    border-radius: 6px;
+    padding: 2px 9px;
+    font: 0.8125rem var(--font-mono);
+    color: #fff;
+  }
+  .ac-path :global(span.root) {
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+  }
+  .ac-res {
+    margin: 12px 0 0;
+    padding-left: 1.6em;
+    font: 0.8125rem/1.8 var(--font-mono);
+    color: var(--text);
+  }
+  .ac-res :global(i) {
+    font-style: normal;
+    color: var(--text-faint);
+    margin-left: 8px;
+  }
+  .ac-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  .input {
+    width: 8em;
+  }
+</style>
+
+<script>
+  const BASE: Record<string, number> = {
+    iphone: 900, 'iphone 15 case': 700, 'iphone charger': 650, ipad: 500, 'ipad pro': 410, 'ikea desk': 300, 'ice cream maker': 120, iron: 90, 'ice skates': 80, instagram: 600, 'imdb top 250': 200, indeed: 340,
+  };
+  type Table = Record<string, string[]>;
+  function build(counts: Record<string, number>): Table {
+    const all: Record<string, [number, string][]> = {};
+    for (const [q, n] of Object.entries(counts)) for (let i = 1; i <= q.length; i++) (all[q.slice(0, i)] ??= []).push([n, q]);
+    const t: Table = {};
+    for (const [p, list] of Object.entries(all)) t[p] = list.sort((a, b) => b[0] - a[0]).slice(0, 3).map((x) => x[1]);
+    return t;
+  }
+  class AutocompleteTopK extends HTMLElement {
+    counts = { ...BASE };
+    table: Table = build(BASE);
+    pending = false;
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-boost]')!.addEventListener('click', (e) => {
+        this.pending = !this.pending;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.pending));
+        this.querySelector<HTMLButtonElement>('[data-job]')!.disabled = !this.pending;
+        this.draw();
+      });
+      this.querySelector('[data-job]')!.addEventListener('click', () => {
+        this.counts = { ...BASE, 'ice cream maker': BASE['ice cream maker'] * 10 };
+        this.table = build(this.counts);
+        this.pending = false;
+        (this.querySelector('[data-boost]') as HTMLElement).setAttribute('aria-pressed', 'false');
+        (this.querySelector('[data-job]') as HTMLButtonElement).disabled = true;
+        this.draw(true);
+      });
+      this.draw();
+    }
+    draw(recomputed = false) {
+      const p = this.querySelector<HTMLInputElement>('[data-p]')!.value.toLowerCase();
+      this.querySelector('[data-path]')!.innerHTML = `<span class="root">root</span>` + [...p].map((c) => `<span>${c === ' ' ? '␣' : c}</span>`).join('');
+      const res = this.table[p] ?? [];
+      this.querySelector('[data-res]')!.innerHTML = res.length ? res.map((q) => `<li>${q}<i>${this.counts[q].toLocaleString('en-US')} searches</i></li>`).join('') : '<li><i>no suggestions</i></li>';
+      const n = Object.keys(this.counts).length;
+      this.querySelector('[data-msg]')!.textContent =
+        (p ? `Answered by walking ${p.length} node${p.length === 1 ? '' : 's'} and reading a stored list; scanning would compare against all ${n} known queries (billions in practice). ` : 'Type a prefix. ') +
+        (this.pending ? 'A trend is building in the logs, but the stored suggestions are unchanged until the offline job runs. ' : '') +
+        (recomputed ? 'The offline job rebuilt the lists, so the trending query now ranks higher. ' : '');
+    }
+  }
+  customElements.define('autocomplete-topk', AutocompleteTopK);
+</script>

@@ -1,0 +1,88 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Sign in with an identity provider"
+  caption="The authorization-code flow with PKCE, step by step. Note what each artifact is for: the authorization code is a short-lived ticket, the ID token says who signed in, and the access token lets the app call an API. The user's password only ever goes to the identity provider."
+>
+  <oauth-flow>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <ol class="of-log" data-log></ol>
+    <p class="of-msg" data-msg aria-live="polite"></p>
+  </oauth-flow>
+</Figure>
+
+<style>
+  .of-log {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .of-log :global(li) {
+    display: grid;
+    grid-template-columns: 1fr;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: 0.75rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .of-log :global(li b) {
+    color: var(--text);
+  }
+  .of-log :global(li.now) {
+    border-color: var(--g-blue);
+    color: #fff;
+  }
+  .of-log :global(li.tok) {
+    border-color: var(--g-green);
+  }
+  .of-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.5em;
+  }
+</style>
+
+<script>
+  const STEPS: [string, string, string, string][] = [
+    ['App → Browser', 'redirect to the identity provider', '', 'The app generates a random code_verifier, sends only its hash (code_challenge), and redirects the browser to the provider with client_id, redirect_uri, scope=openid email and a random state value.'],
+    ['Browser → IdP', 'user logs in (password, MFA) and consents', '', 'The user authenticates directly with the identity provider, so the app never sees the password. The provider shows which permissions (scopes) the app asks for.'],
+    ['IdP → Browser → App', 'redirect back with ?code=abc&state=…', '', 'The browser carries a short-lived authorization code to the app. The app checks that state matches what it sent (protecting against forged callbacks). The code alone is useless without the next step.'],
+    ['App → IdP', 'POST code + code_verifier (back channel)', '', 'The app exchanges the code directly with the provider, proving it is the same client that began the flow by revealing the original code_verifier. This is PKCE: an intercepted code cannot be redeemed by an attacker who lacks the verifier.'],
+    ['IdP → App', 'ID token + access token (+ refresh token)', 'tok', 'The ID token (OpenID Connect) tells the app who authenticated. The access token (OAuth) authorizes calls to an API. They are different tokens with different audiences.'],
+    ['App', 'validate the ID token', '', 'The app verifies the signature, issuer, audience (its own client_id) and expiry, then starts its own session for the user (e.g. a session cookie).'],
+    ['App → API', 'GET /calendar  Authorization: Bearer <access token>', 'tok', 'The API validates the access token and checks scope, audience and expiry before answering. Authentication told the app who the user is; whether they may do something is still an authorization decision.'],
+  ];
+  class OAuthFlow extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'A user clicks "Sign in with …" in a web app. Press Next step.';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    next() {
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      const [who, what, cls, why] = STEPS[this.i++];
+      log.insertAdjacentHTML('beforeend', `<li class="${cls} now"><b>${this.i}. ${who}</b>${what}</li>`);
+      this.querySelector('[data-msg]')!.textContent = why;
+      if (this.i >= STEPS.length) (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+    }
+  }
+  customElements.define('oauth-flow', OAuthFlow);
+</script>

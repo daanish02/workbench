@@ -1,0 +1,146 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Finding the nearest drivers with a grid"
+  caption="Drivers (dots) are bucketed into grid cells. Click the map to place a rider: the search only examines drivers in the rider's cell, and optionally its 8 neighbours, instead of all drivers. Turn neighbour search off and move the rider near a cell edge: the truly nearest driver can sit across the boundary and be missed. Crowded areas show why one fixed cell size does not fit everywhere."
+>
+  <geo-grid>
+    <div class="ctl-row">
+      <label class="stat">Grid size <input type="range" min="3" max="14" value="7" data-g /> <b data-gv>7</b> × <b data-gv2>7</b> cells</label>
+      <button class="btn" data-nb aria-pressed="true">Search neighbouring cells</button>
+    </div>
+    <svg viewBox="0 0 360 240" class="gg-svg" data-svg aria-label="Map of drivers and a grid"></svg>
+    <p class="gg-msg" data-msg aria-live="polite"></p>
+  </geo-grid>
+</Figure>
+
+<style>
+  .gg-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  .gg-svg :global(.cell) {
+    fill: none;
+    stroke: var(--border-strong);
+  }
+  .gg-svg :global(.cell.home) {
+    fill: rgba(66, 133, 244, 0.22);
+    stroke: var(--g-blue);
+  }
+  .gg-svg :global(.cell.nb) {
+    fill: rgba(66, 133, 244, 0.1);
+  }
+  .gg-svg :global(.rider) {
+    fill: #fff;
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .gg-svg :global(.link) {
+    stroke: var(--g-green);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 3;
+  }
+  .gg-svg :global(.link.miss) {
+    stroke: var(--g-red);
+  }
+  .gg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.6em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const W = 360;
+  const H = 240;
+  const R = rng(9);
+  const DRIVERS: [number, number][] = [];
+  for (let i = 0; i < 45; i++) DRIVERS.push([R() * W, R() * H]); // spread across the city
+  for (let i = 0; i < 45; i++) DRIVERS.push([70 + R() * 60 + R() * 20, 60 + R() * 60 + R() * 20]); // a crowded downtown
+  class GeoGrid extends HTMLElement {
+    rider: [number, number] = [182, 118];
+    nb = true;
+    connectedCallback() {
+      this.querySelector('[data-g]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-nb]')!.addEventListener('click', (e) => {
+        this.nb = !this.nb;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.nb));
+        this.draw();
+      });
+      const svg = this.querySelector<SVGSVGElement>('[data-svg]')!;
+      svg.addEventListener('click', (e) => {
+        const r = svg.getBoundingClientRect();
+        this.rider = [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H];
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const g = +this.querySelector<HTMLInputElement>('[data-g]')!.value;
+      this.querySelector('[data-gv]')!.textContent = String(g);
+      this.querySelector('[data-gv2]')!.textContent = String(g);
+      const cw = W / g;
+      const ch = H / g;
+      const cell = (p: [number, number]) => [Math.min(g - 1, Math.floor(p[0] / cw)), Math.min(g - 1, Math.floor(p[1] / ch))];
+      const [rx, ry] = cell(this.rider);
+      const inSearch = (p: [number, number]) => {
+        const [cx, cy] = cell(p);
+        return this.nb ? Math.abs(cx - rx) <= 1 && Math.abs(cy - ry) <= 1 : cx === rx && cy === ry;
+      };
+      const cand = DRIVERS.map((d, i) => ({ d, i })).filter(({ d }) => inSearch(d));
+      const dist = (d: [number, number]) => Math.hypot(d[0] - this.rider[0], d[1] - this.rider[1]);
+      const trueNearest = DRIVERS.map((d, i) => ({ d, i })).sort((a, b) => dist(a.d) - dist(b.d))[0];
+      const found = [...cand].sort((a, b) => dist(a.d) - dist(b.d))[0];
+      let h = '';
+      for (let cx = 0; cx < g; cx++)
+        for (let cy = 0; cy < g; cy++) {
+          const home = cx === rx && cy === ry;
+          const near = this.nb && Math.abs(cx - rx) <= 1 && Math.abs(cy - ry) <= 1 && !home;
+          h += `<rect class="cell ${home ? 'home' : near ? 'nb' : ''}" x="${cx * cw}" y="${cy * ch}" width="${cw}" height="${ch}"></rect>`;
+        }
+      const missed = !found || found.i !== trueNearest.i;
+      h += `<line class="link miss" x1="${this.rider[0]}" y1="${this.rider[1]}" x2="${trueNearest.d[0]}" y2="${trueNearest.d[1]}" style="${missed ? '' : 'display:none'}"></line>`;
+      if (found) h += `<line class="link" x1="${this.rider[0]}" y1="${this.rider[1]}" x2="${found.d[0]}" y2="${found.d[1]}"></line>`;
+      DRIVERS.forEach((d, i) => {
+        const inc = inSearch(d);
+        h += `<circle cx="${d[0]}" cy="${d[1]}" r="${inc ? 3.6 : 2.6}" fill="${inc ? '#81c995' : '#7d8590'}" fill-opacity="${inc ? 1 : 0.7}"></circle>`;
+      });
+      h += `<circle class="rider" cx="${this.rider[0]}" cy="${this.rider[1]}" r="5"></circle>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const km = (v: number) => v.toFixed(0);
+      this.querySelector('[data-msg]')!.textContent =
+        `Examined ${cand.length} of ${DRIVERS.length} drivers (${Math.round((cand.length / DRIVERS.length) * 100)}%). ` +
+        (!found
+          ? 'No driver in the searched cells: you would widen the search to more cells. '
+          : missed
+            ? `MISSED the true nearest driver (red line, ${km(dist(trueNearest.d))} units away): it is across a cell boundary, so the search returned a farther one (${km(dist(found.d))} units). Search the neighbouring cells to fix this. `
+            : 'Found the true nearest driver. ') +
+        (this.nb ? '' : 'Neighbour search is off. ') +
+        'Where drivers cluster (the dense blob), one cell holds many of them, so cells need to be smaller there: real systems use adaptive structures (quadtrees) or multi-resolution cells.';
+    }
+  }
+  customElements.define('geo-grid', GeoGrid);
+</script>

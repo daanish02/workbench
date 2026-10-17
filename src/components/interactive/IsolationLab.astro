@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same kernel, different view"
+  caption="A container is a normal process with a private view (namespaces) and a resource cap (cgroups). Pick a namespace to compare what the host sees with what the process inside sees, or open the memory tab to see what a cgroup limit does when an application leaks memory. The listings are illustrative, shaped like real Linux output."
+>
+  <isolation-lab>
+    <div class="ctl-row" data-tabs></div>
+    <div class="il-ctl" data-ctl hidden>
+      <label class="stat">Memory limit
+        <select data-lim>
+          <option value="0">none</option>
+          <option value="256">256 MB</option>
+          <option value="512" selected>512 MB</option>
+          <option value="1024">1,024 MB</option>
+        </select>
+      </label>
+      <span class="stat">The app leaks memory up to 900 MB.</span>
+    </div>
+    <div class="il-cols">
+      <div><b>Host sees</b><pre data-host></pre></div>
+      <div><b>Container sees</b><pre data-ct></pre></div>
+    </div>
+    <p class="il-msg" data-msg></p>
+  </isolation-lab>
+</Figure>
+
+<style>
+  .il-ctl {
+    margin-top: 8px;
+  }
+  .il-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .il-cols {
+      grid-template-columns: 1fr;
+    }
+  }
+  .il-cols pre {
+    margin: 6px 0 0;
+    padding: 10px;
+    font: 0.75rem/1.5 var(--font-mono);
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    overflow-x: auto;
+    min-height: 9em;
+    white-space: pre;
+  }
+  .il-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  select {
+    background: var(--bg-soft);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 3px 6px;
+    font: inherit;
+  }
+</style>
+
+<script>
+  const TABS: Record<string, { label: string; host: string; ct: string; msg: string }> = {
+    pid: {
+      label: 'PID',
+      host: '  PID  COMMAND\n    1  systemd\n  842  sshd\n 4310  nginx: master  <- container\n 4311  nginx: worker  <- container\n 5120  postgres\n 5588  python app.py',
+      ct: '  PID  COMMAND\n    1  nginx: master\n    7  nginx: worker',
+      msg: 'PID namespace: the same nginx process is PID 4310 on the host and PID 1 inside. The container cannot see (or signal) the host’s other processes.',
+    },
+    net: {
+      label: 'Network',
+      host: 'eth0     10.0.0.5\ndocker0  172.17.0.1\nveth3a1  (pair end)\nveth9c4  (pair end)\nlo       127.0.0.1',
+      ct: 'eth0     172.17.0.2\nlo       127.0.0.1',
+      msg: 'Network namespace: the container has its own interfaces, routes and port space. Two containers can both listen on port 80 without clashing, because each has its own network stack.',
+    },
+    mnt: {
+      label: 'Mount',
+      host: '/            ext4\n/home        ext4\n/var/lib/docker/overlay2/…\n/data        xfs\n/proc /sys /dev …',
+      ct: '/            overlay (image layers)\n/proc        proc\n/dev         tmpfs\n/etc/hosts   (bind mount)',
+      msg: 'Mount namespace: the process sees only the image’s root filesystem plus what the runtime mounts in. /home and /data on the host do not exist for it.',
+    },
+    uts: {
+      label: 'Hostname',
+      host: 'hostname: build-server-01',
+      ct: 'hostname: a3f9c21e0b7d',
+      msg: 'UTS namespace: the container has its own hostname (by default a short container ID). A small isolation, but it shows the pattern: one global setting, many private copies.',
+    },
+    user: {
+      label: 'User',
+      host: 'nginx master  UID 100000\nnginx worker  UID 100101',
+      ct: 'nginx master  UID 0 (root)\nnginx worker  UID 101',
+      msg: 'User namespace: root inside the container maps to an unprivileged UID on the host, so an escape from the container does not automatically become host root.',
+    },
+    mem: { label: 'Memory limit (cgroup)', host: '', ct: '', msg: '' },
+  };
+  class IsolationLab extends HTMLElement {
+    tab = 'pid';
+    connectedCallback() {
+      const tabs = this.querySelector('[data-tabs]')!;
+      tabs.innerHTML = Object.entries(TABS).map(([k, v]) => `<button class="btn" data-k="${k}" aria-pressed="${k === this.tab}">${v.label}</button>`).join('');
+      tabs.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.tab = b.dataset.k!;
+          tabs.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-lim]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      (this.querySelector('[data-ctl]') as HTMLElement).hidden = this.tab !== 'mem';
+      let host: string, ct: string, msg: string;
+      if (this.tab === 'mem') {
+        const lim = +this.querySelector<HTMLSelectElement>('[data-lim]')!.value;
+        const peak = lim && lim < 900 ? lim : 900;
+        const killed = lim > 0 && lim < 900;
+        ct = `app memory:  ${peak} MB${lim ? ` of ${lim} MB limit` : ' (no limit)'}\nstatus:      ${killed ? 'OOM-killed (exit 137)' : 'running'}`;
+        host = `host RAM:     16,384 MB\ncontainer:    ${peak} MB\nneighbours:   ${killed || lim ? 'unaffected' : 'starved if the leak continues'}\nfree:         ${(16384 - 6200 - peak).toLocaleString('en-US')} MB`;
+        msg = killed
+          ? `With a ${lim} MB cgroup limit the kernel kills the leaking process when it reaches the limit. The damage is contained to one container, and an orchestrator can restart it.`
+          : lim
+            ? 'The limit is above what the app needs, so nothing happens. Limits protect neighbours; set them from measured usage, not guesses.'
+            : 'No limit: the leak keeps growing into the host’s memory. Namespaces hide the process but do nothing to stop it consuming shared resources; only cgroups cap that.';
+      } else ({ host, ct, msg } = TABS[this.tab]);
+      this.querySelector('[data-host]')!.textContent = host;
+      this.querySelector('[data-ct]')!.textContent = ct;
+      this.querySelector('[data-msg]')!.textContent = msg;
+    }
+  }
+  customElements.define('isolation-lab', IsolationLab);
+</script>

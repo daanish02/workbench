@@ -1,0 +1,178 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Rank threats by likelihood × impact"
+  caption="Eight threats against a document-sharing app, placed on a 5×5 grid. Click a threat, then adjust its likelihood and impact: the grid and the priority list reorder. Note how a likely, low-impact nuisance can rank below a rarer catastrophe."
+>
+  <threat-matrix>
+    <div class="tm">
+      <div class="tm-grid" data-grid aria-label="Risk matrix"></div>
+      <ol class="tm-list" data-list></ol>
+    </div>
+    <div class="ctl-row tm-ctl">
+      <span class="stat" data-sel></span>
+      <label class="stat">Likelihood <input type="range" min="1" max="5" step="1" data-l /></label>
+      <label class="stat">Impact <input type="range" min="1" max="5" step="1" data-i /></label>
+    </div>
+    <p class="tm-msg" data-msg></p>
+  </threat-matrix>
+</Figure>
+
+<style>
+  .tm {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) 1fr;
+    gap: 16px;
+    margin-top: 12px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .tm {
+      grid-template-columns: 1fr;
+    }
+  }
+  .tm-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    aspect-ratio: 1;
+    gap: 2px;
+    position: relative;
+    margin-left: 18px;
+    margin-bottom: 18px;
+  }
+  .tm-grid :global(.c) {
+    border-radius: 4px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 2px;
+  }
+  .tm-grid :global(.dot) {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    background: #000;
+    color: #fff;
+    font: 700 0.6875rem/16px var(--font-mono);
+    text-align: center;
+    cursor: pointer;
+    padding: 0;
+  }
+  .tm-grid :global(.dot.sel) {
+    background: var(--g-blue);
+  }
+  .tm-grid :global(.axis-l),
+  .tm-grid :global(.axis-i) {
+    position: absolute;
+    font: 0.625rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .tm-grid :global(.axis-l) {
+    bottom: -16px;
+    left: 0;
+    right: 0;
+    text-align: center;
+  }
+  .tm-grid :global(.axis-i) {
+    left: -18px;
+    top: 50%;
+    transform: rotate(-90deg) translateX(50%);
+    transform-origin: left center;
+    white-space: nowrap;
+  }
+  .tm-list {
+    margin: 0;
+    padding-left: 1.6em;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+  .tm-list :global(li) {
+    padding: 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .tm-list :global(li.sel) {
+    background: var(--accent-soft);
+    color: #fff;
+  }
+  .tm-list :global(b) {
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+  .tm-list :global(i) {
+    font-style: normal;
+    font-size: 0.6875rem;
+    color: var(--text-faint);
+    margin-left: 6px;
+  }
+  .tm-ctl {
+    margin-top: 12px;
+  }
+  .tm-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.5em;
+  }
+  input[type='range'] {
+    width: 100px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  type T = { name: string; stride: string; l: number; i: number };
+  const BASE: T[] = [
+    { name: "User downloads another user's document", stride: 'Information disclosure', l: 4, i: 5 },
+    { name: 'SQL injection in search', stride: 'Tampering / disclosure', l: 3, i: 5 },
+    { name: 'Admin console exposed to the internet', stride: 'Elevation of privilege', l: 2, i: 5 },
+    { name: 'Attacker forges a login-page request (CSRF)', stride: 'Spoofing', l: 3, i: 3 },
+    { name: 'DDoS on the login page', stride: 'Denial of service', l: 3, i: 3 },
+    { name: 'User denies having deleted a file', stride: 'Repudiation', l: 2, i: 2 },
+    { name: 'Verbose error leaks a stack trace', stride: 'Information disclosure', l: 5, i: 1 },
+    { name: 'Stolen laptop with cached files', stride: 'Information disclosure', l: 2, i: 3 },
+  ];
+  const colour = (score: number) => (score >= 15 ? 'rgba(234,67,53,.5)' : score >= 8 ? 'rgba(251,188,5,.4)' : score >= 4 ? 'rgba(52,168,83,.3)' : 'rgba(52,168,83,.14)');
+  class ThreatMatrix extends HTMLElement {
+    t: T[] = BASE.map((x) => ({ ...x }));
+    sel = 0;
+    connectedCallback() {
+      this.querySelector<HTMLInputElement>('[data-l]')!.addEventListener('input', (e) => {
+        this.t[this.sel].l = +(e.target as HTMLInputElement).value;
+        this.draw();
+      });
+      this.querySelector<HTMLInputElement>('[data-i]')!.addEventListener('input', (e) => {
+        this.t[this.sel].i = +(e.target as HTMLInputElement).value;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const grid = this.querySelector('[data-grid]')!;
+      let h = '';
+      for (let imp = 5; imp >= 1; imp--)
+        for (let l = 1; l <= 5; l++) {
+          const dots = this.t.map((x, k) => ({ x, k })).filter(({ x }) => x.l === l && x.i === imp);
+          h += `<div class="c" style="background:${colour(l * imp)}">${dots.map(({ k }) => `<button class="dot ${k === this.sel ? 'sel' : ''}" data-k="${k}" aria-label="${this.t[k].name}">${k + 1}</button>`).join('')}</div>`;
+        }
+      grid.innerHTML = h + '<span class="axis-l">likelihood →</span><span class="axis-i">impact →</span>';
+      const order = this.t.map((x, k) => ({ x, k })).sort((a, b) => b.x.l * b.x.i - a.x.l * a.x.i || a.k - b.k);
+      this.querySelector('[data-list]')!.innerHTML = order.map(({ x, k }) => `<li data-k="${k}" class="${k === this.sel ? 'sel' : ''}"><b>${x.l * x.i}</b> #${k + 1} ${x.name}<i>${x.stride}</i></li>`).join('');
+      this.querySelectorAll<HTMLElement>('[data-k]').forEach((el) => el.addEventListener('click', () => ((this.sel = +el.dataset.k!), this.draw())));
+      const s = this.t[this.sel];
+      this.querySelector('[data-sel]')!.innerHTML = `selected <b>#${this.sel + 1}</b> · risk <b>${s.l * s.i}</b>`;
+      this.querySelector<HTMLInputElement>('[data-l]')!.value = String(s.l);
+      this.querySelector<HTMLInputElement>('[data-i]')!.value = String(s.i);
+      const rank = order.findIndex((o) => o.k === this.sel) + 1;
+      this.querySelector('[data-msg]')!.textContent = `"${s.name}" (${s.stride}) is priority ${rank} of ${this.t.length}. Risk ≈ likelihood × impact is a prioritization aid, not a precise law: record your assumptions and revisit them when the system changes.`;
+    }
+  }
+  customElements.define('threat-matrix', ThreatMatrix);
+</script>

@@ -1,0 +1,129 @@
+---
+import Figure from '../Figure.astro';
+// "Save" travelling down through the layers and the acknowledgement travelling back up.
+const hops = [
+  { name: 'Application', what: 'User clicks Save. The editor serialises the document to bytes.', color: 'var(--g-blue)' },
+  { name: 'Language runtime / library', what: 'f.write(data) buffers the bytes, then asks the OS to write them.', color: 'var(--g-red)' },
+  { name: 'Operating system', what: 'The write() system call crosses into the kernel and checks permissions.', color: 'var(--g-yellow)' },
+  { name: 'File system', what: 'Decides which disk blocks hold the file and updates its metadata.', color: 'var(--g-green)' },
+  { name: 'Device driver', what: 'Translates “write these blocks” into commands this specific SSD understands.', color: 'var(--g-blue)' },
+  { name: 'Hardware', what: 'The SSD controller programs flash cells; electrons are trapped or released.', color: 'var(--g-red)' },
+];
+---
+
+<Figure
+  kind="Diagram"
+  title="What “Save” actually travels through"
+  caption="Each layer only speaks to its neighbours through an interface, and none of them knows what a “document” is except the top one. Press play to send the request down and the acknowledgement back up."
+>
+  <request-trace>
+    <ol class="hops">
+      {
+        hops.map((h, i) => (
+          <li data-hop={i} style={`--c:${h.color}`}>
+            <span class="pin" />
+            <div>
+              <b>{h.name}</b>
+              <p>{h.what}</p>
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <span class="stat" data-dir></span>
+    </div>
+  </request-trace>
+</Figure>
+
+<style>
+  .hops {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    position: relative;
+  }
+  .hops::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 12px;
+    bottom: 12px;
+    width: 2px;
+    background: var(--border-strong);
+  }
+  li {
+    display: flex;
+    gap: 14px;
+    padding: 6px 0;
+    position: relative;
+    opacity: 0.45;
+    transition: opacity 0.3s;
+  }
+  li.seen {
+    opacity: 0.8;
+  }
+  li.on {
+    opacity: 1;
+  }
+  .pin {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    margin-top: 2px;
+    border-radius: 50%;
+    border: 2px solid var(--c);
+    background: var(--bg-elev);
+    position: relative;
+    z-index: 1;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  li.on .pin {
+    background: var(--c);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--c) 25%, transparent);
+  }
+  b {
+    font-size: 0.875rem;
+  }
+  p {
+    margin: 2px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+</style>
+
+<script>
+  class RequestTrace extends HTMLElement {
+    timer = 0;
+    connectedCallback() {
+      this.querySelector('[data-play]')!.addEventListener('click', () => this.play());
+    }
+    play() {
+      clearInterval(this.timer);
+      const items = [...this.querySelectorAll<HTMLElement>('[data-hop]')];
+      const n = items.length;
+      // down 0..n-1, then back up n-2..0
+      const path = [...Array(n).keys(), ...[...Array(n - 1).keys()].reverse()];
+      let k = 0;
+      const dir = this.querySelector('[data-dir]')!;
+      items.forEach((li) => li.classList.remove('seen', 'on'));
+      const tick = () => {
+        if (k >= path.length) {
+          clearInterval(this.timer);
+          dir.textContent = '✓ saved: the application receives “success”';
+          items.forEach((li) => li.classList.remove('on'));
+          return;
+        }
+        items.forEach((li) => li.classList.remove('on'));
+        items[path[k]].classList.add('on', 'seen');
+        dir.textContent = k < n ? '↓ request travelling down' : '↑ completion travelling up';
+        k++;
+      };
+      tick();
+      this.timer = window.setInterval(tick, 750);
+    }
+  }
+  customElements.define('request-trace', RequestTrace);
+</script>

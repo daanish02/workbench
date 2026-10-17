@@ -1,0 +1,285 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="BFS, DFS and Dijkstra on one graph"
+  caption="Same graph, same start A, neighbours in alphabetical order. BFS (queue) finishes A's neighbours before going further; DFS (stack) dives A → B → E → F before returning. Dijkstra (priority queue) ignores edge counts: it reaches C through D for cost 3, although the direct edge A–C costs 5. Green edges form the tree each algorithm builds."
+>
+  <graph-trav>
+    <div class="ctl-row">
+      <button class="btn" data-mode="bfs" aria-pressed="true">BFS</button>
+      <button class="btn" data-mode="dfs" aria-pressed="false">DFS</button>
+      <button class="btn" data-mode="dij" aria-pressed="false">Dijkstra</button>
+      <span style="flex:1"></span>
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="gt-wrap">
+      <svg class="graph" viewBox="0 0 340 220" data-svg aria-hidden="true"></svg>
+      <div class="side">
+        <div><span class="ctl-label" data-dsname>Queue</span><div class="ds mono" data-ds></div></div>
+        <div><span class="ctl-label">Visit order</span><div class="mono order" data-order></div></div>
+        <p class="msg" data-msg></p>
+      </div>
+    </div>
+  </graph-trav>
+</Figure>
+
+<style>
+  .gt-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  .graph {
+    flex: 1 1 300px;
+    max-width: 460px;
+    width: 100%;
+    height: auto;
+  }
+  .side {
+    flex: 1 1 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .ds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 30px;
+    margin-top: 4px;
+  }
+  .ds :global(span) {
+    border: 1px solid var(--g-yellow);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 0.8125rem;
+  }
+  .ds :global(em) {
+    color: var(--text-faint);
+    font-style: normal;
+    font-size: 0.8125rem;
+  }
+  .order {
+    margin-top: 4px;
+    font-size: 0.9375rem;
+    min-height: 1.4em;
+  }
+  .msg {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .graph :global(line) {
+    stroke: #3a3a3a;
+    stroke-width: 2;
+  }
+  .graph :global(line.tree) {
+    stroke: var(--g-green);
+    stroke-width: 3.5;
+  }
+  .graph :global(text.w) {
+    fill: var(--text-muted);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .graph :global(rect.wbg) {
+    fill: #000;
+  }
+  .graph :global(circle) {
+    fill: var(--bg-soft);
+    stroke: #555;
+    stroke-width: 2;
+  }
+  .graph :global(g.front circle) {
+    stroke: var(--g-yellow);
+    fill: rgba(251, 188, 5, 0.15);
+  }
+  .graph :global(g.done circle) {
+    stroke: var(--g-green);
+    fill: rgba(52, 168, 83, 0.25);
+  }
+  .graph :global(g.cur circle) {
+    stroke: var(--g-blue);
+    fill: rgba(66, 133, 244, 0.45);
+    stroke-width: 3;
+  }
+  .graph :global(text.lbl) {
+    fill: #fff;
+    font: 700 15px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .graph :global(text.d) {
+    fill: var(--g-yellow-l);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+</style>
+
+<script>
+  const POS: Record<string, [number, number]> = { A: [36, 110], B: [140, 36], C: [170, 112], D: [140, 188], E: [280, 36], F: [300, 160] };
+  const EDGES: [string, string, number][] = [
+    ['A', 'B', 2],
+    ['A', 'C', 5],
+    ['A', 'D', 1],
+    ['B', 'E', 3],
+    ['C', 'D', 2],
+    ['C', 'F', 1],
+    ['E', 'F', 2],
+  ];
+  const V = Object.keys(POS);
+  const ADJ: Record<string, [string, number][]> = Object.fromEntries(V.map((v) => [v, []]));
+  for (const [u, v, w] of EDGES) ADJ[u].push([v, w]), ADJ[v].push([u, w]);
+  for (const v of V) ADJ[v].sort((a, b) => a[0].localeCompare(b[0]));
+
+  type Snap = { cur: string | null; front: Set<string>; done: string[]; ds: string[]; parent: Record<string, string>; dist: Record<string, number>; msg: string };
+
+  function record(mode: string): Snap[] {
+    const out: Snap[] = [];
+    const parent: Record<string, string> = {};
+    const dist: Record<string, number> = Object.fromEntries(V.map((v) => [v, Infinity]));
+    const done: string[] = [];
+    const snap = (cur: string | null, front: Iterable<string>, ds: string[], msg: string) =>
+      out.push({ cur, front: new Set(front), done: [...done], ds, parent: { ...parent }, dist: { ...dist }, msg });
+
+    if (mode === 'bfs') {
+      const q = ['A'];
+      const seen = new Set(['A']);
+      dist.A = 0;
+      snap(null, q, [...q], 'Enqueue A and mark it visited.');
+      while (q.length) {
+        const u = q.shift()!;
+        done.push(u);
+        const added: string[] = [];
+        for (const [v] of ADJ[u]) if (!seen.has(v)) (seen.add(v), (parent[v] = u), (dist[v] = dist[u] + 1), q.push(v), added.push(v));
+        snap(u, q, [...q], `Dequeue ${u}. ${added.length ? `Enqueue unvisited neighbours ${added.join(', ')} (${dist[u] + 1} edge${dist[u] ? 's' : ''} from A).` : 'No unvisited neighbours.'}`);
+      }
+    } else if (mode === 'dfs') {
+      // each stack entry remembers who pushed it, so the tree edge is the one actually used
+      const st: [string, string | null][] = [['A', null]];
+      const names = () => st.map(([v]) => v).reverse();
+      snap(null, names(), names(), 'Push A.');
+      while (st.length) {
+        const [u, from] = st.pop()!;
+        if (done.includes(u)) {
+          snap(null, names(), names(), `Pop ${u}: already visited, skip.`);
+          continue;
+        }
+        done.push(u);
+        if (from) parent[u] = from;
+        const nb = ADJ[u].filter(([v]) => !done.includes(v)).map(([v]) => v);
+        for (const v of [...nb].reverse()) st.push([v, u]);
+        snap(u, names(), names(), `Pop ${u} and visit it. ${nb.length ? `Push unvisited ${nb.join(', ')} in reverse, so ${nb[0]} is on top.` : 'Nothing new to push.'}`);
+      }
+    } else {
+      dist.A = 0;
+      let pq: [number, string][] = [[0, 'A']];
+      const fmt = () => pq.map(([d, v]) => `${v}:${d}`);
+      snap(null, ['A'], fmt(), 'd[A] = 0, every other distance ∞. Push (0, A).');
+      while (pq.length) {
+        pq.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
+        const [d, u] = pq.shift()!;
+        if (done.includes(u)) {
+          snap(null, pq.map(([, v]) => v), fmt(), `Pop (${d}, ${u}): stale entry, ${u} is already final. Skip.`);
+          continue;
+        }
+        done.push(u);
+        const notes: string[] = [];
+        for (const [v, w] of ADJ[u]) {
+          if (done.includes(v)) continue;
+          if (d + w < dist[v]) {
+            notes.push(`${v}: ${dist[v] === Infinity ? '∞' : dist[v]} → ${d + w}`);
+            dist[v] = d + w;
+            parent[v] = u;
+            pq.push([d + w, v]);
+          } else notes.push(`${v}: ${d}+${w} ≥ ${dist[v]}, keep`);
+        }
+        pq.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
+        snap(u, pq.map(([, v]) => v), fmt(), `Pop ${u} (d = ${d}); its distance is now final. Relax: ${notes.length ? notes.join('; ') : 'nothing'}.`);
+      }
+    }
+    snap(null, [], [], mode === 'dij' ? 'Done. Distances from A: ' + V.map((v) => `${v}=${dist[v]}`).join(', ') + '.' : `Done: every vertex reached.`);
+    return out;
+  }
+
+  class GraphTrav extends HTMLElement {
+    mode = 'bfs';
+    snaps: Snap[] = [];
+    i = 0;
+    timer = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.mode = b.dataset.mode!;
+          this.reset();
+        }),
+      );
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-reset]').addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    reset() {
+      this.pause();
+      this.snaps = record(this.mode);
+      this.i = 0;
+      this.q('[data-dsname]').textContent = { bfs: 'Queue (front → back)', dfs: 'Stack (top → bottom)', dij: 'Priority queue (vertex:distance)' }[this.mode]!;
+      this.draw();
+    }
+    step() {
+      if (this.i < this.snaps.length - 1) this.i++;
+      this.draw();
+    }
+    play() {
+      if (this.i >= this.snaps.length - 1) this.i = 0;
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        if (this.i >= this.snaps.length - 1) return this.pause();
+        this.timer = window.setTimeout(tick, 1100);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    draw() {
+      const s = this.snaps[this.i];
+      const showW = this.mode === 'dij';
+      let svg = '';
+      for (const [u, v, w] of EDGES) {
+        const [x1, y1] = POS[u], [x2, y2] = POS[v];
+        const tree = s.parent[v] === u || s.parent[u] === v;
+        svg += `<line class="${tree ? 'tree' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+        if (showW) {
+          const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+          svg += `<rect class="wbg" x="${mx - 8}" y="${my - 8}" width="16" height="16" rx="4"/><text class="w" x="${mx}" y="${my}">${w}</text>`;
+        }
+      }
+      for (const v of V) {
+        const [x, y] = POS[v];
+        const cls = s.cur === v ? 'cur' : s.done.includes(v) ? 'done' : s.front.has(v) ? 'front' : '';
+        const d = s.dist[v];
+        const lab = this.mode === 'dfs' ? '' : `<text class="d" x="${x}" y="${y - 22}">${this.mode === 'bfs' ? (d === Infinity ? '' : d + (d === 1 ? ' edge' : ' edges')) : d === Infinity ? '∞' : 'd=' + d}</text>`;
+        svg += `<g class="${cls}"><circle cx="${x}" cy="${y}" r="16"/><text class="lbl" x="${x}" y="${y}">${v}</text>${lab}</g>`;
+      }
+      this.q('[data-svg]').innerHTML = svg;
+      this.q('[data-ds]').innerHTML = s.ds.length ? s.ds.map((x) => `<span>${x}</span>`).join('') : '<em>(empty)</em>';
+      this.q('[data-order]').textContent = s.done.join(' → ') || '—';
+      this.q('[data-msg]').textContent = s.msg;
+    }
+  }
+  customElements.define('graph-trav', GraphTrav);
+</script>

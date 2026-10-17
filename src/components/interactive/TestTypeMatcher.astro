@@ -1,0 +1,121 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which kind of test is this?"
+  caption="Twelve situations, twelve test types. Read the situation and pick the type that fits best. A wrong answer explains why the right one fits better. Many situations could be partly covered by several types; the point is the main question each type exists to answer."
+>
+  <test-type-matcher>
+    <p class="tt-q" data-q></p>
+    <div class="tt-opts" data-opts></div>
+    <p class="tt-fb" data-fb aria-live="polite"></p>
+    <div class="ctl-row"><button class="btn primary" data-next hidden>Next situation</button><span class="stat" data-score></span></div>
+  </test-type-matcher>
+</Figure>
+
+<style>
+  .tt-q {
+    margin: 12px 0;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    min-height: 3em;
+  }
+  .tt-opts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tt-opts :global(button[data-ok='1']) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.2);
+  }
+  .tt-opts :global(button[data-ok='0']) {
+    border-color: var(--g-red);
+    background: rgba(234, 67, 53, 0.18);
+  }
+  .tt-fb {
+    margin: 12px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.6em;
+  }
+</style>
+
+<script>
+  const TYPES = ['Unit', 'Integration', 'Contract', 'End-to-end', 'Smoke', 'Sanity', 'Regression', 'Acceptance', 'Load', 'Property-based', 'Mutation', 'Fuzz'];
+  const WHY: Record<string, string> = {
+    Unit: 'checks one small piece of logic in isolation',
+    Integration: 'checks that components work together, such as code and a real database',
+    Contract: 'checks that two services agree on an interface without running both',
+    'End-to-end': 'drives a complete user journey through the real system',
+    Smoke: 'is a quick, shallow check that the build is alive enough to test further',
+    Sanity: 'is a narrow check that one specific change or fix works, before spending time on broader testing',
+    Regression: 'guards behaviour that worked before, so old bugs and working features do not break again',
+    Acceptance: 'confirms the feature meets the agreed criteria from the customer or product owner',
+    Load: 'measures behaviour under expected and peak traffic: latency, throughput, errors',
+    'Property-based': 'states a rule that must hold for all inputs and lets a tool generate many cases',
+    Mutation: 'tests the tests: it injects small bugs and checks that the suite notices',
+    Fuzz: 'throws huge numbers of malformed or random inputs at code to find crashes',
+  };
+  const Q: [string, string][] = [
+    ['After every deployment, a 30-second check confirms the app starts and the login page loads.', 'Smoke'],
+    ['A bug reported last month was fixed. Make sure no future change brings it back.', 'Regression'],
+    ['Verify that the price-rounding function behaves at boundary values such as 0.005.', 'Unit'],
+    ['Service A depends on fields in Service B\'s API. Catch breaking changes to those fields without starting both services.', 'Contract'],
+    ['How many concurrent users can the site serve before the 95th-percentile latency passes 500 ms?', 'Load'],
+    ['Does the order service really persist an order and its lines to the PostgreSQL database?', 'Integration'],
+    ['The product owner checks that the new refund flow meets the agreed acceptance criteria.', 'Acceptance'],
+    ['Throw millions of random malformed byte strings at the image parser to find crashes.', 'Fuzz'],
+    ['A hotfix touched only the coupon code. Quickly verify that area works before running the whole suite.', 'Sanity'],
+    ['A script opens a real browser, signs up, adds an item, pays and checks the confirmation page.', 'End-to-end'],
+    ['For any list, sorting it twice must give the same result as sorting it once.', 'Property-based'],
+    ['The suite is green, but does it actually catch bugs? Flip operators in the code and see whether tests fail.', 'Mutation'],
+  ];
+  class TestTypeMatcher extends HTMLElement {
+    i = 0;
+    score = 0;
+    order: number[] = [];
+    done = false;
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => { this.i++; this.show(); });
+      this.querySelector('[data-opts]')!.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest('button[data-t]') as HTMLElement | null;
+        if (!b || this.done) return;
+        this.answer(b);
+      });
+      this.order = Q.map((_, k) => k);
+      this.show();
+    }
+    show() {
+      this.done = false;
+      if (this.i >= Q.length) {
+        this.querySelector('[data-q]')!.textContent = `Finished: ${this.score} of ${Q.length} correct on the first try.`;
+        this.querySelector('[data-opts]')!.innerHTML = '';
+        this.querySelector('[data-fb]')!.textContent = '';
+        const nb = this.querySelector('[data-next]') as HTMLElement;
+        nb.hidden = false; nb.textContent = 'Start again';
+        nb.onclick = () => { this.i = 0; this.score = 0; nb.textContent = 'Next situation'; nb.onclick = null; this.show(); };
+        return;
+      }
+      this.querySelector('[data-q]')!.textContent = `${this.i + 1}/${Q.length}. ${Q[this.i][0]}`;
+      this.querySelector('[data-opts]')!.innerHTML = TYPES.map((t) => `<button class="btn" data-t="${t}">${t}</button>`).join('');
+      this.querySelector('[data-fb]')!.textContent = '';
+      (this.querySelector('[data-next]') as HTMLElement).hidden = true;
+      this.querySelector('[data-score]')!.textContent = `Score ${this.score}`;
+    }
+    answer(b: HTMLElement) {
+      const [, right] = Q[this.i];
+      const pick = b.dataset.t!;
+      const ok = pick === right;
+      this.done = true;
+      if (ok) this.score++;
+      this.querySelectorAll<HTMLElement>('[data-t]').forEach((x) => { if (x.dataset.t === right) x.dataset.ok = '1'; });
+      if (!ok) b.dataset.ok = '0';
+      this.querySelector('[data-fb]')!.textContent = ok ? `Correct: ${right} testing ${WHY[right]}.` : `Not quite. ${pick} testing ${WHY[pick]}. This situation needs ${right} testing, which ${WHY[right]}.`;
+      this.querySelector('[data-score]')!.textContent = `Score ${this.score}`;
+      (this.querySelector('[data-next]') as HTMLElement).hidden = false;
+    }
+  }
+  customElements.define('test-type-matcher', TestTypeMatcher);
+</script>

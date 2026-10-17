@@ -1,0 +1,101 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A live one-time password"
+  caption="This is real TOTP (RFC 6238): HMAC-SHA1 of the current 30-second window using a shared secret, truncated to 6 digits. Your phone and the server both compute it from the same secret and the clock, so no code ever crosses the network in advance. Type the current code to 'log in'."
+>
+  <totp-clock>
+    <div class="tp">
+      <div class="tp-code mono" data-code>------</div>
+      <div class="tp-bar"><i data-bar></i></div>
+      <span class="stat" data-left></span>
+    </div>
+    <div class="ctl-row">
+      <label class="stat">Shared secret <input class="input" data-secret value="12345678901234567890" aria-label="Shared secret" /></label>
+    </div>
+    <div class="ctl-row">
+      <input class="input" data-in inputmode="numeric" maxlength="6" placeholder="6-digit code" aria-label="Code to verify" />
+      <button class="btn primary" data-check>Verify</button>
+      <span class="stat" data-res></span>
+    </div>
+  </totp-clock>
+</Figure>
+
+<style>
+  .tp {
+    text-align: center;
+    margin: 6px 0 14px;
+  }
+  .tp-code {
+    font-size: 2.2rem;
+    letter-spacing: 0.2em;
+    font-weight: 700;
+    color: #fff;
+  }
+  .tp-bar {
+    height: 6px;
+    background: #222;
+    border-radius: 3px;
+    overflow: hidden;
+    max-width: 320px;
+    margin: 8px auto 6px;
+  }
+  .tp-bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.25s linear;
+  }
+  .input {
+    width: 100%;
+    max-width: 280px;
+    box-sizing: border-box;
+  }
+  [data-in] {
+    width: 9em;
+  }
+</style>
+
+<script>
+  async function totp(secret: string, ts: number, step = 30, digits = 6) {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const counter = new ArrayBuffer(8);
+    new DataView(counter).setUint32(4, Math.floor(ts / step));
+    const h = new Uint8Array(await crypto.subtle.sign('HMAC', key, counter));
+    const o = h[19] & 0x0f;
+    const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+    return String(bin % 10 ** digits).padStart(digits, '0');
+  }
+  class TotpClock extends HTMLElement {
+    iv = 0;
+    code = '';
+    connectedCallback() {
+      this.querySelector('[data-check]')!.addEventListener('click', () => this.verify());
+      this.querySelector('[data-secret]')!.addEventListener('input', () => this.tick());
+      this.tick();
+      this.iv = window.setInterval(() => this.tick(), 500);
+    }
+    disconnectedCallback() {
+      clearInterval(this.iv);
+    }
+    async tick() {
+      const now = Math.floor(Date.now() / 1000);
+      const secret = this.querySelector<HTMLInputElement>('[data-secret]')!.value || ' ';
+      this.code = await totp(secret, now);
+      this.querySelector('[data-code]')!.textContent = `${this.code.slice(0, 3)} ${this.code.slice(3)}`;
+      const left = 30 - (now % 30);
+      (this.querySelector('[data-bar]') as HTMLElement).style.width = `${(left / 30) * 100}%`;
+      this.querySelector('[data-left]')!.textContent = `new code in ${left}s`;
+    }
+    async verify() {
+      const v = this.querySelector<HTMLInputElement>('[data-in]')!.value.trim();
+      const now = Math.floor(Date.now() / 1000);
+      const secret = this.querySelector<HTMLInputElement>('[data-secret]')!.value || ' ';
+      const ok = v === (await totp(secret, now)) || v === (await totp(secret, now - 30)); // servers allow one step of clock drift
+      this.querySelector('[data-res]')!.textContent = ok ? 'Accepted. (Servers usually accept the previous window too, to allow for clock drift.)' : 'Rejected: wrong or expired code.';
+    }
+  }
+  customElements.define('totp-clock', TotpClock);
+</script>

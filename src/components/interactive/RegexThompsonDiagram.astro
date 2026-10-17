@@ -1,0 +1,134 @@
+---
+import Figure from '../Figure.astro';
+
+// Shared pieces for the three Thompson fragments. Each N(·) box is an already-built NFA
+// with one start state (left dot) and one accepting state (right dot).
+const arrow = 'url(#th-arrow)';
+---
+
+<Figure
+  kind="Diagram"
+  title="Thompson's construction: three ways to glue NFAs"
+  caption="Each box N(R) is the NFA already built for a smaller expression, with one entry state (left) and one exit state (right). Dashed arrows are ε-transitions: they consume no input. Choice branches into either box, concatenation chains exit to entry, and star adds a loop back (repeat) plus a bypass (zero times). Every rule adds at most two states, so the NFA has O(length of the regex) states."
+>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <marker id="th-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--text-faint)"></path></marker>
+    </defs>
+  </svg>
+  <div class="panels">
+    <div class="panel">
+      <div class="ptitle mono">R | S <span>choice</span></div>
+      <svg viewBox="0 0 320 150" role="img" aria-label="Union construction">
+        <rect class="box" x="92" y="14" width="136" height="46" rx="10"></rect>
+        <rect class="box" x="92" y="90" width="136" height="46" rx="10"></rect>
+        <text class="bl" x="160" y="41">N(R)</text>
+        <text class="bl" x="160" y="117">N(S)</text>
+        <circle class="d" cx="110" cy="37" r="8"></circle><circle class="d" cx="210" cy="37" r="8"></circle>
+        <circle class="d" cx="110" cy="113" r="8"></circle><circle class="d" cx="210" cy="113" r="8"></circle>
+        <path class="eps" d="M38,68 L100,41" marker-end={arrow}></path>
+        <path class="eps" d="M38,82 L100,109" marker-end={arrow}></path>
+        <path class="eps" d="M219,41 L281,68" marker-end={arrow}></path>
+        <path class="eps" d="M219,109 L281,82" marker-end={arrow}></path>
+        <text class="el" x="58" y="46">ε</text><text class="el" x="58" y="114">ε</text>
+        <text class="el" x="262" y="46">ε</text><text class="el" x="262" y="114">ε</text>
+        <circle class="s" cx="26" cy="75" r="13"></circle>
+        <circle class="s" cx="294" cy="75" r="13"></circle><circle class="ring" cx="294" cy="75" r="9"></circle>
+      </svg>
+    </div>
+    <div class="panel">
+      <div class="ptitle mono">RS <span>concatenation</span></div>
+      <svg viewBox="0 0 320 80" role="img" aria-label="Concatenation construction">
+        <rect class="box" x="8" y="17" width="134" height="46" rx="10"></rect>
+        <rect class="box" x="178" y="17" width="134" height="46" rx="10"></rect>
+        <text class="bl" x="75" y="44">N(R)</text>
+        <text class="bl" x="245" y="44">N(S)</text>
+        <circle class="d" cx="26" cy="40" r="8"></circle><circle class="d" cx="124" cy="40" r="8"></circle>
+        <circle class="d" cx="196" cy="40" r="8"></circle><circle class="d" cx="294" cy="40" r="8"></circle>
+        <circle class="ring" cx="294" cy="40" r="5"></circle>
+        <path class="eps" d="M133,40 L186,40" marker-end={arrow}></path>
+        <text class="el" x="160" y="33">ε</text>
+      </svg>
+    </div>
+    <div class="panel">
+      <div class="ptitle mono">R* <span>Kleene star</span></div>
+      <svg viewBox="0 0 320 150" role="img" aria-label="Star construction">
+        <rect class="box" x="92" y="58" width="136" height="46" rx="10"></rect>
+        <text class="bl" x="160" y="85">N(R)</text>
+        <circle class="d" cx="110" cy="81" r="8"></circle><circle class="d" cx="210" cy="81" r="8"></circle>
+        <path class="eps" d="M40,81 L99,81" marker-end={arrow}></path>
+        <path class="eps" d="M219,81 L279,81" marker-end={arrow}></path>
+        <path class="eps" d="M210,72 C204,16 116,16 111,70" marker-end={arrow}></path>
+        <path class="eps" d="M30,94 C70,150 250,150 290,94" marker-end={arrow}></path>
+        <text class="el" x="68" y="74">ε</text><text class="el" x="250" y="74">ε</text>
+        <text class="el" x="160" y="26">ε repeat</text>
+        <text class="el" x="160" y="146">ε skip (zero times)</text>
+        <circle class="s" cx="26" cy="81" r="13"></circle>
+        <circle class="s" cx="294" cy="81" r="13"></circle><circle class="ring" cx="294" cy="81" r="9"></circle>
+      </svg>
+    </div>
+  </div>
+</Figure>
+
+<style>
+  .panels {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+  }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+  .ptitle {
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: 4px;
+  }
+  .ptitle span {
+    font: 0.75rem var(--font-sans, inherit);
+    color: var(--text-faint);
+    margin-left: 6px;
+  }
+  svg {
+    display: block;
+    width: 100%;
+  }
+  .box {
+    fill: rgba(66, 133, 244, 0.08);
+    stroke: var(--g-blue);
+    stroke-width: 1.4;
+  }
+  .bl {
+    font: 600 13px var(--font-mono);
+    fill: var(--g-blue-l, var(--g-blue));
+    text-anchor: middle;
+  }
+  .d {
+    fill: var(--bg-soft);
+    stroke: var(--text-faint);
+    stroke-width: 1.4;
+  }
+  .s {
+    fill: var(--bg-soft);
+    stroke: var(--text-muted);
+    stroke-width: 1.6;
+  }
+  .ring {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 1.2;
+  }
+  .eps {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .el {
+    font: 600 13px var(--font-mono);
+    fill: var(--g-yellow);
+    text-anchor: middle;
+  }
+</style>

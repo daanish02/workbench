@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Inside the event loop: two tasks, one thread"
+  caption="A replay of the asyncio example above: gather(fetch('A', 1.0), fetch('B', 0.5)). Only one task is ever running. A task leaves the thread only at an await, parks in the waiting area with a timer, and goes back to the ready queue when the timer fires. The total is 1.0 s, the longest wait, not 1.5 s, the sum."
+>
+  <async-event-loop>
+    <div class="clock mono">t = <b data-t>0.0</b> s</div>
+    <div class="boxes">
+      <div class="box run"><span class="ctl-label">Running (the one thread)</span><div class="items" data-run></div></div>
+      <div class="box"><span class="ctl-label">Ready queue</span><div class="items" data-ready></div></div>
+      <div class="box"><span class="ctl-label">Waiting (suspended at await)</span><div class="items" data-wait></div></div>
+    </div>
+    <pre class="term mono" data-out></pre>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="msg" data-msg></p>
+  </async-event-loop>
+</Figure>
+
+<style>
+  .clock {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .clock b {
+    color: var(--g-yellow);
+  }
+  .boxes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+  }
+  .box {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    min-height: 74px;
+  }
+  .box.run {
+    border-color: var(--g-blue);
+  }
+  .items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .items :global(.task) {
+    border-radius: 8px;
+    padding: 3px 8px;
+    font: 0.8125rem var(--font-mono);
+    border: 1px solid var(--c);
+    background: color-mix(in srgb, var(--c) 16%, transparent);
+  }
+  .items :global(.task small) {
+    color: var(--text-faint);
+    margin-left: 4px;
+  }
+  .term {
+    margin: 10px 0;
+    min-height: 6.5em;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    font-size: 0.8125rem;
+    white-space: pre-wrap;
+  }
+  .msg {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    min-height: 2.6em;
+  }
+</style>
+
+<script>
+  type F = { t: string; run: string[]; ready: string[]; wait: string[]; out?: string; msg: string };
+  // Each frame mirrors the real run of the asyncio example (output A waiting, B waiting, B done, A done).
+  const FRAMES: F[] = [
+    { t: '0.0', run: ['main'], ready: [], wait: [], msg: 'asyncio.run(main()) starts the loop. main calls gather(), which wraps both coroutines in tasks.' },
+    { t: '0.0', run: [], ready: ['A', 'B'], wait: ['main|awaiting gather'], msg: 'main suspends at "await gather(...)". A and B are queued, not yet running.' },
+    { t: '0.0', run: ['A'], ready: ['B'], wait: ['main|awaiting gather'], out: 'A waiting', msg: 'The loop runs A until its first await.' },
+    { t: '0.0', run: [], ready: ['B'], wait: ['main|awaiting gather', 'A|timer 1.0 s'], msg: 'A hits await asyncio.sleep(1.0): it registers a timer and hands the thread back.' },
+    { t: '0.0', run: ['B'], ready: [], wait: ['main|awaiting gather', 'A|timer 1.0 s'], out: 'B waiting', msg: 'B runs on the same thread.' },
+    { t: '0.0', run: [], ready: [], wait: ['main|awaiting gather', 'A|timer 1.0 s', 'B|timer 0.5 s'], msg: 'B suspends too. Nothing is ready, so the loop blocks in the OS until the earliest timer.' },
+    { t: '0.5', run: [], ready: ['B'], wait: ['main|awaiting gather', 'A|timer 1.0 s'], msg: "0.5 s: B's timer fires and B moves to the ready queue." },
+    { t: '0.5', run: ['B'], ready: [], wait: ['main|awaiting gather', 'A|timer 1.0 s'], out: 'B done', msg: "B resumes right after its await, prints, and returns 'B'." },
+    { t: '1.0', run: [], ready: ['A'], wait: ['main|awaiting gather'], msg: "1.0 s: A's timer fires." },
+    { t: '1.0', run: ['A'], ready: [], wait: ['main|awaiting gather'], out: 'A done', msg: "A returns 'A'. Both tasks are done, so gather's future completes and main becomes ready." },
+    { t: '1.0', run: ['main'], ready: [], wait: [], out: "['A', 'B'] 1.0s", msg: 'main resumes with the results in argument order. Elapsed: the longest wait, not the sum.' },
+  ];
+  const COLOR: Record<string, string> = { A: 'var(--g-blue)', B: 'var(--g-green)', main: 'var(--g-yellow)' };
+
+  class AsyncEventLoop extends HTMLElement {
+    k = 0;
+    timer = 0;
+    connectedCallback() {
+      this.querySelector('[data-play]')!.addEventListener('click', () => {
+        clearInterval(this.timer);
+        if (this.k >= FRAMES.length - 1) this.k = 0;
+        this.draw();
+        this.timer = window.setInterval(() => (this.k < FRAMES.length - 1 ? (this.k++, this.draw()) : clearInterval(this.timer)), 1100);
+      });
+      this.querySelector('[data-step]')!.addEventListener('click', () => {
+        clearInterval(this.timer);
+        if (this.k < FRAMES.length - 1) this.k++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        clearInterval(this.timer);
+        this.k = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = FRAMES[this.k];
+      const chip = (s: string) => {
+        const [name, note] = s.split('|');
+        return `<span class="task" style="--c:${COLOR[name]}">${name}${note ? `<small>${note}</small>` : ''}</span>`;
+      };
+      this.querySelector('[data-t]')!.textContent = f.t;
+      this.querySelector('[data-run]')!.innerHTML = f.run.map(chip).join('') || '<span class="ctl-label">idle</span>';
+      this.querySelector('[data-ready]')!.innerHTML = f.ready.map(chip).join('');
+      this.querySelector('[data-wait]')!.innerHTML = f.wait.map(chip).join('');
+      this.querySelector('[data-out]')!.textContent = FRAMES.slice(0, this.k + 1)
+        .filter((x) => x.out)
+        .map((x) => x.out)
+        .join('\n');
+      this.querySelector('[data-msg]')!.textContent = `${this.k + 1}/${FRAMES.length} · ${f.msg}`;
+    }
+  }
+  customElements.define('async-event-loop', AsyncEventLoop);
+</script>

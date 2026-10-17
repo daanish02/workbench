@@ -1,0 +1,161 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Token bucket vs leaky bucket, live"
+  caption="Click Send, or Burst of 10. Token bucket: each request spends a token, tokens refill at a steady rate, so an idle client can burst up to the capacity and is then held to the refill rate. Leaky bucket: requests join a queue that drains at the fixed rate, so bursts are smoothed into steady output and rejected only when the queue is full."
+>
+  <bucket-sim>
+    <div class="ctl-row">
+      <button class="btn" data-m="token" aria-pressed="true">Token bucket</button>
+      <button class="btn" data-m="leaky" aria-pressed="false">Leaky bucket (queue)</button>
+      <label class="stat">Capacity <input type="range" min="2" max="20" value="10" data-cap /> <b data-capv>10</b></label>
+      <label class="stat">Rate/s <input type="range" min="1" max="10" value="3" data-rate /> <b data-ratev>3</b></label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-send>Send request</button>
+      <button class="btn primary" data-burst>Burst of 10</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="bk"><i data-level></i><span data-lab></span></div>
+    <div class="stat" data-stat></div>
+    <ol class="bk-log" data-log></ol>
+  </bucket-sim>
+</Figure>
+
+<style>
+  .bk {
+    position: relative;
+    height: 30px;
+    margin-top: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111;
+  }
+  .bk i {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(66, 133, 244, 0.55);
+    transition: width 0.1s linear;
+  }
+  .bk span {
+    position: absolute;
+    inset: 0;
+    text-align: center;
+    font: 700 0.75rem/30px var(--font-mono);
+    color: #fff;
+  }
+  .bk-log {
+    margin: 10px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.7 var(--font-mono);
+    color: var(--text-muted);
+    max-height: 8.5em;
+    overflow-y: auto;
+  }
+  .bk-log :global(li.ok) {
+    color: var(--g-green-l);
+  }
+  .bk-log :global(li.no) {
+    color: var(--g-red-l);
+  }
+  input[type='range'] {
+    width: 90px;
+    vertical-align: middle;
+  }
+  [data-stat] {
+    margin-top: 8px;
+  }
+</style>
+
+<script>
+  class BucketSim extends HTMLElement {
+    mode = 'token';
+    level = 10; // tokens (token bucket) or queued requests (leaky bucket)
+    last = 0;
+    ok = 0;
+    no = 0;
+    iv = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.m!;
+          this.querySelectorAll('[data-m]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-send]')!.addEventListener('click', () => this.send(1));
+      this.querySelector('[data-burst]')!.addEventListener('click', () => this.send(10));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelectorAll('input[type=range]').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.reset();
+      this.iv = window.setInterval(() => this.tick(), 100);
+    }
+    disconnectedCallback() {
+      clearInterval(this.iv);
+    }
+    cap() {
+      return +this.querySelector<HTMLInputElement>('[data-cap]')!.value;
+    }
+    rate() {
+      return +this.querySelector<HTMLInputElement>('[data-rate]')!.value;
+    }
+    reset() {
+      this.level = this.mode === 'token' ? this.cap() : 0;
+      this.ok = this.no = 0;
+      this.last = performance.now();
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.draw();
+    }
+    tick() {
+      const now = performance.now();
+      const dt = (now - this.last) / 1000;
+      this.last = now;
+      if (this.mode === 'token') this.level = Math.min(this.cap(), this.level + dt * this.rate());
+      else this.level = Math.max(0, this.level - dt * this.rate());
+      this.draw();
+    }
+    log(ok: boolean, t: string) {
+      const ol = this.querySelector('[data-log]')!;
+      ol.insertAdjacentHTML('afterbegin', `<li class="${ok ? 'ok' : 'no'}">${t}</li>`);
+      while (ol.children.length > 30) ol.lastElementChild!.remove();
+    }
+    send(n: number) {
+      this.tick();
+      for (let i = 0; i < n; i++) {
+        if (this.mode === 'token') {
+          if (this.level >= 1) {
+            this.level -= 1;
+            this.ok++;
+            this.log(true, 'allowed: spent a token');
+          } else {
+            this.no++;
+            this.log(false, 'rejected 429: bucket empty');
+          }
+        } else if (this.level + 1 <= this.cap()) {
+          this.level += 1;
+          this.ok++;
+          this.log(true, `queued (position ${Math.ceil(this.level)}, released at ${this.rate()}/s)`);
+        } else {
+          this.no++;
+          this.log(false, 'rejected 429: queue full');
+        }
+      }
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-capv]')!.textContent = String(this.cap());
+      this.querySelector('[data-ratev]')!.textContent = String(this.rate());
+      const cap = this.cap();
+      if (this.level > cap) this.level = cap;
+      (this.querySelector('[data-level]') as HTMLElement).style.width = `${(this.level / cap) * 100}%`;
+      this.querySelector('[data-lab]')!.textContent = this.mode === 'token' ? `${this.level.toFixed(1)} / ${cap} tokens` : `${this.level.toFixed(1)} / ${cap} queued`;
+      this.querySelector('[data-stat]')!.innerHTML = `accepted <b>${this.ok}</b> · rejected <b>${this.no}</b>`;
+    }
+  }
+  customElements.define('bucket-sim', BucketSim);
+</script>

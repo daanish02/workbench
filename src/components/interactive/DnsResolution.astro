@@ -1,0 +1,111 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Resolving www.example.com"
+  caption="Step through a lookup with a cold cache: the resolver walks the hierarchy from the root down, each server answering with a referral until the authoritative server gives the real address. Switch to a warm cache and the same lookup ends at step 1."
+>
+  <dns-resolution>
+    <div class="ctl-row">
+      <span class="ctl-label">Resolver cache</span>
+      <button class="btn" data-cache="cold" aria-pressed="true">Cold</button>
+      <button class="btn" data-cache="tld" aria-pressed="false">Knows .com servers</button>
+      <button class="btn" data-cache="warm" aria-pressed="false">Has the answer</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+      <span class="stat" data-stat></span>
+    </div>
+    <ol class="dr-log" data-log></ol>
+    <p class="dr-msg" data-msg aria-live="polite"></p>
+  </dns-resolution>
+</Figure>
+
+<style>
+  .dr-log {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .dr-log :global(li) {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: 0.75rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .dr-log :global(li b) {
+    color: var(--text);
+  }
+  .dr-log :global(li.now) {
+    border-color: var(--g-blue);
+  }
+  .dr-log :global(li.ans) {
+    border-color: var(--g-green);
+    color: var(--g-green-l);
+  }
+  .dr-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  type S = [string, string, string, number];
+  // [who is asked/answers, what happens, class, illustrative ms]
+  const ALL: S[] = [
+    ['Browser & OS', 'Check the browser cache, the OS cache and the hosts file: nothing for www.example.com.', '', 0],
+    ['Resolver', 'Stub resolver asks the recursive resolver (ISP or public DNS): "A record for www.example.com?" The resolver has no cached answer.', '', 10],
+    ['Root server', 'Resolver → root: "www.example.com?" Root answers with a referral: "I don\'t know, but ask the .com servers" (NS records for .com).', '', 20],
+    ['.com TLD server', 'Resolver → .com: "www.example.com?" Referral: "ask the name servers for example.com" (ns1.example.com).', '', 25],
+    ['example.com authoritative', 'Resolver → ns1.example.com: "www.example.com?" This server owns the zone, so it answers: A 93.184.216.34, TTL 300.', 'ans', 30],
+    ['Resolver', 'The resolver caches the answer for 300 s (the TTL) and returns it to the client. The browser now has an IP and can start a TCP connection.', 'ans', 5],
+  ];
+  class DnsResolution extends HTMLElement {
+    cache = 'cold';
+    i = 0;
+    steps(): S[] {
+      if (this.cache === 'warm') return [ALL[0], ['Resolver', 'The resolver already holds www.example.com in its cache, TTL not expired: it answers immediately from memory.', 'ans', 1]];
+      if (this.cache === 'tld') return [ALL[0], ALL[1], ['Resolver', 'The resolver has the .com server addresses cached, so it skips the root and goes straight to .com.', '', 0], ALL[3], ALL[4], ALL[5]];
+      return ALL;
+    }
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-cache]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.cache = b.dataset.cache!;
+          this.querySelectorAll('[data-cache]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'Press Next step.';
+      this.querySelector('[data-stat]')!.textContent = '';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    next() {
+      const steps = this.steps();
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      const [who, what, cls] = steps[this.i++];
+      log.insertAdjacentHTML('beforeend', `<li class="${cls} now"><b>${this.i}. ${who}</b> ${what}</li>`);
+      const ms = steps.slice(0, this.i).reduce((a, s) => a + s[3], 0);
+      this.querySelector('[data-stat]')!.innerHTML = `≈ <b>${ms} ms</b> so far (illustrative)`;
+      this.querySelector('[data-msg]')!.textContent = this.i >= steps.length ? 'Done. A warm cache cuts the whole walk to one memory lookup, which is why TTL choices matter.' : '';
+      if (this.i >= steps.length) (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+    }
+  }
+  customElements.define('dns-resolution', DnsResolution);
+</script>

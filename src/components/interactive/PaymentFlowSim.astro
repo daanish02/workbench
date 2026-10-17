@@ -1,0 +1,183 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Charging a card when the network lies"
+  caption="Choose what the payment provider does and how your system is built, then step through. The dangerous case is a timeout after the provider has already charged the customer: the reply is lost, and your system must not guess. Compare the customer's real charges with your own books."
+>
+  <payment-flow>
+    <div class="ctl-row">
+      <span class="ctl-label">Provider</span>
+      <button class="btn" data-o="ok" aria-pressed="false">Charges, replies</button>
+      <button class="btn" data-o="timeout" aria-pressed="true">Charges, reply lost (timeout)</button>
+      <button class="btn" data-o="decline" aria-pressed="false">Declines</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Idempotency key</span>
+      <button class="btn" data-k="on" aria-pressed="true">Sent</button>
+      <button class="btn" data-k="off" aria-pressed="false">Not used</button>
+      <span class="ctl-label">After a timeout we</span>
+      <button class="btn" data-r="retry" aria-pressed="true">Retry</button>
+      <button class="btn" data-r="resolve" aria-pressed="false">Mark unknown, check status</button>
+      <button class="btn" data-r="fail" aria-pressed="false">Treat as failed</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <ol class="pf2-log" data-log></ol>
+    <div class="pf2-sum" data-sum></div>
+  </payment-flow>
+</Figure>
+
+<style>
+  .pf2-log {
+    margin: 14px 0 0;
+    padding-left: 1.5em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pf2-log :global(li.now) {
+    color: #fff;
+  }
+  .pf2-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+  .pf2-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+  .pf2-sum {
+    margin-top: 12px;
+    display: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.7;
+  }
+  .pf2-sum.show {
+    display: block;
+  }
+  .pf2-sum.ok {
+    border-color: var(--g-green);
+  }
+  .pf2-sum.bad {
+    border-color: var(--g-red);
+  }
+  .pf2-sum :global(b) {
+    color: var(--text);
+  }
+</style>
+
+<script>
+  type Line = { t: string; c?: string };
+  interface Result {
+    lines: Line[];
+    charges: number;
+    ledger: number;
+    fulfilled: boolean;
+    note: string;
+  }
+  function simulate(outcome: string, key: boolean, after: string): Result {
+    const L: Line[] = [];
+    let charges = 0;
+    let ledger = 0;
+    let fulfilled = false;
+    let note = '';
+    L.push({ t: `Checkout sends charge($50)${key ? ' with Idempotency-Key k-1' : ' with no idempotency key'}` });
+    if (outcome === 'decline') {
+      L.push({ t: 'Provider declines the card' });
+      L.push({ t: 'We record the payment as FAILED; no ledger entry is written', c: 'good' });
+      note = 'Nothing was charged and nothing was recorded: consistent. The order is not fulfilled.';
+      return { lines: L, charges, ledger, fulfilled, note };
+    }
+    if (outcome === 'ok') {
+      charges = 1;
+      L.push({ t: 'Provider charges the card and replies success', c: 'good' });
+      L.push({ t: 'We mark the payment CAPTURED and post a balanced ledger entry' });
+      L.push({ t: 'Order fulfilled', c: 'good' });
+      ledger = 1;
+      fulfilled = true;
+      note = 'The happy path: one charge, one ledger entry, one fulfilled order.';
+      return { lines: L, charges, ledger, fulfilled, note };
+    }
+    charges = 1;
+    L.push({ t: 'Provider charges the card (the customer has been charged)', c: 'bad' });
+    L.push({ t: 'The reply is LOST: our request times out', c: 'bad' });
+    if (after === 'retry') {
+      L.push({ t: 'We retry the same request' });
+      if (key) {
+        L.push({ t: 'Provider recognises key k-1 and returns the ORIGINAL result, with no second charge', c: 'good' });
+        L.push({ t: 'We mark CAPTURED and post one ledger entry' });
+        L.push({ t: 'Order fulfilled', c: 'good' });
+        ledger = 1;
+        fulfilled = true;
+        note = 'The idempotency key turned a dangerous retry into a safe one: the provider de-duplicated it.';
+      } else {
+        charges = 2;
+        L.push({ t: 'With no key, the provider treats it as a NEW payment and charges again', c: 'bad' });
+        L.push({ t: 'We see success and post one ledger entry', c: 'bad' });
+        L.push({ t: 'Order fulfilled, but the customer paid twice', c: 'bad' });
+        ledger = 1;
+        fulfilled = true;
+        note = 'A retry without an idempotency key is a double charge. Our books show one payment while the provider shows two; only reconciliation would notice.';
+      }
+    } else if (after === 'resolve') {
+      L.push({ t: 'We do NOT guess: the payment is marked UNKNOWN' });
+      L.push({ t: 'We ask the provider for the status of this payment (or wait for its webhook)' });
+      L.push({ t: 'Provider reports: charged', c: 'good' });
+      L.push({ t: 'We mark CAPTURED, post one ledger entry, fulfil the order', c: 'good' });
+      ledger = 1;
+      fulfilled = true;
+      note = 'Treating a timeout as "unknown" and resolving it from the source of truth keeps everything consistent without a second attempt.';
+    } else {
+      L.push({ t: 'We treat the timeout as a failure and show the customer an error', c: 'bad' });
+      L.push({ t: 'No ledger entry; order not fulfilled', c: 'bad' });
+      note = 'The customer was charged but got nothing, and our books say nothing happened. A timeout is not a failure. Only reconciliation will eventually surface this.';
+    }
+    return { lines: L, charges, ledger, fulfilled, note };
+  }
+  class PaymentFlow extends HTMLElement {
+    o = 'timeout';
+    k = true;
+    r = 'retry';
+    i = 0;
+    res!: Result;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-o]').forEach((b) => b.addEventListener('click', () => ((this.o = b.dataset.o!), this.mark('[data-o]', b), this.reset())));
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) => b.addEventListener('click', () => ((this.k = b.dataset.k === 'on'), this.mark('[data-k]', b), this.reset())));
+      this.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((b) => b.addEventListener('click', () => ((this.r = b.dataset.r!), this.mark('[data-r]', b), this.reset())));
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    reset() {
+      this.res = simulate(this.o, this.k, this.r);
+      this.i = 0;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-sum]')!.className = 'pf2-sum';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    next() {
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      const l = this.res.lines[this.i++];
+      log.insertAdjacentHTML('beforeend', `<li class="${l.c ?? ''} now">${l.t}</li>`);
+      if (this.i >= this.res.lines.length) {
+        (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+        const r = this.res;
+        const matches = r.charges === r.ledger;
+        const good = matches && r.charges <= 1 && (r.charges === 0 || r.fulfilled);
+        const sum = this.querySelector('[data-sum]') as HTMLElement;
+        sum.className = `pf2-sum show ${good ? 'ok' : 'bad'}`;
+        sum.innerHTML = `Customer was charged <b>${r.charges}×</b> · our ledger has <b>${r.ledger}</b> entr${r.ledger === 1 ? 'y' : 'ies'} · order <b>${r.fulfilled ? 'fulfilled' : 'not fulfilled'}</b> · books ${matches ? '<b>match</b>' : '<b>DO NOT match</b>'} the provider.<br>${r.note}`;
+      }
+    }
+  }
+  customElements.define('payment-flow', PaymentFlow);
+</script>

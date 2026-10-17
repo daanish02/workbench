@@ -1,0 +1,98 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What a test suite really costs"
+  caption="Set how many tests live at each layer, or load a classic shape. Broad tests are slower and flakier, so the same number of tests costs very different amounts to run, and a suite heavy on end-to-end tests spends most of its time red for reasons that are not bugs. The per-test numbers are illustrative: 5 ms and no flakiness for a unit test, 0.5 s and 0.02% flakiness for integration, 20 s and 0.5% for end-to-end."
+>
+  <test-pyramid-budget>
+    <div class="ctl-row">
+      <button class="btn" data-pre="pyramid">Pyramid</button>
+      <button class="btn" data-pre="cone">Ice-cream cone</button>
+      <button class="btn" data-pre="hour">Hourglass</button>
+    </div>
+    <div class="ctl-row">
+      <label class="stat">Unit <input type="range" min="0" max="2000" step="10" value="1000" data-u /> <b data-uv>1,000</b></label>
+      <label class="stat">Integration <input type="range" min="0" max="500" step="5" value="100" data-i /> <b data-iv>100</b></label>
+      <label class="stat">End-to-end <input type="range" min="0" max="500" step="5" value="10" data-e /> <b data-ev>10</b></label>
+    </div>
+    <div class="tp-bars" data-bars></div>
+    <p class="tp-msg" data-msg></p>
+  </test-pyramid-budget>
+</Figure>
+
+<style>
+  .tp-bars {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .tp-bars :global(.r) {
+    display: grid;
+    grid-template-columns: 96px 1fr 120px;
+    gap: 8px;
+    align-items: center;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .tp-bars :global(.t) {
+    height: 16px;
+    border-radius: 8px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    overflow: hidden;
+  }
+  .tp-bars :global(.f) {
+    height: 100%;
+    transition: width 0.2s;
+  }
+  .tp-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4.4em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const COST = { u: { s: 0.005, p: 0 }, i: { s: 0.5, p: 0.0002 }, e: { s: 20, p: 0.005 } };
+  const PRE: Record<string, [number, number, number]> = { pyramid: [1000, 100, 10], cone: [50, 100, 400], hour: [800, 10, 300] };
+  const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+  const dur = (s: number) => (s < 90 ? `${s.toFixed(s < 10 ? 1 : 0)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
+  class TestPyramidBudget extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-pre]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const [u, i, e] = PRE[b.dataset.pre!];
+          this.set('[data-u]', u); this.set('[data-i]', i); this.set('[data-e]', e);
+          this.draw();
+        }),
+      );
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    set(s: string, v: number) { this.querySelector<HTMLInputElement>(s)!.value = String(v); }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const n = { u: q('[data-u]'), i: q('[data-i]'), e: q('[data-e]') };
+      this.querySelector('[data-uv]')!.textContent = fmt(n.u);
+      this.querySelector('[data-iv]')!.textContent = fmt(n.i);
+      this.querySelector('[data-ev]')!.textContent = fmt(n.e);
+      const secs = { u: n.u * COST.u.s, i: n.i * COST.i.s, e: n.e * COST.e.s };
+      const total = secs.u + secs.i + secs.e;
+      const green = (1 - COST.u.p) ** n.u * (1 - COST.i.p) ** n.i * (1 - COST.e.p) ** n.e;
+      const names = { u: 'Unit', i: 'Integration', e: 'End-to-end' } as const;
+      const colors = { u: 'var(--g-green)', i: 'var(--g-yellow)', e: 'var(--g-red)' } as const;
+      const max = Math.max(total, 1);
+      this.querySelector('[data-bars]')!.innerHTML = (['u', 'i', 'e'] as const).map((k) => `<div class="r"><span>${names[k]}</span><div class="t"><div class="f" style="width:${(secs[k] / max) * 100}%;background:${colors[k]}"></div></div><span>${dur(secs[k])}</span></div>`).join('');
+      const e2eShare = total ? secs.e / total : 0;
+      this.querySelector('[data-msg]')!.textContent = `${fmt(n.u + n.i + n.e)} tests take ${dur(total)} to run, and ${(green * 100).toFixed(1)}% of runs are fully green with no bug present, so ${((1 - green) * 100).toFixed(1)}% fail for flakiness alone. ${e2eShare > 0.7 ? `End-to-end tests are ${Math.round(e2eShare * 100)}% of the run time: feedback is slow and a red build usually needs a human to find out whether it is real.` : total < 600 ? 'Fast enough to run on every commit, and a red build most likely points at one focused test.' : 'Workable, but check whether lower-level tests could replace some of the slow ones.'}`;
+    }
+  }
+  customElements.define('test-pyramid-budget', TestPyramidBudget);
+</script>

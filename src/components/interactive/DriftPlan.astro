@@ -1,0 +1,146 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Plan, apply, drift"
+  caption="The left column is the configuration in version control (desired state); the right is what actually exists. Edit the desired state, press Plan to see the diff a declarative tool would compute, and Apply to reconcile. Press Console edit to simulate someone changing production by hand, then Plan again to see drift. Changing the region cannot be done in place, so it forces a replacement."
+>
+  <drift-plan>
+    <div class="ctl-row">
+      <label class="stat">Servers <input type="range" min="1" max="6" value="3" data-n /> <b data-nv>3</b></label>
+      <label class="stat">Size
+        <select data-size><option>small</option><option>large</option></select>
+      </label>
+      <label class="stat">Region
+        <select data-reg><option>eu</option><option>us</option></select>
+      </label>
+      <label class="stat"><input type="checkbox" data-p22 /> open port 22</label>
+    </div>
+    <div class="dp-cols">
+      <div><b>Desired (code)</b><pre data-want></pre></div>
+      <div><b>Actual (live)</b><pre data-have></pre></div>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-plan>Plan</button>
+      <button class="btn" data-apply>Apply</button>
+      <button class="btn" data-drift>Console edit (drift)</button>
+    </div>
+    <pre class="dp-plan" data-out>Press Plan.</pre>
+  </drift-plan>
+</Figure>
+
+<style>
+  .dp-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  @media (max-width: 560px) {
+    .dp-cols {
+      grid-template-columns: 1fr;
+    }
+  }
+  pre {
+    margin: 6px 0 0;
+    padding: 10px;
+    font: 0.75rem/1.55 var(--font-mono);
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .dp-plan {
+    margin-top: 12px;
+    min-height: 7em;
+  }
+  .dp-plan :global(.add) {
+    color: var(--g-green);
+  }
+  .dp-plan :global(.del) {
+    color: var(--g-red-l);
+  }
+  .dp-plan :global(.chg) {
+    color: var(--g-yellow);
+  }
+  select {
+    background: var(--bg-soft);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 3px 6px;
+    font: inherit;
+  }
+  input[type='range'] {
+    width: 90px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  type S = { servers: number; size: string; region: string; ports: number[] };
+  const show = (s: S) => `servers: ${s.servers}\nsize:    ${s.size}\nregion:  ${s.region}\nports:   [${s.ports.join(', ')}]`;
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  function plan(want: S, have: S) {
+    const out: string[] = [];
+    let add = 0, chg = 0, del = 0;
+    if (want.region !== have.region) {
+      out.push(`<span class="del">- servers: ${have.servers} (destroy, region ${have.region})</span>`);
+      out.push(`<span class="add">+ servers: ${want.servers} (create, region ${want.region})</span>`);
+      out.push(`<span class="del">  # region forces replacement: every server is destroyed and recreated</span>`);
+      del += have.servers; add += want.servers;
+      if (want.size !== have.size) out.push(`<span class="chg">  (size ${have.size} → ${want.size} comes with the replacement)</span>`);
+    } else {
+      if (want.servers > have.servers) { out.push(`<span class="add">+ servers: create ${want.servers - have.servers} more</span>`); add += want.servers - have.servers; }
+      if (want.servers < have.servers) { out.push(`<span class="del">- servers: destroy ${have.servers - want.servers}</span>`); del += have.servers - want.servers; }
+      if (want.size !== have.size) { out.push(`<span class="chg">~ size: ${have.size} → ${want.size} (in-place update, ${Math.min(want.servers, have.servers)} servers)</span>`); chg += Math.min(want.servers, have.servers); }
+    }
+    const a = want.ports.filter((p) => !have.ports.includes(p)), r = have.ports.filter((p) => !want.ports.includes(p));
+    if (a.length || r.length) { out.push(`<span class="chg">~ ports: open [${a.join(', ')}] close [${r.join(', ')}]</span>`); chg += 1; }
+    return { lines: out, add, chg, del };
+  }
+  class DriftPlan extends HTMLElement {
+    have: S = { servers: 3, size: 'small', region: 'eu', ports: [443] };
+    drifts = 0;
+    connectedCallback() {
+      this.querySelectorAll('input, select').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-plan]')!.addEventListener('click', () => this.showPlan());
+      this.querySelector('[data-apply]')!.addEventListener('click', () => this.apply());
+      this.querySelector('[data-drift]')!.addEventListener('click', () => this.drift());
+      this.draw();
+    }
+    want(): S {
+      const q = (s: string) => this.querySelector<HTMLInputElement | HTMLSelectElement>(s)!;
+      return { servers: +q('[data-n]').value, size: q('[data-size]').value, region: q('[data-reg]').value, ports: (q('[data-p22]') as HTMLInputElement).checked ? [22, 443] : [443] };
+    }
+    draw() {
+      const w = this.want();
+      this.querySelector('[data-nv]')!.textContent = String(w.servers);
+      this.querySelector('[data-want]')!.textContent = show(w);
+      this.querySelector('[data-have]')!.textContent = show(this.have);
+    }
+    showPlan() {
+      const p = plan(this.want(), this.have);
+      this.querySelector('[data-out]')!.innerHTML = p.lines.length ? p.lines.join('\n') + `\n\nPlan: ${p.add} to add, ${p.chg} to change, ${p.del} to destroy.` : 'No changes. Live infrastructure matches the configuration.';
+    }
+    apply() {
+      const p = plan(this.want(), this.have);
+      this.have = this.want();
+      this.draw();
+      this.querySelector('[data-out]')!.innerHTML = p.lines.length ? `Applied: ${p.add} added, ${p.chg} changed, ${p.del} destroyed.\nRun Plan again: it now reports no changes (applying twice does nothing extra).` : 'Nothing to apply.';
+    }
+    drift() {
+      const k = this.drifts++ % 3;
+      if (k === 0) { if (!this.have.ports.includes(22)) this.have.ports = [22, ...this.have.ports]; this.msg('Someone opened port 22 in the cloud console.'); }
+      else if (k === 1) { this.have.servers += 1; this.msg('Someone added a server by hand during an incident.'); }
+      else { this.have.size = this.have.size === 'small' ? 'large' : 'small'; this.msg('Someone resized the machines in the console.'); }
+    }
+    msg(t: string) {
+      this.draw();
+      this.querySelector('[data-out]')!.textContent = `${t} The live state drifted from the code. Press Plan to see the difference; the tool can reconcile it back, or you can adopt the change into the configuration.`;
+    }
+  }
+  customElements.define('drift-plan', DriftPlan);
+</script>

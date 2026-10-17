@@ -1,0 +1,88 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why 90% busy is not 'almost fine'"
+  caption="For a simple queue the mean time in a system is service time ÷ (1 − utilization). Latency barely moves up to about 70% busy, then explodes. Slide the load and read the latency off the curve; Little's law (concurrency = arrival rate × latency) shows how many requests pile up in flight."
+>
+  <utilization-curve>
+    <div class="ctl-row">
+      <label class="stat">Utilization <input type="range" min="5" max="99" value="60" data-u /> <b data-uv>60%</b></label>
+      <label class="stat">Service time <input type="range" min="1" max="50" value="10" data-s /> <b data-sv>10</b> ms</label>
+    </div>
+    <svg viewBox="0 0 400 190" class="uc-svg" data-svg aria-label="Latency versus utilization"></svg>
+    <p class="uc-msg" data-msg></p>
+  </utilization-curve>
+</Figure>
+
+<style>
+  .uc-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .uc-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .uc-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .uc-svg :global(.curve) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .uc-svg :global(.mark) {
+    fill: var(--g-yellow);
+  }
+  .uc-svg :global(.guide) {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 3 3;
+  }
+  .uc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 130px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  class UtilizationCurve extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const u = +this.querySelector<HTMLInputElement>('[data-u]')!.value / 100;
+      const s = +this.querySelector<HTMLInputElement>('[data-s]')!.value;
+      this.querySelector('[data-uv]')!.textContent = `${Math.round(u * 100)}%`;
+      this.querySelector('[data-sv]')!.textContent = String(s);
+      const X = (r: number) => 34 + r * 350;
+      const MAXM = 30; // clip the vertical axis at 30x
+      const Y = (m: number) => 165 - (Math.min(m, MAXM) / MAXM) * 145;
+      const pts: string[] = [];
+      for (let r = 0.02; r <= 0.985; r += 0.005) pts.push(`${X(r).toFixed(1)},${Y(1 / (1 - r)).toFixed(1)}`);
+      const m = 1 / (1 - u);
+      let h = `<line class="ax" x1="34" y1="165" x2="388" y2="165"></line><line class="ax" x1="34" y1="15" x2="34" y2="165"></line>`;
+      h += `<polyline class="curve" points="${pts.join(' ')}"></polyline>`;
+      h += `<line class="guide" x1="${X(u)}" y1="${Y(m)}" x2="${X(u)}" y2="165"></line><circle class="mark" cx="${X(u)}" cy="${Y(m)}" r="5"></circle>`;
+      h += [0, 25, 50, 75, 100].map((p) => `<text x="${X(p / 100) - 8}" y="178">${p}%</text>`).join('') + `<text x="4" y="22">30×</text><text x="8" y="168">1×</text><text x="150" y="188">utilization</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const lat = s * m;
+      const rate = (u * 1000) / s; // requests per second this one server completes at that utilization
+      this.querySelector('[data-msg]')!.textContent = `At ${Math.round(u * 100)}% utilization a ${s} ms request spends about ${Math.round(lat).toLocaleString('en-US')} ms in the system (${m.toFixed(1)}× its service time). The server is handling ${rate.toFixed(0)} req/s, so by Little's law about ${((rate * lat) / 1000).toFixed(1)} requests are in flight on it at any moment. ${u > 0.8 ? 'Past ~80% a small bump in traffic multiplies latency: this is why capacity plans leave headroom.' : 'Comfortable: latency is within a small multiple of the service time.'}`;
+    }
+  }
+  customElements.define('utilization-curve', UtilizationCurve);
+</script>

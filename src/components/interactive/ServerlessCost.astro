@@ -1,0 +1,124 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="When does always-on get cheaper?"
+  caption="Monthly cost of serving the same traffic two ways. Serverless bills per request and per GB-second, so its line rises smoothly from zero. A fleet of always-on instances costs a minimum even when idle, then climbs in steps as traffic needs more machines (sized for the peak). Spiky traffic and low volume favour serverless; steady high volume favours the fleet. The prices are illustrative list-price-style numbers; check your provider."
+>
+  <serverless-cost>
+    <div class="ctl-row">
+      <label class="stat">Requests/month <input type="range" min="4" max="10" step="0.1" value="7" data-x /> <b data-xv>10,000,000</b></label>
+      <label class="stat">Duration <input type="range" min="20" max="2000" step="10" value="100" data-d /> <b data-dv>100</b> ms</label>
+      <label class="stat">Memory <input type="range" min="128" max="3008" step="128" value="512" data-m /> <b data-mv>512</b> MB</label>
+      <label class="stat">Peak ÷ average <input type="range" min="1" max="10" value="3" data-k /> <b data-kv>3</b>×</label>
+    </div>
+    <svg viewBox="0 0 400 200" class="sc-svg" data-svg aria-label="Monthly cost versus requests"></svg>
+    <p class="sc-msg" data-msg></p>
+  </serverless-cost>
+</Figure>
+
+<style>
+  .sc-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .sc-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .sc-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .sc-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .sc-svg :global(.sl) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .sc-svg :global(.fl) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .sc-svg :global(.guide) {
+    stroke: var(--text-faint);
+    stroke-dasharray: 3 3;
+  }
+  .sc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4.4em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const PER_MILLION = 0.2; // dollars per million requests
+  const PER_GB_S = 0.0000166667; // dollars per GB-second
+  const INSTANCE = 60; // dollars per month for one instance
+  const CONC = 30; // concurrent requests one instance handles
+  const UTIL = 0.6; // target utilisation
+  const MONTH_S = 2_592_000;
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  const usd = (n: number) => `$${n >= 100 ? fmt(Math.round(n)) : n.toFixed(2)}`;
+  class ServerlessCost extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const d = q('[data-d]');
+      const mem = q('[data-m]');
+      const k = q('[data-k]');
+      const lx = q('[data-x]');
+      const sl = (n: number) => (n / 1e6) * PER_MILLION + n * (d / 1000) * (mem / 1024) * PER_GB_S;
+      const fl = (n: number) => {
+        const peak = (n / MONTH_S) * k;
+        const cap = CONC * (1000 / d) * UTIL;
+        return Math.max(2, Math.ceil(peak / cap)) * INSTANCE;
+      };
+      this.querySelector('[data-xv]')!.textContent = fmt(Math.round(10 ** lx));
+      this.querySelector('[data-dv]')!.textContent = String(d);
+      this.querySelector('[data-mv]')!.textContent = String(mem);
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      const X = (e: number) => 34 + ((e - 4) / 6) * 350;
+      const LO = 0;
+      const HI = 7; // log10 dollars
+      const Y = (c: number) => 170 - ((Math.log10(Math.max(c, 1)) - LO) / (HI - LO)) * 150;
+      const s: string[] = [];
+      const f: string[] = [];
+      for (let e = 4; e <= 10.001; e += 0.05) {
+        s.push(`${X(e).toFixed(1)},${Y(sl(10 ** e)).toFixed(1)}`);
+        f.push(`${X(e).toFixed(1)},${Y(fl(10 ** e)).toFixed(1)}`);
+      }
+      let h = `<line class="ax" x1="34" y1="170" x2="384" y2="170"></line><line class="ax" x1="34" y1="20" x2="34" y2="170"></line>`;
+      for (let v = 0; v <= 6; v++) h += `<line class="grid" x1="34" y1="${Y(10 ** v)}" x2="384" y2="${Y(10 ** v)}"></line><text x="${v >= 3 ? 6 : 12}" y="${Y(10 ** v) + 3}">$${v === 0 ? 1 : v === 3 ? '1K' : v === 6 ? '1M' : v === 1 ? 10 : v === 2 ? 100 : v === 4 ? '10K' : '100K'}</text>`;
+      for (let e = 4; e <= 10; e++) h += `<text x="${X(e) - 8}" y="182">1e${e}</text>`;
+      h += `<polyline class="sl" points="${s.join(' ')}"></polyline><polyline class="fl" points="${f.join(' ')}"></polyline>`;
+      h += `<line class="guide" x1="${X(lx)}" y1="20" x2="${X(lx)}" y2="170"></line>`;
+      h += `<text x="260" y="34" style="fill:var(--g-blue)">serverless</text><text x="260" y="46" style="fill:var(--g-yellow)">always-on fleet</text><text x="150" y="196">requests per month</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const n = 10 ** lx;
+      // first volume where the fleet becomes cheaper than serverless and stays so
+      let cross = 0;
+      for (let e = 4; e <= 10.001; e += 0.01) if (fl(10 ** e) < sl(10 ** e)) { cross = 10 ** e; break; }
+      const a = sl(n);
+      const b = fl(n);
+      this.querySelector('[data-msg]')!.textContent = `At ${fmt(Math.round(n))} requests a month (${((n / MONTH_S)).toFixed(n / MONTH_S < 10 ? 2 : 0)} req/s average): serverless ${usd(a)}, fleet ${usd(b)} (${Math.max(2, Math.ceil(((n / MONTH_S) * k) / (CONC * (1000 / d) * UTIL)))} instances sized for the ${k}× peak). ${a < b ? 'Serverless is cheaper here.' : 'The fleet is cheaper here.'} ${cross ? `With these settings the fleet first becomes cheaper near ${fmt(Math.round(cross / 1e6))} million requests a month.` : 'With these settings serverless stays cheaper across the whole range.'}`;
+    }
+  }
+  customElements.define('serverless-cost', ServerlessCost);
+</script>

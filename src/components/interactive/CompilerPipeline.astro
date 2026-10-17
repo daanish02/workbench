@@ -1,0 +1,362 @@
+---
+import Figure from '../Figure.astro';
+const presets = ['total = price + 10 * 2', 'total = (price + 10) * 2', 'x = 3 * 4 - qty', 'y = -price / 4', 'total = price + * 2', 'z = cost + 1'];
+---
+
+<Figure
+  title="Source → tokens → AST → bytecode"
+  caption="Edit the line or pick a preset. The lexer splits characters into tokens, a precedence-climbing parser builds the tree (notice * binds tighter than +), and the code generator walks the tree into stack-machine instructions modelled on CPython's. Toggle constant folding to see 10 * 2 become 20 before the program ever runs; an unknown name only fails at run time."
+>
+  <compiler-pipeline>
+    <div class="ctl-row">
+      <label class="ctl-label" for="cp-src">Source</label>
+      <input class="input mono src" id="cp-src" data-src value={presets[0]} spellcheck="false" autocomplete="off" />
+    </div>
+    <div class="ctl-row presets">
+      {presets.map((p) => <button class="btn" data-preset={p}>{p}</button>)}
+    </div>
+    <div class="ctl-row">
+      <button class="btn" data-fold aria-pressed="true">Constant folding</button>
+      <span class="stat mono">price = 5, qty = 3</span>
+    </div>
+    <div class="stages">
+      <section>
+        <h4><span class="n">1</span>Tokens</h4>
+        <div class="tokens" data-tokens></div>
+      </section>
+      <section>
+        <h4><span class="n">2</span>AST</h4>
+        <div class="ast mono" data-ast></div>
+      </section>
+      <section>
+        <h4><span class="n">3</span>Bytecode <small>and the stack after each instruction</small></h4>
+        <div data-code></div>
+        <div class="result mono" data-result></div>
+      </section>
+    </div>
+  </compiler-pipeline>
+</Figure>
+
+<style>
+  .src {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+  .presets :global(.btn) {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+  .stages {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  section {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-width: 0;
+  }
+  h4 {
+    margin: 0 0 8px;
+    font-size: 0.8125rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  h4 small {
+    color: var(--text-faint);
+    font-weight: 400;
+  }
+  .n {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    font-size: 0.6875rem;
+  }
+  .tokens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .tokens :global(.tok) {
+    border: 1px solid var(--c);
+    border-radius: 8px;
+    padding: 3px 8px;
+    font: 0.8125rem var(--font-mono);
+    background: color-mix(in srgb, var(--c) 14%, transparent);
+  }
+  .tokens :global(.tok small) {
+    display: block;
+    font-size: 0.625rem;
+    color: var(--text-faint);
+  }
+  .ast {
+    font-size: 0.8125rem;
+    overflow-x: auto;
+  }
+  .ast :global(ul) {
+    list-style: none;
+    margin: 0;
+    padding-left: 18px;
+    border-left: 1px solid var(--border-strong);
+  }
+  .ast > :global(ul) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .ast :global(li) {
+    padding: 2px 0;
+    white-space: nowrap;
+  }
+  .ast :global(.k) {
+    color: var(--g-blue-l, var(--g-blue));
+    font-weight: 700;
+  }
+  .ast :global(.lbl) {
+    color: var(--text-faint);
+  }
+  [data-code] :global(table) {
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+    width: 100%;
+  }
+  .stages [data-code] :global(td) {
+    text-align: left;
+    padding: 3px 8px 3px 0;
+    vertical-align: top;
+  }
+  [data-code] :global(td.op) {
+    color: var(--g-yellow);
+    white-space: nowrap;
+  }
+  [data-code] :global(td.st) {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  [data-code] :global(tr.bad td) {
+    color: var(--g-red);
+  }
+  .result {
+    margin-top: 8px;
+    font-size: 0.8125rem;
+  }
+  :global(compiler-pipeline .err) {
+    color: var(--g-red);
+    font: 0.8125rem var(--font-mono);
+    white-space: pre-wrap;
+  }
+</style>
+
+<script>
+  type Tok = { kind: string; text: string; pos: number };
+  type Num = { v: number; float: boolean };
+  type Node =
+    | { type: 'Assign'; target: string; value: Node }
+    | { type: 'BinOp'; op: string; left: Node; right: Node }
+    | { type: 'UnaryOp'; op: string; operand: Node }
+    | { type: 'Name'; id: string }
+    | { type: 'Constant'; value: Num };
+
+  const KIND_COLOR: Record<string, string> = {
+    NAME: 'var(--g-blue)',
+    NUMBER: 'var(--g-green)',
+    OP: 'var(--g-yellow)',
+    ASSIGN: 'var(--g-red)',
+    PAREN: 'var(--text-faint)',
+  };
+  const PREC: Record<string, number> = { '+': 10, '-': 10, '*': 20, '/': 20 };
+  const ENV: Record<string, Num> = { price: { v: 5, float: false }, qty: { v: 3, float: false } };
+
+  class SyntaxErr extends Error {}
+
+  function lex(src: string): Tok[] {
+    const out: Tok[] = [];
+    let i = 0;
+    while (i < src.length) {
+      const c = src[i];
+      if (/\s/.test(c)) { i++; continue; }
+      const rest = src.slice(i);
+      let m: RegExpMatchArray | null;
+      if ((m = rest.match(/^[A-Za-z_]\w*/))) out.push({ kind: 'NAME', text: m[0], pos: i });
+      else if ((m = rest.match(/^\d+(\.\d+)?/))) out.push({ kind: 'NUMBER', text: m[0], pos: i });
+      else if ('+-*/'.includes(c)) out.push({ kind: 'OP', text: c, pos: i });
+      else if (c === '=') out.push({ kind: 'ASSIGN', text: c, pos: i });
+      else if ('()'.includes(c)) out.push({ kind: 'PAREN', text: c, pos: i });
+      else throw new SyntaxErr(`invalid character '${c}' at column ${i + 1}`);
+      i += m ? m[0].length : 1;
+    }
+    return out;
+  }
+
+  function parse(toks: Tok[]): Node {
+    let k = 0;
+    const peek = () => toks[k];
+    const fail = (what: string): never => {
+      const t = peek();
+      throw new SyntaxErr(t ? `unexpected '${t.text}' at column ${t.pos + 1}, expected ${what}` : `unexpected end of input, expected ${what}`);
+    };
+    const primary = (): Node => {
+      const t = peek();
+      if (!t) return fail('a value');
+      if (t.kind === 'NUMBER') { k++; return { type: 'Constant', value: { v: +t.text, float: t.text.includes('.') } }; }
+      if (t.kind === 'NAME') { k++; return { type: 'Name', id: t.text }; }
+      if (t.text === '-') { k++; return { type: 'UnaryOp', op: '-', operand: primary() }; }
+      if (t.text === '(') {
+        k++;
+        const e = expr(0);
+        if (peek()?.text !== ')') fail("')'");
+        k++;
+        return e;
+      }
+      return fail('a value');
+    };
+    // Precedence climbing: keep absorbing operators that bind at least as tightly as minPrec.
+    const expr = (minPrec: number): Node => {
+      let left = primary();
+      while (peek()?.kind === 'OP' && PREC[peek().text] >= minPrec) {
+        const op = toks[k++].text;
+        const right = expr(PREC[op] + 1); // +1 makes operators left-associative
+        left = { type: 'BinOp', op, left, right };
+      }
+      return left;
+    };
+    let tree: Node;
+    if (toks[0]?.kind === 'NAME' && toks[1]?.kind === 'ASSIGN') {
+      k = 2;
+      tree = { type: 'Assign', target: toks[0].text, value: expr(0) };
+    } else tree = expr(0);
+    if (k < toks.length) fail('end of line');
+    return tree;
+  }
+
+  function arith(op: string, a: Num, b: Num): Num {
+    if (op === '/') {
+      if (b.v === 0) throw new Error('ZeroDivisionError: division by zero');
+      return { v: a.v / b.v, float: true };
+    }
+    const v = op === '+' ? a.v + b.v : op === '-' ? a.v - b.v : a.v * b.v;
+    return { v, float: a.float || b.float };
+  }
+  const fmt = (n: Num) => (n.float && Number.isInteger(n.v) ? n.v.toFixed(1) : String(+n.v.toFixed(10)));
+
+  function fold(n: Node): Node {
+    if (n.type === 'Assign') return { ...n, value: fold(n.value) };
+    if (n.type === 'UnaryOp') {
+      const o = fold(n.operand);
+      return o.type === 'Constant' ? { type: 'Constant', value: { v: -o.value.v, float: o.value.float } } : { ...n, operand: o };
+    }
+    if (n.type === 'BinOp') {
+      const l = fold(n.left), r = fold(n.right);
+      if (l.type === 'Constant' && r.type === 'Constant' && !(n.op === '/' && r.value.v === 0))
+        return { type: 'Constant', value: arith(n.op, l.value, r.value) };
+      return { ...n, left: l, right: r };
+    }
+    return n;
+  }
+
+  type Ins = [string, string];
+  function gen(n: Node, out: Ins[] = []): Ins[] {
+    switch (n.type) {
+      case 'Assign': gen(n.value, out); out.push(['STORE_NAME', n.target]); break;
+      case 'BinOp': gen(n.left, out); gen(n.right, out); out.push(['BINARY_OP', n.op]); break;
+      case 'UnaryOp': gen(n.operand, out); out.push(['UNARY_NEGATIVE', '']); break;
+      case 'Name': out.push(['LOAD_NAME', n.id]); break;
+      case 'Constant': out.push(['LOAD_CONST', fmt(n.value)]); break;
+    }
+    return out;
+  }
+
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  function astHtml(n: Node, label = ''): string {
+    const lbl = label ? `<span class="lbl">${label}: </span>` : '';
+    switch (n.type) {
+      case 'Assign': return `<li>${lbl}<span class="k">Assign</span><ul><li><span class="lbl">target: </span>Name <b>${n.target}</b></li>${astHtml(n.value, 'value')}</ul></li>`;
+      case 'BinOp': return `<li>${lbl}<span class="k">BinOp</span> ${esc(n.op)}<ul>${astHtml(n.left, 'left')}${astHtml(n.right, 'right')}</ul></li>`;
+      case 'UnaryOp': return `<li>${lbl}<span class="k">UnaryOp</span> -<ul>${astHtml(n.operand, 'operand')}</ul></li>`;
+      case 'Name': return `<li>${lbl}Name <b>${n.id}</b></li>`;
+      case 'Constant': return `<li>${lbl}Constant <b>${fmt(n.value)}</b></li>`;
+    }
+  }
+
+  class CompilerPipeline extends HTMLElement {
+    folding = true;
+    connectedCallback() {
+      const src = this.querySelector<HTMLInputElement>('[data-src]')!;
+      src.addEventListener('input', () => this.run());
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+        b.addEventListener('click', () => ((src.value = b.dataset.preset!), this.run())),
+      );
+      const fb = this.querySelector<HTMLButtonElement>('[data-fold]')!;
+      fb.addEventListener('click', () => {
+        this.folding = !this.folding;
+        fb.setAttribute('aria-pressed', String(this.folding));
+        this.run();
+      });
+      this.run();
+    }
+    run() {
+      const src = this.querySelector<HTMLInputElement>('[data-src]')!.value;
+      const $ = (s: string) => this.querySelector<HTMLElement>(s)!;
+      const [tokEl, astEl, codeEl, resEl] = ['[data-tokens]', '[data-ast]', '[data-code]', '[data-result]'].map($);
+      astEl.innerHTML = codeEl.innerHTML = resEl.innerHTML = '';
+      let toks: Tok[];
+      try {
+        toks = lex(src);
+      } catch (e) {
+        tokEl.innerHTML = `<span class="err">SyntaxError: ${esc((e as Error).message)}</span>`;
+        return;
+      }
+      tokEl.innerHTML = toks.map((t) => `<span class="tok" style="--c:${KIND_COLOR[t.kind]}">${esc(t.text)}<small>${t.kind}</small></span>`).join('') || '<span class="lbl">(empty)</span>';
+      let tree: Node;
+      try {
+        tree = parse(toks);
+      } catch (e) {
+        astEl.innerHTML = `<span class="err">SyntaxError: ${esc((e as Error).message)}\nThe parser rejects the line, so no code is generated.</span>`;
+        return;
+      }
+      astEl.innerHTML = `<ul>${astHtml(tree)}</ul>`;
+      const code = gen(this.folding ? fold(tree) : tree);
+      // Execute on a tiny stack machine, recording the stack after each instruction.
+      const stack: Num[] = [];
+      const env: Record<string, Num> = { ...ENV };
+      const rows: string[] = [];
+      let error = '';
+      for (const [op, arg] of code) {
+        if (!error) {
+          try {
+            if (op === 'LOAD_CONST') stack.push({ v: +arg, float: arg.includes('.') });
+            else if (op === 'LOAD_NAME') {
+              if (!(arg in env)) throw new Error(`NameError: name '${arg}' is not defined`);
+              stack.push(env[arg]);
+            } else if (op === 'BINARY_OP') {
+              const b = stack.pop()!, a = stack.pop()!;
+              stack.push(arith(arg, a, b));
+            } else if (op === 'UNARY_NEGATIVE') {
+              const a = stack.pop()!;
+              stack.push({ v: -a.v, float: a.float });
+            } else if (op === 'STORE_NAME') env[arg] = stack.pop()!;
+          } catch (e) {
+            error = (e as Error).message;
+            rows.push(`<tr class="bad"><td class="op">${op}</td><td>${esc(arg)}</td><td class="st">${esc(error)}</td></tr>`);
+            continue;
+          }
+        }
+        rows.push(`<tr${error ? ' style="opacity:.4"' : ''}><td class="op">${op}</td><td>${esc(arg)}</td><td class="st">${error ? '' : '[' + stack.map(fmt).join(', ') + ']'}</td></tr>`);
+      }
+      codeEl.innerHTML = `<table>${rows.join('')}</table>`;
+      const target = tree.type === 'Assign' ? tree.target : '';
+      resEl.innerHTML = error
+        ? `<span class="err">Runtime ${esc(error)} (the code compiled fine)</span>`
+        : target
+          ? `${code.length} instructions · ${target} = <b>${fmt(env[target])}</b>`
+          : `${code.length} instructions · value left on stack: <b>${fmt(stack[stack.length - 1])}</b>`;
+    }
+  }
+  customElements.define('compiler-pipeline', CompilerPipeline);
+</script>

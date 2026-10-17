@@ -1,0 +1,191 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where does a file's block live?"
+  caption="The same 5-block file stored three ways on a 40-block disk (grey blocks belong to other files). Pick a logical block to read and count the disk reads needed to find it, then grow the file and see which method struggles."
+>
+  <file-alloc>
+    <div class="ctl-row">
+      <button class="btn" data-m="contig" aria-pressed="true">Contiguous</button>
+      <button class="btn" data-m="linked" aria-pressed="false">Linked</button>
+      <button class="btn" data-m="indexed" aria-pressed="false">Indexed</button>
+    </div>
+    <div class="disk" data-disk></div>
+    <div class="ctl-row">
+      <span class="ctl-label">Read logical block</span>
+      <span data-pick></span>
+      <button class="btn" data-grow>Grow file by 1 block</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="say" data-say aria-live="polite"></p>
+  </file-alloc>
+</Figure>
+
+<style>
+  .disk {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
+    margin: 14px 0;
+  }
+  .disk :global(div) {
+    position: relative;
+    aspect-ratio: 1.4;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+    font: 600 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .disk :global(div.other) {
+    background: #1c1c1c;
+  }
+  .disk :global(div.file) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.18);
+    color: #fff;
+  }
+  .disk :global(div.index) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.18);
+    color: #fff;
+  }
+  .disk :global(div.read) {
+    outline: 2px solid var(--g-red);
+    outline-offset: 1px;
+  }
+  .disk :global(div.target) {
+    background: var(--g-red);
+    color: #fff;
+  }
+  .disk :global(small) {
+    position: absolute;
+    top: 1px;
+    left: 3px;
+    font-size: 0.5rem;
+    color: var(--text-faint);
+  }
+  [data-pick] :global(button) {
+    min-width: 2.2em;
+  }
+  .say {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  const SIZE = 40;
+  const OTHER = new Set([0, 1, 7, 8, 9, 15, 16, 22, 26, 27, 31, 33, 38]);
+  const INIT: Record<string, number[]> = {
+    contig: [2, 3, 4, 5, 6],
+    linked: [3, 12, 18, 29, 35],
+    indexed: [3, 12, 18, 29, 35],
+  };
+  const INDEX_BLOCK = 20;
+
+  class FileAlloc extends HTMLElement {
+    m = 'contig';
+    blocks: Record<string, number[]> = {};
+    target = -1;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.m = b.dataset.m!;
+          this.querySelectorAll('[data-m]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.target = -1;
+          this.say('');
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-grow]')!.addEventListener('click', () => this.grow());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.blocks = Object.fromEntries(Object.entries(INIT).map(([k, v]) => [k, [...v]]));
+      this.target = -1;
+      this.say('Pick a logical block to read.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-say]')!.textContent = s;
+    }
+    used() {
+      const u = new Set(OTHER);
+      this.blocks[this.m].forEach((b) => u.add(b));
+      if (this.m === 'indexed') u.add(INDEX_BLOCK);
+      return u;
+    }
+    grow() {
+      const bl = this.blocks[this.m];
+      const used = this.used();
+      if (this.m === 'contig') {
+        const next = bl[bl.length - 1] + 1;
+        if (!used.has(next) && next < SIZE) {
+          bl.push(next);
+          this.say(`Block ${next} happened to be free, so the file grew in place.`);
+        } else {
+          // find a run of len+1 free blocks and move the whole file there
+          const need = bl.length + 1;
+          let start = -1;
+          for (let s = 0; s + need <= SIZE && start < 0; s++) {
+            if ([...Array(need).keys()].every((k) => !OTHER.has(s + k))) start = s;
+          }
+          if (start < 0) return this.say('No run of free blocks is long enough: external fragmentation stops the file growing.');
+          this.blocks[this.m] = [...Array(need).keys()].map((k) => start + k);
+          this.say(`Block ${next} is taken, so all ${need - 1} blocks had to be copied to a new free run starting at ${start}. Growth is expensive.`);
+        }
+      } else {
+        const free = [...Array(SIZE).keys()].find((b) => !used.has(b));
+        if (free === undefined) return this.say('Disk full.');
+        bl.push(free);
+        this.say(
+          this.m === 'linked'
+            ? `Any free block works: ${free} is linked from the old last block. No copying.`
+            : `Any free block works: ${free} is added to the index block. No copying.`,
+        );
+      }
+      this.target = -1;
+      this.draw();
+    }
+    read(i: number) {
+      this.target = i;
+      const bl = this.blocks[this.m];
+      if (this.m === 'contig') this.say(`Start ${bl[0]} + ${i} = block ${bl[i]}: 1 disk read, computed directly.`);
+      else if (this.m === 'linked')
+        this.say(`Follow the chain ${bl.slice(0, i + 1).join(' → ')}: ${i + 1} disk read${i ? 's' : ''}, because each block holds the pointer to the next.`);
+      else this.say(`Read index block ${INDEX_BLOCK}, look up entry ${i} → block ${bl[i]}: 2 disk reads, whichever block you want.`);
+      this.draw();
+    }
+    draw() {
+      const bl = this.blocks[this.m];
+      const reads = new Set<number>();
+      if (this.target >= 0) {
+        if (this.m === 'linked') bl.slice(0, this.target + 1).forEach((b) => reads.add(b));
+        if (this.m === 'indexed') reads.add(INDEX_BLOCK);
+      }
+      const label = new Map(bl.map((b, i) => [b, i]));
+      this.querySelector('[data-disk]')!.innerHTML = Array.from({ length: SIZE }, (_, b) => {
+        const cls = OTHER.has(b) ? 'other' : label.has(b) ? 'file' : this.m === 'indexed' && b === INDEX_BLOCK ? 'index' : '';
+        const isTarget = this.target >= 0 && bl[this.target] === b;
+        const text = label.has(b)
+          ? this.m === 'linked'
+            ? `${label.get(b)}→${bl[label.get(b)! + 1] ?? '∅'}`
+            : String(label.get(b))
+          : this.m === 'indexed' && b === INDEX_BLOCK
+            ? 'idx'
+            : '';
+        return `<div class="${cls} ${reads.has(b) ? 'read' : ''} ${isTarget ? 'target' : ''}"><small>${b}</small>${text}</div>`;
+      }).join('');
+      this.querySelector('[data-pick]')!.innerHTML = bl.map((_, i) => `<button class="btn" data-i="${i}">${i}</button>`).join(' ');
+      this.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) => b.addEventListener('click', () => this.read(+b.dataset.i!)));
+    }
+  }
+  customElements.define('file-alloc', FileAlloc);
+</script>

@@ -1,0 +1,229 @@
+---
+import Figure from '../Figure.astro';
+interface Props {
+  address?: number;
+}
+const { address = 10000 } = Astro.props;
+---
+
+<Figure
+  title="Translate a virtual address"
+  caption="Pages are 4096 bytes, so the low 12 bits of an address are the offset and the remaining high bits are the page number. The MMU checks the TLB first, then the page table. Try a resident page, a page that is on disk (a page fault the OS can fix), and an unmapped page (a fault the OS cannot fix)."
+>
+  <paging-translator data-addr={address}>
+    <div class="ctl-row">
+      <label class="ctl-label" for="pt-a">Virtual address</label>
+      <input class="input" id="pt-a" type="number" min="0" max="32767" data-addr-in style="width:7em" />
+      <button class="btn" data-go="10000">10000</button>
+      <button class="btn" data-go="13000">13000</button>
+      <button class="btn" data-go="22000">22000</button>
+      <button class="btn" data-go="1234">1234</button>
+    </div>
+    <div class="bits" data-bits></div>
+    <div class="grid">
+      <div>
+        <span class="ctl-label">TLB (2 entries)</span>
+        <table class="t" data-tlb></table>
+        <span class="ctl-label" style="margin-top:10px;display:block">Page table</span>
+        <table class="t" data-pt></table>
+      </div>
+      <div class="result" data-result aria-live="polite"></div>
+    </div>
+    <div class="ctl-row" style="margin-top:10px">
+      <button class="btn primary" data-fix hidden>Handle the page fault</button>
+      <button class="btn" data-reset>Reset tables</button>
+    </div>
+  </paging-translator>
+</Figure>
+
+<style>
+  .bits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin: 14px 0;
+    font: 600 0.875rem var(--font-mono);
+  }
+  .bits :global(span) {
+    width: 1.35em;
+    text-align: center;
+    padding: 4px 0;
+    border-radius: 4px;
+  }
+  .bits :global(.pg) {
+    background: rgba(66, 133, 244, 0.2);
+    color: var(--g-blue-l);
+  }
+  .bits :global(.off) {
+    background: rgba(52, 168, 83, 0.18);
+    color: var(--g-green-l);
+  }
+  .bits :global(.lbl) {
+    width: auto;
+    padding: 4px 8px;
+    font: 500 0.75rem var(--font-sans);
+    color: var(--text-muted);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 560px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .t {
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+    margin-top: 4px;
+  }
+  .t :global(td),
+  .t :global(th) {
+    padding: 3px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  .t :global(th) {
+    color: var(--text-faint);
+    font-weight: 500;
+  }
+  .t :global(tr.hit td) {
+    background: rgba(52, 168, 83, 0.18);
+  }
+  .t :global(tr.look td) {
+    background: rgba(251, 188, 5, 0.14);
+  }
+  .t :global(tr.bad td) {
+    background: rgba(234, 67, 53, 0.18);
+  }
+  .t :global(.disk) {
+    color: var(--g-yellow-l);
+  }
+  .t :global(.none) {
+    color: var(--g-red-l);
+  }
+  .result {
+    font-size: 0.875rem;
+    line-height: 1.7;
+    color: var(--text-muted);
+  }
+  .result :global(b) {
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+  .result :global(.big) {
+    display: block;
+    margin-top: 6px;
+    font: 700 1.25rem var(--font-mono);
+    color: var(--g-green-l);
+  }
+  .result :global(.fault) {
+    display: block;
+    margin-top: 6px;
+    font-weight: 700;
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  const S = 4096;
+  type Entry = { frame: number | null; state: 'ram' | 'disk' | 'none' };
+  const INITIAL: Entry[] = [
+    { frame: 3, state: 'ram' },
+    { frame: 5, state: 'ram' },
+    { frame: 7, state: 'ram' },
+    { frame: null, state: 'disk' },
+    { frame: 1, state: 'ram' },
+    { frame: null, state: 'none' },
+    { frame: 2, state: 'ram' },
+    { frame: null, state: 'disk' },
+  ];
+
+  class PagingTranslator extends HTMLElement {
+    pt: Entry[] = [];
+    tlb: { page: number; frame: number }[] = [];
+    pendingFault = -1;
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-addr-in]')!;
+      input.value = this.dataset.addr ?? '10000';
+      input.addEventListener('change', () => this.translate());
+      this.querySelectorAll<HTMLButtonElement>('[data-go]').forEach((b) => b.addEventListener('click', () => ((input.value = b.dataset.go!), this.translate())));
+      this.querySelector('[data-fix]')!.addEventListener('click', () => this.fix());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.pt = INITIAL.map((e) => ({ ...e }));
+      this.tlb = [];
+      this.translate();
+    }
+    addr() {
+      const a = Math.round(+this.querySelector<HTMLInputElement>('[data-addr-in]')!.value);
+      return Number.isFinite(a) ? Math.min(32767, Math.max(0, a)) : 0;
+    }
+    translate() {
+      const A = this.addr();
+      const p = Math.floor(A / S), d = A % S;
+      this.pendingFault = -1;
+      const hitIdx = this.tlb.findIndex((t) => t.page === p);
+      let html = `A = <b>${A}</b> → page p = ⌊${A} / ${S}⌋ = <b>${p}</b>, offset d = ${A} mod ${S} = <b>${d}</b><br>`;
+      let ptClass = '';
+      if (hitIdx >= 0) {
+        const { frame } = this.tlb.splice(hitIdx, 1)[0];
+        this.tlb.unshift({ page: p, frame }); // most recently used first
+        html += `TLB <b>hit</b>: page ${p} → frame ${frame}, no page-table walk needed.`;
+        html += `<span class="big">PA = ${frame} × ${S} + ${d} = ${frame * S + d}</span>`;
+      } else {
+        const e = this.pt[p];
+        html += `TLB <b>miss</b>: walk the page table. `;
+        ptClass = e.state === 'ram' ? 'look' : 'bad';
+        if (e.state === 'ram') {
+          this.tlb.unshift({ page: p, frame: e.frame! });
+          this.tlb = this.tlb.slice(0, 2);
+          html += `Entry ${p} → frame ${e.frame} (now cached in the TLB).`;
+          html += `<span class="big">PA = ${e.frame} × ${S} + ${d} = ${e.frame! * S + d}</span>`;
+        } else if (e.state === 'disk') {
+          this.pendingFault = p;
+          html += `Entry ${p} is valid but <b>not present</b>: its contents are on disk.<span class="fault">Page fault → the OS must load the page.</span>`;
+        } else {
+          html += `Page ${p} is <b>not mapped</b> at all.<span class="fault">Page fault → illegal access: the OS kills the process (segmentation fault).</span>`;
+        }
+      }
+      this.querySelector('[data-result]')!.innerHTML = html;
+      this.querySelector<HTMLElement>('[data-fix]')!.hidden = this.pendingFault < 0;
+      // bit view: 15-bit address = 3 page bits + 12 offset bits
+      const bits = A.toString(2).padStart(15, '0');
+      this.querySelector('[data-bits]')!.innerHTML =
+        [...bits].map((b, i) => `<span class="${i < 3 ? 'pg' : 'off'}">${b}</span>`).join('') +
+        `<span class="lbl">page ${p} | offset ${d}</span>`;
+      this.drawTables(p, hitIdx >= 0, ptClass);
+    }
+    fix() {
+      const p = this.pendingFault;
+      const used = new Set(this.pt.map((e) => e.frame).filter((f) => f !== null));
+      const free = [0, 1, 2, 3, 4, 5, 6, 7].find((f) => !used.has(f))!;
+      this.pt[p] = { frame: free, state: 'ram' };
+      this.querySelector('[data-result]')!.innerHTML =
+        `The OS found free frame <b>${free}</b>, read page ${p} from disk into it, marked the entry present, and restarts the instruction…`;
+      this.querySelector<HTMLElement>('[data-fix]')!.hidden = true;
+      this.drawTables(p, false, 'look');
+      setTimeout(() => this.translate(), 1200);
+    }
+    drawTables(p: number, tlbHit: boolean, ptClass: string) {
+      this.querySelector('[data-tlb]')!.innerHTML =
+        '<tr><th>page</th><th>frame</th></tr>' +
+        (this.tlb.length ? this.tlb.map((t, i) => `<tr class="${tlbHit && i === 0 ? 'hit' : ''}"><td>${t.page}</td><td>${t.frame}</td></tr>`).join('') : '<tr><td colspan="2">empty</td></tr>');
+      this.querySelector('[data-pt]')!.innerHTML =
+        '<tr><th>page</th><th>frame</th><th>present</th></tr>' +
+        this.pt
+          .map(
+            (e, i) =>
+              `<tr class="${i === p && !tlbHit ? ptClass : ''}"><td>${i}</td><td>${e.frame ?? '—'}</td><td class="${e.state === 'disk' ? 'disk' : e.state === 'none' ? 'none' : ''}">${e.state === 'ram' ? 'yes' : e.state === 'disk' ? 'no (on disk)' : 'unmapped'}</td></tr>`,
+          )
+          .join('');
+    }
+  }
+  customElements.define('paging-translator', PagingTranslator);
+</script>

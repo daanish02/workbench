@@ -1,0 +1,191 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Parse tree builder for arithmetic"
+  caption="The tree is built with the grammar E → E + T | T, T → T * F | F, F → ( E ) | num. Blue nodes are nonterminals, yellow leaves are terminals; reading the leaves left to right gives back the input. Because * lives one level deeper (in T) than + (in E), multiplication always ends up lower in the tree and is evaluated first. Compare 2+3*4 with (2+3)*4, and see 1+2+3 grow to the left."
+>
+  <cfg-tree>
+    <div class="ctl-row">
+      <label class="ctl-label" for="cfg-in">Expression</label>
+      <input class="input mono" id="cfg-in" data-in value="2+3*4" spellcheck="false" maxlength="24" style="width:10em" />
+      <button class="btn" data-ex="2+3*4">2+3*4</button>
+      <button class="btn" data-ex="(2+3)*4">(2+3)*4</button>
+      <button class="btn" data-ex="1+2+3">1+2+3</button>
+    </div>
+    <div class="treebox"><svg data-svg role="img" aria-label="Parse tree"></svg></div>
+    <div class="stat" data-val></div>
+    <div class="ctl-label" style="margin-top:10px">Leftmost derivation</div>
+    <ol class="deriv mono" data-deriv></ol>
+  </cfg-tree>
+</Figure>
+
+<style>
+  .treebox {
+    overflow-x: auto;
+    margin-top: 10px;
+  }
+  svg {
+    display: block;
+    margin: 0 auto;
+    max-width: 100%;
+    height: auto;
+  }
+  svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+  }
+  svg :global(.nt) {
+    font: 700 13px var(--font-mono);
+    fill: var(--g-blue);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  svg :global(.tm) {
+    font: 700 14px var(--font-mono);
+    fill: var(--g-yellow);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  svg :global(circle) {
+    fill: #000;
+    stroke: var(--border);
+  }
+  .deriv {
+    margin: 4px 0 0;
+    padding-left: 2.2em;
+    max-height: 170px;
+    overflow: auto;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  .deriv :global(b) {
+    color: var(--g-blue);
+  }
+</style>
+
+<script>
+  type Node = { sym: string; kids: Node[]; leaf: boolean; x?: number; y?: number };
+  const leaf = (sym: string): Node => ({ sym, kids: [], leaf: true });
+  const node = (sym: string, kids: Node[]): Node => ({ sym, kids, leaf: false });
+
+  function parse(src: string): Node {
+    const toks = src.replace(/\s+/g, '').match(/\d+|./g) ?? [];
+    let i = 0;
+    const peek = () => toks[i];
+    const want = (t: string) => {
+      if (toks[i] !== t) throw new Error(`expected "${t}" at token ${i + 1}`);
+      i++;
+    };
+    // Left-recursive rules (E → E + T) are built as loops that grow the tree to the left.
+    function E(): Node {
+      let n = node('E', [T()]);
+      while (peek() === '+') (i++, (n = node('E', [n, leaf('+'), T()])));
+      return n;
+    }
+    function T(): Node {
+      let n = node('T', [F()]);
+      while (peek() === '*') (i++, (n = node('T', [n, leaf('*'), F()])));
+      return n;
+    }
+    function F(): Node {
+      if (peek() === '(') {
+        i++;
+        const e = E();
+        want(')');
+        return node('F', [leaf('('), e, leaf(')')]);
+      }
+      const t = peek();
+      if (t === undefined || !/^\d+$/.test(t)) throw new Error(t === undefined ? 'unexpected end of input' : `unexpected "${t}"`);
+      i++;
+      return node('F', [leaf(t)]);
+    }
+    const root = E();
+    if (i < toks.length) throw new Error(`unexpected "${toks[i]}"`);
+    return root;
+  }
+  function value(n: Node): number {
+    if (n.sym === 'F') return n.kids.length === 1 ? +n.kids[0].sym : value(n.kids[1]);
+    if (n.kids.length === 1) return value(n.kids[0]);
+    const a = value(n.kids[0]);
+    const b = value(n.kids[2]);
+    return n.sym === 'E' ? a + b : a * b;
+  }
+  function derivation(root: Node): string[] {
+    let form: Node[] = [root];
+    const out: string[] = [];
+    const show = (f: Node[], hi = -1) => f.map((n, k) => (n.leaf ? (/\d/.test(n.sym) ? n.sym : n.sym) : k === hi ? `<b>${n.sym}</b>` : n.sym)).join(' ');
+    for (;;) {
+      const k = form.findIndex((n) => !n.leaf);
+      out.push(show(form, k));
+      if (k < 0) break;
+      form = [...form.slice(0, k), ...form[k].kids, ...form.slice(k + 1)];
+    }
+    return out;
+  }
+
+  class CfgTree extends HTMLElement {
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-in]')!;
+      input.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-ex]').forEach((b) =>
+        b.addEventListener('click', () => ((input.value = b.dataset.ex!), this.draw())),
+      );
+      this.draw();
+    }
+    draw() {
+      const src = this.querySelector<HTMLInputElement>('[data-in]')!.value;
+      const svg = this.querySelector('[data-svg]')!;
+      const val = this.querySelector('[data-val]')!;
+      const der = this.querySelector('[data-deriv]')!;
+      let root: Node;
+      try {
+        root = parse(src);
+      } catch (e) {
+        svg.innerHTML = '';
+        svg.setAttribute('viewBox', '0 0 10 10');
+        svg.setAttribute('width', '0');
+        val.innerHTML = '<span style="color:var(--g-red)"></span>';
+        val.firstElementChild!.textContent = `Not in the language: ${(e as Error).message}`;
+        der.innerHTML = '';
+        return;
+      }
+      const W = 34;
+      const H = 46;
+      let leaves = 0;
+      let depth = 0;
+      const place = (n: Node, d: number) => {
+        n.y = 20 + d * H;
+        depth = Math.max(depth, d);
+        if (n.leaf) n.x = 18 + leaves++ * W;
+        else {
+          n.kids.forEach((k) => place(k, d + 1));
+          n.x = (n.kids[0].x! + n.kids[n.kids.length - 1].x!) / 2;
+        }
+      };
+      place(root, 0);
+      const w = 36 + (leaves - 1) * W;
+      const h = 40 + depth * H;
+      let lines = '';
+      let labels = '';
+      const walk = (n: Node) => {
+        for (const k of n.kids) {
+          lines += `<line x1="${n.x}" y1="${n.y! + 10}" x2="${k.x}" y2="${k.y! - 10}"/>`;
+          walk(k);
+        }
+        labels += `<circle cx="${n.x}" cy="${n.y}" r="12"/><text class="${n.leaf ? 'tm' : 'nt'}" x="${n.x}" y="${n.y}">${n.sym}</text>`;
+      };
+      walk(root);
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      svg.setAttribute('width', String(Math.max(w, 120)));
+      svg.innerHTML = lines + labels;
+      val.innerHTML = `Value from the tree: <b>${value(root)}</b> &nbsp;·&nbsp; ${leaves} leaves, height ${depth}`;
+      der.innerHTML = derivation(root)
+        .map((f, k) => `<li>${k ? '⇒ ' : ''}${f}</li>`)
+        .join('');
+    }
+  }
+  customElements.define('cfg-tree', CfgTree);
+</script>

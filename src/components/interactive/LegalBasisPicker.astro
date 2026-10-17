@@ -1,0 +1,73 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which lawful basis fits this processing?"
+  caption="Pick what the organisation wants to do with personal data. The tool suggests the GDPR Article 6 basis that usually fits and the catch to watch for. This is a thinking aid, not legal advice: the basis must match the real purpose, and it cannot be chosen after the fact for convenience."
+>
+  <legal-basis>
+    <div class="lb-picks" data-picks></div>
+    <div class="lb-out" data-out></div>
+  </legal-basis>
+</Figure>
+
+<style>
+  .lb-picks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .lb-out {
+    margin-top: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .lb-out :global(b) {
+    color: var(--text);
+  }
+  .lb-out :global(.basis) {
+    display: inline-block;
+    font: 700 0.8125rem var(--font-mono);
+    color: var(--g-green-l);
+    margin-bottom: 6px;
+  }
+  .lb-out :global(.catch) {
+    color: var(--g-yellow-l);
+  }
+</style>
+
+<script>
+  const CASES: [string, string, string, string][] = [
+    ['Create an account and deliver the service the user signed up for', 'Contract', 'Processing is necessary to perform the contract (email and password to run the account).', 'Only data actually necessary for the service. Extra fields (location, contacts) need their own justification.'],
+    ['Keep invoices for the period tax law requires', 'Legal obligation', 'A legal duty requires the processing.', 'It covers only what the law requires and for as long as it requires; do not reuse the data for marketing on this basis.'],
+    ['Send marketing emails to a newsletter list', 'Consent (or legitimate interests, where national rules allow)', 'Consent must be freely given, specific, informed, unambiguous and withdrawable. Separate marketing from the service so people can say no.', 'Do not bundle it into one compulsory tick-box. Withdrawal must be as easy as giving consent.'],
+    ['Detect and block fraudulent payments', 'Legitimate interests', 'A real interest (preventing fraud) that does not override the person\'s rights and freedoms.', 'Requires a documented balancing test, and people keep the right to object.'],
+    ['Process data to protect someone\'s life in an emergency', 'Vital interests', 'Necessary to protect a life when the person cannot consent.', 'Narrow: not a general-purpose basis, and special-category data needs an additional Article 9 condition.'],
+    ['A public body performs a statutory service', 'Public task', 'Processing is necessary for a task in the public interest or under official authority.', 'Mainly for public authorities; the task needs a legal footing.'],
+    ['Analyse customers\' health data to personalise offers', 'Explicit consent (Article 9) plus an Article 6 basis', 'Health data is special-category data: an Article 6 basis is not enough on its own.', 'Often needs a DPIA, and "convenient for the business" is not a valid condition.'],
+  ];
+  class LegalBasis extends HTMLElement {
+    connectedCallback() {
+      const picks = this.querySelector('[data-picks]')!;
+      picks.innerHTML = CASES.map((c, i) => `<button class="btn" data-i="${i}" aria-pressed="${i === 0}">${c[0]}</button>`).join('');
+      picks.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          picks.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.show(+b.dataset.i!);
+        }),
+      );
+      this.show(0);
+    }
+    show(i: number) {
+      const [, basis, why, caveat] = CASES[i];
+      this.querySelector('[data-out]')!.innerHTML = `<span class="basis">${basis}</span><br>${why}<br><span class="catch"><b>Watch for:</b> ${caveat}</span>`;
+    }
+  }
+  customElements.define('legal-basis', LegalBasis);
+</script>

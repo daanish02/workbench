@@ -1,0 +1,246 @@
+---
+import Figure from '../Figure.astro';
+const gates = ['AND', 'OR', 'XOR', 'NOT', 'NAND', 'NOR'];
+---
+
+<Figure
+  title="Logic gate playground"
+  caption="Toggle the inputs and switch gates. Lit wires carry 1 (true). The highlighted truth-table row is the case you are looking at; NAND and NOR are just AND and OR followed by NOT (the small circle)."
+>
+  <logic-gates>
+    <div class="ctl-row">
+      {gates.map((g, i) => <button class="btn" data-gate={g} aria-pressed={i === 0 ? 'true' : 'false'}>{g}</button>)}
+    </div>
+    <div class="lg-body">
+      <div class="lg-diagram">
+        <div class="inputs">
+          <button class="sw" data-in="a" aria-pressed="false"><span>A</span><b>0</b></button>
+          <button class="sw" data-in="b" aria-pressed="false"><span>B</span><b>0</b></button>
+        </div>
+        <svg viewBox="0 0 240 120" aria-hidden="true">
+          <path class="wire" data-w="a" d="M0,40 H95"></path>
+          <path class="wire" data-w="b" d="M0,80 H95"></path>
+          <path class="wire" data-w="out" d="M150,60 H240"></path>
+          <path class="body" data-body></path>
+          <path class="extra" data-extra fill="none"></path>
+          <circle class="bubble" data-bubble r="6"></circle>
+        </svg>
+        <div class="lamp" data-lamp><b>0</b><span>output</span></div>
+      </div>
+      <table class="tt" data-tt></table>
+    </div>
+    <p class="expr" data-expr></p>
+  </logic-gates>
+</Figure>
+
+<style>
+  .lg-body {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+  }
+  .lg-diagram {
+    flex: 1 1 320px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .inputs {
+    display: grid;
+    gap: 22px;
+  }
+  .sw {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    cursor: pointer;
+    font: inherit;
+    color: var(--text-muted);
+  }
+  .sw b {
+    font: 700 1rem var(--font-mono);
+    color: var(--text);
+  }
+  .sw[aria-pressed='true'] {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.16);
+  }
+  .sw:disabled {
+    opacity: 0.3;
+  }
+  svg {
+    flex: 1;
+    min-width: 0;
+    height: auto;
+    max-height: 140px;
+  }
+  .wire {
+    stroke: #3a3a3a;
+    stroke-width: 4;
+    fill: none;
+    transition: stroke 0.2s;
+  }
+  .wire.on {
+    stroke: var(--g-green);
+  }
+  .wire.off-hide {
+    stroke: transparent;
+  }
+  .body {
+    fill: #0a0a0a;
+    stroke: #d0d0d0;
+    stroke-width: 2.5;
+  }
+  .extra {
+    stroke: #d0d0d0;
+    stroke-width: 2.5;
+  }
+  .bubble {
+    fill: #0a0a0a;
+    stroke: #d0d0d0;
+    stroke-width: 2.5;
+  }
+  .lamp {
+    flex: none;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    border: 2px solid #3a3a3a;
+    transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
+  }
+  .lamp b {
+    font: 700 1.25rem var(--font-mono);
+  }
+  .lamp span {
+    font-size: 0.625rem;
+    color: var(--text-faint);
+  }
+  .lamp.on {
+    background: var(--g-yellow);
+    border-color: var(--g-yellow);
+    box-shadow: 0 0 24px rgba(251, 188, 5, 0.5);
+  }
+  .lamp.on b,
+  .lamp.on span {
+    color: #000;
+  }
+  .tt {
+    border-collapse: collapse;
+    font: 0.875rem var(--font-mono);
+    flex: none;
+  }
+  .tt :global(th),
+  .tt :global(td) {
+    padding: 4px 14px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .tt :global(th) {
+    color: var(--text-faint);
+    font-weight: 600;
+  }
+  .tt :global(tr.cur td) {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .expr {
+    margin: 12px 0 0;
+    font-size: 0.9375rem;
+    color: var(--text-muted);
+  }
+  .expr :global(code) {
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+</style>
+
+<script>
+  const AND = 'M95,20 H115 A40,40 0 0 1 115,100 H95 Z';
+  const OR = 'M88,20 Q125,20 150,60 Q125,100 88,100 Q106,60 88,20 Z';
+  const NOT = 'M95,25 L140,60 L95,95 Z';
+  const FN: Record<string, (a: number, b: number) => number> = {
+    AND: (a, b) => a & b,
+    OR: (a, b) => a | b,
+    XOR: (a, b) => a ^ b,
+    NOT: (a) => 1 - a,
+    NAND: (a, b) => 1 - (a & b),
+    NOR: (a, b) => 1 - (a | b),
+  };
+  const SYM: Record<string, string> = { AND: 'A ∧ B', OR: 'A ∨ B', XOR: 'A ⊕ B', NOT: '¬A', NAND: '¬(A ∧ B)', NOR: '¬(A ∨ B)' };
+  const PY: Record<string, string> = { AND: 'a and b', OR: 'a or b', XOR: 'a != b', NOT: 'not a', NAND: 'not (a and b)', NOR: 'not (a or b)' };
+
+  class LogicGates extends HTMLElement {
+    gate = 'AND';
+    a = 0;
+    b = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-gate]').forEach((btn) =>
+        btn.addEventListener('click', () => {
+          this.gate = btn.dataset.gate!;
+          this.querySelectorAll('[data-gate]').forEach((x) => x.setAttribute('aria-pressed', String(x === btn)));
+          this.draw();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-in]').forEach((sw) =>
+        sw.addEventListener('click', () => {
+          const k = sw.dataset.in as 'a' | 'b';
+          this[k] = 1 - this[k];
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const g = this.gate, unary = g === 'NOT';
+      const out = FN[g](this.a, this.b);
+      const base = g === 'AND' || g === 'NAND' ? AND : g === 'NOT' ? NOT : OR;
+      this.querySelector('[data-body]')!.setAttribute('d', base);
+      this.querySelector('[data-extra]')!.setAttribute('d', g === 'XOR' ? 'M80,20 Q98,60 80,100' : '');
+      const bubble = this.querySelector('[data-bubble]')!;
+      const bx = g === 'NOT' ? 146 : g === 'NAND' ? 161 : 156;
+      bubble.setAttribute('cx', String(bx));
+      bubble.setAttribute('cy', '60');
+      bubble.setAttribute('visibility', g === 'NOT' || g === 'NAND' || g === 'NOR' ? 'visible' : 'hidden');
+      // NOT has a single input, centred
+      this.querySelector('[data-w="a"]')!.setAttribute('d', unary ? 'M0,60 H100' : 'M0,40 H100');
+      this.querySelector('[data-w="a"]')!.classList.toggle('on', !!this.a);
+      const wb = this.querySelector('[data-w="b"]')!;
+      wb.classList.toggle('on', !!this.b && !unary);
+      wb.classList.toggle('off-hide', unary);
+      this.querySelector('[data-w="out"]')!.classList.toggle('on', !!out);
+      this.querySelectorAll<HTMLButtonElement>('[data-in]').forEach((sw) => {
+        const v = this[sw.dataset.in as 'a' | 'b'];
+        sw.setAttribute('aria-pressed', String(!!v));
+        sw.querySelector('b')!.textContent = String(v);
+        sw.disabled = unary && sw.dataset.in === 'b';
+      });
+      const lamp = this.querySelector('[data-lamp]')!;
+      lamp.classList.toggle('on', !!out);
+      lamp.querySelector('b')!.textContent = String(out);
+      const rows = unary ? [[0], [1]] : [[0, 0], [0, 1], [1, 0], [1, 1]];
+      const head = unary ? '<tr><th>A</th><th>¬A</th></tr>' : `<tr><th>A</th><th>B</th><th>${g}</th></tr>`;
+      this.querySelector('[data-tt]')!.innerHTML =
+        head +
+        rows
+          .map((r) => {
+            const cur = r[0] === this.a && (unary || r[1] === this.b);
+            return `<tr class="${cur ? 'cur' : ''}">${r.map((x) => `<td>${x}</td>`).join('')}<td>${FN[g](r[0], r[1] ?? 0)}</td></tr>`;
+          })
+          .join('');
+      this.querySelector('[data-expr]')!.innerHTML = `<code>${SYM[g]}</code> = ${out ? 'true' : 'false'} &nbsp;·&nbsp; in Python: <code>${PY[g]}</code>`;
+    }
+  }
+  customElements.define('logic-gates', LogicGates);
+</script>

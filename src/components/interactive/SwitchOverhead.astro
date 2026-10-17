@@ -1,0 +1,81 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How much of the CPU is useful work?"
+  caption="Each slice runs a thread for q ms, then spends c ms switching. Shrink the quantum and the red switching gaps take over the timeline. This ignores indirect costs like cache misses, which make short quanta even worse."
+>
+  <switch-overhead>
+    <div class="ctl-row">
+      <label class="ctl-label">quantum q <input type="range" min="1" max="20" value="9" data-q /></label>
+      <b class="mono" data-qv></b>
+      <label class="ctl-label">switch cost c <input type="range" min="0.1" max="3" step="0.1" value="1" data-c /></label>
+      <b class="mono" data-cv></b>
+    </div>
+    <div class="tl" data-tl aria-hidden="true"></div>
+    <p class="res"><span class="frac" data-frac></span> useful &nbsp;·&nbsp; <span class="stat" data-n></span></p>
+  </switch-overhead>
+</Figure>
+
+<style>
+  .tl {
+    display: flex;
+    height: 34px;
+    margin: 14px 0 8px;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .tl :global(.w) {
+    background: var(--g-green);
+    opacity: 0.8;
+  }
+  .tl :global(.w:nth-child(4n + 1)) {
+    background: var(--g-blue);
+  }
+  .tl :global(.s) {
+    background: var(--g-red);
+  }
+  .res {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: var(--text-muted);
+  }
+  .frac {
+    font: 700 1.5rem var(--font-mono);
+    color: var(--text);
+  }
+</style>
+
+<script>
+  class SwitchOverhead extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = +this.querySelector<HTMLInputElement>('[data-q]')!.value;
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      this.querySelector('[data-qv]')!.textContent = `${q} ms`;
+      this.querySelector('[data-cv]')!.textContent = `${c} ms`;
+      const window_ = 60; // ms shown
+      const parts: string[] = [];
+      let t = 0, n = 0;
+      while (t < window_) {
+        const w = Math.min(q, window_ - t);
+        parts.push(`<div class="w" style="flex:${w}"></div>`);
+        t += w;
+        if (t < window_) {
+          const s = Math.min(c, window_ - t);
+          parts.push(`<div class="s" style="flex:${s}"></div>`);
+          t += s;
+          n++;
+        }
+      }
+      this.querySelector('[data-tl]')!.innerHTML = parts.join('');
+      this.querySelector('[data-frac]')!.textContent = `${((100 * q) / (q + c)).toFixed(1)}%`;
+      this.querySelector('[data-n]')!.textContent = `${n} switches in ${window_} ms; q/(q+c) = ${q}/${(q + c).toFixed(1)}`;
+    }
+  }
+  customElements.define('switch-overhead', SwitchOverhead);
+</script>

@@ -1,0 +1,92 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Adding numbers you can't see"
+  caption="Toy Paillier encryption (n = 323, tiny on purpose). Encrypt two numbers; the 'cloud' multiplies the two ciphertexts without ever decrypting; the owner decrypts the product and gets the sum. Encrypt the same number twice and the ciphertexts differ: fresh randomness hides equality."
+>
+  <paillier-toy>
+    <div class="ctl-row">
+      <label class="stat">a <input class="input" type="number" min="0" max="150" value="20" data-a /></label>
+      <label class="stat">b <input class="input" type="number" min="0" max="150" value="35" data-b /></label>
+      <button class="btn primary" data-go>Encrypt, add, decrypt</button>
+    </div>
+    <ol class="pt-log" data-log></ol>
+    <p class="pt-msg" data-msg aria-live="polite"></p>
+  </paillier-toy>
+</Figure>
+
+<style>
+  .pt-log {
+    margin: 12px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.9 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pt-log :global(b) {
+    color: var(--text);
+  }
+  .pt-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  .input {
+    width: 5.5em;
+  }
+</style>
+
+<script>
+  const P = 17n;
+  const Q = 19n;
+  const N = P * Q;
+  const N2 = N * N;
+  const PHI = (P - 1n) * (Q - 1n);
+  const modpow = (b: bigint, e: bigint, m: bigint) => {
+    let r = 1n;
+    b %= m;
+    while (e > 0n) {
+      if (e & 1n) r = (r * b) % m;
+      b = (b * b) % m;
+      e >>= 1n;
+    }
+    return r;
+  };
+  const gcd = (a: bigint, b: bigint): bigint => (b === 0n ? a : gcd(b, a % b));
+  const inv = (a: bigint, m: bigint) => {
+    for (let x = 1n; x < m; x++) if ((a * x) % m === 1n) return x;
+    return 1n;
+  };
+  const MU = inv(PHI % N, N);
+  const enc = (m: bigint) => {
+    let r = 2n + BigInt(Math.floor(Math.random() * 300));
+    while (gcd(r, N) !== 1n) r++;
+    return (modpow(N + 1n, m, N2) * modpow(r, N, N2)) % N2;
+  };
+  const dec = (c: bigint) => (((modpow(c, PHI, N2) - 1n) / N) * MU) % N;
+  class PaillierToy extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-go]')!.addEventListener('click', () => this.run());
+      this.run();
+    }
+    run() {
+      const a = BigInt(Math.max(0, Math.min(150, +this.querySelector<HTMLInputElement>('[data-a]')!.value || 0)));
+      const b = BigInt(Math.max(0, Math.min(150, +this.querySelector<HTMLInputElement>('[data-b]')!.value || 0)));
+      const ca = enc(a);
+      const cb = enc(b);
+      const prod = (ca * cb) % N2;
+      const sum = dec(prod);
+      const ca2 = enc(a);
+      this.querySelector('[data-log]')!.innerHTML = [
+        `owner encrypts: E(${a}) = <b>${ca}</b>, E(${b}) = <b>${cb}</b>`,
+        `cloud multiplies the ciphertexts mod n² (it never sees ${a} or ${b}): <b>${prod}</b>`,
+        `owner decrypts the product: <b>${sum}</b> = ${a} + ${b} ${sum === a + b ? '✓' : '(wrapped around: the sum must stay below n = 323)'}`,
+        `encrypting ${a} again gives a different ciphertext: E(${a}) = <b>${ca2}</b> ${ca2 !== ca ? '≠' : '='} ${ca}`,
+      ].map((l) => `<li>${l}</li>`).join('');
+      this.querySelector('[data-msg]')!.textContent = 'Multiplying ciphertexts adds plaintexts: this is additive homomorphism (partially homomorphic). Fully homomorphic schemes also support multiplication, at far higher cost. Toy sizes only: real keys use 2048-bit n.';
+    }
+  }
+  customElements.define('paillier-toy', PaillierToy);
+</script>

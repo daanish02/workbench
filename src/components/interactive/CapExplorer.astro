@@ -1,0 +1,160 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Partition a three-replica store"
+  caption="Cut replica C off, then write and read on either side. A consistency-first (CP) store refuses what it cannot confirm; an availability-first (AP) store answers from local state and reconciles on heal. Same failure, opposite costs."
+>
+  <cap-explorer>
+    <div class="ctl-row">
+      <span class="ctl-label">Policy</span>
+      <button class="btn" data-mode="CP" aria-pressed="true">Consistency first (CP)</button>
+      <button class="btn" data-mode="AP" aria-pressed="false">Availability first (AP)</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn" data-act="part" aria-pressed="false">Partition C</button>
+      <button class="btn primary" data-act="wA">Write 50 at A</button>
+      <button class="btn primary" data-act="wC">Write 70 at C</button>
+      <button class="btn" data-act="rA">Read at A</button>
+      <button class="btn" data-act="rC">Read at C</button>
+      <button class="btn" data-act="reset">Reset</button>
+    </div>
+    <div class="cx">
+      <div class="cx-node" data-n="A"><b>A</b><span class="mono" data-v></span></div>
+      <div class="cx-node" data-n="B"><b>B</b><span class="mono" data-v></span></div>
+      <div class="cx-link" data-link>link up</div>
+      <div class="cx-node" data-n="C"><b>C</b><span class="mono" data-v></span></div>
+    </div>
+    <p class="cx-msg" data-msg aria-live="polite"></p>
+  </cap-explorer>
+</Figure>
+
+<style>
+  .cx {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto 1fr;
+    gap: 8px;
+    align-items: stretch;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .cx {
+      grid-template-columns: 1fr 1fr;
+    }
+    .cx-link {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+  .cx-node {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+    font-size: 0.8125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cx-node :global(.stale) {
+    color: var(--g-yellow-l);
+  }
+  .cx-link {
+    align-self: center;
+    font: 0.6875rem var(--font-mono);
+    color: var(--g-green-l);
+    text-align: center;
+  }
+  .cx-link.cut {
+    color: var(--g-red-l);
+  }
+  .cx-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  type N = 'A' | 'B' | 'C';
+  interface V {
+    val: number;
+    ver: number;
+  }
+  class CapExplorer extends HTMLElement {
+    mode = 'CP';
+    cut = false;
+    clock = 0;
+    d: Record<N, V> = { A: { val: 100, ver: 0 }, B: { val: 100, ver: 0 }, C: { val: 100, ver: 0 } };
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) => b.addEventListener('click', () => this.act(b.dataset.act!)));
+      this.reset();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.cut = false;
+      this.clock = 0;
+      this.d = { A: { val: 100, ver: 0 }, B: { val: 100, ver: 0 }, C: { val: 100, ver: 0 } };
+      this.say('Three replicas hold 100. Cut C off, then try writing and reading on both sides.');
+      this.draw();
+    }
+    latest() {
+      return Object.values(this.d).reduce((a, b) => (b.ver > a.ver ? b : a));
+    }
+    write(n: N, val: number) {
+      const group: N[] = n === 'C' ? (this.cut ? ['C'] : ['A', 'B', 'C']) : this.cut ? ['A', 'B'] : ['A', 'B', 'C'];
+      if (this.mode === 'CP' && group.length < 2) return this.say(`CP: write at ${n} refused. ${n} can reach only ${group.length} of 3 replicas, no majority, so it cannot commit. Unavailable, but nothing diverges.`);
+      this.clock++;
+      group.forEach((g) => (this.d[g] = { val, ver: this.clock }));
+      this.say(
+        this.mode === 'CP'
+          ? `CP: write ${val} committed on ${group.join('+')} (a majority).`
+          : `AP: write ${val} accepted on ${group.join('+')} immediately${this.cut ? '; the other side has not heard of it' : ''}.`,
+      );
+    }
+    read(n: N) {
+      if (this.mode === 'CP' && this.cut && n === 'C') return this.say('CP: read at C refused. C cannot reach a majority, so it cannot prove its value is current. Unavailable.');
+      const stale = this.d[n].ver < this.latest().ver;
+      this.say(`${this.mode}: read at ${n} returns ${this.d[n].val}${stale ? `, which is stale: the newest write is ${this.latest().val}. Available, but not consistent.` : '.'}`);
+    }
+    act(a: string) {
+      if (a === 'reset') return this.reset();
+      if (a === 'part') {
+        this.cut = !this.cut;
+        if (!this.cut) {
+          const w = this.latest();
+          (['A', 'B', 'C'] as N[]).forEach((n) => (this.d[n] = { ...w }));
+          this.say(this.mode === 'AP' ? `Healed. Replicas reconcile, last write wins: everyone converges on ${w.val}. Any losing write is silently dropped.` : 'Healed. C catches up from the majority.');
+        } else this.say('C is cut off. A and B can still talk to each other.');
+      } else if (a === 'wA') this.write('A', 50);
+      else if (a === 'wC') this.write('C', 70);
+      else if (a === 'rA') this.read('A');
+      else if (a === 'rC') this.read('C');
+      this.draw();
+    }
+    draw() {
+      const top = this.latest().ver;
+      (['A', 'B', 'C'] as N[]).forEach((n) => {
+        const el = this.querySelector(`[data-n="${n}"] [data-v]`)!;
+        el.innerHTML = `${this.d[n].val}${this.d[n].ver < top ? ' <span class="stale">(stale)</span>' : ''}`;
+      });
+      const link = this.querySelector('[data-link]')!;
+      link.classList.toggle('cut', this.cut);
+      link.textContent = this.cut ? 'C partitioned' : 'all links up';
+      this.querySelector('[data-act="part"]')!.setAttribute('aria-pressed', String(this.cut));
+      (this.querySelector('[data-act="part"]') as HTMLElement).textContent = this.cut ? 'Heal partition' : 'Partition C';
+    }
+  }
+  customElements.define('cap-explorer', CapExplorer);
+</script>

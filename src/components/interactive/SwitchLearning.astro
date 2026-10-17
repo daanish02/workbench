@@ -1,0 +1,125 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A switch learns where everyone is"
+  caption="Send frames between hosts. The switch starts knowing nothing: it floods a frame whose destination it hasn't seen, and learns each sender's port from the source address. Send A → B, then B → A, and watch the second frame go to exactly one port."
+>
+  <switch-learning>
+    <div class="ctl-row">
+      <span class="ctl-label">From</span>
+      <select class="input" data-from><option>A</option><option>B</option><option>C</option><option>D</option></select>
+      <span class="ctl-label">To</span>
+      <select class="input" data-to><option>B</option><option>A</option><option>C</option><option>D</option></select>
+      <button class="btn primary" data-send>Send frame</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="sw" data-ports></div>
+    <table class="sw-table"><thead><tr><th>MAC</th><th>Port</th></tr></thead><tbody data-table></tbody></table>
+    <p class="sw-msg" data-msg aria-live="polite"></p>
+  </switch-learning>
+</Figure>
+
+<style>
+  .sw {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .sw :global(.host) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+    font: 0.75rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .sw :global(.host b) {
+    display: block;
+    color: var(--text);
+    font-size: 0.875rem;
+  }
+  .sw :global(.host.got) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.16);
+  }
+  .sw :global(.host.src) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.16);
+  }
+  .sw :global(.host.ign) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.12);
+  }
+  .sw-table {
+    margin: 12px auto 0;
+    font: 0.75rem var(--font-mono);
+    border-collapse: collapse;
+  }
+  .sw-table :global(th),
+  .sw-table :global(td) {
+    padding: 3px 14px;
+    border: 1px solid var(--border-strong);
+    text-align: center;
+  }
+  .sw-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  select.input {
+    padding: 5px 8px;
+  }
+</style>
+
+<script>
+  const MAC: Record<string, string> = { A: 'aa:aa', B: 'bb:bb', C: 'cc:cc', D: 'dd:dd' };
+  const PORT: Record<string, number> = { A: 1, B: 2, C: 3, D: 4 };
+  class SwitchLearning extends HTMLElement {
+    table: Record<string, number> = {};
+    cls: Record<string, string> = {};
+    connectedCallback() {
+      this.querySelector('[data-send]')!.addEventListener('click', () => this.send());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.table = {};
+        this.cls = {};
+        this.say('The MAC table is empty. Send a frame.');
+        this.draw();
+      });
+      this.say('The MAC table is empty. Send a frame.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    send() {
+      const f = this.querySelector<HTMLSelectElement>('[data-from]')!.value;
+      const t = this.querySelector<HTMLSelectElement>('[data-to]')!.value;
+      if (f === t) return this.say('Pick two different hosts.');
+      const learned = this.table[MAC[f]] === undefined;
+      this.table[MAC[f]] = PORT[f];
+      this.cls = { [f]: 'src' };
+      let msg = learned ? `Learned: ${MAC[f]} is on port ${PORT[f]}. ` : `Already knew ${MAC[f]} is on port ${PORT[f]}. `;
+      if (this.table[MAC[t]] !== undefined) {
+        this.cls[t] = 'got';
+        msg += `Destination ${MAC[t]} is known on port ${this.table[MAC[t]]}, so the frame goes out that one port only. Other hosts never see it.`;
+      } else {
+        for (const h of Object.keys(MAC)) if (h !== f) this.cls[h] = h === t ? 'got' : 'ign';
+        msg += `Destination ${MAC[t]} is unknown, so the switch floods the frame out every other port. ${t} accepts it; the others (yellow) receive it and discard it.`;
+      }
+      this.say(msg);
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-ports]')!.innerHTML = Object.keys(MAC)
+        .map((h) => `<div class="host ${this.cls[h] ?? ''}"><b>${h}</b>${MAC[h]}<br>port ${PORT[h]}</div>`)
+        .join('');
+      const rows = Object.entries(this.table);
+      this.querySelector('[data-table]')!.innerHTML = rows.length ? rows.map(([m, p]) => `<tr><td>${m}</td><td>${p}</td></tr>`).join('') : '<tr><td colspan="2">empty</td></tr>';
+    }
+  }
+  customElements.define('switch-learning', SwitchLearning);
+</script>

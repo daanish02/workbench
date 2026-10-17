@@ -1,0 +1,129 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Saving A, restoring B"
+  caption="Step through one switch. The CPU has a single set of registers; each thread's values survive the switch only because the kernel copies them into that thread's control block (PCB/TCB) and back. Memory such as the stack is not copied, only the stack pointer."
+>
+  <ctx-switch>
+    <div class="cs">
+      <div class="cpu">
+        <span class="ctl-label">CPU registers</span>
+        <div class="who" data-who></div>
+        <dl data-cpu></dl>
+      </div>
+      <div class="pcbs">
+        <div class="pcb" data-pcb="A"><span class="ctl-label">TCB of thread A</span><dl></dl><i></i></div>
+        <div class="pcb" data-pcb="B"><span class="ctl-label">TCB of thread B</span><dl></dl><i></i></div>
+      </div>
+    </div>
+    <p class="say" data-say aria-live="polite"></p>
+    <div class="ctl-row">
+      <button class="btn primary" data-next>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+      <span class="stat" data-n></span>
+    </div>
+  </ctx-switch>
+</Figure>
+
+<style>
+  .cs {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 12px;
+  }
+  @media (max-width: 520px) {
+    .cs {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cpu,
+  .pcb {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    transition: border-color 0.25s, background 0.25s;
+  }
+  .pcbs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .who {
+    font: 700 0.875rem var(--font-sans);
+    margin: 4px 0;
+    min-height: 1.3em;
+  }
+  dl {
+    margin: 4px 0 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    font: 0.75rem var(--font-mono);
+  }
+  dl :global(dt) {
+    color: var(--text-faint);
+  }
+  dl :global(dd) {
+    margin: 0;
+  }
+  .pcb i {
+    display: block;
+    margin-top: 6px;
+    font-style: normal;
+    font-size: 0.6875rem;
+    color: var(--text-faint);
+  }
+  .hl {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.08);
+  }
+  .say {
+    margin: 12px 0 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  type Regs = { PC: string; SP: string; R1: string; flags: string };
+  const A: Regs = { PC: '0x4012a0', SP: '0x7ffd1000', R1: '42', flags: 'ZF=0' };
+  const B: Regs = { PC: '0x40a7c8', SP: '0x7ffc8800', R1: '7', flags: 'ZF=1' };
+  const BLANK: Regs = { PC: '—', SP: '—', R1: '—', flags: '—' };
+
+  // [cpu owner, cpu regs, TCB A, TCB B, state A, state B, highlight, explanation]
+  const STEPS: [string, Regs, Regs, Regs, string, string, string[], string][] = [
+    ['Thread A (user mode)', A, BLANK, B, 'running', 'ready', ['cpu'], '1. Thread A is executing. Its live state exists only in the CPU registers; B’s state waits in its TCB.'],
+    ['kernel (timer interrupt)', A, BLANK, B, 'running', 'ready', ['cpu'], '2. A timer interrupt enters the kernel. A’s registers are still in the CPU; the scheduler decides B should run.'],
+    ['kernel', A, A, B, 'ready', 'ready', ['A'], '3. Save: the kernel copies A’s PC, SP, general registers and flags into A’s TCB and marks A ready.'],
+    ['kernel', B, A, B, 'ready', 'running', ['B', 'cpu'], '4. Restore: B’s saved values are loaded into the CPU (and, for a different process, its page-table base too).'],
+    ['Thread B (user mode)', B, A, B, 'ready', 'running', ['cpu'], '5. Return from the kernel: B resumes at exactly the instruction where it was paused, with its own stack.'],
+  ];
+
+  class CtxSwitch extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => ((this.i = (this.i + 1) % STEPS.length), this.draw()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => ((this.i = 0), this.draw()));
+      this.draw();
+    }
+    draw() {
+      const [who, cpu, ta, tb, sa, sb, hl, say] = STEPS[this.i];
+      const dl = (r: Regs) => Object.entries(r).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+      this.querySelector('[data-who]')!.textContent = who;
+      this.querySelector('[data-cpu]')!.innerHTML = dl(cpu);
+      this.querySelector('.cpu')!.classList.toggle('hl', hl.includes('cpu'));
+      for (const [id, regs, st] of [['A', ta, sa], ['B', tb, sb]] as const) {
+        const el = this.querySelector(`[data-pcb="${id}"]`)!;
+        el.querySelector('dl')!.innerHTML = dl(regs);
+        el.querySelector('i')!.textContent = `state: ${st}${st === 'running' ? ' (values live in the CPU)' : ''}`;
+        el.classList.toggle('hl', hl.includes(id));
+      }
+      this.querySelector('[data-say]')!.textContent = say;
+      this.querySelector('[data-n]')!.textContent = `step ${this.i + 1} / ${STEPS.length}`;
+    }
+  }
+  customElements.define('ctx-switch', CtxSwitch);
+</script>

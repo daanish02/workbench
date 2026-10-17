@@ -1,0 +1,131 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Transfer 100 from Alice to Bob"
+  caption="A transfer is two updates. Crash the server between them. Without a transaction the debit sticks and the money vanishes; inside a transaction the database rolls the half-finished work back. Then try a withdrawal that would break the balance constraint."
+>
+  <transfer-atomicity>
+    <div class="ctl-row">
+      <span class="ctl-label">Wrap in</span>
+      <button class="btn" data-tx="no" aria-pressed="true">No transaction</button>
+      <button class="btn" data-tx="yes" aria-pressed="false">BEGIN … COMMIT</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-run="ok">Run normally</button>
+      <button class="btn primary" data-run="crash">Crash between the two updates</button>
+      <button class="btn primary" data-run="over">Transfer 800 (Alice has 500)</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="ta">
+      <div class="ta-acct"><b>Alice</b><span class="mono" data-a></span></div>
+      <div class="ta-acct"><b>Bob</b><span class="mono" data-b></span></div>
+      <div class="ta-acct"><b>Total</b><span class="mono" data-t></span></div>
+    </div>
+    <ol class="ta-log" data-log></ol>
+  </transfer-atomicity>
+</Figure>
+
+<style>
+  .ta {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .ta-acct {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8125rem;
+  }
+  .ta-acct :global(.bad) {
+    color: var(--g-red-l);
+  }
+  .ta-acct :global(.good) {
+    color: var(--g-green-l);
+  }
+  .ta-log {
+    margin: 12px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-muted);
+    min-height: 6em;
+  }
+  .ta-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+  .ta-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  class TransferAtomicity extends HTMLElement {
+    tx = false;
+    a = 500;
+    b = 200;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-tx]').forEach((x) =>
+        x.addEventListener('click', () => {
+          this.tx = x.dataset.tx === 'yes';
+          this.querySelectorAll('[data-tx]').forEach((y) => y.setAttribute('aria-pressed', String(y === x)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-run]').forEach((x) => x.addEventListener('click', () => this.run(x.dataset.run!)));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.a = 500;
+      this.b = 200;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.draw();
+    }
+    log(lines: [string, string][]) {
+      this.querySelector('[data-log]')!.innerHTML = lines.map(([c, t]) => `<li class="${c}">${t}</li>`).join('');
+    }
+    run(kind: string) {
+      this.a = 500;
+      this.b = 200;
+      const amt = kind === 'over' ? 800 : 100;
+      const L: [string, string][] = [];
+      if (this.tx) L.push(['', 'BEGIN']);
+      const debit = this.a - amt;
+      if (debit < 0) {
+        L.push(['bad', `UPDATE balance = balance - ${amt} for Alice: CHECK (balance >= 0) violated`]);
+        L.push([this.tx ? 'good' : 'bad', this.tx ? 'ROLLBACK: nothing changed' : 'statement rejected, but there is no transaction to coordinate anything else']);
+        this.log(L);
+        return this.draw();
+      }
+      this.a = debit;
+      L.push(['', `UPDATE balance = balance - ${amt} for Alice → ${this.a}`]);
+      if (kind === 'crash') {
+        L.push(['bad', 'server crashes before the second update']);
+        if (this.tx) {
+          this.a = 500;
+          L.push(['good', 'on restart, recovery finds no COMMIT record and undoes the debit']);
+        } else L.push(['bad', 'the debit was already committed on its own: the money is gone']);
+        this.log(L);
+        return this.draw();
+      }
+      this.b += amt;
+      L.push(['', `UPDATE balance = balance + ${amt} for Bob → ${this.b}`]);
+      if (this.tx) L.push(['good', 'COMMIT: both changes become durable together']);
+      this.log(L);
+      this.draw();
+    }
+    draw() {
+      const t = this.a + this.b;
+      this.querySelector('[data-a]')!.textContent = String(this.a);
+      this.querySelector('[data-b]')!.textContent = String(this.b);
+      this.querySelector('[data-t]')!.innerHTML = `<span class="${t === 700 ? 'good' : 'bad'}">${t}${t === 700 ? '' : ' (should be 700)'}</span>`;
+    }
+  }
+  customElements.define('transfer-atomicity', TransferAtomicity);
+</script>

@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Back-of-envelope capacity estimate"
+  caption="Turn a few product assumptions into the numbers that drive a design: requests per second, storage, bandwidth and servers. The point is order of magnitude, not precision: it tells you whether one machine, a handful, or a whole fleet is the right shape."
+>
+  <capacity-estimator>
+    <div class="ce">
+      <label>Daily active users <input class="input" type="text" inputmode="numeric" value="10,000,000" data-dau /></label>
+      <label>Requests / user / day <input class="input" type="text" inputmode="numeric" value="20" data-rpu /></label>
+      <label>Peak ÷ average <input class="input" type="number" min="1" step="0.5" value="3" data-peak /></label>
+      <label>Response size (KB) <input class="input" type="text" inputmode="numeric" value="50" data-kb /></label>
+      <label>New items / day <input class="input" type="text" inputmode="numeric" value="2,000,000" data-items /></label>
+      <label>Item size (KB) <input class="input" type="text" inputmode="numeric" value="1" data-item-kb /></label>
+      <label>Replicas <input class="input" type="number" min="1" max="9" value="3" data-rep /></label>
+      <label>Req/s per server <input class="input" type="text" inputmode="numeric" value="500" data-srv /></label>
+    </div>
+    <div class="ce-out" data-out></div>
+    <p class="ce-msg" data-msg></p>
+  </capacity-estimator>
+</Figure>
+
+<style>
+  .ce {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .ce label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ce .input {
+    width: 100%;
+    box-sizing: border-box;
+    text-transform: none;
+  }
+  .ce-out {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .ce-out :global(.card) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .ce-out :global(.card span) {
+    display: block;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ce-out :global(.card b) {
+    font: 700 1.1rem var(--font-mono);
+    color: var(--text);
+  }
+  .ce-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  const fmt = (n: number) => (n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : n.toFixed(n < 10 ? 1 : 0));
+  class CapacityEstimator extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLInputElement>('input').forEach((i) =>
+        i.addEventListener('input', () => {
+          if (i.type === 'text') this.group(i);
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    // keep digits grouped in thousands (1,000,000) while typing, preserving the caret
+    group(i: HTMLInputElement) {
+      const digitsBefore = i.value.slice(0, i.selectionStart ?? 0).replace(/\D/g, '').length;
+      const digits = i.value.replace(/\D/g, '');
+      i.value = digits ? Number(digits).toLocaleString('en-US') : '';
+      let pos = 0;
+      let seen = 0;
+      while (pos < i.value.length && seen < digitsBefore) if (/\d/.test(i.value[pos++])) seen++;
+      i.setSelectionRange(pos, pos);
+    }
+    v(sel: string) {
+      return Math.max(0, +this.querySelector<HTMLInputElement>(sel)!.value.replace(/,/g, '') || 0);
+    }
+    draw() {
+      const avg = (this.v('[data-dau]') * this.v('[data-rpu]')) / 86400;
+      const peak = avg * Math.max(1, this.v('[data-peak]'));
+      const storageTb = (this.v('[data-items]') * this.v('[data-item-kb]') * 365 * this.v('[data-rep]')) / 1e9;
+      const gbit = (peak * this.v('[data-kb]') * 8) / 1e6;
+      const headroom = 0.6;
+      const servers = Math.ceil(peak / (Math.max(1, this.v('[data-srv]')) * headroom));
+      const card = (l: string, v: string) => `<div class="card"><span>${l}</span><b>${v}</b></div>`;
+      this.querySelector('[data-out]')!.innerHTML = card('Average req/s', fmt(avg)) + card('Peak req/s', fmt(peak)) + card('Storage / year', storageTb < 1 ? (storageTb * 1000).toFixed(0) + ' GB' : storageTb.toFixed(1) + ' TB') + card('Peak bandwidth', gbit.toFixed(2) + ' Gbit/s') + card('Servers', `${servers} (60% load)`);
+      this.querySelector('[data-msg]')!.textContent = `Average is ${fmt(avg)} req/s but you must size for the peak (${fmt(peak)}), and keep servers at about 60% so latency stays low (see the utilization curve below). ${servers <= 2 ? 'This fits on one or two machines: do not over-engineer.' : servers < 50 ? 'A modest fleet behind a load balancer.' : 'A large fleet: expect to need caching, partitioning and automation.'} 86,400 seconds per day is the number worth remembering.`;
+    }
+  }
+  customElements.define('capacity-estimator', CapacityEstimator);
+</script>

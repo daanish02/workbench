@@ -1,0 +1,135 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Encapsulation, layer by layer"
+  caption="Send a browser's request down the stack: each layer wraps what it was handed with its own header (the link layer adds a trailer too). Receive reverses it, each layer reading and removing only its own part. Switch the labels between the OSI and TCP/IP views of the same layers."
+>
+  <encap-demo>
+    <div class="ctl-row">
+      <button class="btn primary" data-act="down">Send ↓ (wrap)</button>
+      <button class="btn primary" data-act="up">Receive ↑ (unwrap)</button>
+      <button class="btn" data-act="reset">Reset</button>
+      <span class="ctl-label">Names</span>
+      <button class="btn" data-model="tcp" aria-pressed="true">TCP/IP</button>
+      <button class="btn" data-model="osi" aria-pressed="false">OSI</button>
+    </div>
+    <div class="en" data-layers></div>
+    <p class="en-msg" data-msg aria-live="polite"></p>
+  </encap-demo>
+</Figure>
+
+<style>
+  .en {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .en :global(.row) {
+    display: grid;
+    grid-template-columns: 112px 1fr;
+    gap: 10px;
+    align-items: center;
+    opacity: 0.35;
+    transition: opacity 0.2s;
+  }
+  .en :global(.row.on) {
+    opacity: 1;
+  }
+  .en :global(.name) {
+    font: 700 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .en :global(.name small) {
+    display: block;
+    font-weight: 500;
+    color: var(--text-faint);
+  }
+  .en :global(.pkt) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    min-height: 30px;
+  }
+  .en :global(.chip) {
+    border: 1px solid var(--c);
+    background: color-mix(in srgb, var(--c) 22%, transparent);
+    border-radius: 6px;
+    padding: 4px 7px;
+    font: 0.6875rem/1.3 var(--font-mono);
+    color: #fff;
+  }
+  .en-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  @media (max-width: 520px) {
+    .en :global(.row) {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+  }
+</style>
+
+<script>
+  const LAYERS = [
+    { tcp: 'Application', osi: 'Application (7)', unit: 'message', chips: [['HTTP', 'GET /index.html'], ], c: 'var(--g-blue)', says: 'The browser produces an HTTP request. This is the data everyone else will carry.' },
+    { tcp: 'Transport', osi: 'Transport (4)', unit: 'segment', chips: [['TCP', '52814 → 443'], ], c: 'var(--g-yellow)', says: 'TCP prepends ports (which process on which host) plus sequence numbers. The unit is now a segment.' },
+    { tcp: 'Internet', osi: 'Network (3)', unit: 'packet', chips: [['IP', '10.0.0.5 → 93.184.216.34'], ], c: 'var(--g-green)', says: 'IP prepends source and destination addresses, which routers read. The unit is a packet.' },
+    { tcp: 'Link', osi: 'Data link (2)', unit: 'frame', chips: [['Eth', 'to router MAC'], ], trailer: 'FCS', c: 'var(--g-red)', says: 'Ethernet prepends MAC addresses for the next hop only, and appends a checksum. The unit is a frame.' },
+  ];
+  class EncapDemo extends HTMLElement {
+    n = 0; // how many layers have wrapped (0..4)
+    model = 'tcp';
+    connectedCallback() {
+      this.querySelector('[data-act="down"]')!.addEventListener('click', () => this.go(1));
+      this.querySelector('[data-act="up"]')!.addEventListener('click', () => this.go(-1));
+      this.querySelector('[data-act="reset"]')!.addEventListener('click', () => {
+        this.n = 0;
+        this.say('Nothing sent yet. Press Send to wrap the request layer by layer.');
+        this.draw();
+      });
+      this.querySelectorAll<HTMLButtonElement>('[data-model]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.model = b.dataset.model!;
+          this.querySelectorAll('[data-model]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.say('Nothing sent yet. Press Send to wrap the request layer by layer.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    go(d: number) {
+      if (d > 0) {
+        if (this.n >= 4) return this.say('Fully encapsulated: this frame is what the network card puts on the wire as bits.');
+        this.n++;
+        this.say(LAYERS[this.n - 1].says);
+      } else {
+        if (this.n <= 1) return this.say(this.n === 0 ? 'Nothing to unwrap yet. Send first.' : 'Only the application data is left: the receiving application reads it.');
+        this.n--;
+        const L = LAYERS[this.n];
+        this.say(`The ${L.tcp.toLowerCase()} layer reads its header, acts on it, and passes the ${L.unit}'s payload up.`);
+      }
+      this.draw();
+    }
+    draw() {
+      const rows = LAYERS.map((L, i) => {
+        const name = `<div class="name">${this.model === 'tcp' ? L.tcp : L.osi}<small>${L.unit}</small></div>`;
+        if (this.n <= i) return `<div class="row">${name}<div class="pkt"></div></div>`;
+        // outermost header first, application data last, link trailer at the end
+        const chip = (x: (typeof LAYERS)[number]) => `<span class="chip" style="--c:${x.c}">${x.chips[0][0]}: ${x.chips[0][1]}</span>`;
+        const html = LAYERS.slice(0, i + 1).reverse().map(chip).join('');
+        return `<div class="row on">${name}<div class="pkt">${html}${L.trailer ? `<span class="chip" style="--c:${L.c}">${L.trailer}</span>` : ''}</div></div>`;
+      });
+      this.querySelector('[data-layers]')!.innerHTML = rows.join('');
+    }
+  }
+  customElements.define('encap-demo', EncapDemo);
+</script>

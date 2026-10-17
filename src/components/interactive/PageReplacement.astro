@@ -1,0 +1,156 @@
+---
+import Figure from '../Figure.astro';
+interface Props {
+  refs?: string;
+  frames?: number;
+}
+const { refs = '7 0 1 2 0 3 0 4 2 3 0 3 2 1 2 0 1 7 0 1', frames = 3 } = Astro.props;
+---
+
+<Figure
+  title="FIFO vs. LRU vs. Optimal on one reference string"
+  caption="Each column is one memory reference; each row is a physical frame. Red columns are page faults, and the outlined cell is the page that was just loaded. Edit the string or change the frame count; try 1 2 3 4 1 2 5 1 2 3 4 5 with 3 and then 4 frames to see Bélády's anomaly in FIFO."
+>
+  <page-repl data-refs={refs} data-frames={frames}>
+    <div class="ctl-row">
+      <label class="ctl-label" for="pr-refs">Reference string</label>
+      <input class="input refs" data-refs-input id="pr-refs" value={refs} spellcheck="false" />
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Frames</span>
+      <button class="btn" data-dec aria-label="Fewer frames">−</button>
+      <b class="mono" data-n></b>
+      <button class="btn" data-inc aria-label="More frames">+</button>
+    </div>
+    <div class="grids" data-out></div>
+  </page-repl>
+</Figure>
+
+<style>
+  .refs {
+    flex: 1;
+    min-width: 200px;
+  }
+  .grids {
+    margin-top: 14px;
+    display: grid;
+    gap: 18px;
+  }
+  .grids :global(.algo) {
+    overflow-x: auto;
+  }
+  .grids :global(.algo-head) {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .grids :global(table) {
+    border-collapse: separate;
+    border-spacing: 3px;
+    font: 0.75rem var(--font-mono);
+  }
+  .grids :global(td) {
+    width: 26px;
+    min-width: 26px;
+    height: 24px;
+    text-align: center;
+    border-radius: 5px;
+    background: var(--bg-soft);
+    color: var(--text-muted);
+  }
+  .grids :global(tr.ref td) {
+    background: none;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .grids :global(td.fault) {
+    background: rgba(234, 67, 53, 0.16);
+    color: var(--g-red-l);
+  }
+  .grids :global(td.new) {
+    outline: 1.5px solid var(--g-red);
+    color: #fff;
+  }
+  .grids :global(tr.mark td) {
+    background: none;
+    font-size: 0.6875rem;
+  }
+  .grids :global(.hit) {
+    color: var(--g-green-l);
+  }
+  .grids :global(.miss) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  type Col = { frames: (string | null)[]; fault: boolean; slot: number };
+
+  function simulate(algo: 'FIFO' | 'LRU' | 'OPT', refs: string[], n: number): Col[] {
+    const frames: (string | null)[] = Array(n).fill(null);
+    const loadedAt: number[] = Array(n).fill(-1); // FIFO: when each frame was filled
+    const usedAt: number[] = Array(n).fill(-1); // LRU: last time each frame was referenced
+    return refs.map((page, t) => {
+      const hit = frames.indexOf(page);
+      if (hit >= 0) {
+        usedAt[hit] = t;
+        return { frames: [...frames], fault: false, slot: -1 };
+      }
+      let victim = frames.indexOf(null); // free frame first
+      if (victim < 0) {
+        if (algo === 'FIFO') victim = loadedAt.indexOf(Math.min(...loadedAt));
+        else if (algo === 'LRU') victim = usedAt.indexOf(Math.min(...usedAt));
+        else {
+          // OPT: evict the page whose next use is farthest in the future (or never)
+          const nextUse = frames.map((p) => {
+            const k = refs.indexOf(p!, t + 1);
+            return k < 0 ? Infinity : k;
+          });
+          victim = nextUse.indexOf(Math.max(...nextUse));
+        }
+      }
+      frames[victim] = page;
+      loadedAt[victim] = usedAt[victim] = t;
+      return { frames: [...frames], fault: true, slot: victim };
+    });
+  }
+
+  class PageRepl extends HTMLElement {
+    n = 3;
+    connectedCallback() {
+      this.n = +(this.dataset.frames ?? 3);
+      const input = this.querySelector<HTMLInputElement>('[data-refs-input]')!;
+      input.addEventListener('input', () => this.render());
+      this.querySelector('[data-dec]')!.addEventListener('click', () => ((this.n = Math.max(1, this.n - 1)), this.render()));
+      this.querySelector('[data-inc]')!.addEventListener('click', () => ((this.n = Math.min(7, this.n + 1)), this.render()));
+      this.render();
+    }
+    render() {
+      const refs = this.querySelector<HTMLInputElement>('[data-refs-input]')!.value.trim().split(/[\s,]+/).filter(Boolean).slice(0, 40);
+      this.querySelector('[data-n]')!.textContent = String(this.n);
+      const out = this.querySelector('[data-out]')!;
+      out.innerHTML = '';
+      for (const algo of ['FIFO', 'LRU', 'OPT'] as const) {
+        const cols = simulate(algo, refs, this.n);
+        const faults = cols.filter((c) => c.fault).length;
+        const wrap = document.createElement('div');
+        wrap.className = 'algo';
+        const label = algo === 'OPT' ? 'Optimal (Bélády)' : algo;
+        wrap.innerHTML = `<div class="algo-head"><span>${label}</span><span class="stat"><b>${faults}</b> faults · hit rate <b>${refs.length ? Math.round((100 * (refs.length - faults)) / refs.length) : 0}%</b></span></div>`;
+        const table = document.createElement('table');
+        const row = (cls: string, cells: string[]) => `<tr class="${cls}">${cells.join('')}</tr>`;
+        let html = row('ref', refs.map((r) => `<td>${r}</td>`));
+        for (let f = 0; f < this.n; f++)
+          html += row('', cols.map((c) => `<td class="${c.fault ? 'fault' : ''} ${c.slot === f ? 'new' : ''}">${c.frames[f] ?? ''}</td>`));
+        html += row('mark', cols.map((c) => `<td class="${c.fault ? 'miss' : 'hit'}">${c.fault ? 'F' : '✓'}</td>`));
+        table.innerHTML = html;
+        wrap.append(table);
+        out.append(wrap);
+      }
+    }
+  }
+  customElements.define('page-repl', PageRepl);
+</script>

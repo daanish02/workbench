@@ -1,0 +1,192 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Filling the edit-distance table"
+  caption="Cell D[i,j] is the cheapest way to turn the first i letters of A into the first j letters of B. Each new cell (blue) takes the minimum of its three outlined neighbours: above + 1 (delete), left + 1 (insert), diagonal + 0 or 1 (match or substitute). When the table is full, the green path traces one optimal sequence of edits back from the bottom-right corner."
+>
+  <edit-grid>
+    <div class="ctl-row">
+      <label class="ctl-label" for="ed-a">A</label>
+      <input class="input" id="ed-a" data-a value="kitten" maxlength="10" style="width:8em" />
+      <label class="ctl-label" for="ed-b">B</label>
+      <input class="input" id="ed-b" data-b value="sitting" maxlength="10" style="width:8em" />
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-fill>Fill all</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="tbl-wrap"><table class="ed" data-tbl></table></div>
+    <p class="msg mono" data-msg></p>
+    <ol class="ops" data-ops></ol>
+  </edit-grid>
+</Figure>
+
+<style>
+  .tbl-wrap {
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  .ed {
+    border-collapse: separate;
+    border-spacing: 3px;
+    font: 0.8125rem var(--font-mono);
+  }
+  .ed :global(td),
+  .ed :global(th) {
+    width: 30px;
+    height: 30px;
+    text-align: center;
+    border-radius: 5px;
+    padding: 0;
+  }
+  .ed :global(th) {
+    color: var(--g-yellow-l);
+    font-weight: 700;
+    border: 0;
+    background: none;
+  }
+  .ed :global(td) {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .ed :global(td.cur) {
+    background: rgba(66, 133, 244, 0.45);
+    border-color: var(--g-blue);
+  }
+  .ed :global(td.dep) {
+    border-color: var(--g-yellow);
+  }
+  .ed :global(td.path) {
+    background: rgba(52, 168, 83, 0.35);
+    border-color: var(--g-green);
+  }
+  .msg {
+    margin: 10px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    min-height: 1.4em;
+  }
+  .ops {
+    margin: 6px 0 0;
+    padding-left: 1.4em;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  class EditGrid extends HTMLElement {
+    A = '';
+    B = '';
+    D: number[][] = [];
+    k = 0; // number of interior cells filled (row-major)
+    timer = 0;
+    connectedCallback() {
+      for (const s of ['[data-a]', '[data-b]']) this.querySelector(s)!.addEventListener('input', () => this.reset());
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-fill]').addEventListener('click', () => (this.pause(), (this.k = this.total()), this.draw()));
+      this.q('[data-reset]').addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    total() {
+      return this.A.length * this.B.length;
+    }
+    reset() {
+      this.pause();
+      this.A = this.querySelector<HTMLInputElement>('[data-a]')!.value.slice(0, 10);
+      this.B = this.querySelector<HTMLInputElement>('[data-b]')!.value.slice(0, 10);
+      const m = this.A.length, n = this.B.length;
+      this.D = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+      for (let i = 1; i <= m; i++)
+        for (let j = 1; j <= n; j++) {
+          const c = this.A[i - 1] === this.B[j - 1] ? 0 : 1;
+          this.D[i][j] = Math.min(this.D[i - 1][j] + 1, this.D[i][j - 1] + 1, this.D[i - 1][j - 1] + c);
+        }
+      this.k = 0;
+      this.draw();
+    }
+    step() {
+      if (this.k < this.total()) this.k++;
+      this.draw();
+    }
+    play() {
+      if (this.k >= this.total()) this.k = 0;
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        if (this.k >= this.total()) return this.pause();
+        this.timer = window.setTimeout(tick, 260);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    // Walk back from the corner, preferring a match/substitution, then delete, then insert.
+    path() {
+      const { A, B, D } = this;
+      let i = A.length, j = B.length;
+      const cells = new Set<string>([`${i},${j}`]);
+      const ops: string[] = [];
+      while (i > 0 || j > 0) {
+        const c = i > 0 && j > 0 && A[i - 1] === B[j - 1] ? 0 : 1;
+        if (i > 0 && j > 0 && D[i][j] === D[i - 1][j - 1] + c) {
+          ops.push(c ? `substitute ${A[i - 1]} → ${B[j - 1]}` : `keep ${A[i - 1]}`);
+          i--, j--;
+        } else if (i > 0 && D[i][j] === D[i - 1][j] + 1) {
+          ops.push(`delete ${A[i - 1]}`);
+          i--;
+        } else {
+          ops.push(`insert ${B[j - 1]}`);
+          j--;
+        }
+        cells.add(`${i},${j}`);
+      }
+      return { cells, ops: ops.reverse() };
+    }
+    draw() {
+      const { A, B, D } = this;
+      const m = A.length, n = B.length;
+      const full = this.k >= this.total();
+      const ci = this.k > 0 ? Math.floor((this.k - 1) / n) + 1 : -1;
+      const cj = this.k > 0 ? ((this.k - 1) % n) + 1 : -1;
+      const known = (i: number, j: number) => i === 0 || j === 0 || (i - 1) * n + j <= this.k;
+      const p = full ? this.path() : null;
+      let html = `<tr><th></th><th>ε</th>${[...B].map((ch) => `<th>${esc(ch)}</th>`).join('')}</tr>`;
+      for (let i = 0; i <= m; i++) {
+        html += `<tr><th>${i === 0 ? 'ε' : esc(A[i - 1])}</th>`;
+        for (let j = 0; j <= n; j++) {
+          let cls = '';
+          if (p && p.cells.has(`${i},${j}`)) cls = 'path';
+          else if (!full && i === ci && j === cj) cls = 'cur';
+          else if (!full && ci > 0 && ((i === ci - 1 && j === cj) || (i === ci && j === cj - 1) || (i === ci - 1 && j === cj - 1))) cls = 'dep';
+          html += `<td class="${cls}">${known(i, j) ? D[i][j] : ''}</td>`;
+        }
+        html += '</tr>';
+      }
+      this.q('[data-tbl]').innerHTML = html;
+      let msg = '';
+      if (m === 0 || n === 0) msg = `One string is empty: distance = ${Math.max(m, n)}.`;
+      else if (full) msg = `Edit distance("${A}", "${B}") = ${D[m][n]}`;
+      else if (ci > 0) {
+        const c = A[ci - 1] === B[cj - 1] ? 0 : 1;
+        msg = `D[${ci},${cj}] = min(${D[ci - 1][cj]}+1, ${D[ci][cj - 1]}+1, ${D[ci - 1][cj - 1]}+${c}) = ${D[ci][cj]}   (${A[ci - 1]} ${c ? '≠' : '='} ${B[cj - 1]})`;
+      } else msg = 'Row 0 and column 0 are the base cases: D[i,0] = i, D[0,j] = j.';
+      this.q('[data-msg]').textContent = msg;
+      this.q('[data-ops]').innerHTML = p ? p.ops.map((o) => `<li>${esc(o)}</li>`).join('') : '';
+    }
+  }
+  customElements.define('edit-grid', EditGrid);
+</script>

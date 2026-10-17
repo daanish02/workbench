@@ -1,0 +1,234 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Turing machine tape simulator"
+  caption="The blue cell is under the head. Each step applies exactly one rule (highlighted below): read the symbol, write a symbol, move one cell, change state. The aⁿbⁿcⁿ machine crosses off one a (X), one b (Y) and one c (Z) per pass, then walks back; no matching rule means reject. Try aabbcc, aabbc and abcabc. Binary increment walks to the right end, then turns trailing 1s into 0s until it can write a 1."
+>
+  <tm-sim>
+    <div class="ctl-row">
+      <span class="ctl-label">Machine</span>
+      <button class="btn" data-m="abc" aria-pressed="true">aⁿbⁿcⁿ decider</button>
+      <button class="btn" data-m="inc" aria-pressed="false">Binary increment</button>
+    </div>
+    <div class="ctl-row">
+      <label class="ctl-label" for="tm-in">Input</label>
+      <input class="input mono" id="tm-in" data-in value="aabbcc" spellcheck="false" maxlength="18" style="width:9em" />
+      <button class="btn primary" data-step>Step</button>
+      <button class="btn" data-run>Run</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="tape mono" data-tape></div>
+    <div class="stats">
+      <span class="stat">State <b class="mono" data-state></b></span>
+      <span class="stat">Steps <b class="mono" data-steps></b></span>
+      <span class="stat" data-verdict></span>
+    </div>
+    <div class="rules mono" data-rules></div>
+  </tm-sim>
+</Figure>
+
+<style>
+  .tape {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 14px;
+    justify-content: center;
+  }
+  .tape :global(span) {
+    width: 28px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 1rem;
+    color: var(--text);
+  }
+  .tape :global(span.blank) {
+    color: var(--text-faint);
+  }
+  .tape :global(span.mark) {
+    color: var(--g-yellow);
+  }
+  .tape :global(span.head) {
+    border: 2px solid var(--g-blue);
+    background: rgba(66, 133, 244, 0.2);
+  }
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .stats :global(.acc) {
+    color: var(--g-green);
+    font-weight: 700;
+  }
+  .stats :global(.rej) {
+    color: var(--g-red);
+    font-weight: 700;
+  }
+  .rules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 12px;
+    font-size: 0.75rem;
+  }
+  .rules :global(span) {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 6px;
+    color: var(--text-muted);
+  }
+  .rules :global(span.hot) {
+    border-color: var(--g-yellow);
+    color: var(--g-yellow);
+  }
+</style>
+
+<script>
+  type Rule = [string, string, number]; // next state, write, move (+1 right, -1 left)
+  type Machine = { start: string; alphabet: RegExp; sample: string; rules: Record<string, Rule> };
+  const R = 1;
+  const L = -1;
+  const MACHINES: Record<string, Machine> = {
+    abc: {
+      start: 'q0',
+      alphabet: /[^abc]/g,
+      sample: 'aabbcc',
+      rules: {
+        'q0,a': ['q1', 'X', R], // cross off an a, go find a b
+        'q0,Y': ['q4', 'Y', R], // no a left: check everything is crossed off
+        'q0,_': ['accept', '_', R], // empty input (n = 0)
+        'q1,a': ['q1', 'a', R],
+        'q1,Y': ['q1', 'Y', R],
+        'q1,b': ['q2', 'Y', R], // cross off a b, go find a c
+        'q2,b': ['q2', 'b', R],
+        'q2,Z': ['q2', 'Z', R],
+        'q2,c': ['q3', 'Z', L], // cross off a c, head back
+        'q3,a': ['q3', 'a', L],
+        'q3,b': ['q3', 'b', L],
+        'q3,Y': ['q3', 'Y', L],
+        'q3,Z': ['q3', 'Z', L],
+        'q3,X': ['q0', 'X', R], // just right of the last X is the next a
+        'q4,Y': ['q4', 'Y', R],
+        'q4,Z': ['q4', 'Z', R],
+        'q4,_': ['accept', '_', R],
+      },
+    },
+    inc: {
+      start: 'right',
+      alphabet: /[^01]/g,
+      sample: '1011',
+      rules: {
+        'right,0': ['right', '0', R],
+        'right,1': ['right', '1', R],
+        'right,_': ['carry', '_', L],
+        'carry,1': ['carry', '0', L], // 1 + carry = 0, carry continues left
+        'carry,0': ['accept', '1', L], // 0 + carry = 1, done
+        'carry,_': ['accept', '1', L], // ran off the left end: new leading 1
+      },
+    },
+  };
+
+  class TmSim extends HTMLElement {
+    m: Machine = MACHINES.abc;
+    tape = new Map<number, string>();
+    head = 0;
+    state = 'q0';
+    steps = 0;
+    lastRule = '';
+    timer: number | undefined;
+
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-in]')!;
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-m]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.m = MACHINES[b.dataset.m!];
+          input.value = this.m.sample;
+          this.reset();
+        }),
+      );
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(this.m.alphabet, '');
+        this.reset();
+      });
+      this.querySelector('[data-step]')!.addEventListener('click', () => (this.stop(), this.step()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-run]')!.addEventListener('click', () => {
+        this.stop();
+        if (this.halted()) this.reset();
+        this.timer = window.setInterval(() => {
+          if (!this.step()) this.stop();
+        }, 220);
+      });
+      this.reset();
+    }
+    disconnectedCallback() {
+      this.stop();
+    }
+    stop() {
+      if (this.timer !== undefined) window.clearInterval(this.timer);
+      this.timer = undefined;
+    }
+    halted() {
+      return this.state === 'accept' || this.state === 'reject';
+    }
+    reset() {
+      this.stop();
+      const w = this.querySelector<HTMLInputElement>('[data-in]')!.value;
+      this.tape = new Map([...w].map((c, i) => [i, c]));
+      this.head = 0;
+      this.state = this.m.start;
+      this.steps = 0;
+      this.lastRule = '';
+      this.draw();
+    }
+    step() {
+      if (this.halted()) return false;
+      const sym = this.tape.get(this.head) ?? '_';
+      const key = `${this.state},${sym}`;
+      const rule = this.m.rules[key];
+      this.steps++;
+      if (!rule) {
+        // no applicable rule: the machine halts and rejects
+        this.lastRule = '';
+        this.state = 'reject';
+      } else {
+        this.lastRule = key;
+        const [next, write, move] = rule;
+        this.tape.set(this.head, write);
+        this.state = next;
+        this.head += move;
+      }
+      this.draw();
+      return !this.halted();
+    }
+    draw() {
+      const keys = [...this.tape.keys(), this.head];
+      const lo = Math.min(0, ...keys) - 1;
+      const hi = Math.max(...keys) + 1;
+      let cells = '';
+      for (let i = lo; i <= hi; i++) {
+        const c = this.tape.get(i) ?? '_';
+        const cls = [c === '_' ? 'blank' : /[XYZ]/.test(c) ? 'mark' : '', i === this.head ? 'head' : ''].join(' ');
+        cells += `<span class="${cls}">${c === '_' ? '␣' : c}</span>`;
+      }
+      this.querySelector('[data-tape]')!.innerHTML = cells;
+      this.querySelector('[data-state]')!.textContent = this.state;
+      this.querySelector('[data-steps]')!.textContent = String(this.steps);
+      const v = this.querySelector('[data-verdict]')!;
+      v.innerHTML = this.state === 'accept' ? '<span class="acc">HALT: ACCEPT</span>' : this.state === 'reject' ? '<span class="rej">HALT: REJECT (no rule)</span>' : 'running';
+      this.querySelector('[data-rules]')!.innerHTML = Object.entries(this.m.rules)
+        .map(([k, [n, w, d]]) => `<span class="${k === this.lastRule ? 'hot' : ''}">δ(${k}) = (${n}, ${w}, ${d > 0 ? 'R' : 'L'})</span>`)
+        .join('');
+    }
+  }
+  customElements.define('tm-sim', TmSim);
+</script>

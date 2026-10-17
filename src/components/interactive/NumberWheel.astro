@@ -1,0 +1,137 @@
+---
+import Figure from '../Figure.astro';
+// 16 four-bit patterns arranged on a circle. Adding 1 moves one step clockwise;
+// the two seams show where unsigned and signed arithmetic overflow.
+const N = 16;
+const R = 118, CX = 150, CY = 150;
+const pts = Array.from({ length: N }, (_, i) => {
+  const ang = (i / N) * 2 * Math.PI - Math.PI / 2;
+  return { i, x: CX + R * Math.cos(ang), y: CY + R * Math.sin(ang), bits: i.toString(2).padStart(4, '0'), s: i >= 8 ? i - 16 : i };
+});
+const seam = (k: number) => {
+  // a short radial tick between pattern k-1 and k
+  const ang = ((k - 0.5) / N) * 2 * Math.PI - Math.PI / 2;
+  return { x1: CX + 88 * Math.cos(ang), y1: CY + 88 * Math.sin(ang), x2: CX + 146 * Math.cos(ang), y2: CY + 146 * Math.sin(ang) };
+};
+const u = seam(0), s = seam(8);
+---
+
+<Figure
+  title="Fixed width means arithmetic wraps around"
+  caption="All sixteen 4-bit patterns on a dial. +1 always moves one step clockwise, whatever the interpretation. Crossing the green seam (1111 → 0000) is unsigned overflow: 15 + 1 = 0. Crossing the red seam (0111 → 1000) is signed overflow: 7 + 1 = −8."
+>
+  <number-wheel>
+    <div class="wheel-wrap">
+      <svg viewBox="0 0 300 300" role="img" aria-label="Four-bit number wheel">
+        <circle cx={CX} cy={CY} r={R} fill="none" stroke="#262626" stroke-width="30"></circle>
+        <line {...u} stroke="#34A853" stroke-width="3" stroke-linecap="round"></line>
+        <line {...s} stroke="#EA4335" stroke-width="3" stroke-linecap="round"></line>
+        {
+          pts.map((p) => (
+            <g class="pt" data-i={p.i}>
+              <circle cx={p.x} cy={p.y} r="17" />
+              <text x={p.x} y={p.y + 4} text-anchor="middle">
+                {p.bits}
+              </text>
+            </g>
+          ))
+        }
+        <text x={CX} y={CY - 22} text-anchor="middle" class="big" data-bitsbig>0000</text>
+        <text x={CX} y={CY + 6} text-anchor="middle" class="lbl" data-u>unsigned 0</text>
+        <text x={CX} y={CY + 26} text-anchor="middle" class="lbl" data-s>signed 0</text>
+      </svg>
+      <div class="side">
+        <div class="ctl-row">
+          <button class="btn" data-d="-1">−1</button>
+          <button class="btn primary" data-d="1">+1</button>
+          <button class="btn" data-d="4">+4</button>
+        </div>
+        <p class="log" data-log aria-live="polite">Start at 0000.</p>
+      </div>
+    </div>
+  </number-wheel>
+</Figure>
+
+<style>
+  .wheel-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+  svg {
+    width: min(300px, 100%);
+    height: auto;
+    flex: none;
+  }
+  .side {
+    flex: 1;
+    min-width: 200px;
+  }
+  .pt circle {
+    fill: #111;
+    stroke: #2e2e2e;
+    transition: fill 0.2s, stroke 0.2s;
+  }
+  .pt text {
+    font: 600 8.5px var(--font-mono);
+    fill: #a3a3a3;
+  }
+  .pt.on circle {
+    fill: var(--g-yellow);
+    stroke: var(--g-yellow);
+  }
+  .pt.on text {
+    fill: #000;
+  }
+  .big {
+    font: 700 22px var(--font-mono);
+    fill: #ececec;
+  }
+  .lbl {
+    font: 11px var(--font-sans);
+    fill: #a3a3a3;
+  }
+  .log {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+    min-height: 3.2em;
+  }
+  .log :global(b.u) {
+    color: var(--g-green-l);
+  }
+  .log :global(b.s) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  class NumberWheel extends HTMLElement {
+    v = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) => b.addEventListener('click', () => this.add(+b.dataset.d!)));
+      this.draw();
+    }
+    add(d: number) {
+      const before = this.v;
+      const raw = before + d;
+      this.v = ((raw % 16) + 16) % 16;
+      const sb = before >= 8 ? before - 16 : before;
+      const sRaw = sb + d;
+      const notes: string[] = [];
+      if (raw > 15 || raw < 0) notes.push(`<b class="u">Unsigned overflow</b>: ${before} ${d > 0 ? '+' : '−'} ${Math.abs(d)} should be ${raw}, but only 0–15 fit, so the result wraps to ${this.v}.`);
+      if (sRaw > 7 || sRaw < -8) notes.push(`<b class="s">Signed overflow</b>: ${sb} ${d > 0 ? '+' : '−'} ${Math.abs(d)} should be ${sRaw}, but only −8…7 fit, so it reads as ${this.v >= 8 ? this.v - 16 : this.v}.`);
+      this.querySelector('[data-log]')!.innerHTML = notes.length ? notes.join('<br>') : `${before.toString(2).padStart(4, '0')} → ${this.v.toString(2).padStart(4, '0')}: no overflow in either reading.`;
+      this.draw();
+    }
+    draw() {
+      this.querySelectorAll('.pt').forEach((g) => g.classList.toggle('on', +(g as HTMLElement).dataset.i! === this.v));
+      this.querySelector('[data-bitsbig]')!.textContent = this.v.toString(2).padStart(4, '0');
+      this.querySelector('[data-u]')!.textContent = `unsigned ${this.v}`;
+      this.querySelector('[data-s]')!.textContent = `signed ${this.v >= 8 ? this.v - 16 : this.v}`;
+    }
+  }
+  customElements.define('number-wheel', NumberWheel);
+</script>

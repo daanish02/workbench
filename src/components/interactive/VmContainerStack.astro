@@ -1,0 +1,151 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What each instance carries"
+  caption="One 16 GB host runs copies of a small service. A virtual machine carries its own guest operating system; a container shares the host's kernel and adds only a little. Slide the number of instances to see the memory used and how many fit. The sizes are illustrative round numbers (guest OS 512 MB, app 150 MB, container overhead 10 MB), not measurements."
+>
+  <vm-container-stack>
+    <div class="ctl-row">
+      <label class="stat">Instances <input type="range" min="1" max="30" value="6" data-n /> <b data-nv>6</b></label>
+    </div>
+    <div class="vc-cols">
+      <div class="vc-col">
+        <b>Virtual machines</b>
+        <div class="vc-stack" data-vm></div>
+        <div class="vc-bar"><div data-vmbar></div></div>
+        <small data-vmtxt></small>
+      </div>
+      <div class="vc-col">
+        <b>Containers</b>
+        <div class="vc-stack" data-ct></div>
+        <div class="vc-bar"><div data-ctbar></div></div>
+        <small data-cttxt></small>
+      </div>
+    </div>
+    <p class="vc-msg" data-msg></p>
+  </vm-container-stack>
+</Figure>
+
+<style>
+  .vc-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  @media (max-width: 560px) {
+    .vc-cols {
+      grid-template-columns: 1fr;
+    }
+  }
+  .vc-col {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+  }
+  .vc-stack {
+    display: grid;
+    gap: 3px;
+    font: 0.75rem var(--font-mono);
+    text-align: center;
+  }
+  .vc-stack :global(.row) {
+    display: flex;
+    gap: 3px;
+  }
+  .vc-stack :global(.box) {
+    padding: 5px 4px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .vc-stack :global(.app) {
+    background: rgba(66, 133, 244, 0.25);
+    border-color: var(--g-blue);
+  }
+  .vc-stack :global(.os) {
+    background: rgba(234, 67, 53, 0.2);
+    border-color: var(--g-red);
+  }
+  .vc-stack :global(.shared) {
+    background: rgba(52, 168, 83, 0.2);
+    border-color: var(--g-green);
+  }
+  .vc-stack :global(.hw) {
+    background: var(--bg-soft);
+  }
+  .vc-bar {
+    height: 12px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    overflow: hidden;
+  }
+  .vc-bar div {
+    height: 100%;
+    background: var(--g-blue);
+    transition: width 0.2s;
+  }
+  small {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+  }
+  .vc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 160px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const HOST = 16384; // MB
+  const HYP = 1024; // hypervisor reserve
+  const GUEST = 512;
+  const APP = 150;
+  const OS_HOST = 1024; // host OS and container runtime for containers
+  const RUNTIME = 256;
+  const CT = 10;
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  const mb = (n: number) => (n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${fmt(n)} MB`);
+  class VmContainerStack extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const show = Math.min(n, 3);
+      const more = n > show ? `<div class="row"><div class="box">+ ${n - show} more</div></div>` : '';
+      let vm = '';
+      for (let i = 0; i < show; i++) vm += `<div class="row"><div class="box app">app</div><div class="box os">guest OS</div></div>`;
+      vm += more + `<div class="row"><div class="box shared">hypervisor</div></div><div class="row"><div class="box hw">hardware</div></div>`;
+      let ct = `<div class="row">${Array.from({ length: show }, () => '<div class="box app">app</div>').join('')}</div>`;
+      ct += more + `<div class="row"><div class="box shared">container runtime</div></div><div class="row"><div class="box shared">host OS (one kernel)</div></div><div class="row"><div class="box hw">hardware</div></div>`;
+      this.querySelector('[data-vm]')!.innerHTML = vm;
+      this.querySelector('[data-ct]')!.innerHTML = ct;
+      const vmUse = HYP + n * (GUEST + APP);
+      const ctUse = OS_HOST + RUNTIME + n * (APP + CT);
+      const vmFit = Math.floor((HOST - HYP) / (GUEST + APP));
+      const ctFit = Math.floor((HOST - OS_HOST - RUNTIME) / (APP + CT));
+      const pct = (u: number) => Math.min(100, (u / HOST) * 100);
+      (this.querySelector('[data-vmbar]') as HTMLElement).style.width = `${pct(vmUse)}%`;
+      (this.querySelector('[data-ctbar]') as HTMLElement).style.width = `${pct(ctUse)}%`;
+      this.querySelector('[data-vmtxt]')!.textContent = `${mb(vmUse)} of 16 GB used${vmUse > HOST ? ' (does not fit)' : ''}. Boots in about 30 s.`;
+      this.querySelector('[data-cttxt]')!.textContent = `${mb(ctUse)} of 16 GB used${ctUse > HOST ? ' (does not fit)' : ''}. Starts in about 1 s.`;
+      this.querySelector('[data-msg]')!.textContent = `This host fits about ${fmt(vmFit)} VMs or ${fmt(ctFit)} containers of this service (${(ctFit / vmFit).toFixed(1)}× more). The saving is mostly the ${GUEST} MB guest OS each VM repeats, which containers share. The price is a shared kernel: a kernel bug or escape can reach every container on the host.`;
+    }
+  }
+  customElements.define('vm-container-stack', VmContainerStack);
+</script>

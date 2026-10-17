@@ -1,0 +1,88 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why the planner sometimes ignores your index"
+  caption="A 1,000,000-row table stored in 10,000 pages. Slide the fraction of rows the query needs. A sequential scan always costs about the same; an index lookup pays a random page read per match. Past a small fraction the scan wins, and the planner switches."
+>
+  <scan-vs-index>
+    <div class="ctl-row">
+      <label class="stat">Rows matching <input type="range" min="-4" max="2" step="0.1" value="-2" data-s /> <b data-sv>1%</b></label>
+    </div>
+    <div class="sv" data-bars></div>
+    <p class="sv-msg" data-msg aria-live="polite"></p>
+  </scan-vs-index>
+</Figure>
+
+<style>
+  .sv {
+    margin: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sv :global(.row) {
+    display: grid;
+    grid-template-columns: 110px 1fr 76px;
+    gap: 8px;
+    align-items: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .sv :global(.bar) {
+    height: 18px;
+    border-radius: 4px;
+    min-width: 2px;
+  }
+  .sv :global(.win .bar) {
+    outline: 2px solid var(--g-green);
+  }
+  .sv :global(.val) {
+    text-align: right;
+    color: var(--text);
+  }
+  .sv-msg {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  input[type='range'] {
+    width: 170px;
+    vertical-align: middle;
+  }
+  @media (max-width: 520px) {
+    .sv :global(.row) {
+      grid-template-columns: 80px 1fr 64px;
+    }
+  }
+</style>
+
+<script>
+  const ROWS = 1_000_000;
+  const PAGES = 10_000;
+  const RANDOM = 4; // a random page read costs ~4x a sequential one (PostgreSQL's default random_page_cost)
+  const HEIGHT = 3;
+  class ScanVsIndex extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-s]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const pct = 10 ** +this.querySelector<HTMLInputElement>('[data-s]')!.value;
+      const frac = pct / 100;
+      const matches = Math.max(1, Math.round(ROWS * frac));
+      this.querySelector('[data-sv]')!.textContent = pct < 0.1 ? `${pct.toFixed(3)}%` : pct < 10 ? `${pct.toFixed(2)}%` : `${pct.toFixed(0)}%`;
+      const seq = PAGES;
+      // each match may sit on a different page, but never more page visits than the table has pages
+      const idx = Math.round((HEIGHT + Math.min(matches, PAGES)) * RANDOM);
+      const max = Math.max(seq, idx);
+      const win = seq <= idx ? 'seq' : 'idx';
+      const bar = (id: string, label: string, v: number, c: string) => `<div class="row ${win === id ? 'win' : ''}"><span>${label}</span><div class="bar" style="width:${(v / max) * 100}%;background:${c}"></div><span class="val">${v.toLocaleString('en-US')}</span></div>`;
+      this.querySelector('[data-bars]')!.innerHTML = bar('seq', 'sequential scan', seq, 'var(--g-red)') + bar('idx', 'index lookups', idx, 'var(--g-blue)');
+      this.querySelector('[data-msg]')!.textContent = `${matches.toLocaleString('en-US')} matching rows. Estimated cost: scan ${seq.toLocaleString('en-US')}, index ${idx.toLocaleString('en-US')} → the planner picks the ${win === 'seq' ? 'sequential scan' : 'index'}. ${win === 'seq' ? 'Visiting that many scattered pages randomly costs more than reading the whole table in order.' : 'Few matches, so jumping straight to them beats reading everything.'}`;
+    }
+  }
+  customElements.define('scan-vs-index', ScanVsIndex);
+</script>

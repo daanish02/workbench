@@ -1,0 +1,101 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Longest-prefix match"
+  caption="Enter a destination (or click an example). Every route whose prefix contains it matches, shown in blue. The router picks the match with the longest prefix, the most specific one, shown in green. The default route 0.0.0.0/0 matches everything but loses to anything longer."
+>
+  <prefix-match>
+    <div class="ctl-row">
+      <label class="stat">Destination <input class="input" data-dst value="10.20.30.45" size="15" aria-label="Destination IPv4 address" /></label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn" data-ex="10.20.30.45">10.20.30.45</button>
+      <button class="btn" data-ex="10.20.8.12">10.20.8.12</button>
+      <button class="btn" data-ex="10.9.4.2">10.9.4.2</button>
+      <button class="btn" data-ex="8.8.8.8">8.8.8.8</button>
+    </div>
+    <table class="pm-table"><thead><tr><th>Prefix</th><th>Next hop</th><th>Length</th><th>Matches?</th></tr></thead><tbody data-rows></tbody></table>
+    <p class="pm-msg" data-msg aria-live="polite"></p>
+  </prefix-match>
+</Figure>
+
+<style>
+  .pm-table {
+    margin: 12px auto 0;
+    font: 0.75rem var(--font-mono);
+    border-collapse: collapse;
+  }
+  .pm-table :global(th),
+  .pm-table :global(td) {
+    padding: 4px 12px;
+    border: 1px solid var(--border-strong);
+    text-align: center;
+  }
+  .pm-table :global(th) {
+    color: var(--text-faint);
+    font-weight: 500;
+  }
+  .pm-table :global(tr.m td) {
+    background: rgba(66, 133, 244, 0.16);
+    color: var(--text);
+  }
+  .pm-table :global(tr.w td) {
+    background: rgba(52, 168, 83, 0.28);
+    color: #fff;
+    font-weight: 700;
+  }
+  .pm-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.5em;
+  }
+</style>
+
+<script>
+  const ROUTES: [string, number, string][] = [
+    ['10.0.0.0', 8, 'Router A'],
+    ['10.20.0.0', 16, 'Router B'],
+    ['10.20.30.0', 24, 'Router C'],
+    ['0.0.0.0', 0, 'Router D (default)'],
+  ];
+  const parse = (s: string): number | null => {
+    const m = s.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!m || m.slice(1).some((x) => +x > 255)) return null;
+    return ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0;
+  };
+  class PrefixMatch extends HTMLElement {
+    connectedCallback() {
+      const inp = this.querySelector<HTMLInputElement>('[data-dst]')!;
+      inp.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-ex]').forEach((b) =>
+        b.addEventListener('click', () => {
+          inp.value = b.dataset.ex!;
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const d = parse(this.querySelector<HTMLInputElement>('[data-dst]')!.value);
+      const rows = this.querySelector('[data-rows]')!;
+      const msg = this.querySelector('[data-msg]')!;
+      if (d === null) {
+        rows.innerHTML = '';
+        msg.textContent = 'Enter a valid IPv4 address.';
+        return;
+      }
+      const matches = ROUTES.map(([net, len]) => {
+        const mask = len === 0 ? 0 : (0xffffffff << (32 - len)) >>> 0;
+        return ((d & mask) >>> 0) === parse(net)!;
+      });
+      let best = -1;
+      ROUTES.forEach((r, i) => matches[i] && (best < 0 || r[1] > ROUTES[best][1]) && (best = i));
+      rows.innerHTML = ROUTES.map((r, i) => `<tr class="${i === best ? 'w' : matches[i] ? 'm' : ''}"><td>${r[0]}/${r[1]}</td><td>${r[2]}</td><td>/${r[1]}</td><td>${matches[i] ? (i === best ? 'yes, longest' : 'yes') : 'no'}</td></tr>`).join('');
+      msg.textContent = `${matches.filter(Boolean).length} route(s) match; the router forwards to ${ROUTES[best][2]} using ${ROUTES[best][0]}/${ROUTES[best][1]}, the most specific.`;
+    }
+  }
+  customElements.define('prefix-match', PrefixMatch);
+</script>

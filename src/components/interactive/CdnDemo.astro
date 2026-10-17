@@ -1,0 +1,113 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A CDN edge cache"
+  caption="Users request the same file from three regions. The first request in each region is a miss: the edge fetches from the distant origin, then keeps a copy. Later requests are hits, served from nearby. Purge the caches to simulate expiry or invalidation."
+>
+  <cdn-demo>
+    <div class="ctl-row">
+      <button class="btn primary" data-region="0">User in Europe</button>
+      <button class="btn primary" data-region="1">User in Asia</button>
+      <button class="btn primary" data-region="2">User in America</button>
+      <button class="btn" data-purge>Purge edges</button>
+      <button class="btn" data-origin aria-pressed="false">No CDN (always origin)</button>
+    </div>
+    <div class="cd" data-edges></div>
+    <p class="stat cd-stat" data-stat></p>
+    <p class="cd-msg" data-msg aria-live="polite"></p>
+  </cdn-demo>
+</Figure>
+
+<style>
+  .cd {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .cd {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cd :global(.edge) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font: 0.75rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cd :global(.edge b) {
+    color: var(--text);
+    font-size: 0.8125rem;
+  }
+  .cd :global(.edge.full) {
+    border-color: var(--g-green);
+  }
+  .cd-stat {
+    margin: 16px 0 0;
+  }
+  .cd-msg {
+    margin: 8px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.5em;
+  }
+</style>
+
+<script>
+  const REG = ['Europe edge', 'Asia edge', 'America edge'];
+  const NEAR = 20; // ms user to nearby edge
+  const FAR = 140; // ms edge (or user) to the origin
+  class CdnDemo extends HTMLElement {
+    cached = [false, false, false];
+    hits = 0;
+    miss = 0;
+    total = 0;
+    noCdn = false;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-region]').forEach((b) => b.addEventListener('click', () => this.req(+b.dataset.region!)));
+      this.querySelector('[data-purge]')!.addEventListener('click', () => {
+        this.cached = [false, false, false];
+        this.say('Edges purged: the next request in each region is a miss again.');
+        this.draw();
+      });
+      this.querySelector('[data-origin]')!.addEventListener('click', (e) => {
+        this.noCdn = !this.noCdn;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.noCdn));
+        this.hits = this.miss = this.total = 0;
+        this.say(this.noCdn ? 'Every request now travels to the origin.' : 'CDN back on.');
+        this.draw();
+      });
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    req(r: number) {
+      if (this.noCdn) {
+        this.miss++;
+        this.total += FAR + NEAR;
+        this.say(`Request from the ${REG[r].replace(' edge', '')} user goes all the way to the origin: ${FAR + NEAR} ms.`);
+      } else if (this.cached[r]) {
+        this.hits++;
+        this.total += NEAR;
+        this.say(`HIT at the ${REG[r]}: served from cache in ${NEAR} ms. The origin was not touched.`);
+      } else {
+        this.miss++;
+        this.total += NEAR + FAR;
+        this.cached[r] = true;
+        this.say(`MISS at the ${REG[r]}: it fetched the file from the origin (${NEAR + FAR} ms) and now keeps a copy for the next user.`);
+      }
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-edges]')!.innerHTML = REG.map((n, i) => `<div class="edge ${this.cached[i] ? 'full' : ''}"><b>${n}</b><br>${this.noCdn ? 'bypassed' : this.cached[i] ? 'file cached' : 'empty'}</div>`).join('');
+      const n = this.hits + this.miss;
+      this.querySelector('[data-stat]')!.innerHTML = n ? `requests <b>${n}</b> · hit ratio <b>${Math.round((this.hits / n) * 100)}%</b> · origin requests <b>${this.miss}</b> · average latency <b>${Math.round(this.total / n)} ms</b>` : 'No requests yet.';
+    }
+  }
+  customElements.define('cdn-demo', CdnDemo);
+</script>

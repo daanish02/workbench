@@ -1,0 +1,185 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Map of the main complexity classes"
+  caption="Click a region or a name. Nesting shows known inclusions: L ⊆ NL ⊆ P ⊆ NP ⊆ PSPACE ⊆ EXP, with P inside the overlap of NP and co-NP. The red bands are the complete problems, the hardest in their class. Only some separations are proven (P ≠ EXP, NL ≠ PSPACE); the picture of distinct regions inside is the believed one. Toggle 'Suppose P = NP' to see what would collapse."
+>
+  <cc-map>
+    <div class="ctl-row">
+      <button class="btn" data-collapse aria-pressed="false">Suppose P = NP</button>
+    </div>
+    <svg viewBox="0 0 480 340" role="img" aria-label="Nested complexity classes" data-svg>
+      <rect class="r exp" data-c="EXP" x="6" y="6" width="468" height="328" rx="28"></rect>
+      <text class="lab" x="240" y="28">EXP</text>
+      <rect class="r ps" data-c="PSPACE" x="26" y="40" width="428" height="282" rx="24"></rect>
+      <text class="lab" x="240" y="62">PSPACE</text>
+      <g data-believed>
+        <ellipse class="r np" data-c="NP" cx="190" cy="192" rx="130" ry="95"></ellipse>
+        <ellipse class="r conp" data-c="co-NP" cx="290" cy="192" rx="130" ry="95"></ellipse>
+        <path class="band" data-c="NP-complete" d="M116.7,131.5 A114,79 0 0 0 116.7,252.5"></path>
+        <path class="band" data-c="co-NP-complete" d="M363.3,131.5 A114,79 0 0 1 363.3,252.5"></path>
+        <text class="lab" x="140" y="135">NP</text>
+        <text class="lab" x="342" y="135">co-NP</text>
+        <text class="small" x="76" y="192" transform="rotate(-90 76 192)">NP-complete</text>
+        <text class="small" x="404" y="192" transform="rotate(90 404 192)">co-NP-complete</text>
+      </g>
+      <g data-collapsed style="display:none">
+        <circle class="r np" data-c="P=NP" cx="240" cy="192" r="112"></circle>
+        <text class="lab" x="240" y="112">P = NP = co-NP</text>
+      </g>
+      <circle class="r p" data-c="P" cx="240" cy="205" r="52"></circle>
+      <text class="lab" data-plabel x="240" y="172">P</text>
+      <circle class="r nl" data-c="NL" cx="240" cy="217" r="30"></circle>
+      <text class="small" x="240" y="198">NL</text>
+      <circle class="r l" data-c="L" cx="240" cy="226" r="13"></circle>
+      <text class="small" x="240" y="227">L</text>
+    </svg>
+    <div class="chips" data-chips></div>
+    <div class="info" data-info></div>
+  </cc-map>
+</Figure>
+
+<style>
+  svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 10px auto 0;
+  }
+  .r {
+    stroke-width: 1.6;
+    cursor: pointer;
+    transition: fill 0.15s;
+  }
+  .exp {
+    fill: rgba(154, 160, 166, 0.06);
+    stroke: var(--text-faint);
+  }
+  .ps {
+    fill: rgba(52, 168, 83, 0.07);
+    stroke: var(--g-green);
+  }
+  .np {
+    fill: rgba(66, 133, 244, 0.1);
+    stroke: var(--g-blue);
+  }
+  .conp {
+    fill: rgba(251, 188, 4, 0.07);
+    stroke: var(--g-yellow);
+  }
+  .p {
+    fill: rgba(0, 0, 0, 0.85);
+    stroke: #fff;
+  }
+  .nl,
+  .l {
+    fill: rgba(255, 255, 255, 0.06);
+    stroke: var(--text-muted);
+  }
+  .band {
+    fill: none;
+    stroke: rgba(234, 67, 53, 0.55);
+    stroke-width: 16;
+    cursor: pointer;
+  }
+  .sel {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.35));
+  }
+  path.sel {
+    stroke: var(--g-red);
+    stroke-width: 18;
+  }
+  .lab,
+  .small {
+    fill: var(--text);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .lab {
+    font: 700 14px var(--font-mono);
+  }
+  .small {
+    font: 600 10.5px var(--font-mono);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 10px;
+    justify-content: center;
+  }
+  .chips :global(button) {
+    font-size: 0.75rem;
+    padding: 4px 9px;
+  }
+  .info {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 5.5em;
+  }
+  .info :global(b) {
+    color: var(--text);
+  }
+  .info :global(p) {
+    margin: 4px 0 0;
+  }
+</style>
+
+<script>
+  const INFO: Record<string, [string, string, string]> = {
+    L: ['Logarithmic space', 'Deterministic, O(log n) working memory: enough for a few counters and pointers into the input.', 'Undirected graph connectivity (Reingold, 2005).'],
+    NL: ['Nondeterministic log space', 'Log-space machines that may guess. NL ⊆ P because a log-space machine has only polynomially many configurations.', 'Directed s–t reachability (NL-complete).'],
+    P: ['Polynomial time', 'Solvable by a deterministic algorithm in O(nᵏ) steps for some fixed k. The usual formal stand-in for "efficient".', 'Shortest paths, sorting, linear programming, primality testing.'],
+    NP: ['Nondeterministic polynomial time', 'Yes-answers have short certificates checkable in polynomial time.', 'SAT, Hamiltonian cycle, graph coloring, subset sum.'],
+    'co-NP': ['Complements of NP', 'No-answers have short certificates. Unknown whether NP = co-NP.', 'Tautology (is this formula true under every assignment?).'],
+    'NP-complete': ['Hardest problems in NP', 'In NP, and every NP problem reduces to them in polynomial time. If P ≠ NP, none of them is in P.', 'SAT, 3-SAT, clique, vertex cover, TSP (decision).'],
+    'co-NP-complete': ['Hardest problems in co-NP', 'Complements of NP-complete problems.', 'Tautology, unsatisfiability (UNSAT).'],
+    PSPACE: ['Polynomial space', 'Polynomial memory, unlimited time. Contains NP and co-NP; equals NPSPACE (Savitch).', 'TQBF (PSPACE-complete), generalized geography, many generalized games.'],
+    EXP: ['Exponential time', 'Deterministic time 2^(nᵏ). Strictly larger than P by the time hierarchy theorem.', 'Generalized chess and checkers on n×n boards (EXP-complete).'],
+    'P=NP': ['If P = NP', 'Then NP = co-NP = P as well, the polynomial hierarchy collapses to P, and every problem in P except the trivial ones (∅ and Σ*) is NP-complete.', 'Every NP-complete problem, from SAT to TSP, would have a polynomial algorithm.'],
+  };
+  const ORDER = ['L', 'NL', 'P', 'NP', 'co-NP', 'NP-complete', 'co-NP-complete', 'PSPACE', 'EXP'];
+
+  class CcMap extends HTMLElement {
+    sel = 'P';
+    collapsed = false;
+
+    connectedCallback() {
+      this.querySelector('[data-chips]')!.innerHTML = ORDER.map((c) => `<button type="button" class="btn" data-pick="${c}">${c}</button>`).join('');
+      this.addEventListener('click', (e) => {
+        const t = e.target as Element;
+        const pick = t.closest<HTMLElement>('[data-pick]')?.dataset.pick ?? t.closest<SVGElement>('[data-c]')?.dataset.c;
+        if (pick) {
+          this.sel = this.collapsed && ['NP', 'co-NP', 'NP-complete', 'co-NP-complete'].includes(pick) ? 'P=NP' : pick;
+          this.draw();
+        }
+      });
+      const tog = this.querySelector<HTMLButtonElement>('[data-collapse]')!;
+      tog.addEventListener('click', () => {
+        this.collapsed = !this.collapsed;
+        tog.setAttribute('aria-pressed', String(this.collapsed));
+        this.sel = this.collapsed ? 'P=NP' : 'NP';
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      this.querySelector<SVGElement>('[data-believed]')!.style.display = this.collapsed ? 'none' : '';
+      this.querySelector<SVGElement>('[data-collapsed]')!.style.display = this.collapsed ? '' : 'none';
+      this.querySelector<SVGElement>('[data-plabel]')!.style.display = this.collapsed ? 'none' : '';
+      this.querySelectorAll<SVGElement>('[data-c]').forEach((el) => el.classList.toggle('sel', el.dataset.c === this.sel));
+      this.querySelectorAll<HTMLElement>('[data-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pick === this.sel)));
+      const [name, def, ex] = INFO[this.sel];
+      this.querySelector('[data-info]')!.innerHTML = `<b>${this.sel === 'P=NP' ? '' : this.sel + ': '}${name}</b><p>${def}</p><p><b>Examples:</b> ${ex}</p>`;
+    }
+  }
+  customElements.define('cc-map', CcMap);
+</script>

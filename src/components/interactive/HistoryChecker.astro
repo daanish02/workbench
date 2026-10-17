@@ -1,0 +1,187 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which guarantee does this history break?"
+  caption="Each lane is one client; boxes are operations on x (initially 0) laid out in real time. Pick a history and see which consistency models allow it. Weaker models accept every history the stronger ones do, and more."
+>
+  <history-checker>
+    <div class="ctl-row" data-picks></div>
+    <div class="hc-lanes" data-lanes></div>
+    <div class="hc-verdicts" data-verdicts></div>
+    <p class="hc-why" data-why></p>
+  </history-checker>
+</Figure>
+
+<style>
+  .hc-lanes {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .hc-lanes :global(.hc-lane) {
+    position: relative;
+    height: 34px;
+    border-bottom: 1px dashed var(--border-strong);
+  }
+  .hc-lanes :global(.hc-lane > i) {
+    position: absolute;
+    left: 0;
+    top: 6px;
+    font: 700 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    font-style: normal;
+  }
+  .hc-lanes :global(.hc-op) {
+    position: absolute;
+    top: 3px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--g-blue);
+    background: rgba(66, 133, 244, 0.2);
+    font: 0.6875rem/26px var(--font-mono);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    color: #fff;
+  }
+  .hc-lanes :global(.hc-op.w) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.18);
+  }
+  .hc-verdicts {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 14px;
+  }
+  @media (max-width: 520px) {
+    .hc-verdicts {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .hc-verdicts :global(.hc-v) {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+  .hc-verdicts :global(.hc-v b) {
+    display: block;
+    font-size: 0.8125rem;
+  }
+  .hc-verdicts :global(.hc-v.yes) {
+    border-color: var(--g-green);
+    color: var(--g-green-l);
+  }
+  .hc-verdicts :global(.hc-v.no) {
+    border-color: var(--g-red);
+    color: var(--g-red-l);
+  }
+  .hc-why {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  interface Op {
+    lane: number;
+    a: number;
+    b: number;
+    t: string;
+    w?: boolean;
+  }
+  interface H {
+    name: string;
+    lanes: string[];
+    ops: Op[];
+    lin: boolean;
+    seq: boolean;
+    causal: boolean;
+    why: string;
+  }
+  const H: H[] = [
+    {
+      name: 'Fresh read',
+      lanes: ['A', 'B'],
+      ops: [{ lane: 0, a: 0, b: 2, t: 'w x=1', w: true }, { lane: 1, a: 3, b: 5, t: 'r → 1' }],
+      lin: true, seq: true, causal: true,
+      why: 'The read starts after the write finished and sees it. Nothing to complain about: every model accepts this.',
+    },
+    {
+      name: 'Stale read',
+      lanes: ['A', 'B'],
+      ops: [{ lane: 0, a: 0, b: 2, t: 'w x=1', w: true }, { lane: 1, a: 3, b: 5, t: 'r → 0' }],
+      lin: false, seq: true, causal: true,
+      why: 'The write had completed before the read began, yet the read returned the old value. Not linearizable (real time is violated), but a legal order exists (read, then write) that keeps each client in program order, so it is sequentially consistent.',
+    },
+    {
+      name: 'Time travel',
+      lanes: ['A', 'B'],
+      ops: [{ lane: 0, a: 0, b: 1, t: 'w x=1', w: true }, { lane: 1, a: 2, b: 3, t: 'r → 1' }, { lane: 1, a: 4, b: 5, t: 'r → 0' }],
+      lin: false, seq: false, causal: false,
+      why: 'B saw the new value and then the old one. No single order can place the write both before and after B\'s reads, so only eventual consistency (which promises nothing in the short term) allows it.',
+    },
+    {
+      name: 'Causality broken',
+      lanes: ['A', 'B', 'C'],
+      ops: [
+        { lane: 0, a: 0, b: 1, t: 'w x=1', w: true },
+        { lane: 1, a: 2, b: 3, t: 'r x → 1' },
+        { lane: 1, a: 4, b: 5, t: 'w y=1', w: true },
+        { lane: 2, a: 6, b: 7, t: 'r y → 1' },
+        { lane: 2, a: 8, b: 9, t: 'r x → 0' },
+      ],
+      lin: false, seq: false, causal: false,
+      why: 'B wrote y after reading x=1, so y=1 depends on x=1. C saw the effect (y=1) but not its cause (x=1). Causal consistency exists to forbid exactly this.',
+    },
+    {
+      name: 'Two orders',
+      lanes: ['A', 'B', 'C', 'D'],
+      ops: [
+        { lane: 0, a: 0, b: 2, t: 'w x=1', w: true },
+        { lane: 1, a: 0, b: 2, t: 'w x=2', w: true },
+        { lane: 2, a: 3, b: 4, t: 'r → 1' },
+        { lane: 2, a: 5, b: 6, t: 'r → 2' },
+        { lane: 3, a: 3, b: 4, t: 'r → 2' },
+        { lane: 3, a: 5, b: 6, t: 'r → 1' },
+      ],
+      lin: false, seq: false, causal: true,
+      why: 'The two writes are concurrent, so causal consistency lets different clients see them in different orders. C saw 1 then 2, D saw 2 then 1: no single global order explains both, so it is not sequentially consistent.',
+    },
+  ];
+  class HistoryChecker extends HTMLElement {
+    connectedCallback() {
+      const picks = this.querySelector('[data-picks]')!;
+      picks.innerHTML = H.map((h, i) => `<button class="btn" data-i="${i}" aria-pressed="${i === 0}">${h.name}</button>`).join('');
+      picks.querySelectorAll<HTMLButtonElement>('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          picks.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.show(H[+b.dataset.i!]);
+        }),
+      );
+      this.show(H[0]);
+    }
+    show(h: H) {
+      const end = 10;
+      this.querySelector('[data-lanes]')!.innerHTML = h.lanes
+        .map(
+          (l, i) =>
+            `<div class="hc-lane"><i>${l}</i>${h.ops
+              .filter((o) => o.lane === i)
+              .map((o) => `<div class="hc-op ${o.w ? 'w' : ''}" style="left:${8 + (o.a / end) * 90}%;width:${((o.b - o.a) / end) * 90 - 0.6}%">${o.t}</div>`)
+              .join('')}</div>`,
+        )
+        .join('');
+      const row = (n: string, ok: boolean) => `<div class="hc-v ${ok ? 'yes' : 'no'}"><b>${ok ? 'allowed' : 'violated'}</b>${n}</div>`;
+      this.querySelector('[data-verdicts]')!.innerHTML = row('Linearizable', h.lin) + row('Sequential', h.seq) + row('Causal', h.causal) + row('Eventual', true);
+      this.querySelector('[data-why]')!.textContent = h.why;
+    }
+  }
+  customElements.define('history-checker', HistoryChecker);
+</script>

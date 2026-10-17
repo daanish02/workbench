@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Build an RBAC policy"
+  caption="Tick which permissions each role grants, then assign roles to users. Ask 'can this user do that?' and the answer explains which role (if any) allows it. Remove a role's permission and watch everyone holding the role lose it at once: that is the point of RBAC."
+>
+  <access-matrix>
+    <div class="am">
+      <div>
+        <div class="ctl-label">Roles → permissions</div>
+        <table data-roles></table>
+      </div>
+      <div>
+        <div class="ctl-label">Users → roles</div>
+        <table data-users></table>
+      </div>
+    </div>
+    <div class="ctl-row am-ask">
+      <span class="ctl-label">Can</span>
+      <select class="input" data-user></select>
+      <span class="ctl-label">do</span>
+      <select class="input" data-perm></select>
+      <span class="ctl-label">?</span>
+    </div>
+    <p class="am-msg" data-msg aria-live="polite"></p>
+  </access-matrix>
+</Figure>
+
+<style>
+  .am {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .am {
+      grid-template-columns: 1fr;
+    }
+  }
+  .am-ask {
+    margin-top: 14px;
+  }
+  .am :global(table) {
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+    margin-top: 6px;
+  }
+  .am :global(th),
+  .am :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 4px 8px;
+    text-align: center;
+    color: var(--text);
+  }
+  .am :global(th) {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
+  }
+  .am :global(input[type='checkbox']) {
+    accent-color: var(--accent-strong);
+    width: 15px;
+    height: 15px;
+  }
+  .am-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    min-height: 3em;
+    color: var(--text-muted);
+  }
+  .am-msg.yes {
+    color: var(--g-green-l);
+  }
+  .am-msg.no {
+    color: var(--g-red-l);
+  }
+  select.input {
+    padding: 5px 8px;
+  }
+</style>
+
+<script>
+  const PERMS = ['record:read', 'obs:write', 'rx:write', 'user:manage'];
+  const ROLES = ['nurse', 'doctor', 'admin'];
+  const USERS = ['Ana', 'Raj', 'Sue'];
+  class AccessMatrix extends HTMLElement {
+    rp: Record<string, Set<string>> = {};
+    ur: Record<string, Set<string>> = {};
+    connectedCallback() {
+      this.rp = { nurse: new Set(['record:read', 'obs:write']), doctor: new Set(['record:read', 'obs:write', 'rx:write']), admin: new Set(['user:manage']) };
+      this.ur = { Ana: new Set(['nurse']), Raj: new Set(['doctor']), Sue: new Set(['admin']) };
+      this.querySelector('[data-user]')!.innerHTML = USERS.map((u) => `<option>${u}</option>`).join('');
+      this.querySelector('[data-perm]')!.innerHTML = PERMS.map((p) => `<option>${p}</option>`).join('');
+      this.querySelector('[data-user]')!.addEventListener('change', () => this.answer());
+      this.querySelector('[data-perm]')!.addEventListener('change', () => this.answer());
+      this.draw();
+    }
+    toggle(set: Set<string>, v: string) {
+      set.has(v) ? set.delete(v) : set.add(v);
+      this.draw();
+    }
+    draw() {
+      const rt = this.querySelector('[data-roles]')!;
+      rt.innerHTML = `<tr><th></th>${PERMS.map((p) => `<th>${p}</th>`).join('')}</tr>${ROLES.map((r) => `<tr><th>${r}</th>${PERMS.map((p) => `<td><input type="checkbox" data-r="${r}" data-p="${p}" ${this.rp[r].has(p) ? 'checked' : ''} aria-label="${r} grants ${p}"></td>`).join('')}</tr>`).join('')}`;
+      const ut = this.querySelector('[data-users]')!;
+      ut.innerHTML = `<tr><th></th>${ROLES.map((r) => `<th>${r}</th>`).join('')}</tr>${USERS.map((u) => `<tr><th>${u}</th>${ROLES.map((r) => `<td><input type="checkbox" data-u="${u}" data-r2="${r}" ${this.ur[u].has(r) ? 'checked' : ''} aria-label="${u} has role ${r}"></td>`).join('')}</tr>`).join('')}`;
+      rt.querySelectorAll<HTMLInputElement>('input').forEach((i) => i.addEventListener('change', () => this.toggle(this.rp[i.dataset.r!], i.dataset.p!)));
+      ut.querySelectorAll<HTMLInputElement>('input').forEach((i) => i.addEventListener('change', () => this.toggle(this.ur[i.dataset.u!], i.dataset.r2!)));
+      this.answer();
+    }
+    answer() {
+      const u = this.querySelector<HTMLSelectElement>('[data-user]')!.value;
+      const p = this.querySelector<HTMLSelectElement>('[data-perm]')!.value;
+      const via = [...this.ur[u]].filter((r) => this.rp[r].has(p));
+      const m = this.querySelector('[data-msg]')!;
+      m.className = `am-msg ${via.length ? 'yes' : 'no'}`;
+      m.textContent = via.length
+        ? `Yes: ${u} may ${p} through the role${via.length > 1 ? 's' : ''} ${via.join(', ')}.`
+        : `No: none of ${u}'s roles (${[...this.ur[u]].join(', ') || 'none'}) grants ${p}. Default deny.`;
+    }
+  }
+  customElements.define('access-matrix', AccessMatrix);
+</script>

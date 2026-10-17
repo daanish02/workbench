@@ -1,0 +1,115 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Quorum overlap"
+  caption="A write goes to W nodes, a read asks R. When W + R > N the two sets must share a node, so a read always meets the latest write. Click nodes to take them down and see when reads or writes stop being possible."
+>
+  <quorum-grid>
+    <div class="ctl-row">
+      <label class="stat">N <input type="range" min="3" max="7" step="1" value="5" data-n /> <b data-nv>5</b></label>
+      <label class="stat">W <input type="range" min="1" max="7" step="1" value="3" data-w /> <b data-wv>3</b></label>
+      <label class="stat">R <input type="range" min="1" max="7" step="1" value="3" data-r /> <b data-rv>3</b></label>
+    </div>
+    <div class="qg" data-nodes></div>
+    <p class="qg-msg" data-msg aria-live="polite"></p>
+  </quorum-grid>
+</Figure>
+
+<style>
+  .qg {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+  }
+  .qg :global(button) {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text);
+    font: 700 0.75rem var(--font-mono);
+    cursor: pointer;
+    line-height: 1.1;
+  }
+  .qg :global(button small) {
+    display: block;
+    font-weight: 500;
+    font-size: 0.5625rem;
+  }
+  .qg :global(button.w) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.2);
+  }
+  .qg :global(button.r) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.2);
+  }
+  .qg :global(button.w.r) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.3);
+  }
+  .qg :global(button.dead) {
+    opacity: 0.35;
+    text-decoration: line-through;
+  }
+  .qg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    width: 90px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  class QuorumGrid extends HTMLElement {
+    dead = new Set<number>();
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const wIn = this.querySelector<HTMLInputElement>('[data-w]')!;
+      const rIn = this.querySelector<HTMLInputElement>('[data-r]')!;
+      wIn.max = rIn.max = String(n);
+      const w = Math.min(+wIn.value, n);
+      const r = Math.min(+rIn.value, n);
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-wv]')!.textContent = String(w);
+      this.querySelector('[data-rv]')!.textContent = String(r);
+      for (const d of [...this.dead]) if (d >= n) this.dead.delete(d);
+      const up = Array.from({ length: n }, (_, i) => i).filter((i) => !this.dead.has(i));
+      const wSet = new Set(up.slice(0, w));
+      const rSet = new Set(up.slice(up.length - r < 0 ? 0 : up.length - r));
+      const canW = up.length >= w;
+      const canR = up.length >= r;
+      this.querySelector('[data-nodes]')!.innerHTML = Array.from({ length: n }, (_, i) => {
+        const cls = this.dead.has(i) ? 'dead' : `${canW && wSet.has(i) ? 'w' : ''} ${canR && rSet.has(i) ? 'r' : ''}`;
+        return `<button class="${cls}" data-i="${i}">${i}<small>${this.dead.has(i) ? 'down' : cls.includes('w') && cls.includes('r') ? 'both' : cls.includes('w') ? 'write' : cls.includes('r') ? 'read' : 'up'}</small></button>`;
+      }).join('');
+      this.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const i = +b.dataset.i!;
+          this.dead.has(i) ? this.dead.delete(i) : this.dead.add(i);
+          this.draw();
+        }),
+      );
+      const overlap = w + r > n;
+      const both = [...wSet].filter((x) => rSet.has(x)).length;
+      let m = `W + R = ${w + r} ${overlap ? '>' : '≤'} N = ${n}: ${overlap ? 'read and write sets always overlap, reads see the latest write.' : 'sets can miss each other, so a read may return stale data.'}`;
+      m += ` Writes survive ${n - w} failure(s), reads survive ${n - r}.`;
+      if (!canW) m += ' Writes are blocked now: too few nodes up.';
+      if (!canR) m += ' Reads are blocked now: too few nodes up.';
+      if (canW && canR) m += ` In this layout the write set and read set share ${both} node(s)${both === 0 ? ': a read here would be stale.' : '.'}`;
+      this.querySelector('[data-msg]')!.textContent = m;
+    }
+  }
+  customElements.define('quorum-grid', QuorumGrid);
+</script>

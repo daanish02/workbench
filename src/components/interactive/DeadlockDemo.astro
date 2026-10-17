@@ -1,0 +1,205 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two threads, two locks"
+  caption="Step the threads in any order. With opposite lock orders, stepping A then B leaves each holding one lock and waiting for the other: the wait-for graph closes into a cycle. Switch to a single global order (always M1 before M2) and no interleaving can deadlock, because circular wait is impossible."
+>
+  <deadlock-demo>
+    <div class="ctl-row">
+      <button class="btn" data-mode="opposite" aria-pressed="true">Opposite orders</button>
+      <button class="btn" data-mode="ordered" aria-pressed="false">Global order M1 → M2</button>
+    </div>
+    <div class="dd">
+      <div class="th" data-th="A"><b>Thread A</b><ol></ol></div>
+      <svg viewBox="0 0 200 120" aria-label="Wait-for graph">
+        <defs><marker id="dd-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="currentColor"></path></marker></defs>
+        <g class="edge" data-e="A-M1"><line x1="44" y1="30" x2="146" y2="30"></line></g>
+        <g class="edge" data-e="A-M2"><line x1="44" y1="38" x2="146" y2="86"></line></g>
+        <g class="edge" data-e="B-M2"><line x1="44" y1="90" x2="146" y2="90"></line></g>
+        <g class="edge" data-e="B-M1"><line x1="44" y1="82" x2="146" y2="34"></line></g>
+        <circle cx="30" cy="30" r="16" class="node t"></circle><text x="30" y="34">A</text>
+        <circle cx="30" cy="90" r="16" class="node t"></circle><text x="30" y="94">B</text>
+        <rect x="148" y="16" width="36" height="28" rx="6" class="node m"></rect><text x="166" y="34">M1</text>
+        <rect x="148" y="76" width="36" height="28" rx="6" class="node m"></rect><text x="166" y="94">M2</text>
+      </svg>
+      <div class="th" data-th="B"><b>Thread B</b><ol></ol></div>
+    </div>
+    <p class="legend"><span class="hold">━ holds</span> <span class="want">┅ waits for</span></p>
+    <div class="ctl-row">
+      <button class="btn primary" data-step="A">Step A</button>
+      <button class="btn primary" data-step="B">Step B</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="msg" data-msg aria-live="polite"></p>
+  </deadlock-demo>
+</Figure>
+
+<style>
+  .dd {
+    display: grid;
+    grid-template-columns: 1fr minmax(140px, 200px) 1fr;
+    gap: 10px;
+    align-items: center;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .dd {
+      grid-template-columns: 1fr 1fr;
+    }
+    svg {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      max-width: 220px;
+      justify-self: center;
+    }
+  }
+  .th {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+  }
+  .th ol {
+    margin: 6px 0 0;
+    padding-left: 1.2em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-faint);
+  }
+  .th :global(li.done) {
+    color: var(--text-muted);
+  }
+  .th :global(li.next) {
+    color: #fff;
+    font-weight: 700;
+  }
+  .th :global(li.stuck) {
+    color: var(--g-red-l);
+    font-weight: 700;
+  }
+  svg {
+    width: 100%;
+    height: auto;
+    color: var(--text-faint);
+  }
+  svg text {
+    font: 700 12px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+  }
+  .node.t {
+    fill: rgba(66, 133, 244, 0.25);
+    stroke: var(--g-blue);
+  }
+  .node.m {
+    fill: rgba(251, 188, 5, 0.18);
+    stroke: var(--g-yellow);
+  }
+  .edge line {
+    stroke: transparent;
+    stroke-width: 2.5;
+  }
+  .edge.hold line {
+    stroke: var(--g-green);
+  }
+  .edge.want line {
+    stroke: var(--g-red);
+    stroke-dasharray: 5 4;
+  }
+  .edge.cycle line {
+    stroke-width: 3.5;
+  }
+  .legend {
+    margin: 6px 0 8px;
+    font-size: 0.75rem;
+  }
+  .hold {
+    color: var(--g-green-l);
+  }
+  .want {
+    color: var(--g-red-l);
+    margin-left: 10px;
+  }
+  .msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+</style>
+
+<script>
+  type T = 'A' | 'B';
+  class DeadlockDemo extends HTMLElement {
+    mode = 'opposite';
+    pc: Record<T, number> = { A: 0, B: 0 };
+    owner: Record<string, T | null> = { M1: null, M2: null };
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.mode = b.dataset.mode!;
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-step]').forEach((b) => b.addEventListener('click', () => this.step(b.dataset.step as T)));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    prog(t: T) {
+      const order = this.mode === 'ordered' || t === 'A' ? ['M1', 'M2'] : ['M2', 'M1'];
+      return [`lock ${order[0]}`, `lock ${order[1]}`, 'work', `unlock ${order[1]}`, `unlock ${order[0]}`];
+    }
+    reset() {
+      this.pc = { A: 0, B: 0 };
+      this.owner = { M1: null, M2: null };
+      this.say('Both threads need both locks.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    wanting(t: T) {
+      const op = this.prog(t)[this.pc[t]];
+      if (!op?.startsWith('lock')) return null;
+      const m = op.split(' ')[1];
+      return this.owner[m] && this.owner[m] !== t ? m : null;
+    }
+    step(t: T) {
+      const p = this.prog(t);
+      if (this.pc[t] >= p.length) return this.say(`Thread ${t} has finished.`);
+      const [verb, m] = p[this.pc[t]].split(' ');
+      if (verb === 'lock') {
+        if (this.owner[m] && this.owner[m] !== t) {
+          this.draw();
+          const other = t === 'A' ? 'B' : 'A';
+          return this.say(
+            this.wanting(other) ? 'Deadlock: A waits for B and B waits for A. Neither step can ever succeed.' : `Thread ${t} blocks: ${m} is held by Thread ${this.owner[m]}.`,
+          );
+        }
+        this.owner[m] = t;
+      } else if (verb === 'unlock') this.owner[m] = null;
+      this.pc[t]++;
+      this.say(this.pc.A >= 5 && this.pc.B >= 5 ? 'Both threads finished.' : `Thread ${t}: ${verb} ${m ?? ''}`);
+      this.draw();
+    }
+    draw() {
+      for (const t of ['A', 'B'] as T[]) {
+        const stuck = this.wanting(t);
+        this.querySelector(`[data-th="${t}"] ol`)!.innerHTML = this.prog(t)
+          .map((op, i) => `<li class="${i < this.pc[t] ? 'done' : i === this.pc[t] ? (stuck ? 'stuck' : 'next') : ''}">${op}</li>`)
+          .join('');
+      }
+      const cycle = !!(this.wanting('A') && this.wanting('B'));
+      for (const t of ['A', 'B'] as T[])
+        for (const m of ['M1', 'M2']) {
+          const g = this.querySelector(`[data-e="${t}-${m}"]`)!;
+          const hold = this.owner[m] === t;
+          const want = this.wanting(t) === m;
+          g.setAttribute('class', `edge ${hold ? 'hold' : want ? 'want' : ''} ${cycle && (hold || want) ? 'cycle' : ''}`);
+        }
+    }
+  }
+  customElements.define('deadlock-demo', DeadlockDemo);
+</script>

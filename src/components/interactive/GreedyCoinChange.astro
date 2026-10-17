@@ -1,0 +1,146 @@
+---
+import Figure from '../Figure.astro';
+const sets = [
+  ['25,10,5,1', 'US coins 25·10·5·1'],
+  ['4,3,1', '4·3·1'],
+  ['10,7,1', '10·7·1'],
+];
+---
+
+<Figure
+  title="Greedy change vs the true minimum"
+  caption="The greedy rule always takes the largest coin that fits. The optimal count comes from dynamic programming over every amount up to the target. With US coins they always agree; with 4·3·1 or 10·7·1 they don't. Use “Find a counterexample” to search for the smallest amount where greedy loses."
+>
+  <greedy-coins>
+    <div class="ctl-row">
+      <span class="ctl-label">Coins</span>
+      {sets.map(([v, label], i) => <button class="btn" data-set={v} aria-pressed={i === 1 ? 'true' : 'false'}>{label}</button>)}
+    </div>
+    <div class="ctl-row">
+      <label class="ctl-label" for="gc-amt">Amount</label>
+      <input class="input" id="gc-amt" type="number" min="1" max="999" value="6" data-amt style="width:6em" />
+      <button class="btn" data-dec>−1</button>
+      <button class="btn" data-inc>+1</button>
+      <button class="btn primary" data-find>Find a counterexample</button>
+    </div>
+    <div class="rows">
+      <div class="row"><span class="ctl-label">Greedy</span><div class="coins" data-g></div><span class="stat" data-gs></span></div>
+      <div class="row"><span class="ctl-label">Optimal</span><div class="coins" data-o></div><span class="stat" data-os></span></div>
+    </div>
+    <p class="msg" data-msg></p>
+  </greedy-coins>
+</Figure>
+
+<style>
+  .rows {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .coins {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-height: 34px;
+    align-items: center;
+  }
+  .coins :global(span) {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font: 700 0.75rem var(--font-mono);
+    color: #000;
+    background: var(--g-yellow);
+  }
+  .coins :global(em) {
+    color: var(--g-red-l);
+    font: 0.8125rem var(--font-mono);
+    font-style: normal;
+  }
+  .msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .msg :global(b.bad) {
+    color: var(--g-red-l);
+  }
+  .msg :global(b.ok) {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  function greedy(coins: number[], amt: number): number[] | null {
+    const out: number[] = [];
+    for (const c of coins) while (amt >= c) (out.push(c), (amt -= c));
+    return amt === 0 ? out : null;
+  }
+  // best[x] = fewest coins summing to x; classic unbounded-coin DP.
+  function optimal(coins: number[], amt: number): number[] | null {
+    const best = new Array(amt + 1).fill(Infinity);
+    const pick = new Array(amt + 1).fill(0);
+    best[0] = 0;
+    for (let x = 1; x <= amt; x++)
+      for (const c of coins)
+        if (c <= x && best[x - c] + 1 < best[x]) (best[x] = best[x - c] + 1), (pick[x] = c);
+    if (best[amt] === Infinity) return null;
+    const out: number[] = [];
+    for (let x = amt; x > 0; x -= pick[x]) out.push(pick[x]);
+    return out.sort((a, b) => b - a);
+  }
+
+  class GreedyCoins extends HTMLElement {
+    coins = [4, 3, 1];
+    connectedCallback() {
+      const amt = this.querySelector<HTMLInputElement>('[data-amt]')!;
+      this.querySelectorAll<HTMLButtonElement>('[data-set]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-set]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.coins = b.dataset.set!.split(',').map(Number);
+          this.draw();
+        }),
+      );
+      amt.addEventListener('input', () => this.draw());
+      const bump = (d: number) => ((amt.value = String(Math.min(999, Math.max(1, (+amt.value || 1) + d)))), this.draw());
+      this.querySelector('[data-inc]')!.addEventListener('click', () => bump(1));
+      this.querySelector('[data-dec]')!.addEventListener('click', () => bump(-1));
+      this.querySelector('[data-find]')!.addEventListener('click', () => {
+        for (let x = 1; x <= 999; x++) {
+          const g = greedy(this.coins, x);
+          const o = optimal(this.coins, x)!;
+          if (!g || g.length > o.length) {
+            amt.value = String(x);
+            return this.draw(`Smallest counterexample for these coins: <b class="bad">${x}</b>.`);
+          }
+        }
+        amt.value = '1';
+        this.draw(`<b class="ok">No counterexample up to 999.</b> For these coins greedy is always optimal (a “canonical” coin system).`);
+      });
+      this.draw();
+    }
+    draw(extra = '') {
+      const x = Math.trunc(+this.querySelector<HTMLInputElement>('[data-amt]')!.value);
+      if (!(x >= 1 && x <= 999)) return;
+      const g = greedy(this.coins, x);
+      const o = optimal(this.coins, x)!;
+      const show = (cs: number[]) => cs.map((c) => `<span>${c}</span>`).join('');
+      this.querySelector('[data-g]')!.innerHTML = g ? show(g) : '<em>stuck</em>';
+      this.querySelector('[data-o]')!.innerHTML = show(o);
+      this.querySelector('[data-gs]')!.textContent = g ? `${g.length} coins` : '—';
+      this.querySelector('[data-os]')!.textContent = `${o.length} coins`;
+      const verdict = !g ? '<b class="bad">Greedy gets stuck.</b>' : g.length === o.length ? '<b class="ok">Greedy is optimal here.</b>' : `<b class="bad">Greedy uses ${g.length - o.length} more coin${g.length - o.length > 1 ? 's' : ''} than necessary.</b>`;
+      this.querySelector('[data-msg]')!.innerHTML = `${extra} ${verdict}`.trim();
+    }
+  }
+  customElements.define('greedy-coins', GreedyCoins);
+</script>

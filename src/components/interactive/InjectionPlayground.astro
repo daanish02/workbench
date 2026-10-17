@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Code and data, mixed or kept apart"
+  caption="The same login input, handled two ways. String concatenation pastes the input into the SQL text, so a crafted value changes the query's logic. A parameterized query sends the SQL and the values separately: the value can only ever be data. (Results here were produced by actually running both versions in SQLite.)"
+>
+  <injection-play>
+    <div class="ctl-row">
+      <span class="ctl-label">Password typed</span>
+      <button class="btn" data-i="0" aria-pressed="true">wrong-password</button>
+      <button class="btn" data-i="1" aria-pressed="false">x' OR '1'='1</button>
+      <button class="btn" data-i="2" aria-pressed="false">it's</button>
+    </div>
+    <div class="ij">
+      <div class="ij-col bad"><b>Concatenated</b><pre class="mono" data-bad></pre><span data-badres></span></div>
+      <div class="ij-col good"><b>Parameterized</b><pre class="mono" data-good></pre><span data-goodres></span></div>
+    </div>
+    <p class="ij-msg" data-msg aria-live="polite"></p>
+  </injection-play>
+</Figure>
+
+<style>
+  .ij {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .ij {
+      grid-template-columns: 1fr;
+    }
+  }
+  .ij-col {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+    min-width: 0;
+  }
+  .ij-col.bad {
+    border-color: var(--g-red);
+  }
+  .ij-col.good {
+    border-color: var(--g-green);
+  }
+  .ij-col pre {
+    margin: 8px 0;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--text-muted);
+  }
+  .ij-col :global(.inj) {
+    background: rgba(234, 67, 53, 0.3);
+    color: #fff;
+    border-radius: 3px;
+  }
+  .ij-col :global(.val) {
+    background: rgba(52, 168, 83, 0.3);
+    color: #fff;
+    border-radius: 3px;
+  }
+  .ij-col span {
+    font: 700 0.75rem var(--font-mono);
+  }
+  .ij-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.5em;
+  }
+</style>
+
+<script>
+  // Outcomes below come from executing both login functions against SQLite with user maya / password s3cret.
+  const CASES = [
+    { pw: 'wrong-password', bad: ['', 'wrong-password'], badRes: 'login failed', goodRes: 'login failed', msg: 'With ordinary input both versions behave identically, which is why the flaw survives testing.' },
+    { pw: "x' OR '1'='1", bad: ['', "x' OR '1'='1"], badRes: 'LOGIN SUCCEEDS without the password', goodRes: 'login failed', msg: "The quote ends the string early, and OR '1'='1' makes the condition always true: the input rewrote the query's logic. In the parameterized version the same text is just a (wrong) password." },
+    { pw: "it's", bad: ['', "it's"], badRes: 'SQL syntax error (query breaks)', goodRes: 'login failed (no error)', msg: "Even an innocent apostrophe breaks the concatenated query: the app crashes on legitimate input, and the error message may also leak internals. Parameters handle quotes automatically." },
+  ];
+  class InjectionPlay extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-i]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw(+b.dataset.i!);
+        }),
+      );
+      this.draw(0);
+    }
+    draw(i: number) {
+      const c = CASES[i];
+      const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      this.querySelector('[data-bad]')!.innerHTML = `SELECT * FROM users\nWHERE name = 'maya'\n  AND password = '<span class="inj">${esc(c.pw)}</span>'`;
+      this.querySelector('[data-good]')!.innerHTML = `SELECT * FROM users\nWHERE name = ? AND password = ?\n\nparams: ('maya', <span class="val">${esc(JSON.stringify(c.pw))}</span>)`;
+      (this.querySelector('[data-badres]') as HTMLElement).style.color = i === 0 ? 'var(--text-muted)' : 'var(--g-red-l)';
+      this.querySelector('[data-badres]')!.textContent = c.badRes;
+      (this.querySelector('[data-goodres]') as HTMLElement).style.color = 'var(--g-green-l)';
+      this.querySelector('[data-goodres]')!.textContent = c.goodRes;
+      this.querySelector('[data-msg]')!.textContent = c.msg;
+    }
+  }
+  customElements.define('injection-play', InjectionPlay);
+</script>

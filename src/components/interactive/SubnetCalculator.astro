@@ -1,0 +1,116 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Subnet calculator"
+  caption="Type an IPv4 address and drag the prefix length. Blue bits are the network part, yellow bits identify a host inside it. Add a second address to see whether the two are on the same subnet, or need a router between them."
+>
+  <subnet-calc>
+    <div class="ctl-row">
+      <label class="stat">IP <input class="input" data-ip value="192.168.1.37" size="15" aria-label="IPv4 address" /></label>
+      <label class="stat">/<b data-pv>24</b> <input type="range" min="0" max="32" value="24" data-p aria-label="Prefix length" /></label>
+      <label class="stat">Other IP <input class="input" data-ip2 value="192.168.1.80" size="15" aria-label="Second IPv4 address" /></label>
+    </div>
+    <div class="sc-bits mono" data-bits aria-label="Address in binary"></div>
+    <table class="sc-table" data-out></table>
+    <p class="sc-msg" data-msg aria-live="polite"></p>
+  </subnet-calc>
+</Figure>
+
+<style>
+  .sc-bits {
+    margin-top: 12px;
+    font-size: 0.8125rem;
+    line-height: 1.9;
+    word-spacing: 0.35em;
+    overflow-wrap: anywhere;
+  }
+  .sc-bits :global(.n) {
+    color: var(--g-blue);
+    font-weight: 700;
+  }
+  .sc-bits :global(.h) {
+    color: var(--g-yellow-l);
+  }
+  .sc-table {
+    margin: 10px auto 0;
+    font: 0.75rem var(--font-mono);
+    border-collapse: collapse;
+  }
+  .sc-table :global(th),
+  .sc-table :global(td) {
+    padding: 3px 12px;
+    border: 1px solid var(--border-strong);
+    text-align: center;
+  }
+  .sc-table :global(th) {
+    color: var(--text-faint);
+    font-weight: 500;
+  }
+  .sc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.5em;
+  }
+  input[type='range'] {
+    width: 130px;
+    vertical-align: middle;
+  }
+  .input {
+    width: 9.5em;
+  }
+</style>
+
+<script>
+  const parse = (s: string): number | null => {
+    const m = s.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!m || m.slice(1).some((x) => +x > 255)) return null;
+    return ((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0;
+  };
+  const dotted = (n: number) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  class SubnetCalc extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const ip = parse(this.querySelector<HTMLInputElement>('[data-ip]')!.value);
+      const ip2 = parse(this.querySelector<HTMLInputElement>('[data-ip2]')!.value);
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      this.querySelector('[data-pv]')!.textContent = String(p);
+      const bits = this.querySelector('[data-bits]')!;
+      const out = this.querySelector('[data-out]')!;
+      const msg = this.querySelector('[data-msg]')!;
+      if (ip === null) {
+        bits.textContent = '';
+        out.innerHTML = '';
+        msg.textContent = 'Enter a valid IPv4 address such as 192.168.1.37.';
+        return;
+      }
+      const bin = ip.toString(2).padStart(32, '0');
+      bits.innerHTML = [0, 8, 16, 24]
+        .map((o) => bin.slice(o, o + 8).split('').map((b, k) => `<span class="${o + k < p ? 'n' : 'h'}">${b}</span>`).join(''))
+        .join(' ');
+      const mask = p === 0 ? 0 : (0xffffffff << (32 - p)) >>> 0;
+      const net = (ip & mask) >>> 0;
+      const bc = (net | (~mask >>> 0)) >>> 0;
+      const total = 2 ** (32 - p);
+      const usable = p >= 31 ? total : total - 2;
+      const first = p >= 31 ? net : net + 1;
+      const last = p >= 31 ? bc : bc - 1;
+      out.innerHTML = `<tr><th>Mask</th><td>${dotted(mask)}</td><th>Network</th><td>${dotted(net)}/${p}</td></tr>
+        <tr><th>Range</th><td>${dotted(first)} – ${dotted(last)}</td><th>Broadcast</th><td>${p >= 31 ? 'n/a' : dotted(bc)}</td></tr>
+        <tr><th>Addresses</th><td>${total.toLocaleString('en-US')}</td><th>Usable hosts</th><td>${usable.toLocaleString('en-US')}</td></tr>`;
+      if (ip2 === null) msg.textContent = 'Second address is not valid.';
+      else {
+        const same = ((ip2 & mask) >>> 0) === net;
+        msg.textContent = same
+          ? `${dotted(ip2)} has the same ${p} network bits: same subnet, so a host delivers directly over the local link.`
+          : `${dotted(ip2)} lies in ${dotted((ip2 & mask) >>> 0)}/${p}, a different subnet: traffic must go through the default gateway (a router).`;
+      }
+    }
+  }
+  customElements.define('subnet-calc', SubnetCalc);
+</script>

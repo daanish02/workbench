@@ -1,0 +1,332 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A tiny CPU running C ← A + B"
+  caption="Step through one phase at a time. Memory holds both the program (addresses 0–4) and its data (12–14) as plain 16-bit words. Switch the memory view to see that nothing in a word says whether it is an instruction or a number: the program counter decides."
+>
+  <tiny-cpu>
+    <div class="cpu-grid">
+      <div class="cpu">
+        <div class="phases" aria-label="Cycle phase">
+          <span data-ph="0">Fetch</span><span data-ph="1">Decode</span><span data-ph="2">Execute</span><span data-ph="3">Write back</span><span data-ph="4">Advance</span>
+        </div>
+        <div class="regs">
+          <div class="reg"><span>PC</span><b data-r="pc"></b></div>
+          <div class="reg wide"><span>IR</span><b data-r="ir"></b></div>
+          <div class="reg"><span>R1</span><b data-r="r1"></b></div>
+          <div class="reg"><span>R2</span><b data-r="r2"></b></div>
+          <div class="reg"><span>R3</span><b data-r="r3"></b></div>
+        </div>
+        <div class="decoded" data-decoded></div>
+        <p class="narrate" data-narrate aria-live="polite"></p>
+      </div>
+      <div class="mem">
+        <div class="mem-head">
+          <span class="ctl-label">Memory</span>
+          <div class="ctl-row">
+            <button class="btn" data-view="ins" aria-pressed="true">as instructions</button>
+            <button class="btn" data-view="num" aria-pressed="false">as numbers</button>
+          </div>
+        </div>
+        <ol class="cells" data-cells></ol>
+      </div>
+    </div>
+    <div class="ctl-row" style="margin-top:14px">
+      <button class="btn primary" data-step>Step phase</button>
+      <button class="btn" data-run>Run</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </tiny-cpu>
+</Figure>
+
+<style>
+  .cpu-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 600px) {
+    .cpu-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .cpu {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .phases {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+  .phases span {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 999px;
+    color: var(--text-faint);
+    border: 1px solid var(--border);
+  }
+  .phases span.on {
+    color: #000;
+    background: var(--g-yellow);
+    border-color: var(--g-yellow);
+  }
+  .regs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .reg {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .reg.wide {
+    grid-column: span 2;
+  }
+  .reg span {
+    display: block;
+    font-size: 0.625rem;
+    font-weight: 700;
+    color: var(--text-faint);
+    letter-spacing: 0.06em;
+  }
+  .reg b {
+    font: 600 0.9375rem var(--font-mono);
+  }
+  .reg.hl {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.12);
+  }
+  .reg.wr {
+    border-color: var(--g-red);
+    background: rgba(234, 67, 53, 0.12);
+  }
+  .decoded {
+    margin-top: 10px;
+    display: flex;
+    gap: 4px;
+    font: 0.75rem var(--font-mono);
+    min-height: 40px;
+  }
+  .decoded :global(span) {
+    flex: 1;
+    text-align: center;
+    padding: 4px 2px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+  }
+  .decoded :global(small) {
+    display: block;
+    color: var(--text-faint);
+    font-size: 0.625rem;
+  }
+  .narrate {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--text-muted);
+    min-height: 4.6em;
+  }
+  .mem-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .mem-head .btn {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+  }
+  .cells {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font: 0.8125rem var(--font-mono);
+  }
+  .cells :global(li) {
+    display: grid;
+    grid-template-columns: 2.2em 4.6em 1fr;
+    gap: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+  }
+  .cells :global(.addr) {
+    color: var(--text-faint);
+  }
+  .cells :global(.word) {
+    color: var(--text-faint);
+  }
+  .cells :global(li.pc) {
+    border-color: var(--g-yellow);
+  }
+  .cells :global(li.hl) {
+    background: rgba(66, 133, 244, 0.14);
+  }
+  .cells :global(li.wr) {
+    background: rgba(234, 67, 53, 0.16);
+  }
+  .cells :global(li.gap) {
+    color: var(--text-faint);
+    padding-left: 18px;
+  }
+</style>
+
+<script>
+  // 16-bit words: [op:4][a:4][b:4][c:4]. Opcode 0 is HALT, so the data word 0x0007 would also "decode" as HALT.
+  const OPS: Record<number, string> = { 0: 'HALT', 1: 'LOAD', 2: 'STORE', 3: 'ADD' };
+  const PROGRAM = [0x110c, 0x120d, 0x3312, 0x230e, 0x0000];
+  const DATA: Record<number, number> = { 12: 7, 13: 5, 14: 0 };
+  const LABELS: Record<number, string> = { 12: 'A', 13: 'B', 14: 'C' };
+  const PHASES = ['Fetch', 'Decode', 'Execute', 'Write back', 'Advance'];
+  const hex = (w: number) => '0x' + w.toString(16).toUpperCase().padStart(4, '0');
+
+  function disasm(w: number) {
+    const op = w >> 12, a = (w >> 8) & 15, b = (w >> 4) & 15, c = w & 15, addr = w & 255;
+    if (op === 1) return `LOAD R${a}, [${addr}]`;
+    if (op === 2) return `STORE [${addr}], R${a}`;
+    if (op === 3) return `ADD R${a}, R${b}, R${c}`;
+    if (op === 0) return 'HALT';
+    return '??? (no such opcode)';
+  }
+
+  class TinyCpu extends HTMLElement {
+    mem: number[] = [];
+    reg: Record<string, number> = {};
+    phase = 0;
+    halted = false;
+    view: 'ins' | 'num' = 'ins';
+    hl: { regs: string[]; wr: string[]; cells: number[]; wcells: number[] } = { regs: [], wr: [], cells: [], wcells: [] };
+    pending: () => void = () => {};
+    timer = 0;
+    msg = '';
+
+    connectedCallback() {
+      this.$('[data-step]').addEventListener('click', () => (this.stop(), this.step()));
+      this.$('[data-run]').addEventListener('click', () => (this.timer ? this.stop() : this.run()));
+      this.$('[data-reset]').addEventListener('click', () => (this.stop(), this.reset()));
+      this.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.view = b.dataset.view as 'ins' | 'num';
+          this.querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.reset();
+    }
+    $(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    reset() {
+      this.mem = Array(16).fill(0);
+      PROGRAM.forEach((w, i) => (this.mem[i] = w));
+      Object.entries(DATA).forEach(([k, v]) => (this.mem[+k] = v));
+      this.reg = { pc: 0, ir: 0, r1: 0, r2: 0, r3: 0 };
+      this.phase = -1;
+      this.halted = false;
+      this.hl = { regs: [], wr: [], cells: [], wcells: [] };
+      this.msg = 'Press “Step phase”. The PC starts at address 0, where the program begins.';
+      this.draw();
+    }
+    run() {
+      this.$('[data-run]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        this.timer = this.halted ? 0 : window.setTimeout(tick, 900);
+        if (this.halted) this.$('[data-run]').textContent = 'Run';
+      };
+      tick();
+    }
+    stop() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.$('[data-run]').textContent = 'Run';
+    }
+    step() {
+      if (this.halted) return;
+      this.phase = (this.phase + 1) % 5;
+      const r = this.reg, w = r.ir;
+      const op = w >> 12, a = (w >> 8) & 15, b = (w >> 4) & 15, c = w & 15, addr = w & 255;
+      this.hl = { regs: [], wr: [], cells: [], wcells: [] };
+      switch (this.phase) {
+        case 0:
+          r.ir = this.mem[r.pc];
+          this.hl = { regs: ['pc'], wr: ['ir'], cells: [r.pc], wcells: [] };
+          this.msg = `Fetch: read the word at address ${r.pc} (the PC) into the instruction register: ${hex(r.ir)}.`;
+          break;
+        case 1:
+          this.hl.regs = ['ir'];
+          this.msg = `Decode: split ${hex(w)} into fields. Opcode ${op} means ${OPS[op] ?? '?'}, so this is “${disasm(w)}”.`;
+          break;
+        case 2:
+          if (op === 1) {
+            this.hl.cells = [addr];
+            this.msg = `Execute: read memory address ${addr} (${LABELS[addr] ?? ''} = ${this.mem[addr]}).`;
+            this.pending = () => (r[`r${a}`] = this.mem[addr]);
+          } else if (op === 3) {
+            this.hl.regs = [`r${b}`, `r${c}`];
+            this.msg = `Execute: the ALU adds R${b} + R${c} = ${r[`r${b}`]} + ${r[`r${c}`]} = ${r[`r${b}`] + r[`r${c}`]}.`;
+            const v = r[`r${b}`] + r[`r${c}`];
+            this.pending = () => (r[`r${a}`] = v);
+          } else if (op === 2) {
+            this.hl.regs = [`r${a}`];
+            this.msg = `Execute: take the value in R${a} (${r[`r${a}`]}) to be written to address ${addr}.`;
+            this.pending = () => (this.mem[addr] = r[`r${a}`]);
+          } else {
+            this.msg = 'Execute: HALT. The processor stops fetching instructions.';
+            this.halted = true;
+          }
+          break;
+        case 3:
+          this.pending();
+          this.pending = () => {};
+          if (op === 1 || op === 3) (this.hl.wr = [`r${a}`]), (this.msg = `Write back: store the result in R${a}.`);
+          else if (op === 2) (this.hl.wcells = [addr]), (this.msg = `Write back: memory[${addr}] (${LABELS[addr]}) ← ${this.mem[addr]}.`);
+          break;
+        case 4:
+          r.pc += 1;
+          this.hl.wr = ['pc'];
+          this.msg = `Advance: PC ← PC + 1 = ${r.pc}. No jump here, so the next instruction is simply the next word.`;
+          break;
+      }
+      this.draw();
+    }
+    draw() {
+      const r = this.reg;
+      for (const k of ['pc', 'ir', 'r1', 'r2', 'r3']) {
+        const el = this.$(`[data-r="${k}"]`);
+        el.textContent = k === 'ir' ? (this.phase < 0 ? '—' : `${hex(r.ir)}`) : String(r[k]);
+        const box = el.parentElement!;
+        box.classList.toggle('hl', this.hl.regs.includes(k));
+        box.classList.toggle('wr', this.hl.wr.includes(k));
+      }
+      this.querySelectorAll<HTMLElement>('[data-ph]').forEach((s) => s.classList.toggle('on', +s.dataset.ph! === this.phase));
+      const w = r.ir;
+      this.$('[data-decoded]').innerHTML =
+        this.phase >= 1
+          ? `<span><small>op</small>${w >> 12} ${OPS[w >> 12] ?? '?'}</span><span><small>a</small>${(w >> 8) & 15}</span><span><small>b</small>${(w >> 4) & 15}</span><span><small>c</small>${w & 15}</span>`
+          : '';
+      this.$('[data-narrate]').textContent = this.halted && this.phase !== 2 ? 'Halted. C now holds 12. Press Reset to run again.' : this.msg;
+      const shown = [0, 1, 2, 3, 4, -1, 12, 13, 14];
+      this.$('[data-cells]').innerHTML = shown
+        .map((i) => {
+          if (i < 0) return '<li class="gap">⋮</li>';
+          const v = this.mem[i];
+          const text = this.view === 'ins' ? disasm(v) : `${v}${LABELS[i] ? `  (${LABELS[i]})` : ''}`;
+          const cls = [i === r.pc && !this.halted ? 'pc' : '', this.hl.cells.includes(i) ? 'hl' : '', this.hl.wcells.includes(i) ? 'wr' : ''].join(' ');
+          return `<li class="${cls}"><span class="addr">${i}</span><span class="word">${hex(v)}</span><span>${text}</span></li>`;
+        })
+        .join('');
+    }
+  }
+  customElements.define('tiny-cpu', TinyCpu);
+</script>

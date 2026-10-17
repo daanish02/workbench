@@ -1,0 +1,106 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Monolith, modular monolith or microservices?"
+  caption="Describe your situation. The chooser applies the rules of thumb from this note: microservices pay off only when specific pressures (independent scaling, independent teams, isolation) outweigh the operational cost, and a young, changing domain argues for staying together. It is a thinking aid, not an oracle."
+>
+  <arch-chooser>
+    <div class="ctl-row">
+      <label class="stat">Engineering teams <input type="range" min="1" max="12" value="2" data-t /> <b data-tv>2</b></label>
+    </div>
+    <div class="ac-checks" data-checks></div>
+    <div class="ac-out" data-out></div>
+  </arch-chooser>
+</Figure>
+
+<style>
+  .ac-checks {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .ac-checks label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .ac-checks input {
+    accent-color: var(--accent-strong);
+    margin-top: 3px;
+  }
+  .ac-out {
+    margin-top: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .ac-out :global(.rec) {
+    font: 700 0.9375rem var(--font-mono);
+    color: var(--g-green-l);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .ac-out :global(ul) {
+    margin: 6px 0 0;
+    padding-left: 1.2em;
+  }
+  .ac-out :global(.warn) {
+    color: var(--g-yellow-l);
+  }
+  input[type='range'] {
+    width: 140px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const Q: [string, string, number, string][] = [
+    ['scale', 'Different parts need very different scaling (for example a video encoder next to a simple account page)', 2, 'Independent scaling is a genuine reason to separate a part.'],
+    ['deploy', 'Teams are blocked by each other and must deploy independently', 2, 'Independent release cadence is the most common valid reason for services.'],
+    ['isolate', 'A part needs its own security, compliance or availability boundary', 1, 'A hard isolation boundary can justify extracting that part.'],
+    ['ops', 'We already have automated deployment, observability, on-call and service discovery', 2, 'Microservices need this operational foundation; it is the price of admission.'],
+    ['change', 'The domain is new and the boundaries between features are still changing', -3, 'Wrong service boundaries are expensive to fix; stay together while you learn them.'],
+  ];
+  class ArchChooser extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-checks]')!.innerHTML = Q.map(([id, text]) => `<label><input type="checkbox" data-q="${id}"> <span>${text}</span></label>`).join('');
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const teams = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = String(teams);
+      const on = new Set([...this.querySelectorAll<HTMLInputElement>('[data-q]')].filter((i) => i.checked).map((i) => i.dataset.q!));
+      let score = teams >= 8 ? 2 : teams >= 4 ? 1 : 0;
+      const reasons: string[] = [];
+      if (teams >= 8) reasons.push('Many teams make independent ownership attractive.');
+      for (const [id, , w, why] of Q) if (on.has(id)) ((score += w), reasons.push(why));
+      if (!on.has('ops')) score -= 2;
+      const warn: string[] = [];
+      if (!on.has('ops')) warn.push('No operational maturity: running many services would multiply toil and outages.');
+      let rec: string;
+      let why: string;
+      if (score >= 5 && on.has('ops')) {
+        rec = 'Extract services where the pressure is';
+        why = 'Several strong reasons line up and you can operate distributed systems. Start by extracting the one or two parts under real pressure, not everything.';
+      } else if (teams >= 2 || on.has('change') || score >= 2) {
+        rec = 'Modular monolith';
+        why = 'One deployable unit with enforced module boundaries gives you most of the clarity and none of the distributed-system cost, and keeps extraction possible later.';
+      } else {
+        rec = 'Plain monolith';
+        why = 'A small team with no special pressure is best served by the simplest thing that works: one codebase, one deployment, in-process calls, ordinary database transactions.';
+      }
+      this.querySelector('[data-out]')!.innerHTML = `<span class="rec">${rec}</span>${why}${reasons.length ? `<ul>${reasons.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}${warn.length ? `<ul class="warn">${warn.map((r) => `<li>${r}</li>`).join('')}</ul>` : ''}`;
+    }
+  }
+  customElements.define('arch-chooser', ArchChooser);
+</script>

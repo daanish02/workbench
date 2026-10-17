@@ -1,0 +1,105 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Polling vs a persistent connection"
+  caption="Three server events happen at the marked times. Polling asks every N seconds, so each event waits for the next poll and most polls come back empty. A WebSocket (or webhook-style push) delivers each event the moment it happens over one connection."
+>
+  <polling-vs-push>
+    <div class="ctl-row">
+      <label class="stat">Poll every <input type="range" min="1" max="10" step="1" value="4" data-n /> <b data-nv>4</b> s</label>
+    </div>
+    <div class="pp" data-rows></div>
+    <p class="stat pp-stat" data-stat></p>
+  </polling-vs-push>
+</Figure>
+
+<style>
+  .pp {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pp :global(.lane) {
+    position: relative;
+    height: 30px;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .pp :global(.lane > em) {
+    position: absolute;
+    left: 0;
+    top: -14px;
+    font: 700 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    font-style: normal;
+  }
+  .pp :global(.t) {
+    position: absolute;
+    bottom: 0;
+    width: 2px;
+    height: 20px;
+  }
+  .pp :global(.t.poll) {
+    background: var(--text-faint);
+    height: 12px;
+  }
+  .pp :global(.t.hit) {
+    background: var(--g-green);
+    height: 24px;
+    width: 3px;
+  }
+  .pp :global(.t.ev) {
+    background: var(--g-yellow);
+    height: 28px;
+    width: 3px;
+  }
+  .pp :global(.t.ws) {
+    background: var(--g-blue);
+    height: 24px;
+    width: 3px;
+  }
+  .pp :global(.conn) {
+    position: absolute;
+    bottom: 8px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--g-blue);
+    opacity: 0.4;
+  }
+  .pp-stat {
+    margin: 16px 0 0;
+  }
+  input[type='range'] {
+    width: 130px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const EVENTS = [2.3, 5.1, 8.7];
+  const SPAN = 12;
+  class PollingVsPush extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const x = (t: number) => `left:${(t / SPAN) * 100}%`;
+      const polls: number[] = [];
+      for (let t = n; t <= SPAN; t += n) polls.push(t);
+      const delays = EVENTS.map((e) => (polls.find((p) => p >= e) ?? SPAN) - e);
+      const useful = new Set(EVENTS.map((e) => polls.find((p) => p >= e)));
+      const pollHtml = polls.map((p) => `<div class="t ${useful.has(p) ? 'hit' : 'poll'}" style="${x(p)}"></div>`).join('') + EVENTS.map((e) => `<div class="t ev" style="${x(e)}"></div>`).join('');
+      const wsHtml = '<div class="conn"></div>' + EVENTS.map((e) => `<div class="t ws" style="${x(e)}"></div>`).join('');
+      this.querySelector('[data-rows]')!.innerHTML = `<div class="lane"><em>Polling · yellow = event, green = poll that found news, grey = empty poll</em>${pollHtml}</div><div class="lane"><em>Persistent connection · blue = pushed instantly</em>${wsHtml}</div>`;
+      const avg = delays.reduce((a, b) => a + b, 0) / delays.length;
+      this.querySelector('[data-stat]')!.innerHTML = `polling: <b>${polls.length}</b> requests (${polls.length - useful.size} empty), average delay <b>${avg.toFixed(1)} s</b> · push: <b>1</b> connection, delay <b>≈0 s</b>`;
+    }
+  }
+  customElements.define('polling-vs-push', PollingVsPush);
+</script>

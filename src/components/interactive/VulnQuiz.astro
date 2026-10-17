@@ -1,0 +1,112 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which vulnerability is this?"
+  caption="Eight short scenarios. For each, name the pattern (the boundary that fails). A wrong answer explains why it is not that one. The point is to recognise the pattern from the design, before you ever see an exploit."
+>
+  <vuln-quiz>
+    <div class="vq-q" data-q></div>
+    <div class="ctl-row" data-choices>
+      <button class="btn" data-a="SQL injection">SQL injection</button>
+      <button class="btn" data-a="XSS">XSS</button>
+      <button class="btn" data-a="CSRF">CSRF</button>
+      <button class="btn" data-a="SSRF">SSRF</button>
+      <button class="btn" data-a="Broken access control">Broken access control</button>
+    </div>
+    <p class="vq-msg" data-msg aria-live="polite"></p>
+    <div class="ctl-row">
+      <button class="btn primary" data-next>Next</button>
+      <span class="stat" data-score></span>
+    </div>
+  </vuln-quiz>
+</Figure>
+
+<style>
+  .vq-q {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 12px;
+    margin: 12px 0;
+    font-size: 0.9375rem;
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .vq-q :global(code) {
+    font-size: 0.8125rem;
+  }
+  .vq-msg {
+    margin: 12px 0;
+    font-size: 0.875rem;
+    min-height: 3.6em;
+    color: var(--text-muted);
+  }
+  .vq-msg.yes {
+    color: var(--g-green-l);
+  }
+  .vq-msg.no {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  const Q: [string, string, string][] = [
+    ['A search page builds its query as <code>"SELECT * FROM items WHERE name LIKE \'%" + q + "%\'"</code>. A visitor enters a quote and extra SQL text.', 'SQL injection', 'Untrusted text crossed into the database interpreter and changed the query structure. Fix: parameterized queries.'],
+    ['A comment box saves what users type and later inserts it straight into the page HTML. One comment contains a <code>&lt;script&gt;</code> tag that runs for every visitor.', 'XSS', 'Untrusted content crossed into the browser interpreter as executable script on a trusted origin. Fix: context-aware output encoding or safe rendering.'],
+    ['A bank honours <code>POST /transfer</code> using only the session cookie. Another site auto-submits a hidden form to it while the victim is logged in.', 'CSRF', 'The browser automatically attached the victim\'s credentials to a request they never intended. Fix: anti-CSRF tokens, SameSite cookies, origin checks.'],
+    ['A "fetch image from URL" feature lets users supply any address. Someone submits <code>http://169.254.169.254/latest/meta-data/</code> and gets back cloud credentials.', 'SSRF', 'The server\'s own network authority was used on the attacker\'s behalf (a confused deputy). Fix: destination allowlists and egress controls.'],
+    ['<code>GET /invoices/1042</code> returns your invoice. Changing the number to <code>1043</code> shows a stranger\'s invoice, though you are logged in.', 'Broken access control', 'Authentication worked, but the server never checked that the invoice belongs to you. This is an authorization flaw (an insecure direct object reference), not an injection.'],
+    ['An email link <code>https://shop.example/search?q=...</code> echoes the <code>q</code> parameter unescaped into the results page, so a crafted link runs script in the victim\'s browser.', 'XSS', 'This is reflected XSS: the payload arrives in the request and is echoed back as executable markup. Fix: encode on output.'],
+    ['A webhook tester accepts a callback URL and the server requests it. Pointing it at <code>http://localhost:9200/_cat/indices</code> reveals an internal service.', 'SSRF', 'The attacker controls the destination of a server-side request, reaching systems only the server can reach.'],
+    ['Changing a profile email is done with a plain <code>GET /change-email?to=…</code> link. An image tag on a forum post triggers it for any logged-in reader.', 'CSRF', 'A state-changing GET plus automatically sent cookies makes it forgeable from any page. Fix: use POST with a token, and SameSite cookies.'],
+  ];
+  class VulnQuiz extends HTMLElement {
+    i = 0;
+    score = 0;
+    answered = false;
+    order: number[] = [];
+    connectedCallback() {
+      this.order = Q.map((_, k) => k);
+      this.querySelectorAll<HTMLButtonElement>('[data-a]').forEach((b) => b.addEventListener('click', () => this.pick(b.dataset.a!)));
+      this.querySelector('[data-next]')!.addEventListener('click', () => this.next());
+      this.show();
+    }
+    show() {
+      const [text] = Q[this.order[this.i]];
+      this.querySelector('[data-q]')!.innerHTML = `<b>${this.i + 1}/${Q.length}</b> ${text}`;
+      this.querySelector('[data-msg]')!.textContent = 'Choose the best match.';
+      (this.querySelector('[data-msg]') as HTMLElement).className = 'vq-msg';
+      this.answered = false;
+      this.querySelectorAll<HTMLButtonElement>('[data-a]').forEach((b) => (b.disabled = false));
+      this.querySelector('[data-score]')!.textContent = `score ${this.score}/${this.i}`;
+    }
+    pick(a: string) {
+      if (this.answered) return;
+      const [, right, why] = Q[this.order[this.i]];
+      const m = this.querySelector('[data-msg]') as HTMLElement;
+      if (a === right) {
+        this.score++;
+        this.answered = true;
+        m.className = 'vq-msg yes';
+        m.textContent = `Correct: ${right}. ${why}`;
+      } else {
+        m.className = 'vq-msg no';
+        m.textContent = `Not ${a}. Look at which boundary fails and who is being tricked, then try again.`;
+        return;
+      }
+      this.querySelector('[data-score]')!.textContent = `score ${this.score}/${this.i + 1}`;
+    }
+    next() {
+      if (this.i < Q.length - 1) {
+        this.i++;
+        this.show();
+      } else {
+        this.querySelector('[data-q]')!.innerHTML = `<b>Done.</b> You identified ${this.score} of ${Q.length} on the first accepted answer. Reset to try again.`;
+        this.i = 0;
+        this.score = 0;
+      }
+    }
+  }
+  customElements.define('vuln-quiz', VulnQuiz);
+</script>

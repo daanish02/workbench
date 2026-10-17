@@ -1,0 +1,122 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where do the writes land?"
+  caption="1,000 recent writes spread over 4 shards. Try each shard key and placement scheme. A range split by increasing id sends every new write to the last shard; hashing evens it out. A key like tenant_id sends a whole busy customer to one shard no matter how it is hashed, until you add something finer to the key."
+>
+  <shard-key>
+    <div class="ctl-row">
+      <span class="ctl-label">Shard key</span>
+      <button class="btn" data-k="seq" aria-pressed="true">user_id (increasing)</button>
+      <button class="btn" data-k="tenant" aria-pressed="false">tenant_id (one big tenant)</button>
+      <button class="btn" data-k="composite" aria-pressed="false">tenant_id + user_id</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Placement</span>
+      <button class="btn" data-s="range" aria-pressed="true">Range</button>
+      <button class="btn" data-s="hash" aria-pressed="false">Hash</button>
+    </div>
+    <div class="sk" data-bars></div>
+    <p class="sk-msg" data-msg aria-live="polite"></p>
+  </shard-key>
+</Figure>
+
+<style>
+  .sk {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    height: 140px;
+    margin-top: 14px;
+    align-items: end;
+  }
+  .sk :global(.col) {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    height: 100%;
+    gap: 4px;
+  }
+  .sk :global(.bar) {
+    background: var(--g-blue);
+    border-radius: 6px 6px 0 0;
+    min-height: 2px;
+  }
+  .sk :global(.bar.hot) {
+    background: var(--g-red);
+  }
+  .sk :global(.lab) {
+    text-align: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .sk-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const hash = (n: number) => {
+    let h = 2166136261 ^ n;
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return (h ^ (h >>> 16)) >>> 0;
+  };
+  class ShardKey extends HTMLElement {
+    k = 'seq';
+    s = 'range';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) => b.addEventListener('click', () => ((this.k = b.dataset.k!), this.mark('[data-k]', b), this.draw())));
+      this.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) => b.addEventListener('click', () => ((this.s = b.dataset.s!), this.mark('[data-s]', b), this.draw())));
+      this.draw();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    draw() {
+      const r = rng(7);
+      const load = [0, 0, 0, 0];
+      for (let i = 0; i < 1000; i++) {
+        const userId = 8001 + i; // the newest users have the highest ids
+        const tenant = r() < 0.6 ? 1 : 2 + Math.floor(r() * 40); // tenant 1 produces 60% of the traffic
+        let shard: number;
+        if (this.s === 'range') {
+          // ranges of the key space, one per shard: ids 1-9000 split 4 ways, tenant ids 1-42 split 4 ways
+          const key = this.k === 'seq' ? Math.min(userId, 9000) / 9000 : this.k === 'tenant' ? tenant / 42 : (tenant * 9000 + userId) / (42 * 9000 + 9000);
+          shard = Math.min(3, Math.floor(key * 4));
+        } else {
+          const key = this.k === 'seq' ? userId : this.k === 'tenant' ? tenant : tenant * 100003 + userId;
+          shard = hash(key) % 4;
+        }
+        load[shard]++;
+      }
+      const max = Math.max(...load);
+      this.querySelector('[data-bars]')!.innerHTML = load.map((v, i) => `<div class="col"><div class="bar ${v === max && max > 450 ? 'hot' : ''}" style="height:${(v / 1000) * 100}%"></div><div class="lab">shard ${i + 1} · ${Math.round(v / 10)}%</div></div>`).join('');
+      const skew = max / 250;
+      const msg =
+        this.k === 'seq' && this.s === 'range'
+          ? 'Every new user has a higher id than all existing ones, so all fresh writes hit the last range: a hot shard while the others sit idle.'
+          : this.k === 'tenant'
+            ? 'The big tenant produces 60% of the traffic, and all of its rows share one key, so they land on one shard however you place it. The key is too coarse.'
+            : this.k === 'composite' && this.s === 'hash'
+              ? 'Adding user_id to the key splits even the big tenant across shards, at the price that "all rows of a tenant" is now a query across shards.'
+              : 'Hashing spreads the keys evenly, but a range-style placement still follows the shape of the key.';
+      this.querySelector('[data-msg]')!.textContent = `Busiest shard takes ${skew.toFixed(1)}× its fair share. ${msg}`;
+    }
+  }
+  customElements.define('shard-key', ShardKey);
+</script>

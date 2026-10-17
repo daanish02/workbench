@@ -1,0 +1,213 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two people edit 'cat' at the same time"
+  caption="Alice and Bob each edit their own copy while disconnected, then sync. Naive merging replays the other person's operations as written (positions that no longer mean what they meant). Operational transformation rewrites each operation for the concurrent one. A CRDT gives every character a permanent identity so operations never depend on positions. Pick a scenario and a strategy, then press Sync."
+>
+  <concurrent-edit>
+    <div class="ctl-row">
+      <span class="ctl-label">Scenario</span>
+      <button class="btn" data-sc="0" aria-pressed="true">Insert vs delete</button>
+      <button class="btn" data-sc="1" aria-pressed="false">Both insert at one spot</button>
+      <button class="btn" data-sc="2" aria-pressed="false">Both delete the same letter</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Strategy</span>
+      <button class="btn" data-st="naive" aria-pressed="false">Naive</button>
+      <button class="btn" data-st="ot" aria-pressed="true">Operational transformation</button>
+      <button class="btn" data-st="crdt" aria-pressed="false">CRDT</button>
+      <button class="btn primary" data-sync>Sync</button>
+    </div>
+    <div class="ce2">
+      <div class="rep"><b>Alice</b><span class="ops" data-aops></span><div class="txt" data-a></div></div>
+      <div class="rep"><b>Bob</b><span class="ops" data-bops></span><div class="txt" data-b></div></div>
+    </div>
+    <p class="ce2-msg" data-msg aria-live="polite"></p>
+  </concurrent-edit>
+</Figure>
+
+<style>
+  .ce2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .rep {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+  }
+  .rep.ok {
+    border-color: var(--g-green);
+  }
+  .rep.bad {
+    border-color: var(--g-red);
+  }
+  .ops {
+    display: block;
+    margin: 4px 0 8px;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    min-height: 1.4em;
+  }
+  .txt {
+    font: 700 1.3rem var(--font-mono);
+    letter-spacing: 0.15em;
+    color: #fff;
+    min-height: 1.6em;
+  }
+  .ce2-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.6em;
+  }
+</style>
+
+<script>
+  type Op = { k: 'ins'; pos: number; ch: string; site: string } | { k: 'del'; pos: number; site: string };
+  const BASE = 'cat';
+  const apply = (t: string, o: Op) => (o.k === 'ins' ? t.slice(0, o.pos) + o.ch + t.slice(o.pos) : o.pos >= 0 && o.pos < t.length ? t.slice(0, o.pos) + t.slice(o.pos + 1) : t);
+  function transform(op: Op, other: Op): Op | null {
+    if (op.k === 'ins' && other.k === 'ins') return other.pos < op.pos || (other.pos === op.pos && other.site < op.site) ? { ...op, pos: op.pos + 1 } : op;
+    if (op.k === 'ins' && other.k === 'del') return other.pos < op.pos ? { ...op, pos: op.pos - 1 } : op;
+    if (op.k === 'del' && other.k === 'ins') return other.pos <= op.pos ? { ...op, pos: op.pos + 1 } : op;
+    if (other.pos < op.pos) return { ...op, pos: op.pos - 1 };
+    return other.pos === op.pos ? null : op;
+  }
+  function transformLists(mine: Op[], theirs: Op[]): [Op[], Op[]] {
+    let m = [...mine];
+    const out: (Op | null)[] = [];
+    for (let t0 of theirs) {
+      let t: Op | null = t0;
+      const nm: (Op | null)[] = [];
+      for (const mo of m) {
+        const tNext: Op | null = t ? transform(t, mo as Op) : null;
+        const mNext: Op | null = mo && t ? transform(mo as Op, t) : mo;
+        t = tNext;
+        nm.push(mNext);
+      }
+      m = nm.filter(Boolean) as Op[];
+      out.push(t);
+    }
+    return [out.filter(Boolean) as Op[], m];
+  }
+  const run = (text: string, ops: Op[]) => ops.reduce(apply, text);
+  // ---- RGA (a sequence CRDT)
+  type Id = { c: number; s: string };
+  const key = (i: Id | null) => (i ? `${i.c}:${i.s}` : 'root');
+  const cmp = (a: Id, b: Id) => a.c - b.c || (a.s < b.s ? -1 : a.s > b.s ? 1 : 0);
+  class Rga {
+    nodes = new Map<string, { id: Id; parent: Id | null; ch: string; dead: boolean }>();
+    clock = 0;
+    constructor(public site: string) {
+      let prev: Id | null = null;
+      for (const ch of BASE) {
+        const id = { c: ++this.clock, s: 'init' };
+        this.nodes.set(key(id), { id, parent: prev, ch, dead: false });
+        prev = id;
+      }
+    }
+    visible() {
+      const kids = new Map<string, Id[]>();
+      for (const n of this.nodes.values()) (kids.get(key(n.parent)) ?? kids.set(key(n.parent), []).get(key(n.parent))!).push(n.id);
+      const order: Id[] = [];
+      const walk = (p: Id | null) => {
+        for (const id of (kids.get(key(p)) ?? []).sort((a, b) => cmp(b, a))) {
+          order.push(id);
+          walk(id);
+        }
+      };
+      walk(null);
+      return order.filter((i) => !this.nodes.get(key(i))!.dead);
+    }
+    text() {
+      return this.visible().map((i) => this.nodes.get(key(i))!.ch).join('');
+    }
+    insert(pos: number, ch: string) {
+      const vis = this.visible();
+      const parent = pos > 0 ? vis[pos - 1] : null;
+      const id = { c: ++this.clock, s: this.site };
+      this.nodes.set(key(id), { id, parent, ch, dead: false });
+      return { t: 'ins' as const, id, parent, ch };
+    }
+    delete(pos: number) {
+      const id = this.visible()[pos];
+      this.nodes.get(key(id))!.dead = true;
+      return { t: 'del' as const, id };
+    }
+    receive(op: ReturnType<Rga['insert']> | ReturnType<Rga['delete']>) {
+      if (op.t === 'ins') {
+        if (!this.nodes.has(key(op.id))) this.nodes.set(key(op.id), { id: op.id, parent: op.parent, ch: op.ch, dead: false });
+        this.clock = Math.max(this.clock, op.id.c);
+      } else this.nodes.get(key(op.id))!.dead = true;
+    }
+  }
+  type Script = ['insert' | 'delete', number, string?];
+  const SCEN = [
+    { a: [{ k: 'ins', pos: 0, ch: 'x', site: 'A' }] as Op[], b: [{ k: 'del', pos: 2, site: 'B' }] as Op[], as: [['insert', 0, 'x']] as Script[], bs: [['delete', 2]] as Script[], want: ['xca'], note: 'Intent: Alice adds an x at the front, Bob removes the final t. Expected: "xca".' },
+    { a: [{ k: 'ins', pos: 1, ch: 'X', site: 'A' }] as Op[], b: [{ k: 'ins', pos: 1, ch: 'Y', site: 'B' }] as Op[], as: [['insert', 1, 'X']] as Script[], bs: [['insert', 1, 'Y']] as Script[], want: ['cXYat', 'cYXat'], note: 'Intent: both letters must survive; either order is fine as long as everyone agrees.' },
+    { a: [{ k: 'del', pos: 1, site: 'A' }] as Op[], b: [{ k: 'del', pos: 1, site: 'B' }] as Op[], as: [['delete', 1]] as Script[], bs: [['delete', 1]] as Script[], want: ['ct'], note: 'Intent: the "a" is deleted once. Expected: "ct". Deleting it twice would wrongly remove another letter.' },
+  ];
+  class ConcurrentEdit extends HTMLElement {
+    sc = 0;
+    st = 'ot';
+    synced = false;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-sc]').forEach((b) => b.addEventListener('click', () => ((this.sc = +b.dataset.sc!), this.mark('[data-sc]', b), (this.synced = false), this.draw())));
+      this.querySelectorAll<HTMLButtonElement>('[data-st]').forEach((b) => b.addEventListener('click', () => ((this.st = b.dataset.st!), this.mark('[data-st]', b), (this.synced = false), this.draw())));
+      this.querySelector('[data-sync]')!.addEventListener('click', () => ((this.synced = true), this.draw()));
+      this.draw();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    desc(o: Op) {
+      return o.k === 'ins' ? `insert '${o.ch}' at ${o.pos}` : `delete position ${o.pos}`;
+    }
+    draw() {
+      const s = SCEN[this.sc];
+      this.querySelector('[data-aops]')!.textContent = s.a.map((o) => this.desc(o)).join('; ');
+      this.querySelector('[data-bops]')!.textContent = s.b.map((o) => this.desc(o)).join('; ');
+      let a = run(BASE, s.a);
+      let b = run(BASE, s.b);
+      if (this.synced) {
+        if (this.st === 'naive') {
+          a = run(a, s.b);
+          b = run(b, s.a);
+        } else if (this.st === 'ot') {
+          const [bForA, aForB] = transformLists(s.a, s.b);
+          a = run(a, bForA);
+          b = run(b, aForB);
+        } else {
+          const ra = new Rga('A');
+          const rb = new Rga('B');
+          const aOps = s.as.map(([m, ...args]) => (ra as any)[m](...args));
+          const bOps = s.bs.map(([m, ...args]) => (rb as any)[m](...args));
+          bOps.forEach((o) => ra.receive(o));
+          aOps.forEach((o) => rb.receive(o));
+          a = ra.text();
+          b = rb.text();
+        }
+      }
+      this.querySelector('[data-a]')!.textContent = a;
+      this.querySelector('[data-b]')!.textContent = b;
+      const ok = a === b && s.want.includes(a);
+      const reps = this.querySelectorAll('.rep');
+      reps.forEach((r) => r.classList.remove('ok', 'bad'));
+      if (this.synced) reps.forEach((r) => r.classList.add(ok ? 'ok' : 'bad'));
+      this.querySelector('[data-msg]')!.textContent = !this.synced
+        ? `Each side has applied only its own edit. ${s.note} Press Sync to exchange operations.`
+        : a !== b
+          ? `DIVERGED: Alice has "${a}" and Bob has "${b}". Replaying positions as written means the same operation changed different letters on each side, and the copies will never agree.`
+          : ok
+            ? `Both copies converged on "${a}", and both intentions were preserved.`
+            : `Converged on "${a}", but WRONG: both sides agree, yet an edit was lost or applied to the wrong letter. Agreement is not enough; the result must preserve what each person meant.`;
+    }
+  }
+  customElements.define('concurrent-edit', ConcurrentEdit);
+</script>

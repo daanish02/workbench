@@ -1,0 +1,85 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What an index buys, and what it costs"
+  caption="Reads: a full scan touches rows in proportion to the table size, while a B-tree needs only a few page reads however large it gets (log base fan-out). Writes: every index is another structure to update on each insert."
+>
+  <index-cost>
+    <div class="ctl-row">
+      <label class="stat">Rows <input type="range" min="2" max="9" step="0.5" value="6" data-n /> <b data-nv>1,000,000</b></label>
+    </div>
+    <div class="ic" data-reads></div>
+    <div class="ctl-row">
+      <label class="stat">Indexes on the table <input type="range" min="0" max="8" step="1" value="2" data-k /> <b data-kv>2</b></label>
+    </div>
+    <div class="ic" data-writes></div>
+    <p class="ic-msg" data-msg></p>
+  </index-cost>
+</Figure>
+
+<style>
+  .ic {
+    margin: 10px 0 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ic :global(.row) {
+    display: grid;
+    grid-template-columns: 120px 1fr 90px;
+    gap: 8px;
+    align-items: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ic :global(.bar) {
+    height: 14px;
+    border-radius: 4px;
+    min-width: 2px;
+  }
+  .ic :global(.val) {
+    text-align: right;
+    color: var(--text);
+  }
+  .ic-msg {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    width: 150px;
+    vertical-align: middle;
+  }
+  @media (max-width: 520px) {
+    .ic :global(.row) {
+      grid-template-columns: 90px 1fr 70px;
+    }
+  }
+</style>
+
+<script>
+  const FANOUT = 200; // keys per B-tree page, a typical order of magnitude
+  class IndexCost extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const n = Math.round(10 ** +this.querySelector<HTMLInputElement>('[data-n]')!.value);
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-nv]')!.textContent = n.toLocaleString('en-US');
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      const scan = n; // worst case: look at every row
+      const levels = Math.max(1, Math.ceil(Math.log(n) / Math.log(FANOUT)));
+      const bin = Math.ceil(Math.log2(n));
+      const max = scan;
+      const bar = (label: string, v: number, c: string, scale: number) => `<div class="row"><span>${label}</span><div class="bar" style="width:${Math.max(0.5, (Math.log10(v + 1) / Math.log10(scale + 1)) * 100)}%;background:${c}"></div><span class="val">${v.toLocaleString('en-US')}</span></div>`;
+      this.querySelector('[data-reads]')!.innerHTML = bar('full scan', scan, 'var(--g-red)', max) + bar('binary search', bin, 'var(--g-yellow)', max) + bar('B-tree pages', levels, 'var(--g-green)', max) + '<span style="font:0.6875rem var(--font-mono);color:var(--text-faint)">row/page reads to find one key (log-scaled bars)</span>';
+      this.querySelector('[data-writes]')!.innerHTML = bar('structures updated', 1 + k, 'var(--g-blue)', 9) + '<span style="font:0.6875rem var(--font-mono);color:var(--text-faint)">per INSERT: the table row plus one entry in each index</span>';
+      this.querySelector('[data-msg]')!.textContent = `At ${n.toLocaleString('en-US')} rows a scan may read up to ${scan.toLocaleString('en-US')} rows; a B-tree with ~${FANOUT} keys per page finds one in ${levels} page reads. In exchange, each insert now updates ${1 + k} structure${k ? 's' : ''}.`;
+    }
+  }
+  customElements.define('index-cost', IndexCost);
+</script>

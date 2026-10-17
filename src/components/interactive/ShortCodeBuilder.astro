@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="From a counter to a short code"
+  caption="A short code is just a number written in a bigger alphabet. Type a counter value to see its base-62 code (and decode it back), then pick a code length and a number of stored links to see how much of the key space is used and how often a randomly chosen code would collide."
+>
+  <short-code>
+    <div class="ctl-row">
+      <label class="stat">Counter value <input class="input" type="text" inputmode="numeric" value="125,000,000" data-n /></label>
+      <span class="stat">→ code <b class="mono sc-code" data-code></b></span>
+    </div>
+    <div class="ctl-row">
+      <label class="stat">Alphabet <select class="input" data-alpha><option value="62">base62 (a–z A–Z 0–9)</option><option value="36">base36 (a–z 0–9)</option><option value="16">hex (0–9 a–f)</option></select></label>
+      <label class="stat">Code length <input type="range" min="4" max="10" value="7" data-len /> <b data-lenv>7</b></label>
+      <label class="stat">Stored links <input type="range" min="3" max="12" step="0.25" value="9" data-links /> <b data-linksv></b></label>
+    </div>
+    <div class="sc-bar"><i data-bar></i></div>
+    <div class="sc-out" data-out></div>
+  </short-code>
+</Figure>
+
+<style>
+  .sc-code {
+    font-size: 1.25rem;
+    color: #fff;
+    letter-spacing: 0.08em;
+  }
+  .sc-bar {
+    height: 10px;
+    margin-top: 14px;
+    border-radius: 5px;
+    background: #222;
+    overflow: hidden;
+  }
+  .sc-bar i {
+    display: block;
+    height: 100%;
+    background: var(--g-green);
+    min-width: 2px;
+  }
+  .sc-bar i.warn {
+    background: var(--g-yellow);
+  }
+  .sc-bar i.bad {
+    background: var(--g-red);
+  }
+  .sc-out {
+    margin-top: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.7;
+    min-height: 5em;
+  }
+  .sc-out :global(b) {
+    color: var(--text);
+  }
+  .input {
+    width: 11em;
+  }
+  select.input {
+    width: auto;
+    padding: 5px 8px;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const sci = (x: number) => (x >= 1e6 ? x.toExponential(2).replace('e+', ' × 10^') : x.toLocaleString('en-US', { maximumFractionDigits: 3 }));
+  class ShortCode extends HTMLElement {
+    connectedCallback() {
+      const n = this.querySelector<HTMLInputElement>('[data-n]')!;
+      n.addEventListener('input', () => {
+        const d = n.value.replace(/\D/g, '');
+        n.value = d ? BigInt(d).toLocaleString('en-US') : '';
+        this.draw();
+      });
+      this.querySelectorAll('select,input[type=range]').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const base = BigInt(+this.querySelector<HTMLSelectElement>('[data-alpha]')!.value);
+      const len = +this.querySelector<HTMLInputElement>('[data-len]')!.value;
+      const links = 10 ** +this.querySelector<HTMLInputElement>('[data-links]')!.value;
+      this.querySelector('[data-lenv]')!.textContent = String(len);
+      this.querySelector('[data-linksv]')!.textContent = Math.round(links).toLocaleString('en-US');
+      let v = BigInt(this.querySelector<HTMLInputElement>('[data-n]')!.value.replace(/\D/g, '') || '0');
+      let s = '';
+      if (v === 0n) s = '0';
+      while (v > 0n) {
+        s = ALPHABET[Number(v % base)] + s;
+        v /= base;
+      }
+      this.querySelector('[data-code]')!.textContent = s;
+      const space = Number(base) ** len;
+      const used = links / space;
+      const bar = this.querySelector<HTMLElement>('[data-bar]')!;
+      bar.style.width = `${Math.min(100, used * 100)}%`;
+      bar.className = used > 0.5 ? 'bad' : used > 0.05 ? 'warn' : '';
+      const birthday = Math.sqrt(space);
+      this.querySelector('[data-out]')!.innerHTML =
+        `Key space: <b>${sci(space)}</b> codes (${Number(base)}^${len}). ${Math.round(links).toLocaleString('en-US')} stored links use <b>${used < 1e-6 ? sci(used * 100) : (used * 100).toFixed(used < 0.01 ? 4 : 1)}%</b> of it.<br>` +
+        `A random code is already taken with probability <b>${used >= 1 ? '100%' : (used * 100).toFixed(used < 0.001 ? 5 : 2) + '%'}</b> per insert (so the average insert needs ${(1 / Math.max(1e-9, 1 - Math.min(used, 0.999999))).toFixed(2)} tries).<br>` +
+        `Birthday effect: the <i>first</i> collision among randomly chosen codes is expected after only about <b>${sci(Math.round(birthday))}</b> codes, long before the space is full.` +
+        (s.length > len ? `<br><span style="color:var(--g-yellow-l)">The counter needs ${s.length} characters, longer than the chosen length of ${len}.</span>` : '');
+    }
+  }
+  customElements.define('short-code', ShortCode);
+</script>

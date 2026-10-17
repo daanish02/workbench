@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where the first byte's time goes"
+  caption="Opening a page on a fresh connection stacks round trips: DNS, TCP, TLS, then the request itself. Drag the round-trip time, then try a warm DNS cache, a reused connection, or HTTP/3 (which merges the transport and TLS handshakes) and see which round trips disappear."
+>
+  <request-timeline>
+    <div class="ctl-row">
+      <label class="stat">Round trip <input type="range" min="10" max="300" step="10" value="80" data-rtt /> <b data-rv>80</b> ms</label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn" data-opt="dns" aria-pressed="false">DNS cached</button>
+      <button class="btn" data-opt="reuse" aria-pressed="false">Connection reused (keep-alive)</button>
+      <button class="btn" data-opt="h3" aria-pressed="false">HTTP/3 (QUIC)</button>
+    </div>
+    <div class="rt-bar" data-bar></div>
+    <div class="rt-legend" data-legend></div>
+    <p class="stat" data-stat></p>
+  </request-timeline>
+</Figure>
+
+<style>
+  .rt-bar {
+    display: flex;
+    height: 34px;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 14px;
+    border: 1px solid var(--border-strong);
+  }
+  .rt-bar :global(span) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 0.6875rem var(--font-mono);
+    color: #000;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .rt-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 8px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .rt-legend :global(i) {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  input[type='range'] {
+    width: 140px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  class RequestTimeline extends HTMLElement {
+    on = new Set<string>();
+    connectedCallback() {
+      this.querySelector('[data-rtt]')!.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-opt]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const k = b.dataset.opt!;
+          this.on.has(k) ? this.on.delete(k) : this.on.add(k);
+          b.setAttribute('aria-pressed', String(this.on.has(k)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const rtt = +this.querySelector<HTMLInputElement>('[data-rtt]')!.value;
+      this.querySelector('[data-rv]')!.textContent = String(rtt);
+      const h3 = this.on.has('h3');
+      const reuse = this.on.has('reuse');
+      const parts: [string, number, string][] = [];
+      if (!this.on.has('dns')) parts.push(['DNS', 1, 'var(--g-yellow)']);
+      if (!reuse) {
+        if (h3) parts.push(['QUIC + TLS', 1, 'var(--g-green)']);
+        else {
+          parts.push(['TCP', 1, 'var(--g-red)']);
+          parts.push(['TLS', 1, 'var(--g-green)']);
+        }
+      }
+      parts.push(['Request', 1, 'var(--g-blue)']);
+      const total = parts.reduce((a, p) => a + p[1], 0) * rtt;
+      this.querySelector('[data-bar]')!.innerHTML = parts.map((p) => `<span style="flex:${p[1]};background:${p[2]}">${p[0]}</span>`).join('');
+      this.querySelector('[data-legend]')!.innerHTML = parts.map((p) => `<span><i style="background:${p[2]}"></i>${p[0]} · ${(p[1] * rtt).toLocaleString('en-US')} ms</span>`).join('');
+      this.querySelector('[data-stat]')!.innerHTML = `${parts.length} round trip${parts.length > 1 ? 's' : ''} → first response byte after ≈ <b>${total.toLocaleString('en-US')} ms</b> (plus server think time)`;
+    }
+  }
+  customElements.define('request-timeline', RequestTimeline);
+</script>

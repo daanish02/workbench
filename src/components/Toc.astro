@@ -1,0 +1,91 @@
+---
+import type { MarkdownHeading } from 'astro';
+
+interface Props {
+  headings: MarkdownHeading[];
+}
+const headings = Astro.props.headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+
+{
+  headings.length > 0 && (
+    <nav class="toc" aria-label="On this page" data-toc>
+      <p class="toc-title">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M2 4h12M2 8h8M2 12h10" />
+        </svg>
+        On this page
+      </p>
+      <ul>
+        {headings.map((h) => (
+          <li class={`d${h.depth}`}>
+            <a href={`#${h.slug}`} data-slug={h.slug}>
+              {h.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  )
+}
+
+<style>
+  .toc {
+    position: sticky;
+    top: calc(var(--header-h) + 32px);
+    max-height: calc(100dvh - var(--header-h) - 64px);
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .toc-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px solid var(--border);
+  }
+  a {
+    display: block;
+    padding: 5px 0 5px 14px;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--text-faint);
+  }
+  .d3 a {
+    padding-left: 28px;
+  }
+  a:hover {
+    color: var(--text);
+  }
+  a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+  }
+</style>
+
+<script>
+  // highlight the heading currently being read
+  const toc = document.querySelector('[data-toc]');
+  if (toc) {
+    const links = [...toc.querySelectorAll<HTMLAnchorElement>('a[data-slug]')];
+    const targets = links.map((l) => document.getElementById(l.dataset.slug!)).filter(Boolean) as HTMLElement[];
+    const setActive = () => {
+      const offset = 140;
+      let current = targets[0];
+      for (const t of targets) if (t.getBoundingClientRect().top - offset <= 0) current = t;
+      links.forEach((l) => l.classList.toggle('active', l.dataset.slug === current?.id));
+    };
+    document.addEventListener('scroll', setActive, { passive: true });
+    setActive();
+  }
+</script>

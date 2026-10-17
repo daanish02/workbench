@@ -1,0 +1,176 @@
+---
+import Figure from '../Figure.astro';
+// A small hierarchy; `send` is the method whose lookup we trace.
+const classes = [
+  { name: 'Notification', parent: null, send: 'raise NotImplementedError', depth: 0 },
+  { name: 'EmailNotification', parent: 'Notification', send: 'print(f"Sending email: {message}")', depth: 1 },
+  { name: 'UrgentEmail', parent: 'EmailNotification', send: null, depth: 2 },
+  { name: 'SMSNotification', parent: 'Notification', send: 'print(f"Sending SMS: {message}")', depth: 1 },
+  { name: 'PushNotification', parent: 'Notification', send: null, depth: 1 },
+];
+---
+
+<Figure
+  title="One call, many implementations"
+  caption="Pick the object passed to notify(channel, msg). The call site never changes; Python looks up send on the object's own class first and then walks up its method resolution order (MRO) until it finds a definition. UrgentEmail inherits Email's send; PushNotification forgot to override it and reaches the abstract base."
+>
+  <oop-dispatch>
+    <div class="ctl-row">
+      <span class="ctl-label">channel =</span>
+      {classes.slice(1).map((c) => <button class="btn mono" data-obj={c.name} aria-pressed="false">{c.name}()</button>)}
+    </div>
+    <div class="body">
+      <ul class="tree mono">
+        {
+          classes.map((c) => (
+            <li data-cls={c.name} data-parent={c.parent ?? ''} data-send={c.send ?? ''} style={`--d:${c.depth}`}>
+              <b>class {c.name}{c.parent ? `(${c.parent})` : ''}</b>
+              <span class="m">{c.send ? `def send(self, message): ${c.send}` : '(no send defined)'}</span>
+            </li>
+          ))
+        }
+      </ul>
+      <div class="side">
+        <div class="mono call">notify(channel, "Order shipped")<br />&nbsp;&nbsp;→ channel.send(message)</div>
+        <div class="ctl-label" style="margin-top:10px">Lookup</div>
+        <ol class="mono steps" data-steps></ol>
+        <div class="mono out" data-out></div>
+        <div class="mono mro" data-mro></div>
+      </div>
+    </div>
+  </oop-dispatch>
+</Figure>
+
+<style>
+  .body {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .tree {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.75rem;
+    text-align: left;
+  }
+  .body .tree li,
+  .body .steps :global(li) {
+    text-align: left;
+    hyphens: manual;
+  }
+  .tree li {
+    margin: 0 0 6px calc(var(--d) * 16px);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 6px 8px;
+    transition: border-color 0.25s, background 0.25s;
+    min-width: 0;
+  }
+  .tree b {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+  .tree .m {
+    display: block;
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+  .tree li.checked {
+    border-left-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.06);
+  }
+  .tree li.found {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.12);
+  }
+  .tree li.found .m {
+    color: var(--text);
+  }
+  .tree li.abstract {
+    border-color: var(--g-red);
+    background: rgba(234, 67, 53, 0.1);
+  }
+  .call {
+    font-size: 0.8125rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+  }
+  .steps {
+    font-size: 0.75rem;
+    margin: 6px 0;
+    padding-left: 20px;
+    min-height: 3em;
+  }
+  .steps :global(li) {
+    margin: 2px 0;
+    overflow-wrap: anywhere;
+  }
+  .mro {
+    margin-top: 6px;
+    font-size: 0.6875rem;
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+  .out {
+    font-size: 0.8125rem;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    min-height: 1.5em;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  class OopDispatch extends HTMLElement {
+    timer = 0;
+    connectedCallback() {
+      const btns = [...this.querySelectorAll<HTMLButtonElement>('[data-obj]')];
+      btns.forEach((b) =>
+        b.addEventListener('click', () => {
+          btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.dispatch(b.dataset.obj!);
+        }),
+      );
+      btns[0].setAttribute('aria-pressed', 'true');
+      this.dispatch(btns[0].dataset.obj!);
+    }
+    dispatch(start: string) {
+      clearInterval(this.timer);
+      const nodes = new Map([...this.querySelectorAll<HTMLElement>('[data-cls]')].map((li) => [li.dataset.cls!, li]));
+      nodes.forEach((li) => li.classList.remove('checked', 'found', 'abstract'));
+      // Single inheritance here, so the MRO is just the parent chain up to the base.
+      const mro: HTMLElement[] = [];
+      for (let c: string | undefined = start; c; c = nodes.get(c)!.dataset.parent || undefined) mro.push(nodes.get(c)!);
+      const steps = this.querySelector('[data-steps]')!;
+      const out = this.querySelector('[data-out]')!;
+      steps.innerHTML = '';
+      out.textContent = '';
+      this.querySelector('[data-mro]')!.textContent = `${start}.__mro__ = (${[...mro.map((m) => m.dataset.cls), 'object'].join(', ')})`;
+      let k = 0;
+      const tick = () => {
+        const li = mro[k];
+        const send = li.dataset.send;
+        const item = document.createElement('li');
+        if (!send) {
+          li.classList.add('checked');
+          item.textContent = `${li.dataset.cls}: no send, try parent`;
+          steps.append(item);
+          k++;
+          return;
+        }
+        clearInterval(this.timer);
+        const abstract = send.startsWith('raise');
+        li.classList.add(abstract ? 'abstract' : 'found');
+        item.textContent = `${li.dataset.cls}: found send`;
+        steps.append(item);
+        out.textContent = abstract ? 'NotImplementedError  (the base only declares the interface)' : `> ${send.includes('email') ? 'Sending email' : 'Sending SMS'}: Order shipped`;
+      };
+      this.timer = window.setInterval(tick, 550);
+    }
+  }
+  customElements.define('oop-dispatch', OopDispatch);
+</script>

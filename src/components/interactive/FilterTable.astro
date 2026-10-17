@@ -1,0 +1,126 @@
+---
+interface Props {
+  placeholder?: string;
+}
+const { placeholder = 'Filter…' } = Astro.props;
+---
+
+<filter-table>
+  <div class="ft-bar">
+    <input type="search" class="ft-input" placeholder={placeholder} aria-label={placeholder} data-q />
+    <div class="ft-chips" data-chips></div>
+  </div>
+  <p class="ft-count" data-count aria-live="polite"></p>
+  <div class="ft-body" data-body><slot /></div>
+  <p class="ft-empty" data-empty hidden>Nothing matches. Try fewer or different words.</p>
+</filter-table>
+
+<style>
+  .ft-bar {
+    display: grid;
+    gap: 10px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    padding: 10px 0;
+    background: var(--bg);
+  }
+  .ft-input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text);
+    font: inherit;
+  }
+  .ft-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .ft-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .ft-chips :global(button) {
+    appearance: none;
+    padding: 4px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-muted);
+    font: 0.8125rem var(--font-sans);
+    cursor: pointer;
+  }
+  .ft-chips :global(button[aria-pressed='true']) {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(138, 180, 248, 0.12);
+  }
+  .ft-count {
+    margin: 0;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .ft-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px 0;
+  }
+</style>
+
+<script>
+  class FilterTable extends HTMLElement {
+    groups: { title: string; els: HTMLElement[]; rows: HTMLTableRowElement[] }[] = [];
+    active = '';
+    connectedCallback() {
+      const body = this.querySelector<HTMLElement>('[data-body]')!;
+      let cur: { title: string; els: HTMLElement[]; rows: HTMLTableRowElement[] } | null = null;
+      for (const el of Array.from(body.children) as HTMLElement[]) {
+        if (el.tagName === 'H3') {
+          cur = { title: el.textContent!.trim(), els: [el], rows: [] };
+          this.groups.push(cur);
+        } else {
+          if (!cur) { cur = { title: '', els: [], rows: [] }; this.groups.push(cur); }
+          cur.els.push(el);
+          el.querySelectorAll<HTMLTableRowElement>('tbody tr').forEach((r) => cur!.rows.push(r));
+        }
+      }
+      const named = this.groups.filter((g) => g.title);
+      const chips = this.querySelector('[data-chips]')!;
+      if (named.length > 1) {
+        chips.innerHTML = ['All', ...named.map((g) => g.title)].map((t) => `<button type="button" data-g="${t === 'All' ? '' : t.replace(/"/g, '&quot;')}" aria-pressed="${t === 'All'}">${t}</button>`).join('');
+        chips.addEventListener('click', (e) => {
+          const b = (e.target as HTMLElement).closest('button') as HTMLElement | null;
+          if (!b) return;
+          this.active = b.dataset.g!;
+          chips.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.apply();
+        });
+      }
+      this.querySelector('[data-q]')!.addEventListener('input', () => this.apply());
+      this.apply();
+    }
+    apply() {
+      const terms = this.querySelector<HTMLInputElement>('[data-q]')!.value.toLowerCase().split(/\s+/).filter(Boolean).map((t) => new RegExp('(^|[^a-z0-9])' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); // match at the start of a word
+      let shown = 0, total = 0;
+      for (const g of this.groups) {
+        const inGroup = !this.active || g.title === this.active;
+        let vis = 0;
+        for (const r of g.rows) {
+          total++;
+          const ok = inGroup && terms.every((t) => t.test(r.textContent!.toLowerCase()));
+          r.hidden = !ok;
+          if (ok) vis++;
+        }
+        shown += vis;
+        const keep = g.rows.length ? vis > 0 : inGroup && !terms.length;
+        g.els.forEach((el) => (el.hidden = !keep));
+      }
+      this.querySelector('[data-count]')!.textContent = `${shown} of ${total} entries`;
+      (this.querySelector('[data-empty]') as HTMLElement).hidden = shown > 0;
+    }
+  }
+  customElements.define('filter-table', FilterTable);
+</script>

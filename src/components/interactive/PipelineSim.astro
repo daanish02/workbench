@@ -1,0 +1,124 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A pipeline that fails fast"
+  caption="Seven stages with illustrative durations. Choose which stage will fail and how the pipeline orders its stages (a stage never runs before the stage it depends on: integration and staging need the build, end-to-end tests need staging). The bar shows when the failure is reported and how much work the gate saved by stopping everything after it."
+>
+  <pipeline-sim>
+    <div class="ctl-row">
+      <label class="stat">Failing stage
+        <select data-f></select>
+      </label>
+      <button class="btn" data-o="listed" aria-pressed="true">As listed</button>
+      <button class="btn" data-o="fast" aria-pressed="false">Cheapest first</button>
+      <button class="btn" data-o="slow" aria-pressed="false">Slowest first</button>
+    </div>
+    <div class="ps-bar" data-bar></div>
+    <p class="ps-msg" data-msg></p>
+  </pipeline-sim>
+</Figure>
+
+<style>
+  .ps-bar {
+    display: flex;
+    margin-top: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    overflow-x: auto;
+    min-height: 54px;
+    background: var(--bg-soft);
+  }
+  .ps-bar :global(.seg) {
+    min-width: 88px;
+    padding: 6px 4px;
+    font: 0.6875rem/1.3 var(--font-mono);
+    text-align: center;
+    border-right: 1px solid var(--bg);
+    overflow: hidden;
+    display: grid;
+    align-content: center;
+    background: rgba(52, 168, 83, 0.28);
+    color: var(--text);
+  }
+  .ps-bar :global(.seg.fail) {
+    background: rgba(234, 67, 53, 0.5);
+  }
+  .ps-bar :global(.seg.skip) {
+    background: transparent;
+    color: var(--text-faint);
+    background-image: repeating-linear-gradient(45deg, transparent 0 6px, rgba(255, 255, 255, 0.05) 6px 12px);
+  }
+  .ps-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4em;
+  }
+  select {
+    background: var(--bg-soft);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 3px 6px;
+    font: inherit;
+  }
+</style>
+
+<script>
+  const STAGES: { n: string; m: number; dep?: string }[] = [
+    { n: 'Lint', m: 1 },
+    { n: 'Build', m: 4 },
+    { n: 'Unit tests', m: 3 },
+    { n: 'Security scan', m: 5 },
+    { n: 'Integration', m: 8, dep: 'Build' },
+    { n: 'Deploy staging', m: 5, dep: 'Build' },
+    { n: 'E2E tests', m: 15, dep: 'Deploy staging' },
+  ];
+  function order(kind: string) {
+    if (kind === 'listed') return [...STAGES];
+    const out: typeof STAGES = [];
+    while (out.length < STAGES.length) {
+      const ok = STAGES.filter((s) => !out.includes(s) && (!s.dep || out.some((o) => o.n === s.dep)));
+      ok.sort((a, b) => (kind === 'fast' ? a.m - b.m : b.m - a.m));
+      out.push(ok[0]);
+    }
+    return out;
+  }
+  class PipelineSim extends HTMLElement {
+    kind = 'listed';
+    connectedCallback() {
+      const sel = this.querySelector<HTMLSelectElement>('[data-f]')!;
+      sel.innerHTML = '<option value="">None (all pass)</option>' + STAGES.map((s) => `<option>${s.n}</option>`).join('');
+      sel.value = 'E2E tests';
+      sel.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-o]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.kind = b.dataset.o!;
+          this.querySelectorAll('[data-o]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const fail = this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      const seq = order(this.kind);
+      const total = seq.reduce((a, s) => a + s.m, 0);
+      let t = 0, stopped = false, stopAt = 0;
+      let html = '';
+      for (const s of seq) {
+        const cls = stopped ? 'skip' : s.n === fail ? 'fail' : '';
+        html += `<div class="seg ${cls}" style="flex:${s.m} 1 0" title="${s.n}"><b>${s.n}</b>${s.m} min</div>`;
+        if (!stopped) { t += s.m; if (s.n === fail) { stopped = true; stopAt = t; } }
+      }
+      this.querySelector('[data-bar]')!.innerHTML = html;
+      const msg = fail
+        ? `Order: ${seq.map((s) => s.n).join(' → ')}. "${fail}" fails, reported after ${stopAt} min. The gate stopped ${total - stopAt} of ${total} minutes of work that would have been wasted on a change that cannot ship.${this.kind !== 'fast' ? ' Cheapest-first would surface the cheap checks sooner.' : ''}`
+        : `Order: ${seq.map((s) => s.n).join(' → ')}. Everything passes, so the change is ready after ${total} min whatever the order. Ordering only matters when something fails.`;
+      this.querySelector('[data-msg]')!.textContent = msg;
+    }
+  }
+  customElements.define('pipeline-sim', PipelineSim);
+</script>

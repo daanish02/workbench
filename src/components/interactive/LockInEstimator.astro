@@ -1,0 +1,152 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Pricing portability"
+  caption="For each building block of an application, choose the provider-native service or a portable alternative. The estimate shows two opposing costs: the effort you would spend leaving (migration), and the extra effort you pay every year to stay portable (running more yourself). Portability only pays when the chance you will actually move, within your planning horizon, is high enough. The person-week figures are illustrative round numbers, not measurements."
+>
+  <lock-in-estimator>
+    <div class="li-rows" data-rows></div>
+    <div class="ctl-row">
+      <label class="stat">Data stored <input type="range" min="1" max="500" value="20" data-tb /> <b data-tbv>20</b> TB</label>
+      <label class="stat">Chance you move <input type="range" min="0" max="100" step="5" value="20" data-p /> <b data-pv>20</b>%</label>
+      <label class="stat">Horizon <input type="range" min="1" max="10" value="5" data-h /> <b data-hv>5</b> yr</label>
+    </div>
+    <p class="li-msg" data-msg></p>
+  </lock-in-estimator>
+</Figure>
+
+<style>
+  .li-rows {
+    display: grid;
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .li-rows :global(.r) {
+    display: grid;
+    grid-template-columns: minmax(110px, 150px) 1fr 1fr;
+    gap: 6px;
+    align-items: stretch;
+    font-size: 0.8125rem;
+  }
+  @media (max-width: 560px) {
+    .li-rows :global(.r) {
+      grid-template-columns: 1fr 1fr;
+    }
+    .li-rows :global(.r > .nm) {
+      grid-column: 1 / -1;
+    }
+    .li-rows :global(.r.hd > span:first-child) {
+      display: none;
+    }
+  }
+  .li-rows :global(.nm) {
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .li-rows :global(.nm .t) {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--text);
+  }
+  .li-rows :global(.nm .h) {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+  }
+  .li-rows :global(.hd span) {
+    font: 0.6875rem var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+  }
+  .li-rows :global(button.o) {
+    appearance: none;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    cursor: pointer;
+    font: inherit;
+    line-height: 1.4;
+  }
+  .li-rows :global(button.o[aria-pressed='true']) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.18);
+    color: var(--text);
+  }
+  .li-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 5.5em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  // [label, native option, portable option]; each option: [text, migration weeks if you leave, extra run weeks per year]
+  const PARTS: [string, [string, number, number], [string, number, number]][] = [
+    ['Compute', ['Provider function platform', 12, 0], ['Containers on Kubernetes', 4, 2]],
+    ['Database', ['Cloud-native proprietary database', 26, 0], ['Managed open-source Postgres', 6, 0.5]],
+    ['Object storage', ['Provider SDK calls everywhere', 6, 0], ['Own interface over an S3-style API', 2, 0.2]],
+    ['Messaging', ['Proprietary event service', 10, 0], ['Kafka or RabbitMQ', 4, 3]],
+    ['Identity', ['Provider directory and IAM', 12, 0], ['Standard OIDC identity provider', 4, 0.5]],
+    ['Monitoring', ['Provider-native tooling', 6, 0], ['OpenTelemetry + open backend', 2, 1.5]],
+  ];
+  const EGRESS = 0.09; // dollars per GB to move data out
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  class LockInEstimator extends HTMLElement {
+    pick = PARTS.map(() => 0);
+    connectedCallback() {
+      this.querySelector('[data-rows]')!.innerHTML = '<div class="r hd"><span></span><span>Provider-native</span><span>Portable</span></div>' + PARTS.map((p, i) => `<div class="r"><div class="nm"><span class="t">${p[0]}</span><span class="h" data-be="${i}"></span></div><button class="o" data-i="${i}" data-k="0">${p[1][0]}</button><button class="o" data-i="${i}" data-k="1">${p[2][0]}</button></div>`).join('');
+      this.querySelectorAll<HTMLButtonElement>('button.o').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.pick[+b.dataset.i!] = +b.dataset.k!;
+          this.draw();
+        }),
+      );
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const tb = q('[data-tb]');
+      const p = q('[data-p]') / 100;
+      const h = q('[data-h]');
+      this.querySelector('[data-tbv]')!.textContent = fmt(tb);
+      this.querySelector('[data-pv]')!.textContent = String(Math.round(p * 100));
+      this.querySelector('[data-hv]')!.textContent = String(h);
+      this.querySelectorAll<HTMLButtonElement>('button.o').forEach((b) => b.setAttribute('aria-pressed', String(this.pick[+b.dataset.i!] === +b.dataset.k!)));
+      const h2 = h;
+      PARTS.forEach((part, i) => {
+        const n = part[1] as [string, number, number];
+        const o = part[2] as [string, number, number];
+        const need = ((o[2] * h2) / (n[1] - o[1])) * 100;
+        this.querySelector(`[data-be="${i}"]`)!.textContent = need <= 100 ? `portable pays above a ${Math.max(1, Math.round(need))}% chance of moving` : 'portable never pays on exit odds alone';
+      });
+      let mig = 0;
+      let migNative = 0;
+      let run = 0;
+      PARTS.forEach((part, i) => {
+        const o = part[this.pick[i] + 1] as [string, number, number];
+        mig += o[1];
+        migNative += (part[1] as [string, number, number])[1];
+        run += o[2];
+      });
+      const egress = tb * 1000 * EGRESS;
+      const saved = migNative - mig;
+      const expectedSave = p * saved;
+      const paid = run * h;
+      this.querySelector('[data-msg]')!.textContent = `Leaving would take about ${mig} person-weeks of rework (${migNative} if everything were native) plus roughly $${fmt(Math.round(egress))} to move ${fmt(tb)} TB out. Staying this portable costs about ${run} extra person-weeks a year, ${paid} over ${h} years. At a ${Math.round(p * 100)}% chance of moving, the expected saving is ${expectedSave.toFixed(1)} person-weeks. ${run === 0 ? 'No extra running cost, but all the exit cost is yours to carry if you ever need to leave.' : expectedSave >= paid ? 'Portability pays for itself at these odds.' : 'At these odds portability costs more than it is likely to save: accept the lock-in knowingly, or raise the chance of leaving to see where it flips.'}`;
+    }
+  }
+  customElements.define('lock-in-estimator', LockInEstimator);
+</script>

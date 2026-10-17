@@ -1,0 +1,161 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two threads, one counter"
+  caption="Each thread runs counter = counter + 1 as three machine steps: read, add, write. You are the scheduler: choose which thread runs its next step. Interleave the reads (T1 read, T2 read, …) to lose an update; turn the lock on and the second thread is forced to wait."
+>
+  <race-cond>
+    <div class="rc">
+      <div class="thread" data-t="0"><b>Thread 1</b><ol></ol><span class="regv"></span></div>
+      <div class="shared">
+        <span class="ctl-label">shared counter</span>
+        <b class="ctr" data-ctr>10</b>
+        <span class="lock" data-lock></span>
+      </div>
+      <div class="thread" data-t="1"><b>Thread 2</b><ol></ol><span class="regv"></span></div>
+    </div>
+    <div class="ctl-row" style="margin-top:12px">
+      <button class="btn primary" data-step="0">Step T1</button>
+      <button class="btn primary" data-step="1">Step T2</button>
+      <button class="btn" data-uselock aria-pressed="false">Use a lock</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="msg" data-msg aria-live="polite"></p>
+  </race-cond>
+</Figure>
+
+<style>
+  .rc {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+  .thread {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+  }
+  .thread ol {
+    margin: 6px 0 0;
+    padding-left: 1.2em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-faint);
+  }
+  .thread :global(li.done) {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+  .thread :global(li.next) {
+    color: #fff;
+    font-weight: 700;
+  }
+  .thread :global(li.blocked) {
+    color: var(--g-red-l);
+  }
+  .regv {
+    display: block;
+    margin-top: 6px;
+    font: 0.75rem var(--font-mono);
+    color: var(--g-yellow-l);
+  }
+  .shared {
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    padding-top: 14px;
+  }
+  .ctr {
+    font: 700 2rem var(--font-mono);
+  }
+  .lock {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+  }
+  .msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+  @media (max-width: 520px) {
+    .rc {
+      grid-template-columns: 1fr 1fr;
+    }
+    .shared {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      padding-top: 0;
+    }
+  }
+</style>
+
+<script>
+  class RaceCond extends HTMLElement {
+    counter = 10;
+    pc = [0, 0];
+    reg = [0, 0];
+    useLock = false;
+    owner = -1;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-step]').forEach((b) => b.addEventListener('click', () => this.step(+b.dataset.step!)));
+      this.querySelector('[data-uselock]')!.addEventListener('click', (e) => {
+        this.useLock = !this.useLock;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.useLock));
+        this.reset();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    steps() {
+      return this.useLock ? ['lock', 'read counter', 'add 1', 'write counter', 'unlock'] : ['read counter', 'add 1', 'write counter'];
+    }
+    reset() {
+      this.counter = 10;
+      this.pc = [0, 0];
+      this.reg = [0, 0];
+      this.owner = -1;
+      this.say('Both threads want to add 1. The correct result is 12.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    step(t: number) {
+      const s = this.steps();
+      if (this.pc[t] >= s.length) return this.say(`Thread ${t + 1} has already finished.`);
+      const op = s[this.pc[t]];
+      if (op === 'lock') {
+        if (this.owner !== -1 && this.owner !== t) {
+          this.draw(t);
+          return this.say(`Thread ${t + 1} is blocked: Thread ${this.owner + 1} holds the lock.`);
+        }
+        this.owner = t;
+      } else if (op === 'unlock') this.owner = -1;
+      else if (op === 'read counter') this.reg[t] = this.counter;
+      else if (op === 'add 1') this.reg[t] += 1;
+      else if (op === 'write counter') this.counter = this.reg[t];
+      this.pc[t]++;
+      const finished = this.pc.every((p) => p >= s.length);
+      if (finished) this.say(this.counter === 12 ? 'Final value 12: correct.' : `Final value ${this.counter}: one increment was lost. Both threads read 10 before either wrote.`);
+      else this.say(`Thread ${t + 1}: ${op}.`);
+      this.draw();
+    }
+    draw(blocked = -1) {
+      const s = this.steps();
+      this.querySelectorAll<HTMLElement>('[data-t]').forEach((el) => {
+        const t = +el.dataset.t!;
+        el.querySelector('ol')!.innerHTML = s
+          .map((op, i) => `<li class="${i < this.pc[t] ? 'done' : i === this.pc[t] ? (blocked === t ? 'blocked' : 'next') : ''}">${op}</li>`)
+          .join('');
+        el.querySelector('.regv')!.textContent = `register = ${this.pc[t] > (this.useLock ? 1 : 0) ? this.reg[t] : '—'}`;
+      });
+      this.querySelector('[data-ctr]')!.textContent = String(this.counter);
+      this.querySelector('[data-lock]')!.textContent = this.useLock ? (this.owner === -1 ? '🔓 lock free' : `🔒 held by T${this.owner + 1}`) : '';
+    }
+  }
+  customElements.define('race-cond', RaceCond);
+</script>

@@ -1,0 +1,236 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="BST insert, search and traversal orders"
+  caption="Run a traversal to see the visit order on the tree the note uses (8, 3, 10, 1, 6). Inorder always comes out sorted. Then load the sorted-insert preset: the same BST rules produce a chain, height 6 for 7 keys, versus height 2 when the keys arrive in a balanced order."
+>
+  <bst-viz>
+    <div class="ctl-row">
+      <span class="ctl-label">Traverse</span>
+      <button class="btn" data-trav="pre">Preorder</button>
+      <button class="btn" data-trav="in">Inorder</button>
+      <button class="btn" data-trav="post">Postorder</button>
+      <button class="btn" data-trav="level">Level-order</button>
+    </div>
+    <div class="stage"><svg data-svg role="img" aria-label="binary search tree"></svg></div>
+    <div class="out mono" data-out></div>
+    <div class="stat" data-stat></div>
+    <div class="ctl-row" style="margin-top:10px">
+      <label class="ctl-label" for="bst-key">Key</label>
+      <input class="input" id="bst-key" data-key type="number" value="7" style="width:5em" />
+      <button class="btn primary" data-ins>Insert</button>
+      <button class="btn" data-find>Search</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Preset</span>
+      <button class="btn" data-preset="8,3,10,1,6">Note example</button>
+      <button class="btn" data-preset="4,2,6,1,3,5,7">Balanced order 1–7</button>
+      <button class="btn" data-preset="1,2,3,4,5,6,7">Sorted order 1–7</button>
+    </div>
+  </bst-viz>
+</Figure>
+
+<style>
+  .stage {
+    margin: 10px 0 4px;
+    display: flex;
+    justify-content: center;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .stage :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(line.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.4;
+  }
+  .stage :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+    transition: fill 0.2s, stroke 0.2s;
+  }
+  .stage :global(.done circle) {
+    fill: rgba(66, 133, 244, 0.22);
+    stroke: var(--g-blue);
+  }
+  .stage :global(.cur circle) {
+    fill: var(--g-yellow);
+    stroke: var(--g-yellow);
+  }
+  .stage :global(.cur text) {
+    fill: #000;
+  }
+  .stage :global(.found circle) {
+    fill: var(--g-green);
+    stroke: var(--g-green);
+  }
+  .stage :global(text) {
+    fill: var(--text);
+    font: 700 14px var(--font-mono);
+  }
+  .out {
+    min-height: 1.6em;
+    font-size: 0.9375rem;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  interface N {
+    k: number;
+    l: N | null;
+    r: N | null;
+  }
+  class BstViz extends HTMLElement {
+    root: N | null = null;
+    marks = new Map<number, string>();
+    path = new Set<number>();
+    timer = 0;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) => b.addEventListener('click', () => this.load(b.dataset.preset!)));
+      this.querySelectorAll<HTMLButtonElement>('[data-trav]').forEach((b) => b.addEventListener('click', () => this.traverse(b.dataset.trav!)));
+      const key = () => Math.trunc(+this.querySelector<HTMLInputElement>('[data-key]')!.value);
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(key()));
+      this.querySelector('[data-find]')!.addEventListener('click', () => this.search(key()));
+      this.load('8,3,10,1,6');
+    }
+    stop() {
+      clearInterval(this.timer);
+      this.marks.clear();
+      this.path.clear();
+    }
+    load(s: string) {
+      this.stop();
+      this.root = null;
+      s.split(',').forEach((k) => this.add(+k));
+      this.out(`Inserted ${s.replace(/,/g, ', ')} in that order.`);
+      this.draw();
+    }
+    add(k: number) {
+      const n: N = { k, l: null, r: null };
+      if (!this.root) return (this.root = n), true;
+      let c = this.root;
+      for (;;) {
+        if (k === c.k) return false;
+        const side = k < c.k ? 'l' : 'r';
+        if (!c[side]) return (c[side] = n), true;
+        c = c[side]!;
+      }
+    }
+    count(n = this.root): number {
+      return n ? 1 + this.count(n.l) + this.count(n.r) : 0;
+    }
+    height(n = this.root): number {
+      return n ? 1 + Math.max(this.height(n.l), this.height(n.r)) : 0;
+    }
+    insert(k: number) {
+      this.stop();
+      if (!Number.isFinite(k)) return;
+      if (this.count() >= 15) return this.out('Tree is full for this demo (15 keys).');
+      const steps = this.walk(k);
+      if (!this.add(k)) return this.out(`${k} is already in the tree.`), this.draw();
+      this.marks.set(k, 'found');
+      this.out(`Insert ${k}: ${steps.length ? steps.join(' → ') + ' → ' : ''}attach as a new leaf.`);
+      this.draw();
+    }
+    walk(k: number) {
+      const steps: string[] = [];
+      let c = this.root;
+      this.path.clear();
+      while (c && c.k !== k) {
+        this.path.add(c.k);
+        steps.push(`${k} ${k < c.k ? '&lt;' : '&gt;'} ${c.k}`);
+        c = k < c.k ? c.l : c.r;
+      }
+      if (c) this.path.add(c.k);
+      return steps;
+    }
+    search(k: number) {
+      this.stop();
+      if (!Number.isFinite(k)) return;
+      const steps = this.walk(k);
+      const found = [...this.path].includes(k);
+      [...this.path].forEach((x) => this.marks.set(x, 'done'));
+      if (found) this.marks.set(k, 'found');
+      this.out(`Search ${k}: ${steps.join(' → ') || 'root'}${found ? ' → found' : ' → empty link, not present'} (${this.path.size} node${this.path.size === 1 ? '' : 's'} visited).`);
+      this.draw();
+    }
+    traverse(kind: string) {
+      this.stop();
+      const order: number[] = [];
+      const rec = (n: N | null) => {
+        if (!n) return;
+        if (kind === 'pre') order.push(n.k);
+        rec(n.l);
+        if (kind === 'in') order.push(n.k);
+        rec(n.r);
+        if (kind === 'post') order.push(n.k);
+      };
+      if (kind === 'level') {
+        const q = this.root ? [this.root] : [];
+        while (q.length) {
+          const n = q.shift()!;
+          order.push(n.k);
+          if (n.l) q.push(n.l);
+          if (n.r) q.push(n.r);
+        }
+      } else rec(this.root);
+      const label = { pre: 'Preorder (node, left, right)', in: 'Inorder (left, node, right)', post: 'Postorder (left, right, node)', level: 'Level-order (queue)' }[kind];
+      let i = 0;
+      const tick = () => {
+        if (i > 0) this.marks.set(order[i - 1], 'done');
+        if (i < order.length) this.marks.set(order[i], 'cur');
+        this.out(`${label}: ${order.slice(0, Math.min(i + 1, order.length)).join(', ')}`);
+        this.draw();
+        if (++i > order.length) clearInterval(this.timer);
+      };
+      tick();
+      this.timer = window.setInterval(tick, 550);
+    }
+    out(t: string) {
+      this.querySelector('[data-out]')!.innerHTML = t;
+    }
+    draw() {
+      const pos = new Map<number, [number, number]>();
+      let x = 0;
+      const lay = (n: N | null, d: number) => {
+        if (!n) return;
+        lay(n.l, d + 1);
+        pos.set(n.k, [x++, d]);
+        lay(n.r, d + 1);
+      };
+      lay(this.root, 0);
+      const SX = 44, SY = 56, P = 24;
+      const w = Math.max(1, x) * SX + P, h = Math.max(1, this.height()) * SY;
+      const svg = this.querySelector('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      svg.setAttribute('width', String(w));
+      const at = (k: number) => [pos.get(k)![0] * SX + SX / 2 + P / 2, pos.get(k)![1] * SY + 28];
+      let edges = '', nodes = '';
+      const rec = (n: N | null) => {
+        if (!n) return;
+        const [x1, y1] = at(n.k);
+        for (const c of [n.l, n.r]) if (c) {
+          const [x2, y2] = at(c.k);
+          edges += `<line class="${this.path.has(n.k) && this.path.has(c.k) ? 'on' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+          rec(c);
+        }
+        nodes += `<g class="${this.marks.get(n.k) ?? ''}"><circle cx="${x1}" cy="${y1}" r="17"/><text x="${x1}" y="${y1 + 5}" text-anchor="middle">${n.k}</text></g>`;
+      };
+      rec(this.root);
+      svg.innerHTML = edges + nodes;
+      this.querySelector('[data-stat]')!.innerHTML = `n <b>${this.count()}</b> · height <b>${Math.max(0, this.height() - 1)}</b> edges · ⌈log₂(n+1)⌉ − 1 = <b>${Math.max(0, Math.ceil(Math.log2(this.count() + 1)) - 1)}</b> is the best possible`;
+    }
+  }
+  customElements.define('bst-viz', BstViz);
+</script>

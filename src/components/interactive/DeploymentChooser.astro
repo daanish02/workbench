@@ -1,0 +1,110 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which deployment model fits?"
+  caption="Tick the facts that are true for a workload. Each fact pushes the score of public, private and hybrid cloud up or down. The scores are a teaching heuristic, not a verdict: the point is that the answer comes from the workload's constraints, and that different workloads in one company can land on different models."
+>
+  <deployment-chooser>
+    <div class="dc-checks" data-checks></div>
+    <div class="dc-bars" data-bars></div>
+    <p class="dc-msg" data-msg></p>
+  </deployment-chooser>
+</Figure>
+
+<style>
+  .dc-checks {
+    display: grid;
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .dc-checks :global(label) {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+  .dc-checks :global(input) {
+    margin-top: 3px;
+  }
+  .dc-bars {
+    display: grid;
+    gap: 6px;
+  }
+  .dc-bars :global(.row) {
+    display: grid;
+    grid-template-columns: 70px 1fr 36px;
+    gap: 8px;
+    align-items: center;
+    font: 0.8125rem var(--font-mono);
+  }
+  .dc-bars :global(.track) {
+    height: 14px;
+    border-radius: 7px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    overflow: hidden;
+  }
+  .dc-bars :global(.fill) {
+    height: 100%;
+    background: var(--g-blue);
+    transition: width 0.2s;
+  }
+  .dc-bars :global(.win .fill) {
+    background: var(--g-green);
+  }
+  .dc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  const FACTS: { t: string; s: [number, number, number] }[] = [
+    { t: 'Demand varies a lot or spikes unpredictably', s: [3, -1, 1] },
+    { t: 'Rules require the data to stay in our own facility', s: [-3, 3, 2] },
+    { t: 'We already own a data centre with years of life left', s: [-1, 2, 2] },
+    { t: 'Small team, little capacity to run infrastructure', s: [3, -2, -1] },
+    { t: 'Equipment on site needs very low latency (factory, hospital)', s: [-1, 2, 2] },
+    { t: 'We want to start this week with no upfront spend', s: [3, -2, 0] },
+    { t: 'Load is large and flat all day, every day', s: [0, 2, 1] },
+    { t: 'We want managed services (ML, analytics, queues)', s: [3, -1, 2] },
+  ];
+  const NAMES = ['Public', 'Private', 'Hybrid'];
+  const WHY = [
+    'public cloud: you rent elasticity and managed services, and avoid owning hardware.',
+    'private cloud: you keep dedicated control and accept the cost and operating burden of running it.',
+    'hybrid: keep what must stay local, rent the rest, and invest in the integration between them.',
+  ];
+  class DeploymentChooser extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-checks]')!.innerHTML = FACTS.map((f, i) => `<label><input type="checkbox" data-i="${i}" />${f.t}</label>`).join('');
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('change', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const score = [0, 0, 0];
+      this.querySelectorAll<HTMLInputElement>('input').forEach((c) => {
+        if (c.checked) FACTS[+c.dataset.i!].s.forEach((v, k) => (score[k] += v));
+      });
+      const max = Math.max(...score);
+      const span = 10;
+      this.querySelector('[data-bars]')!.innerHTML = NAMES.map((n, k) => {
+        const w = Math.max(2, Math.min(100, ((score[k] + 4) / (span + 4)) * 100));
+        return `<div class="row ${score[k] === max && max > 0 ? 'win' : ''}"><span>${n}</span><div class="track"><div class="fill" style="width:${w}%"></div></div><b>${score[k]}</b></div>`;
+      }).join('');
+      const any = [...this.querySelectorAll<HTMLInputElement>('input')].some((c) => c.checked);
+      const winners = NAMES.map((n, k) => (score[k] === max ? k : -1)).filter((k) => k >= 0);
+      this.querySelector('[data-msg]')!.textContent = !any
+        ? 'Tick the facts that apply to your workload.'
+        : winners.length > 1
+          ? `A tie between ${winners.map((k) => NAMES[k].toLowerCase()).join(' and ')}: the facts you ticked do not decide it. Look at cost and the operating burden next.`
+          : `Leaning ${WHY[winners[0]]}`;
+    }
+  }
+  customElements.define('deployment-chooser', DeploymentChooser);
+</script>

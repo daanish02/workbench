@@ -1,0 +1,148 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Try to break the database"
+  caption="Run operations against two linked tables. The database refuses anything that violates a key, a foreign key or a CHECK rule, and says which one. Then switch the foreign key's delete rule between RESTRICT and CASCADE and delete a student."
+>
+  <relational-keys>
+    <div class="ctl-row">
+      <span class="ctl-label">ON DELETE</span>
+      <button class="btn" data-del="restrict" aria-pressed="true">RESTRICT</button>
+      <button class="btn" data-del="cascade" aria-pressed="false">CASCADE</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-op="ok">Enroll 102 in MA201</button>
+      <button class="btn primary" data-op="fk">Enroll 999 in CS101</button>
+      <button class="btn primary" data-op="pk">Enroll 101 in CS101 again</button>
+      <button class="btn primary" data-op="dupstudent">Add student 101</button>
+      <button class="btn primary" data-op="age">Add student aged −5</button>
+      <button class="btn primary" data-op="del">Delete student 101</button>
+    </div>
+    <div class="rk" data-tables></div>
+    <p class="rk-msg" data-msg aria-live="polite"></p>
+  </relational-keys>
+</Figure>
+
+<style>
+  .rk {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+    justify-items: center;
+  }
+  @media (max-width: 520px) {
+    .rk {
+      grid-template-columns: 1fr;
+    }
+  }
+  .rk :global(table) {
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+  }
+  .rk :global(caption) {
+    text-align: left;
+    font-weight: 700;
+    color: var(--text);
+    padding-bottom: 4px;
+  }
+  .rk :global(th),
+  .rk :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 4px 12px;
+    text-align: center;
+    color: var(--text);
+  }
+  .rk :global(th) {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
+  }
+  .rk :global(th.pk) {
+    color: var(--g-yellow-l);
+    text-decoration: underline;
+  }
+  .rk :global(th.fk) {
+    color: var(--g-blue);
+  }
+  .rk :global(tr.new td) {
+    background: rgba(52, 168, 83, 0.28);
+  }
+  .rk-msg {
+    margin: 14px 0 0;
+    font-size: 0.875rem;
+    min-height: 3.2em;
+    color: var(--text-muted);
+  }
+  .rk-msg.bad {
+    color: var(--g-red-l);
+  }
+  .rk-msg.good {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  type S = [number, string, number];
+  type E = [number, string];
+  class RelationalKeys extends HTMLElement {
+    students: S[] = [];
+    enr: E[] = [];
+    cascade = false;
+    fresh = '';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-del]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.cascade = b.dataset.del === 'cascade';
+          this.querySelectorAll('[data-del]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-op]').forEach((b) => b.addEventListener('click', () => this.op(b.dataset.op!)));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.students = [[101, 'Maya', 20], [102, 'Omar', 22], [103, 'Lina', 19]];
+      this.enr = [[101, 'CS101'], [101, 'MA201'], [102, 'CS101']];
+      this.fresh = '';
+      this.say('Two tables, linked by student_id. Pick an operation.', '');
+      this.draw();
+    }
+    say(s: string, c: string) {
+      const m = this.querySelector('[data-msg]')!;
+      m.textContent = s;
+      m.className = `rk-msg ${c}`;
+    }
+    op(k: string) {
+      this.fresh = '';
+      if (k === 'ok') {
+        if (this.enr.some((e) => e[0] === 102 && e[1] === 'MA201')) return this.say('Already there: that row exists (a second try would hit the primary key). Reset to try again.', '');
+        this.enr.push([102, 'MA201']);
+        this.fresh = 'e:102:MA201';
+        this.say('Accepted. Student 102 exists and (102, MA201) is a new key.', 'good');
+      } else if (k === 'fk') this.say('Rejected: FOREIGN KEY constraint failed. There is no student 999 for this enrollment to point at.', 'bad');
+      else if (k === 'pk') this.say('Rejected: UNIQUE / PRIMARY KEY constraint failed. The composite key (student_id, course_id) = (101, CS101) already exists: one enrollment per student per course.', 'bad');
+      else if (k === 'dupstudent') this.say('Rejected: PRIMARY KEY constraint failed on students.student_id. 101 already identifies Maya.', 'bad');
+      else if (k === 'age') this.say('Rejected: CHECK constraint failed: age >= 0. A domain rule, enforced by the database itself.', 'bad');
+      else if (k === 'del') {
+        const refs = this.enr.filter((e) => e[0] === 101).length;
+        if (!this.students.some((s) => s[0] === 101)) return this.say('Student 101 is already gone. Reset to try again.', '');
+        if (refs && !this.cascade) return this.say(`Rejected: FOREIGN KEY constraint failed (ON DELETE RESTRICT). ${refs} enrollment(s) still reference student 101; removing the student would leave dangling references.`, 'bad');
+        this.students = this.students.filter((s) => s[0] !== 101);
+        this.enr = this.enr.filter((e) => e[0] !== 101);
+        this.say(refs ? `Accepted: ON DELETE CASCADE removed student 101 and its ${refs} enrollment(s) with it. Powerful, but one delete silently removed several rows.` : 'Accepted: no enrollments referenced student 101.', 'good');
+      }
+      this.draw();
+    }
+    draw() {
+      const s = `<table><caption>students</caption><tr><th class="pk">student_id</th><th>name</th><th>age</th></tr>${this.students.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</table>`;
+      const e = `<table><caption>enrollments</caption><tr><th class="pk fk">student_id</th><th class="pk">course_id</th></tr>${this.enr.map((r) => `<tr class="${this.fresh === `e:${r[0]}:${r[1]}` ? 'new' : ''}"><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`;
+      this.querySelector('[data-tables]')!.innerHTML = s + e;
+    }
+  }
+  customElements.define('relational-keys', RelationalKeys);
+</script>

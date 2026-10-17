@@ -1,0 +1,169 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Edit history, break the chain"
+  caption="Each block stores the hash of the one before it, and a block is valid only if its own hash starts with the required zeros. Edit any block's data: it and every later block turn red. Re-mining repairs them, which is exactly the work an attacker would have to redo faster than everyone else."
+>
+  <hash-chain>
+    <div class="ctl-row">
+      <span class="ctl-label">Difficulty</span>
+      <button class="btn" data-d="2" aria-pressed="false">2 zeros</button>
+      <button class="btn" data-d="3" aria-pressed="true">3 zeros</button>
+      <button class="btn" data-d="4" aria-pressed="false">4 zeros</button>
+      <button class="btn primary" data-mine>Mine invalid blocks</button>
+    </div>
+    <div class="hc" data-chain></div>
+  </hash-chain>
+</Figure>
+
+<style>
+  .hc {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .hc {
+      grid-template-columns: 1fr;
+    }
+  }
+  .hc :global(.hb) {
+    border: 1px solid var(--g-green);
+    border-radius: 10px;
+    padding: 10px;
+    font: 0.6875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .hc :global(.hb.bad) {
+    border-color: var(--g-red);
+  }
+  .hc :global(.hb b) {
+    color: var(--text);
+    font-size: 0.75rem;
+  }
+  .hc :global(.hb .h) {
+    overflow-wrap: anywhere;
+  }
+  .hc :global(.hb .z) {
+    color: var(--g-green-l);
+  }
+  .hc :global(.hb.bad .z) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  // compact synchronous SHA-256 so mining does not wait on async crypto calls
+  function sha256(msg: string): string {
+    const K = new Uint32Array(64);
+    for (let i = 0, p = 2; i < 64; p++) {
+      let prime = true;
+      for (let d = 2; d * d <= p; d++) if (p % d === 0) prime = false;
+      if (prime) K[i++] = (Math.cbrt(p) % 1) * 4294967296;
+    }
+    const H = new Uint32Array(8);
+    for (let i = 0, p = 2; i < 8; p++) {
+      let prime = true;
+      for (let d = 2; d * d <= p; d++) if (p % d === 0) prime = false;
+      if (prime) H[i++] = (Math.sqrt(p) % 1) * 4294967296;
+    }
+    const bytes = new TextEncoder().encode(msg);
+    const len = bytes.length;
+    const padded = new Uint8Array(((len + 9 + 63) >> 6) << 6);
+    padded.set(bytes);
+    padded[len] = 0x80;
+    new DataView(padded.buffer).setUint32(padded.length - 4, len * 8);
+    const w = new Uint32Array(64);
+    const rotr = (x: number, n: number) => (x >>> n) | (x << (32 - n));
+    for (let off = 0; off < padded.length; off += 64) {
+      const dv = new DataView(padded.buffer, off, 64);
+      for (let i = 0; i < 16; i++) w[i] = dv.getUint32(i * 4);
+      for (let i = 16; i < 64; i++) {
+        const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+        const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+      }
+      let [a, b, c, d, e, f, g, h] = H;
+      for (let i = 0; i < 64; i++) {
+        const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
+        const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+        h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+      }
+      H[0] += a; H[1] += b; H[2] += c; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+    }
+    return [...H].map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
+  }
+  interface B {
+    data: string;
+    nonce: number;
+  }
+  class HashChain extends HTMLElement {
+    diff = 3;
+    blocks: B[] = [
+      { data: 'genesis', nonce: 0 },
+      { data: 'alice pays bob 5', nonce: 0 },
+      { data: 'bob pays carol 2', nonce: 0 },
+    ];
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-d]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.diff = +b.dataset.d!;
+          this.querySelectorAll('[data-d]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-mine]')!.addEventListener('click', () => this.mineAll());
+      this.mineAll();
+    }
+    hash(i: number, prev: string) {
+      return sha256(`${i}|${prev}|${this.blocks[i].data}|${this.blocks[i].nonce}`);
+    }
+    mineAll() {
+      let prev = '0'.repeat(64);
+      for (let i = 0; i < this.blocks.length; i++) {
+        const t = '0'.repeat(this.diff);
+        if (!this.hash(i, prev).startsWith(t) || !this.valid[i]) {
+          this.blocks[i].nonce = 0;
+          while (!this.hash(i, prev).startsWith(t)) this.blocks[i].nonce++;
+        }
+        prev = this.hash(i, prev);
+      }
+      this.draw();
+    }
+    valid: boolean[] = [true, true, true];
+    draw() {
+      let prev = '0'.repeat(64);
+      let ok = true;
+      const t = '0'.repeat(this.diff);
+      const el = this.querySelector('[data-chain]')!;
+      el.innerHTML = this.blocks
+        .map((b, i) => {
+          const h = this.hash(i, prev);
+          ok = ok && h.startsWith(t);
+          this.valid[i] = ok;
+          const html = `<div class="hb ${ok ? '' : 'bad'}"><b>Block ${i} ${ok ? '✓' : '✗'}</b><span>prev <span class="h">${prev.slice(0, 12)}…</span></span><input class="input" data-i="${i}" value="${b.data.replace(/"/g, '&quot;')}" aria-label="Block ${i} data" /><span>nonce ${b.nonce.toLocaleString('en-US')}</span><span class="h">hash <span class="z">${h.slice(0, this.diff)}</span>${h.slice(this.diff, 14)}…</span></div>`;
+          prev = h;
+          return html;
+        })
+        .join('');
+      el.querySelectorAll<HTMLInputElement>('input').forEach((inp) =>
+        inp.addEventListener('input', () => {
+          this.blocks[+inp.dataset.i!].data = inp.value;
+          const pos = inp.selectionStart;
+          this.draw();
+          const n = this.querySelector<HTMLInputElement>(`input[data-i="${inp.dataset.i}"]`)!;
+          n.focus();
+          n.setSelectionRange(pos, pos);
+        }),
+      );
+    }
+  }
+  customElements.define('hash-chain', HashChain);
+</script>

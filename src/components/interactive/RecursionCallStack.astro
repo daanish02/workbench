@@ -1,0 +1,198 @@
+---
+import Figure from '../Figure.astro';
+const code = ['def factorial(n):', '    if n == 0:', '        return 1', '    return n * factorial(n - 1)'];
+---
+
+<Figure
+  title="The call stack during factorial(n)"
+  caption="Each call pushes a frame holding its own n. Frames pile up until the base case, then the stack unwinds: the newest frame returns first and hands its value to the frame beneath it, which can finally finish its multiplication."
+>
+  <recursion-stack>
+    <div class="ctl-row">
+      <span class="ctl-label">n</span>
+      {[3, 4, 5].map((k) => <button class="btn" data-k={k} aria-pressed={k === 4 ? 'true' : 'false'}>{k}</button>)}
+      <span style="flex:1"></span>
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="rc-grid">
+      <div>
+        <div class="ctl-label">Code</div>
+        <pre class="rc-code">{code.map((l, i) => <span data-line={i}>{l}</span>)}</pre>
+        <div class="ctl-row stats">
+          <span class="stat">depth <b data-depth>0</b></span>
+          <span class="stat">max depth <b data-max>0</b></span>
+          <span class="stat">calls <b data-calls>0</b></span>
+        </div>
+        <p class="rc-msg" data-msg></p>
+      </div>
+      <div>
+        <div class="ctl-label">Call stack (top = running)</div>
+        <div class="rc-stack" data-stack></div>
+      </div>
+    </div>
+  </recursion-stack>
+</Figure>
+
+<style>
+  .rc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-top: 14px;
+  }
+  .rc-code {
+    margin: 6px 0 10px;
+    padding: 10px 12px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font: 0.8125rem/1.6 var(--font-mono);
+    overflow-x: auto;
+  }
+  .rc-code span {
+    display: block;
+    padding: 0 4px;
+    border-radius: 4px;
+  }
+  .rc-code span.hl {
+    background: rgba(66, 133, 244, 0.22);
+  }
+  .rc-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.6em;
+  }
+  .rc-stack {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 220px;
+  }
+  .rc-stack :global(.fr) {
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: 0.8125rem var(--font-mono);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .rc-stack :global(.fr small) {
+    color: var(--text-faint);
+  }
+  .rc-stack :global(.fr.top) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.14);
+  }
+  .rc-stack :global(.fr.ret) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.14);
+  }
+  .rc-stack :global(.empty) {
+    color: var(--text-faint);
+    font-size: 0.875rem;
+  }
+</style>
+
+<script>
+  type Frame = { n: number; note: string };
+  type Snap = { stack: Frame[]; line: number; msg: string; ret: boolean; calls: number };
+
+  function record(n: number): Snap[] {
+    const snaps: Snap[] = [];
+    const stack: Frame[] = [];
+    let calls = 0;
+    const snap = (line: number, msg: string, ret = false) => snaps.push({ stack: stack.map((f) => ({ ...f })), line, msg, ret, calls });
+    snap(-1, `Ready to call factorial(${n}).`);
+    const rec = (k: number): number => {
+      calls++;
+      stack.push({ n: k, note: 'running' });
+      snap(1, `Call factorial(${k}): a new frame with its own n = ${k}. Is n == 0?`);
+      if (k === 0) {
+        stack[stack.length - 1].note = 'returns 1';
+        snap(2, 'Base case reached. This frame returns 1 without recursing.', true);
+        stack.pop();
+        return 1;
+      }
+      stack[stack.length - 1].note = `waits: ${k} × factorial(${k - 1})`;
+      snap(3, `n = ${k} is not 0, so this frame pauses until factorial(${k - 1}) returns.`);
+      const r = rec(k - 1);
+      stack[stack.length - 1].note = `returns ${k} × ${r} = ${k * r}`;
+      snap(3, `factorial(${k - 1}) returned ${r}. The paused frame resumes: ${k} × ${r} = ${k * r}.`, true);
+      stack.pop();
+      return k * r;
+    };
+    const v = rec(n);
+    snap(-1, `Stack empty again. factorial(${n}) = ${v}.`);
+    return snaps;
+  }
+
+  class RecursionStack extends HTMLElement {
+    n = 4;
+    snaps: Snap[] = [];
+    i = 0;
+    timer = 0;
+    max = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-k]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.n = +b.dataset.k!;
+          this.reset();
+        }),
+      );
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-reset]').addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    reset() {
+      this.pause();
+      this.snaps = record(this.n);
+      this.i = 0;
+      this.draw();
+    }
+    step() {
+      if (this.i < this.snaps.length - 1) this.i++;
+      this.draw();
+    }
+    play() {
+      if (this.i >= this.snaps.length - 1) this.i = 0;
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        if (this.i >= this.snaps.length - 1) return this.pause();
+        this.timer = window.setTimeout(tick, 900);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    draw() {
+      const s = this.snaps[this.i];
+      this.max = Math.max(...this.snaps.slice(0, this.i + 1).map((x) => x.stack.length));
+      this.querySelectorAll<HTMLElement>('[data-line]').forEach((el) => el.classList.toggle('hl', +el.dataset.line! === s.line));
+      const st = [...s.stack].reverse();
+      this.q('[data-stack]').innerHTML = st.length
+        ? st.map((f, k) => `<div class="fr ${k === 0 ? (s.ret ? 'ret' : 'top') : ''}"><span>factorial(${f.n})</span><small>${f.note}</small></div>`).join('')
+        : '<div class="empty">(empty)</div>';
+      this.q('[data-depth]').textContent = String(s.stack.length);
+      this.q('[data-max]').textContent = String(this.max);
+      this.q('[data-calls]').textContent = String(s.calls);
+      this.q('[data-msg]').textContent = s.msg;
+    }
+  }
+  customElements.define('recursion-stack', RecursionStack);
+</script>

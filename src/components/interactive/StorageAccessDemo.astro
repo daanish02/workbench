@@ -1,0 +1,154 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same job, three storage models"
+  caption="Pick a job and see how object, block and file storage each handle it. Green fits naturally, yellow works with caveats, red fights the model. For the partial-edit job, set the file and edit sizes to see how many bytes each model has to move: object storage replaces whole objects, block and file storage can touch just the part that changed."
+>
+  <storage-access-demo>
+    <div class="ctl-row" data-ops></div>
+    <div class="ctl-row sa-edit" data-edit hidden>
+      <label class="stat">File size <input type="range" min="1" max="4096" value="1024" data-f /> <b data-fv>1,024</b> MB</label>
+      <label class="stat">Edit size <input type="range" min="1" max="1024" value="4" data-e /> <b data-ev>4</b> KB</label>
+    </div>
+    <div class="sa-cards" data-cards></div>
+  </storage-access-demo>
+</Figure>
+
+<style>
+  .sa-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .sa-cards {
+      grid-template-columns: 1fr;
+    }
+  }
+  .sa-cards :global(.card) {
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+  .sa-cards :global(.card b.h) {
+    color: var(--text);
+    font-size: 0.9375rem;
+  }
+  .sa-cards :global(.card code) {
+    font: 0.75rem var(--font-mono);
+    color: var(--text);
+    word-break: break-word;
+  }
+  .sa-cards :global(.card.good) {
+    border-color: var(--g-green);
+  }
+  .sa-cards :global(.card.ok) {
+    border-color: var(--g-yellow);
+  }
+  .sa-cards :global(.card.poor) {
+    border-color: var(--g-red);
+  }
+  .sa-cards :global(.tag) {
+    font: 0.75rem var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .sa-cards :global(.good .tag) {
+    color: var(--g-green);
+  }
+  .sa-cards :global(.ok .tag) {
+    color: var(--g-yellow);
+  }
+  .sa-cards :global(.poor .tag) {
+    color: var(--g-red-l);
+  }
+  .sa-edit {
+    margin-top: 10px;
+  }
+  input[type='range'] {
+    width: 140px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  type V = 'good' | 'ok' | 'poor';
+  type Card = { call: string; note: string; v: V };
+  const OPS = [
+    { id: 'edit', label: 'Edit part of a big file' },
+    { id: 'photo', label: 'Store an uploaded photo' },
+    { id: 'list', label: 'List 10,000 small files' },
+    { id: 'share', label: 'Three servers share files' },
+    { id: 'boot', label: 'Boot disk or database' },
+  ];
+  const STATIC: Record<string, Card[]> = {
+    photo: [
+      { call: 'PUT /photos/42.jpg', note: 'One request, replicated and durable by default, served over HTTP or a CDN.', v: 'good' },
+      { call: 'format, mount, write()', note: 'Works, but you must attach a volume to one server, run a filesystem on it and serve the file yourself.', v: 'poor' },
+      { call: 'write(/uploads/42.jpg)', note: 'Works and every server sees it; you pay file-service prices for a blob that needs no directories.', v: 'ok' },
+    ],
+    list: [
+      { call: 'LIST prefix=dir/ (1,000 keys per page)', note: 'Needs 10 paginated requests. Folders are only a naming convention (key prefixes).', v: 'ok' },
+      { call: 'readdir() on a local filesystem', note: 'Fast: directory metadata sits on a disk attached to the machine.', v: 'good' },
+      { call: 'readdir() over NFS or SMB', note: 'Real directories, but metadata operations cross the network and slow down as directories grow.', v: 'ok' },
+    ],
+    share: [
+      { call: 'GET / PUT by key from any client', note: 'Any number of clients, no mounting. Writes replace whole objects, last writer wins.', v: 'ok' },
+      { call: 'attach the same volume to 3 servers', note: 'Normally one writer at a time. Safe sharing needs a cluster filesystem; plain ext4/NTFS on two writers corrupts data.', v: 'poor' },
+      { call: 'mount NFS / SMB on each server', note: 'Built for this: shared paths, permissions and locking, at network latency.', v: 'good' },
+    ],
+    boot: [
+      { call: '(not a disk)', note: 'Cannot be mounted as a disk. A database engine needs in-place page writes and fsync, which an object API does not offer.', v: 'poor' },
+      { call: 'attach volume as /dev/sdb', note: 'Low-latency random reads and writes with provisioned IOPS. Exactly what boot volumes and database files expect.', v: 'good' },
+      { call: 'mount a shared filesystem', note: 'Possible for some workloads, but locking and latency make it a poor home for a busy database.', v: 'ok' },
+    ],
+  };
+  const NAMES = ['Object', 'Block', 'File'];
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  const bytes = (n: number) => `${fmt(n)} bytes`;
+  class StorageAccessDemo extends HTMLElement {
+    op = 'edit';
+    connectedCallback() {
+      const ops = this.querySelector('[data-ops]')!;
+      ops.innerHTML = OPS.map((o) => `<button class="btn" data-op="${o.id}" aria-pressed="${o.id === this.op}">${o.label}</button>`).join('');
+      ops.querySelectorAll('button').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.op = (b as HTMLElement).dataset.op!;
+          ops.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const mb = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      const kb = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-fv]')!.textContent = fmt(mb);
+      this.querySelector('[data-ev]')!.textContent = fmt(kb);
+      (this.querySelector('[data-edit]') as HTMLElement).hidden = this.op !== 'edit';
+      let cards: Card[];
+      if (this.op === 'edit') {
+        const whole = mb * 1048576;
+        const blk = Math.ceil((kb * 1024) / 4096) * 4096;
+        const fil = kb * 1024;
+        cards = [
+          { call: `PUT the whole ${fmt(mb)} MB object again`, note: `Moves ${bytes(whole)}. Objects are immutable: a small change rewrites everything (${fmt(Math.round(whole / blk))}× the block cost).`, v: 'poor' },
+          { call: 'write() the 4 KB blocks that changed', note: `Moves ${bytes(blk)}. A block device addresses fixed-size blocks and rewrites only those.`, v: 'good' },
+          { call: 'write(offset, length) over NFS', note: `Moves about ${bytes(fil)} plus a little protocol overhead. Partial writes are part of the file API.`, v: 'good' },
+        ];
+      } else cards = STATIC[this.op];
+      this.querySelector('[data-cards]')!.innerHTML = cards.map((c, i) => `<div class="card ${c.v}"><b class="h">${NAMES[i]} storage</b><span class="tag">${{ good: 'fits', ok: 'works with caveats', poor: 'fights the model' }[c.v]}</span><code>${c.call}</code><span>${c.note}</span></div>`).join('');
+    }
+  }
+  customElements.define('storage-access-demo', StorageAccessDemo);
+</script>

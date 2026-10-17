@@ -1,0 +1,145 @@
+---
+import Figure from '../Figure.astro';
+
+interface Props {
+  kind: 'chain' | 'branch' | 'merge' | 'rebase' | 'squash';
+}
+type N = { id: string; x: number; lane: number; ghost?: boolean };
+type P = { title: string; nodes: N[]; edges: [string, string][]; labels: { at: string; text: string; lane: number }[] };
+
+const { kind } = Astro.props;
+// edges read child -> parent, like Git's own pointers
+const DIV: Omit<P, 'title'> = {
+  nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }, { id: 'E', x: 3, lane: 0 }, { id: 'D', x: 3, lane: 1 }],
+  edges: [['B', 'A'], ['C', 'B'], ['E', 'C'], ['D', 'C']],
+  labels: [{ at: 'E', text: 'main', lane: 0 }, { at: 'D', text: 'feature', lane: 1 }],
+};
+const SPEC: Record<string, { title: string; caption: string; a: P; b?: P }> = {
+  chain: {
+    title: 'Commits point to their parents',
+    caption: 'Each commit stores a pointer to its parent, so the arrows run backward in time. The branch label marks the newest commit.',
+    a: { title: 'three commits on main', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }], edges: [['B', 'A'], ['C', 'B']], labels: [{ at: 'C', text: 'main', lane: 0 }] },
+  },
+  branch: {
+    title: 'A branch is a label',
+    caption: 'Creating a branch adds a second label on the same commit; nothing is copied. The first commit on the new branch moves only that label.',
+    a: { title: 'git branch feature', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }], edges: [['B', 'A'], ['C', 'B']], labels: [{ at: 'C', text: 'main', lane: 0 }, { at: 'C', text: 'feature', lane: 0 }] },
+    b: { title: 'then a commit on feature', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }, { id: 'D', x: 3, lane: 1 }], edges: [['B', 'A'], ['C', 'B'], ['D', 'C']], labels: [{ at: 'C', text: 'main', lane: 0 }, { at: 'D', text: 'feature', lane: 1 }] },
+  },
+  merge: {
+    title: 'Merge',
+    caption: 'A merge adds one commit M with two parents. Every original commit keeps its ID and the graph records that the work ran in parallel.',
+    a: { title: 'before: diverged', ...DIV },
+    b: { title: 'after: git merge feature (on main)', nodes: [...DIV.nodes, { id: 'M', x: 4, lane: 0 }], edges: [...DIV.edges, ['M', 'E'], ['M', 'D']], labels: [{ at: 'M', text: 'main', lane: 0 }, { at: 'D', text: 'feature', lane: 1 }] },
+  },
+  rebase: {
+    title: 'Rebase',
+    caption: "A rebase replays D on top of E as a new commit D′. The result is a straight line, but D′ is a different commit from D (new parent, new ID); the old D is no longer reachable from any branch.",
+    a: { title: 'before: diverged', ...DIV },
+    b: { title: 'after: git rebase main (on feature)', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }, { id: 'E', x: 3, lane: 0 }, { id: 'D', x: 3, lane: 1, ghost: true }, { id: "D′", x: 4, lane: 0 }], edges: [['B', 'A'], ['C', 'B'], ['E', 'C'], ['D', 'C'], ["D′", 'E']], labels: [{ at: 'E', text: 'main', lane: 0 }, { at: "D′", text: 'feature', lane: 0 }] },
+  },
+  squash: {
+    title: 'Squash',
+    caption: "A squash merge adds one ordinary commit S on main holding the combined result of D, E and F. S has a single parent, so the three feature commits are not part of main's history (the faded commits and the feature label stay until the branch is deleted).",
+    a: { title: 'before: three feature commits', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }, { id: 'D', x: 3, lane: 1 }, { id: 'E', x: 4, lane: 1 }, { id: 'F', x: 5, lane: 1 }], edges: [['B', 'A'], ['C', 'B'], ['D', 'C'], ['E', 'D'], ['F', 'E']], labels: [{ at: 'C', text: 'main', lane: 0 }, { at: 'F', text: 'feature', lane: 1 }] },
+    b: { title: 'after: git merge --squash feature, commit', nodes: [{ id: 'A', x: 0, lane: 0 }, { id: 'B', x: 1, lane: 0 }, { id: 'C', x: 2, lane: 0 }, { id: 'S', x: 3, lane: 0 }, { id: 'D', x: 3, lane: 1, ghost: true }, { id: 'E', x: 4, lane: 1, ghost: true }, { id: 'F', x: 5, lane: 1, ghost: true }], edges: [['B', 'A'], ['C', 'B'], ['S', 'C'], ['D', 'C'], ['E', 'D'], ['F', 'E']], labels: [{ at: 'S', text: 'main', lane: 0 }, { at: 'F', text: 'feature', lane: 1 }] },
+  },
+};
+const s = SPEC[kind];
+const X = (x: number) => 26 + x * 52;
+const Y = (l: number) => 34 + l * 44;
+const W = 26 + 5 * 52 + 90;
+---
+
+<Figure title={s.title} caption={s.caption}>
+  <div class={s.b ? "gd" : "gd one"}>
+    {
+      [s.a, s.b].filter(Boolean).map((p: P) => (
+        <div class="panel">
+          <b>{p.title}</b>
+          <svg viewBox={`0 0 ${W} 112`} role="img" aria-label={p.title}>
+            {p.edges.map(([c, par]) => {
+              const a = p.nodes.find((n) => n.id === c)!;
+              const b = p.nodes.find((n) => n.id === par)!;
+              const mx = (X(a.x) + X(b.x)) / 2;
+              const ghost = a.ghost || b.ghost;
+              return <path d={`M${X(a.x)} ${Y(a.lane)} C${mx} ${Y(a.lane)} ${mx} ${Y(b.lane)} ${X(b.x)} ${Y(b.lane)}`} class={ghost ? 'e ghost' : 'e'} />;
+            })}
+            {p.nodes.map((n) => (
+              <g class={n.ghost ? 'ghost' : ''}>
+                <circle cx={X(n.x)} cy={Y(n.lane)} r="11" class={`c l${n.lane}`} />
+                <text x={X(n.x)} y={Y(n.lane) + 3.5} class="id">{n.id}</text>
+              </g>
+            ))}
+            {p.labels.map((l, i) => {
+              const n = p.nodes.find((q) => q.id === l.at)!;
+              const same = p.labels.filter((q, j) => j < i && q.at === l.at).length;
+              return <text x={X(n.x) - 12} y={Y(n.lane) - 17 - same * 11} class="lab">{l.text}</text>;
+            })}
+          </svg>
+        </div>
+      ))
+    }
+  </div>
+</Figure>
+
+<style>
+  .gd {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .gd.one {
+    grid-template-columns: minmax(0, 420px);
+    justify-content: center;
+  }
+  @media (max-width: 720px) {
+    .gd {
+      grid-template-columns: 1fr;
+    }
+  }
+  .panel {
+    display: grid;
+    gap: 6px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .panel b {
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  svg {
+    width: 100%;
+    display: block;
+  }
+  .e {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 2;
+  }
+  .c {
+    fill: var(--g-blue);
+  }
+  .c.l1 {
+    fill: var(--g-green);
+  }
+  .id {
+    font: 700 9px var(--font-mono);
+    fill: #000;
+    text-anchor: middle;
+  }
+  .lab {
+    font: 700 9px var(--font-mono);
+    fill: var(--text);
+  }
+  .ghost {
+    opacity: 0.3;
+    stroke-dasharray: 4 3;
+  }
+  g.ghost {
+    stroke-dasharray: none;
+  }
+</style>

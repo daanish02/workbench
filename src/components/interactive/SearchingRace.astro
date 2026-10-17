@@ -1,0 +1,219 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Linear vs binary search on the same sorted array"
+  caption="Both searches look for the same target, one comparison per step. Linear search checks cells left to right; binary search compares the middle of its interval [L, R] (dimmed cells are ruled out) and halves it. Click any cell to make it the target, or try an absent value: linear search must check all 32 cells, binary search at most 6."
+>
+  <search-race>
+    <div class="ctl-row">
+      <span class="ctl-label">Target</span>
+      <b class="mono" data-target></b>
+      <span style="flex:1"></span>
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-rand>Random target</button>
+      <button class="btn" data-absent>Absent target</button>
+      <button class="btn" data-new>New array</button>
+    </div>
+    <div class="lane">
+      <div class="lane-head"><span class="ctl-label">Linear search</span><span class="stat">comparisons <b data-lc>0</b></span><span class="stat" data-ls></span></div>
+      <div class="cells" data-lin></div>
+    </div>
+    <div class="lane">
+      <div class="lane-head"><span class="ctl-label">Binary search</span><span class="stat">comparisons <b data-bc>0</b></span><span class="stat" data-bs></span></div>
+      <div class="cells" data-bin></div>
+      <p class="msg mono" data-msg></p>
+    </div>
+  </search-race>
+</Figure>
+
+<style>
+  .lane {
+    margin-top: 14px;
+  }
+  .lane-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .cells {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    gap: 3px;
+  }
+  .cells :global(button) {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    border-radius: 5px;
+    padding: 5px 0;
+    font: 0.75rem var(--font-mono);
+    cursor: pointer;
+    min-width: 0;
+  }
+  .cells :global(button.out) {
+    opacity: 0.25;
+  }
+  .cells :global(button.seen) {
+    background: #1d1d1d;
+    color: var(--text-faint);
+  }
+  .cells :global(button.cur) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.3);
+    color: #fff;
+  }
+  .cells :global(button.hit) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.35);
+    color: #fff;
+  }
+  .cells :global(button.tgt) {
+    box-shadow: inset 0 -3px 0 var(--g-yellow);
+  }
+  .msg {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+</style>
+
+<script>
+  const N = 32;
+  type B = { L: number; R: number; M: number; found: boolean; done: boolean; msg: string };
+
+  class SearchRace extends HTMLElement {
+    a: number[] = [];
+    target = 0;
+    li = -1; // last index linear search compared
+    lDone = false;
+    lFound = false;
+    lc = 0;
+    b: B = { L: 0, R: N - 1, M: -1, found: false, done: false, msg: '' };
+    bc = 0;
+    timer = 0;
+
+    connectedCallback() {
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-rand]').addEventListener('click', () => this.setTarget(this.a[Math.floor(Math.random() * N)]));
+      this.q('[data-absent]').addEventListener('click', () => {
+        let t = 0;
+        do t = 1 + Math.floor(Math.random() * 99);
+        while (this.a.includes(t));
+        this.setTarget(t);
+      });
+      this.q('[data-new]').addEventListener('click', () => this.newArray());
+      for (const sel of ['[data-lin]', '[data-bin]']) {
+        const box = this.q(sel);
+        for (let k = 0; k < N; k++) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.dataset.k = String(k);
+          btn.addEventListener('click', () => this.setTarget(this.a[k]));
+          box.append(btn);
+        }
+      }
+      this.newArray();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    newArray() {
+      const pool = Array.from({ length: 99 }, (_, i) => i + 1);
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      this.a = pool.slice(0, N).sort((x, y) => x - y);
+      this.setTarget(this.a[22]);
+    }
+    setTarget(t: number) {
+      this.pause();
+      this.target = t;
+      this.li = -1;
+      this.lDone = this.lFound = false;
+      this.lc = this.bc = 0;
+      this.b = { L: 0, R: N - 1, M: -1, found: false, done: false, msg: `L = 0, R = ${N - 1}` };
+      this.draw();
+    }
+    step() {
+      if (!this.lDone) {
+        this.li++;
+        this.lc++;
+        if (this.a[this.li] === this.target) (this.lDone = true), (this.lFound = true);
+        else if (this.li === N - 1) this.lDone = true;
+      }
+      const b = this.b;
+      if (!b.done) {
+        if (b.L > b.R) {
+          b.done = true;
+          b.M = -1;
+          b.msg = `L = ${b.L} > R = ${b.R}: interval empty, target absent`;
+        } else {
+          const M = b.L + Math.floor((b.R - b.L) / 2);
+          b.M = M;
+          this.bc++;
+          const v = this.a[M];
+          if (v === this.target) {
+            b.found = b.done = true;
+            b.msg = `M = ${M}: a[M] = ${v} = target, found`;
+          } else if (this.target < v) {
+            b.msg = `M = ${M}: ${this.target} < a[M] = ${v}, so R = M − 1 = ${M - 1}`;
+            b.R = M - 1;
+          } else {
+            b.msg = `M = ${M}: ${this.target} > a[M] = ${v}, so L = M + 1 = ${M + 1}`;
+            b.L = M + 1;
+          }
+          if (!b.found && b.L > b.R) (b.done = true), (b.msg += ' → L > R, target absent');
+        }
+      }
+      this.draw();
+    }
+    finished() {
+      return this.lDone && this.b.done;
+    }
+    play() {
+      if (this.finished()) this.setTarget(this.target);
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        if (this.finished()) return this.pause();
+        this.timer = window.setTimeout(tick, 380);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    draw() {
+      this.q('[data-target]').textContent = String(this.target) + (this.a.includes(this.target) ? '' : ' (absent)');
+      this.q('[data-lin]').querySelectorAll<HTMLButtonElement>('button').forEach((el, k) => {
+        el.textContent = String(this.a[k]);
+        el.className = k === this.li ? (this.lFound ? 'hit' : 'cur') : k < this.li ? 'seen' : '';
+        if (this.a[k] === this.target) el.classList.add('tgt');
+      });
+      const b = this.b;
+      this.q('[data-bin]').querySelectorAll<HTMLButtonElement>('button').forEach((el, k) => {
+        el.textContent = String(this.a[k]);
+        const inside = b.found ? k === b.M : k >= b.L && k <= b.R;
+        el.className = k === b.M ? (b.found ? 'hit' : 'cur') : inside ? '' : 'out';
+        if (this.a[k] === this.target) el.classList.add('tgt');
+      });
+      this.q('[data-lc]').textContent = String(this.lc);
+      this.q('[data-bc]').textContent = String(this.bc);
+      this.q('[data-ls]').textContent = this.lDone ? (this.lFound ? '✓ found' : '✗ not found') : '';
+      this.q('[data-bs]').textContent = b.done ? (b.found ? '✓ found' : '✗ not found') : '';
+      this.q('[data-msg]').textContent = b.msg;
+    }
+  }
+  customElements.define('search-race', SearchRace);
+</script>

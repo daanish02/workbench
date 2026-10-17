@@ -1,0 +1,151 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One limit, many gateways"
+  caption="An API key is allowed 100 requests per minute, but its traffic is spread over several gateway servers by a load balancer. Send a burst and compare how each strategy enforces the limit. Per-gateway counters let N times too much through; splitting the limit rejects legitimate traffic when load is uneven; a shared counter is exact only if the check-and-increment is atomic; routing each key to one gateway makes a local counter exact."
+>
+  <rl-cluster>
+    <div class="ctl-row">
+      <label class="stat">Gateways <input type="range" min="1" max="8" value="4" data-n /> <b data-nv>4</b></label>
+      <label class="stat">Burst of requests <input type="range" min="20" max="400" step="10" value="150" data-b /> <b data-bv>150</b></label>
+      <label class="stat">Concurrent in flight <input type="range" min="1" max="20" value="8" data-c /> <b data-cv>8</b></label>
+      <button class="btn" data-roll>Re-roll routing</button>
+    </div>
+    <div class="rc" data-out></div>
+    <p class="rc-msg" data-msg></p>
+  </rl-cluster>
+</Figure>
+
+<style>
+  .rc {
+    margin-top: 14px;
+    display: grid;
+    gap: 8px;
+  }
+  .rc :global(.row) {
+    display: grid;
+    grid-template-columns: 200px 1fr 90px;
+    gap: 8px;
+    align-items: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .rc :global(.track) {
+    position: relative;
+    height: 14px;
+    background: #1a1a1a;
+    border-radius: 4px;
+  }
+  .rc :global(.bar) {
+    height: 100%;
+    border-radius: 4px;
+    background: var(--g-blue);
+  }
+  .rc :global(.bar.over) {
+    background: var(--g-red);
+  }
+  .rc :global(.bar.under) {
+    background: var(--g-yellow);
+  }
+  .rc :global(.bar.ok) {
+    background: var(--g-green);
+  }
+  .rc :global(.mark) {
+    position: absolute;
+    top: -3px;
+    bottom: -3px;
+    width: 2px;
+    background: #fff;
+  }
+  .rc :global(.val) {
+    text-align: right;
+    color: var(--text);
+  }
+  .rc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 100px;
+    vertical-align: middle;
+  }
+  @media (max-width: 640px) {
+    .rc :global(.row) {
+      grid-template-columns: 1fr;
+      gap: 3px;
+    }
+  }
+</style>
+
+<script>
+  const LIMIT = 100;
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  class RlCluster extends HTMLElement {
+    seed = 5;
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-roll]')!.addEventListener('click', () => ((this.seed = Math.floor(Math.random() * 1e6)), this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const n = q('[data-n]');
+      const burst = q('[data-b]');
+      const conc = q('[data-c]');
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-bv]')!.textContent = String(burst);
+      this.querySelector('[data-cv]')!.textContent = String(conc);
+      const r = rng(this.seed);
+      const route = Array.from({ length: burst }, () => Math.floor(r() * n));
+      const run = (caps: number) => {
+        const seen = new Array(n).fill(0);
+        let ok = 0;
+        for (const g of route) if (seen[g] < caps) (seen[g]++, ok++);
+        return ok;
+      };
+      const local = run(LIMIT);
+      const split = run(Math.floor(LIMIT / n));
+      const shared = Math.min(burst, LIMIT);
+      let count = 0;
+      let nonAtomic = 0;
+      for (let i = 0; i < burst; i += conc) {
+        const seen = count;
+        for (let k = 0; k < Math.min(conc, burst - i); k++) if (seen < LIMIT) (nonAtomic++, count++);
+      }
+      const ideal = Math.min(burst, LIMIT);
+      const rows: [string, number, string][] = [
+        ['Per-gateway counters', local, 'each gateway enforces 100 on its own slice'],
+        [`Limit split (${Math.floor(LIMIT / n)} each)`, split, 'each gateway enforces 100 ÷ N'],
+        ['Shared counter, atomic', shared, 'one counter, atomic increment-and-check'],
+        [`Shared, check then increment`, nonAtomic, `races among ${conc} concurrent requests`],
+        ['Route key to one gateway', ideal, 'a local counter becomes exact'],
+      ];
+      const max = Math.max(burst, 1);
+      this.querySelector('[data-out]')!.innerHTML = rows
+        .map(([label, v]) => {
+          const cls = v > LIMIT ? 'over' : v < ideal ? 'under' : 'ok';
+          return `<div class="row"><span>${label}</span><div class="track"><div class="bar ${cls}" style="width:${(v / max) * 100}%"></div><div class="mark" style="left:${(LIMIT / max) * 100}%" title="limit"></div></div><span class="val">${v} accepted</span></div>`;
+        })
+        .join('');
+      const msgs: string[] = [];
+      if (local > LIMIT) msgs.push(`Per-gateway counters let ${local} through (limit ${LIMIT}): every gateway sees only part of the traffic.`);
+      if (split < ideal) msgs.push(`Splitting the limit rejected ${ideal - split} request(s) it should have accepted, because the load balancer did not spread this key evenly.`);
+      if (nonAtomic > LIMIT) msgs.push(`The non-atomic check let ${nonAtomic - LIMIT} extra through: requests in the same wave all read the same stale count.`);
+      if (!msgs.length) msgs.push('At this burst size every strategy stays within the limit; raise the burst above 100, or reduce it near 100 with many gateways, to see them diverge.');
+      this.querySelector('[data-msg]')!.textContent = msgs.join(' ') + ' The white marker is the limit; red is over it, yellow is under what was permitted.';
+    }
+  }
+  customElements.define('rl-cluster', RlCluster);
+</script>

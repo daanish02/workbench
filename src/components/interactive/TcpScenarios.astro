@@ -1,0 +1,145 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="TCP and UDP on the same flaky link"
+  caption="Pick a scenario and step through it. TCP's handshake costs a round trip and every segment is acknowledged, so a lost segment is detected and resent. UDP just sends: the lost datagram is simply gone unless the application notices."
+>
+  <tcp-scenarios>
+    <div class="ctl-row">
+      <button class="btn" data-sc="hs" aria-pressed="true">TCP handshake</button>
+      <button class="btn" data-sc="loss" aria-pressed="false">TCP with a lost segment</button>
+      <button class="btn" data-sc="udp" aria-pressed="false">UDP with a lost datagram</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="ts-head"><b>Client</b><b>Server</b></div>
+    <ol class="ts-log" data-log></ol>
+    <p class="ts-msg" data-msg aria-live="polite"></p>
+  </tcp-scenarios>
+</Figure>
+
+<style>
+  .ts-head {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 14px;
+    padding: 0 6px;
+    font-size: 0.8125rem;
+  }
+  .ts-log {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ts-log :global(li) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font: 0.75rem/1.4 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ts-log :global(li.r) {
+    flex-direction: row-reverse;
+    text-align: right;
+  }
+  .ts-log :global(li.lost) {
+    border-color: var(--g-red);
+    color: var(--g-red-l);
+    text-decoration: line-through;
+  }
+  .ts-log :global(li.now) {
+    border-color: var(--g-blue);
+    color: #fff;
+  }
+  .ts-log :global(li.ok) {
+    border-color: var(--g-green);
+    color: var(--g-green-l);
+  }
+  .ts-log :global(li.note) {
+    justify-content: center;
+    font-style: italic;
+    border-style: dashed;
+  }
+  .ts-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  // each step: [direction, text, class, explanation]; direction c = client to server, s = server to client, n = note
+  type S = ['c' | 's' | 'n', string, string, string];
+  const SC: Record<string, S[]> = {
+    hs: [
+      ['c', 'SYN  seq=x', '', 'The client proposes a connection and announces its starting sequence number x.'],
+      ['s', 'SYN-ACK  seq=y, ack=x+1', '', 'The server accepts, announces its own number y, and acknowledges the client\'s.'],
+      ['c', 'ACK  ack=y+1', 'ok', 'The client acknowledges y. Both sides agree on both starting numbers: one round trip spent, connection established.'],
+      ['c', 'DATA  seq=x+1, 100 bytes', '', 'Data can now flow. Every byte has a sequence number.'],
+      ['s', 'ACK  ack=x+101', 'ok', 'The server confirms it has received everything up to byte x+100.'],
+      ['c', 'FIN', '', 'The client is done sending and starts closing its direction.'],
+      ['s', 'ACK, then FIN', '', 'The server acknowledges, finishes its own side and closes too.'],
+      ['c', 'ACK', 'ok', 'Connection closed cleanly in both directions.'],
+    ],
+    loss: [
+      ['c', 'DATA  seq=1, 100 bytes', '', 'Segment 1 is sent over the established connection.'],
+      ['s', 'ACK  ack=101', 'ok', 'Received: the server asks for byte 101 next.'],
+      ['c', 'DATA  seq=101, 100 bytes', 'lost', 'Segment 2 is lost somewhere in the network. Neither side knows yet.'],
+      ['c', 'DATA  seq=201, 100 bytes', '', 'Segment 3 arrives.'],
+      ['s', 'ACK  ack=101  (duplicate)', '', 'The server is still waiting for byte 101, so it repeats its acknowledgment. Repeated duplicates are a loss signal.'],
+      ['n', 'timeout or 3 duplicate ACKs', 'note', 'The client concludes segment 2 was lost.'],
+      ['c', 'DATA  seq=101  (retransmit)', '', 'The client resends the missing bytes. The application above never sees any of this.'],
+      ['s', 'ACK  ack=301', 'ok', 'The server now has everything up to byte 300, in order, and delivers a clean stream to its application.'],
+    ],
+    udp: [
+      ['c', 'datagram #1', '', 'No handshake: the client just sends.'],
+      ['c', 'datagram #2', 'lost', 'This one is lost. UDP does not notice, retry or report it.'],
+      ['c', 'datagram #3', '', 'Delivered. Datagrams are independent: #3 does not wait for #2.'],
+      ['n', 'server application received #1 and #3', 'note', 'Lower latency, no head-of-line blocking, but the gap is the application\'s problem: ignore it (live video), or add its own acknowledgments.'],
+    ],
+  };
+  class TcpScenarios extends HTMLElement {
+    sc = 'hs';
+    i = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-sc]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.sc = b.dataset.sc!;
+          this.querySelectorAll('[data-sc]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'Press Next step.';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    next() {
+      const steps = SC[this.sc];
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      const [dir, text, cls, why] = steps[this.i++];
+      const arrow = dir === 'c' ? `${text} →` : dir === 's' ? `← ${text}` : text;
+      log.insertAdjacentHTML('beforeend', `<li class="${dir === 's' ? 'r' : ''} ${cls} now">${arrow}</li>`);
+      this.querySelector('[data-msg]')!.textContent = why;
+      if (this.i >= steps.length) (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+    }
+  }
+  customElements.define('tcp-scenarios', TcpScenarios);
+</script>

@@ -1,0 +1,94 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A rumour spreads"
+  caption="Node 0 learns something new. Each round, every informed node tells a few random peers. Informed nodes turn green; the lines are this round's messages. Doubling the cluster costs about one extra round."
+>
+  <gossip-spread>
+    <div class="ctl-row">
+      <label class="stat">Nodes <select class="input" data-n><option>16</option><option selected>32</option><option>64</option></select></label>
+      <label class="stat">Fanout <select class="input" data-f><option>1</option><option selected>2</option><option>3</option></select></label>
+      <button class="btn primary" data-step>Next round</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <svg viewBox="0 0 240 240" class="gs-svg" data-svg aria-label="Gossip spreading around a ring"></svg>
+    <p class="stat" data-stat></p>
+  </gossip-spread>
+</Figure>
+
+<style>
+  .gs-svg {
+    width: 100%;
+    max-width: 300px;
+    display: block;
+    margin: 8px auto;
+  }
+  .gs-svg :global(line) {
+    stroke: rgba(138, 180, 248, 0.5);
+    stroke-width: 0.8;
+  }
+  .gs-svg :global(circle) {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+    stroke-width: 1.2;
+  }
+  .gs-svg :global(circle.on) {
+    fill: rgba(52, 168, 83, 0.6);
+    stroke: var(--g-green);
+  }
+  select.input {
+    padding: 4px 6px;
+  }
+</style>
+
+<script>
+  class GossipSpread extends HTMLElement {
+    on = new Set<number>();
+    edges: [number, number][] = [];
+    round = 0;
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelectorAll('select').forEach((s) => s.addEventListener('change', () => this.reset()));
+      this.reset();
+    }
+    n() {
+      return +this.querySelector<HTMLSelectElement>('[data-n]')!.value;
+    }
+    reset() {
+      this.on = new Set([0]);
+      this.edges = [];
+      this.round = 0;
+      this.draw();
+    }
+    step() {
+      const n = this.n();
+      const f = +this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      if (this.on.size >= n) return;
+      const edges: [number, number][] = [];
+      const add: number[] = [];
+      for (const a of this.on)
+        for (let k = 0; k < f; k++) {
+          let b = Math.floor(Math.random() * n);
+          if (b === a) b = (b + 1) % n;
+          edges.push([a, b]);
+          add.push(b);
+        }
+      add.forEach((b) => this.on.add(b));
+      this.edges = edges;
+      this.round++;
+      this.draw();
+    }
+    draw() {
+      const n = this.n();
+      const P = (i: number): [number, number] => [120 + 100 * Math.cos((i / n) * 2 * Math.PI - Math.PI / 2), 120 + 100 * Math.sin((i / n) * 2 * Math.PI - Math.PI / 2)];
+      let h = this.edges.map(([a, b]) => `<line x1="${P(a)[0]}" y1="${P(a)[1]}" x2="${P(b)[0]}" y2="${P(b)[1]}"></line>`).join('');
+      for (let i = 0; i < n; i++) h += `<circle class="${this.on.has(i) ? 'on' : ''}" cx="${P(i)[0]}" cy="${P(i)[1]}" r="${n > 32 ? 4 : 6}"></circle>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      this.querySelector('[data-stat]')!.innerHTML = `round <b>${this.round}</b> · informed <b>${this.on.size}</b>/${n}${this.on.size >= n ? ' · everyone knows' : ''}`;
+    }
+  }
+  customElements.define('gossip-spread', GossipSpread);
+</script>

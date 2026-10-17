@@ -1,0 +1,80 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What the nines add up to"
+  caption="Components in a chain (series) must all work, so availabilities multiply and the whole is worse than any part. Redundant copies (parallel) fail only if all copies fail, so unavailability multiplies and the whole is better. Parallel math assumes independent failures, which shared racks, networks and bugs often violate."
+>
+  <availability-math>
+    <div class="ctl-row">
+      <label class="stat">Each component <select class="input" data-a><option value="0.99">99%</option><option value="0.999" selected>99.9%</option><option value="0.9999">99.99%</option></select></label>
+      <label class="stat">In a chain of <input type="range" min="1" max="12" value="3" data-n /> <b data-nv>3</b></label>
+      <label class="stat">Replicas of each <input type="range" min="1" max="4" value="1" data-r /> <b data-rv>1</b></label>
+    </div>
+    <div class="am-out" data-out></div>
+    <p class="am-msg" data-msg></p>
+  </availability-math>
+</Figure>
+
+<style>
+  .am-out {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .am-out :global(.card) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .am-out :global(.card span) {
+    display: block;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .am-out :global(.card b) {
+    font: 700 1.05rem var(--font-mono);
+    color: var(--text);
+  }
+  .am-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.2em;
+  }
+  select.input {
+    padding: 5px 8px;
+  }
+  input[type='range'] {
+    width: 100px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const MIN_YEAR = 365 * 24 * 60;
+  const fmtDown = (m: number) => (m >= 120 ? `${(m / 60).toFixed(1)} hours` : m >= 1 ? `${m.toFixed(0)} min` : `${(m * 60).toFixed(0)} s`);
+  class AvailabilityMath extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input,select').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const a = +this.querySelector<HTMLSelectElement>('[data-a]')!.value;
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-rv]')!.textContent = String(r);
+      const unit = 1 - (1 - a) ** r; // r independent replicas: down only if all are down
+      const total = unit ** n; // a chain of n such units: all must be up
+      const card = (l: string, v: string) => `<div class="card"><span>${l}</span><b>${v}</b></div>`;
+      this.querySelector('[data-out]')!.innerHTML = card('One component', `${(a * 100).toFixed(2)}%`) + card(`With ${r} replica${r > 1 ? 's' : ''}`, `${(unit * 100).toFixed(4)}%`) + card(`Chain of ${n}`, `${(total * 100).toFixed(4)}%`) + card('Downtime / year', fmtDown(MIN_YEAR * (1 - total)));
+      this.querySelector('[data-msg]')!.textContent = `${n} components at ${(a * 100).toFixed(2)}% each give ${(total * 100).toFixed(3)}% overall: ${fmtDown(MIN_YEAR * (1 - total))} of downtime a year. ${r === 1 && n > 1 ? 'Try adding a replica to each: redundancy buys far more than polishing individual parts.' : r > 1 ? 'Replication helps a lot on paper, but only if the copies fail independently (separate machines, racks and zones) and failover actually works.' : ''}`;
+    }
+  }
+  customElements.define('availability-math', AvailabilityMath);
+</script>

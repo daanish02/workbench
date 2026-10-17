@@ -1,0 +1,205 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Bloom filter: k hashes into m bits"
+  caption="Insert words to set k bits each, then Query: one 0 bit (red) proves absence; all 1s (green) only means maybe. Fill the filter and run the test on 1000 words that were never inserted: the measured rate matches (fraction of bits set)^k, and the formula (1 − e^(−kn/m))^k predicts that fill on average. With only 16 to 64 bits, one filter's fill can stray noticeably from the average. Changing k or m rebuilds the filter from the same words."
+>
+  <bloom-filter-viz>
+    <div class="ctl-row">
+      <span class="ctl-label">m bits</span>
+      <button class="btn" data-m="16">16</button>
+      <button class="btn" data-m="32">32</button>
+      <button class="btn" data-m="64">64</button>
+      <span class="ctl-label" style="margin-left:8px">k hashes</span>
+      <button class="btn" data-k="1">1</button>
+      <button class="btn" data-k="2">2</button>
+      <button class="btn" data-k="3">3</button>
+      <button class="btn" data-k="4">4</button>
+      <button class="btn" data-k="6">6</button>
+    </div>
+    <div class="bits" data-bits></div>
+    <p class="msg" data-msg></p>
+    <div class="ctl-row">
+      <label class="ctl-label" for="bf-w">Word</label>
+      <input class="input" id="bf-w" data-w value="grape" autocomplete="off" spellcheck="false" style="width:8em" />
+      <button class="btn primary" data-ins>Insert</button>
+      <button class="btn" data-q>Query</button>
+      <button class="btn" data-fill>Insert 4 random</button>
+      <button class="btn" data-test>Test 1000 non-members</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="stat" data-stat style="margin-top:10px"></div>
+  </bloom-filter-viz>
+</Figure>
+
+<style>
+  .bits {
+    display: grid;
+    grid-template-columns: repeat(16, minmax(0, 1fr));
+    gap: 3px;
+    margin: 12px 0 4px;
+  }
+  .bits :global(div) {
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    text-align: center;
+    font: 700 0.8125rem var(--font-mono);
+    color: var(--text-faint);
+    padding: 3px 0 1px;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .bits :global(div small) {
+    display: block;
+    font: 8px var(--font-mono);
+    color: var(--text-faint);
+  }
+  .bits :global(div.one) {
+    background: rgba(66, 133, 244, 0.22);
+    color: #fff;
+  }
+  .bits :global(div.ok) {
+    border-color: var(--g-green);
+    box-shadow: 0 0 0 1px var(--g-green);
+  }
+  .bits :global(div.no) {
+    border-color: var(--g-red);
+    box-shadow: 0 0 0 1px var(--g-red);
+  }
+  .bits :global(div.set) {
+    border-color: var(--g-yellow);
+    box-shadow: 0 0 0 1px var(--g-yellow);
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 8px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .msg :global(b.fp) {
+    color: var(--g-yellow);
+  }
+</style>
+
+<script>
+  // cyrb53: a small, well-mixed 53-bit string hash. Seeding it with i gives k independent
+  // hash functions, matching the idealized model behind the false-positive formula.
+  const hash = (str: string, seed: number) => {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+    h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+    h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  };
+  const SYL = ['ka', 'lo', 'mi', 'ne', 'ru', 'ta', 'vo', 'zi', 'pe', 'su', 'da', 'go'];
+
+  class BloomFilterViz extends HTMLElement {
+    m = 32;
+    k = 3;
+    bits: number[] = [];
+    words: string[] = [];
+    marks: Record<number, string> = {};
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) => b.addEventListener('click', () => ((this.m = +b.dataset.m!), this.rebuild('m'))));
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) => b.addEventListener('click', () => ((this.k = +b.dataset.k!), this.rebuild('k'))));
+      const word = () => this.querySelector<HTMLInputElement>('[data-w]')!.value.trim().toLowerCase();
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(word()));
+      this.querySelector('[data-q]')!.addEventListener('click', () => this.query(word()));
+      this.querySelector('[data-fill]')!.addEventListener('click', () => {
+        for (let i = 0; i < 4; i++) this.add(this.rand());
+        this.marks = {};
+        this.say(`Inserted 4 random words. ${this.words.length} words in the filter.`);
+        this.draw();
+      });
+      this.querySelector('[data-test]')!.addEventListener('click', () => this.test());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.words = [];
+        ['apple', 'banana', 'cherry'].forEach((w) => this.words.push(w));
+        this.rebuild('');
+        this.say('Filter holds apple, banana, cherry. Query grape, then insert a few more and query again.');
+      });
+      this.words = ['apple', 'banana', 'cherry'];
+      this.rebuild('');
+      this.say('Filter holds apple, banana, cherry. Query grape, then insert a few more and query again.');
+    }
+    rand() {
+      let w;
+      do w = Array.from({ length: 3 }, () => SYL[Math.floor(Math.random() * SYL.length)]).join('') + Math.floor(Math.random() * 100);
+      while (this.words.includes(w));
+      return w;
+    }
+    pos(w: string) {
+      return Array.from({ length: this.k }, (_, i) => hash(w, i) % this.m);
+    }
+    add(w: string) {
+      if (!this.words.includes(w)) this.words.push(w);
+      this.pos(w).forEach((p) => (this.bits[p] = 1));
+    }
+    rebuild(what: string) {
+      this.bits = Array(this.m).fill(0);
+      const ws = this.words;
+      this.words = [];
+      ws.forEach((w) => this.add(w));
+      this.marks = {};
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.m! === this.m)));
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.k! === this.k)));
+      if (what) this.say(`Rebuilt with m = ${this.m}, k = ${this.k} from the same ${this.words.length} words. (A real filter cannot do this: it does not store the words.)`);
+      this.draw();
+    }
+    insert(w: string) {
+      if (!w) return;
+      const ps = this.pos(w);
+      const fresh = ps.filter((p) => !this.bits[p]).length;
+      this.add(w);
+      this.marks = {};
+      ps.forEach((p) => (this.marks[p] = 'set'));
+      this.say(`Insert "${w}": positions ${ps.join(', ')}. ${fresh} of them were 0 and are now 1; the rest were already set by other words.`);
+      this.draw();
+    }
+    query(w: string) {
+      if (!w) return;
+      const ps = this.pos(w);
+      this.marks = {};
+      ps.forEach((p) => (this.marks[p] = this.bits[p] ? 'ok' : 'no'));
+      const zero = ps.filter((p) => !this.bits[p]);
+      const member = this.words.includes(w);
+      if (zero.length) this.say(`Query "${w}": positions ${ps.join(', ')}. Bit ${zero[0]} is 0, so "${w}" was <b>definitely never inserted</b>.`);
+      else this.say(`Query "${w}": positions ${ps.join(', ')} are all 1, so the answer is <b>maybe</b>. ${member ? 'It really was inserted.' : '<b class="fp">It was never inserted: a false positive.</b>'}`);
+      this.draw();
+    }
+    test() {
+      let fp = 0;
+      const N = 1000;
+      for (let i = 0; i < N; i++) {
+        const w = 'probe-' + i + '-' + Math.random().toString(36).slice(2, 7);
+        if (this.pos(w).every((p) => this.bits[p])) fp++;
+      }
+      this.marks = {};
+      const n = this.words.length;
+      const pred = Math.pow(1 - Math.exp((-this.k * n) / this.m), this.k);
+      const fill = this.bits.reduce((a, b) => a + b, 0) / this.m;
+      this.say(`Queried ${N} words that were never inserted: <b>${fp}</b> came back "maybe", a measured rate of <b>${((fp / N) * 100).toFixed(1)}%</b>. The formula predicts ${(pred * 100).toFixed(1)}%; with this exact fill, (fraction of 1s)^k = ${(Math.pow(fill, this.k) * 100).toFixed(1)}%.`);
+      this.draw();
+    }
+    say(t: string) {
+      this.querySelector('[data-msg]')!.innerHTML = t;
+    }
+    draw() {
+      this.querySelector('[data-bits]')!.innerHTML = this.bits.map((b, i) => `<div class="${b ? 'one' : ''} ${this.marks[i] ?? ''}">${b}<small>${i}</small></div>`).join('');
+      const n = this.words.length;
+      const ones = this.bits.reduce((a, b) => a + b, 0);
+      const pred = Math.pow(1 - Math.exp((-this.k * n) / this.m), this.k);
+      const kopt = n ? ((this.m / n) * Math.LN2).toFixed(1) : '∞';
+      this.querySelector('[data-stat]')!.innerHTML = `n <b>${n}</b> · m <b>${this.m}</b> · k <b>${this.k}</b> · bits set <b>${ones}/${this.m}</b> · predicted p <b>${(pred * 100).toFixed(1)}%</b> · optimal k = (m/n) ln 2 ≈ <b>${kopt}</b>`;
+    }
+  }
+  customElements.define('bloom-filter-viz', BloomFilterViz);
+</script>

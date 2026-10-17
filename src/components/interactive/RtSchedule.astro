@@ -1,0 +1,128 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Rate-monotonic vs. earliest-deadline-first"
+  caption="Two periodic tasks, each needing C units of CPU every P units, with its deadline at the end of its period. RMS fixes priorities by period; EDF always runs whichever job's deadline is nearest. Red marks a missed deadline. With the default tasks the CPU is 97% busy: EDF fits them, RMS does not."
+>
+  <rt-sched>
+    <div class="ctl-row">
+      <span class="ctl-label">T1</span> C <input class="input" type="number" min="1" max="9" value="2" data-c="0" /> P <input class="input" type="number" min="2" max="12" value="5" data-p="0" />
+      <span class="ctl-label" style="margin-left:10px">T2</span> C <input class="input" type="number" min="1" max="9" value="4" data-c="1" /> P <input class="input" type="number" min="2" max="12" value="7" data-p="1" />
+    </div>
+    <p class="u" data-u></p>
+    <div class="rows" data-rows></div>
+  </rt-sched>
+</Figure>
+
+<style>
+  .ctl-row .input {
+    width: 3.2em;
+  }
+  .u {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .u :global(b) {
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+  .rows {
+    margin-top: 10px;
+    display: grid;
+    gap: 10px;
+  }
+  .rows :global(.lab) {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .rows :global(.lab b.ok) {
+    color: var(--g-green-l);
+  }
+  .rows :global(.lab b.bad) {
+    color: var(--g-red-l);
+  }
+  .rows :global(.tl) {
+    display: flex;
+    height: 24px;
+  }
+  .rows :global(.tl div) {
+    flex: 1;
+    border-right: 1px solid #000;
+    font: 600 0.5625rem var(--font-mono);
+    display: grid;
+    place-items: center;
+    color: #000;
+  }
+  .rows :global(.t0) {
+    background: var(--g-blue-l);
+  }
+  .rows :global(.t1) {
+    background: var(--g-yellow-l);
+  }
+  .rows :global(.idle) {
+    background: #151515;
+  }
+  .rows :global(.miss) {
+    box-shadow: inset 0 -4px 0 var(--g-red);
+  }
+</style>
+
+<script>
+  type Task = { c: number; p: number };
+  // Simulate one CPU for `len` time units; returns the timeline and the time of the first missed deadline per task.
+  function simulate(tasks: Task[], policy: 'rms' | 'edf', len: number) {
+    const jobs: { t: number; left: number; deadline: number }[] = [];
+    const timeline: number[] = [];
+    const misses: number[] = [];
+    for (let time = 0; time < len; time++) {
+      tasks.forEach((tk, i) => {
+        if (time % tk.p === 0) jobs.push({ t: i, left: tk.c, deadline: time + tk.p });
+      });
+      for (const j of jobs) if (j.left > 0 && j.deadline <= time && !misses.includes(j.deadline * 10 + j.t)) misses.push(j.deadline * 10 + j.t);
+      const ready = jobs.filter((j) => j.left > 0 && j.deadline > time);
+      ready.sort((a, b) => (policy === 'rms' ? tasks[a.t].p - tasks[b.t].p || a.t - b.t : a.deadline - b.deadline || a.t - b.t));
+      const run = ready[0];
+      if (run) run.left--;
+      timeline.push(run ? run.t : -1);
+    }
+    return { timeline, misses: misses.map((m) => ({ at: Math.floor(m / 10), t: m % 10 })) };
+  }
+  const lcm = (a: number, b: number): number => {
+    const g = (x: number, y: number): number => (y ? g(y, x % y) : x);
+    return (a * b) / g(a, b);
+  };
+
+  class RtSched extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const tasks: Task[] = [0, 1].map((i) => ({
+        c: Math.max(1, +this.querySelector<HTMLInputElement>(`[data-c="${i}"]`)!.value || 1),
+        p: Math.max(2, +this.querySelector<HTMLInputElement>(`[data-p="${i}"]`)!.value || 2),
+      }));
+      const U = tasks.reduce((s, t) => s + t.c / t.p, 0);
+      const bound = 2 * (Math.SQRT2 - 1);
+      this.querySelector('[data-u]')!.innerHTML = `Utilization U = ${tasks.map((t) => `${t.c}/${t.p}`).join(' + ')} = <b>${U.toFixed(3)}</b> · RMS guarantee for 2 tasks: U ≤ <b>${bound.toFixed(3)}</b> · EDF: U ≤ <b>1</b>`;
+      const len = Math.min(lcm(tasks[0].p, tasks[1].p), 42);
+      this.querySelector('[data-rows]')!.innerHTML = (['rms', 'edf'] as const)
+        .map((pol) => {
+          const { timeline, misses } = simulate(tasks, pol, len + 1);
+          const missAt = new Set(misses.map((m) => m.at - 1));
+          const verdict = misses.length ? `<b class="bad">missed T${misses[0].t + 1}'s deadline at t=${misses[0].at}</b>` : '<b class="ok">all deadlines met</b>';
+          const cells = timeline
+            .slice(0, len)
+            .map((t, k) => `<div class="${t < 0 ? 'idle' : 't' + t} ${missAt.has(k) ? 'miss' : ''}">${t < 0 ? '' : 'T' + (t + 1)}</div>`)
+            .join('');
+          return `<div><div class="lab">${pol === 'rms' ? 'RMS (fixed: shorter period wins)' : 'EDF (nearest deadline wins)'}: ${verdict}</div><div class="tl">${cells}</div></div>`;
+        })
+        .join('');
+    }
+  }
+  customElements.define('rt-sched', RtSched);
+</script>

@@ -1,0 +1,184 @@
+---
+import Figure from '../Figure.astro';
+const lines = [
+  'FUNCTION FindLargest(numbers)',
+  '    largest = numbers[0]',
+  '',
+  '    FOR each number IN numbers',
+  '        IF number > largest',
+  '            largest = number',
+  '',
+  '    RETURN largest',
+];
+---
+
+<Figure
+  title="Tracing FindLargest"
+  caption="A trace by hand, automated: the highlighted line is about to run, and the table records every variable change. Edit the list to try the edge cases from the text: all negatives, a single element, a repeated maximum."
+>
+  <algo-tracer>
+    <div class="ctl-row">
+      <label class="ctl-label" for="at-in">numbers</label>
+      <input class="input" id="at-in" data-in value="4, 9, 2, 7" style="flex:1;min-width:160px" />
+    </div>
+    <div class="at-grid">
+      <pre class="pseudo" data-code>{lines.map((l, i) => <span data-line={i}>{l || ' '}</span>)}</pre>
+      <div>
+        <div class="cells" data-cells></div>
+        <table class="vars">
+          <tbody>
+            <tr><th>number</th><td data-v="number">—</td></tr>
+            <tr><th>largest</th><td data-v="largest">—</td></tr>
+            <tr><th>number &gt; largest?</th><td data-v="cmp">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p class="say" data-say aria-live="polite"></p>
+    <div class="ctl-row">
+      <button class="btn" data-prev>← Back</button>
+      <button class="btn primary" data-next>Step →</button>
+      <button class="btn" data-reset>Reset</button>
+      <span class="stat" data-count></span>
+    </div>
+  </algo-tracer>
+</Figure>
+
+<style>
+  .at-grid {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 600px) {
+    .at-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pseudo {
+    margin: 0;
+    padding: 10px 0;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: 0.8125rem/1.6 var(--font-mono);
+    overflow-x: auto;
+  }
+  .pseudo span {
+    display: block;
+    padding: 0 12px;
+    color: var(--text-muted);
+    border-left: 3px solid transparent;
+    white-space: pre;
+  }
+  .pseudo span.on {
+    background: rgba(251, 188, 5, 0.12);
+    border-left-color: var(--g-yellow);
+    color: #fff;
+  }
+  .cells {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cells :global(div) {
+    min-width: 40px;
+    padding: 8px 6px;
+    text-align: center;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    font: 600 0.9375rem var(--font-mono);
+    position: relative;
+  }
+  .cells :global(div.cur) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.16);
+  }
+  .cells :global(div.best) {
+    box-shadow: inset 0 -3px 0 var(--g-green);
+  }
+  .vars {
+    margin-top: 12px;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    width: 100%;
+  }
+  .vars th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-faint);
+    padding: 4px 8px 4px 0;
+  }
+  .vars td {
+    font: 600 0.875rem var(--font-mono);
+    padding: 4px 0;
+  }
+  .vars td.changed {
+    color: var(--g-green-l);
+  }
+  .say {
+    margin: 12px 0 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.8em;
+  }
+</style>
+
+<script>
+  type Step = { line: number; idx: number; number?: number; largest?: number; cmp?: string; say: string; changed?: string };
+
+  function trace(nums: number[]): Step[] {
+    if (!nums.length) return [{ line: 1, idx: -1, say: 'numbers is empty, so numbers[0] does not exist. The pseudocode assumes a non-empty list; real code must decide what to do here.' }];
+    const s: Step[] = [{ line: 0, idx: -1, say: 'Call FindLargest with the list.' }];
+    let largest = nums[0];
+    s.push({ line: 1, idx: 0, largest, changed: 'largest', say: `Start with the first element as the best candidate: largest = ${largest}.` });
+    nums.forEach((n, i) => {
+      s.push({ line: 3, idx: i, number: n, largest, say: `Next element: number = ${n}.`, changed: 'number' });
+      const bigger = n > largest;
+      s.push({ line: 4, idx: i, number: n, largest, cmp: bigger ? 'true' : 'false', say: `Is ${n} > ${largest}? ${bigger ? 'Yes.' : 'No, so skip the update.'}` });
+      if (bigger) {
+        largest = n;
+        s.push({ line: 5, idx: i, number: n, largest, cmp: 'true', changed: 'largest', say: `New best candidate: largest = ${n}.` });
+      }
+    });
+    s.push({ line: 7, idx: -1, largest, say: `Every element has been examined once, so return ${largest}.` });
+    return s;
+  }
+
+  class AlgoTracer extends HTMLElement {
+    steps: Step[] = [];
+    nums: number[] = [];
+    i = 0;
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-in]')!;
+      const load = () => {
+        this.nums = input.value.split(/[\s,]+/).filter(Boolean).map(Number).filter((x) => Number.isFinite(x)).slice(0, 12);
+        this.steps = trace(this.nums);
+        this.i = 0;
+        this.draw();
+      };
+      input.addEventListener('input', load);
+      this.querySelector('[data-next]')!.addEventListener('click', () => ((this.i = Math.min(this.i + 1, this.steps.length - 1)), this.draw()));
+      this.querySelector('[data-prev]')!.addEventListener('click', () => ((this.i = Math.max(this.i - 1, 0)), this.draw()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => ((this.i = 0), this.draw()));
+      load();
+    }
+    draw() {
+      const st = this.steps[this.i];
+      this.querySelectorAll<HTMLElement>('[data-line]').forEach((l) => l.classList.toggle('on', +l.dataset.line! === st.line));
+      const bestIdx = st.largest === undefined ? -1 : this.nums.indexOf(st.largest);
+      this.querySelector('[data-cells]')!.innerHTML = this.nums
+        .map((n, k) => `<div class="${k === st.idx ? 'cur' : ''} ${k === bestIdx ? 'best' : ''}">${n}</div>`)
+        .join('');
+      for (const k of ['number', 'largest', 'cmp'] as const) {
+        const td = this.querySelector(`[data-v="${k}"]`)!;
+        td.textContent = st[k] === undefined ? '—' : String(st[k]);
+        td.classList.toggle('changed', st.changed === k);
+      }
+      this.querySelector('[data-say]')!.textContent = st.say;
+      this.querySelector('[data-count]')!.textContent = `step ${this.i + 1} / ${this.steps.length}`;
+    }
+  }
+  customElements.define('algo-tracer', AlgoTracer);
+</script>

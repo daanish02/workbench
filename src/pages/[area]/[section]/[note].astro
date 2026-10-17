@@ -1,0 +1,324 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../../layouts/Base.astro';
+import Sidebar from '../../../components/Sidebar.astro';
+import Toc from '../../../components/Toc.astro';
+import { components } from '../../../components/interactive';
+import { getArea } from '../../../data/areas';
+import { areaNav, noteParts, noteUrl, readingMinutes, type Note } from '../../../lib/nav';
+
+export async function getStaticPaths() {
+  const notes = await getCollection('notes');
+  return notes.map((note) => {
+    const { area, section, slug } = noteParts(note);
+    return { params: { area, section, note: slug }, props: { note } };
+  });
+}
+
+const { note } = Astro.props as { note: Note };
+const { area: areaId, section: sectionId } = noteParts(note);
+const area = getArea(areaId)!;
+const nav = await areaNav(areaId);
+const section = nav.find((s) => s.id === sectionId)!;
+const flat = nav.flatMap((s) => s.notes);
+const idx = flat.findIndex((n) => n.id === note.id);
+const prev = flat[idx - 1];
+const next = flat[idx + 1];
+const { Content, headings } = await render(note);
+
+// "Copy page" gives the note as plain Markdown (interactive components removed)
+const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.body ?? '')
+  .replace(/^<[A-Z][\s\S]*?\/>\s*$/gm, '')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim()}\n`;
+---
+
+<Base title={note.data.title} description={note.data.description} active={areaId} hasSidebar>
+  <div class="shell">
+    <Sidebar areaId={areaId} areaTitle={area.title} nav={nav} currentId={note.id} />
+    <main class="main" data-pagefind-body>
+      <article>
+        <header class="note-head">
+          <p class="eyebrow" data-pagefind-ignore>
+            <span>{section.title}</span>
+            <span class="read-time">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.25"></circle><path d="M8 4.75V8l2.25 1.5"></path>
+              </svg>
+              {readingMinutes(note)} min read
+            </span>
+          </p>
+          <div class="title-row">
+            <h1>{note.data.title}</h1>
+            <button class="copy-page" type="button" data-copy-page data-pagefind-ignore>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <rect x="5" y="5" width="9" height="9" rx="2"></rect><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"></path>
+              </svg>
+              <span>Copy page</span>
+            </button>
+          </div>
+          <p class="lead">{note.data.description}</p>
+          <template data-markdown>{markdown}</template>
+        </header>
+
+        {
+          note.data.takeaways.length > 0 && (
+            <section class="in-short" aria-labelledby="in-short">
+              <h2 id="in-short" data-pagefind-ignore>In short</h2>
+              <ul>
+                {note.data.takeaways.map((t) => (
+                  <li set:html={t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>')} />
+                ))}
+              </ul>
+            </section>
+          )
+        }
+
+        <div class="prose">
+          <Content components={components} />
+        </div>
+
+        {
+          note.data.resources.length > 0 && (
+            <section class="deeper" aria-labelledby="go-deeper">
+              <h2 id="go-deeper">Go deeper</h2>
+              <ul>
+                {note.data.resources.map((r) => (
+                  <li>
+                    <a href={r.url} target="_blank" rel="noopener">
+                      <span class="r-title">{r.title}</span>
+                      <span class="r-host">{new URL(r.url).hostname.replace(/^www\./, '')}</span>
+                    </a>
+                    {r.note && <p>{r.note}</p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )
+        }
+      </article>
+
+      <nav class="pager" aria-label="Previous and next notes" data-pagefind-ignore>
+        {
+          prev ? (
+            <a class="pager-link" href={noteUrl(prev)}>
+              <span class="pager-dir">← Previous</span>
+              <span class="pager-title">{prev.data.title}</span>
+            </a>
+          ) : (
+            <span />
+          )
+        }
+        {
+          next && (
+            <a class="pager-link next" href={noteUrl(next)}>
+              <span class="pager-dir">Next →</span>
+              <span class="pager-title">{next.data.title}</span>
+            </a>
+          )
+        }
+      </nav>
+    </main>
+    <aside class="toc-col" data-pagefind-ignore>
+      <Toc headings={headings} />
+    </aside>
+  </div>
+</Base>
+
+<style>
+  .shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
+    max-width: 1520px;
+    margin: 0 auto;
+  }
+  .main {
+    min-width: 0;
+    padding: 40px 56px 96px;
+  }
+  article {
+    max-width: var(--content-w);
+    margin: 0 auto;
+  }
+  .toc-col {
+    padding: 40px 24px 0 0;
+  }
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 10px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .read-time {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border-strong);
+    color: var(--text-faint);
+    font-weight: 500;
+  }
+  .title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(1.9rem, 4vw, 2.4rem);
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+    font-weight: 700;
+  }
+  .copy-page {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 7px 12px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .copy-page:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+  .lead {
+    margin: 14px 0 36px;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+  .deeper {
+    margin-top: 56px;
+    padding-top: 28px;
+    border-top: 1px solid var(--border);
+  }
+  .deeper h2 {
+    margin: 0 0 14px;
+    font-size: 1.125rem;
+  }
+  .deeper ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+  .deeper li {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    background: var(--bg-elev);
+  }
+  .deeper a {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .deeper a:hover .r-title {
+    color: var(--accent);
+  }
+  .r-title {
+    font-weight: 600;
+    font-size: 0.9375rem;
+  }
+  .r-host {
+    font: 0.75rem var(--font-mono);
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .deeper p {
+    margin: 4px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+  }
+  .pager {
+    max-width: var(--content-w);
+    margin: 56px auto 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .pager-link {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .pager-link:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-elev);
+  }
+  .pager-link.next {
+    text-align: right;
+    grid-column: 2;
+  }
+  .pager-dir {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+  }
+  .pager-title {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  @media (max-width: 1279px) {
+    .shell {
+      grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    }
+    .toc-col {
+      display: none;
+    }
+  }
+  @media (max-width: 1023px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .main {
+      padding: 28px 16px 72px;
+    }
+  }
+  @media (max-width: 640px) {
+    .copy-page span {
+      display: none;
+    }
+    .lead {
+      font-size: 1.0625rem;
+    }
+    .pager {
+      grid-template-columns: 1fr;
+    }
+    .pager-link.next {
+      grid-column: 1;
+    }
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy-page]').forEach((btn) => {
+    const md = document.querySelector<HTMLTemplateElement>('template[data-markdown]')!.innerHTML;
+    const label = btn.querySelector('span')!;
+    btn.addEventListener('click', async () => {
+      // template content is HTML-escaped; decode it back to plain text
+      const txt = new DOMParser().parseFromString(md, 'text/html').documentElement.textContent ?? '';
+      await navigator.clipboard.writeText(txt);
+      label.textContent = 'Copied';
+      setTimeout(() => (label.textContent = 'Copy page'), 1600);
+    });
+  });
+</script>

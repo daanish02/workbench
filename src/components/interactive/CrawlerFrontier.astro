@@ -1,0 +1,130 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Politeness: why a crawler's queue is per host"
+  caption="Three crawler workers fetch pages; each row is a worker, each column a quarter-second, each colour a website. A site may be hit at most once per second. A plain FIFO queue pulls pages as they were discovered (a site's pages arrive together), so workers hammer one site: red cells are violations. Per-host queues skip sites that are not ready and pick someone else: no violations, and with many sites no lost speed. With only a few sites, politeness leaves workers idle (grey)."
+>
+  <crawler-frontier>
+    <div class="ctl-row">
+      <span class="ctl-label">Sites to crawl</span>
+      <button class="btn" data-s="few" aria-pressed="false">4 sites (12 pages)</button>
+      <button class="btn" data-s="many" aria-pressed="true">24 sites (72 pages)</button>
+      <span class="ctl-label">Queue</span>
+      <button class="btn" data-p="fifo" aria-pressed="false">Plain FIFO</button>
+      <button class="btn" data-p="polite" aria-pressed="true">Per-host queues</button>
+    </div>
+    <div class="cf" data-grid></div>
+    <p class="cf-msg" data-msg></p>
+  </crawler-frontier>
+</Figure>
+
+<style>
+  .cf {
+    margin-top: 14px;
+    overflow-x: auto;
+  }
+  .cf :global(.w) {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 4px;
+    align-items: center;
+  }
+  .cf :global(.lab) {
+    width: 24px;
+    flex: none;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .cf :global(i) {
+    display: block;
+    width: 12px;
+    height: 20px;
+    border-radius: 3px;
+    flex: none;
+    background: #161616;
+  }
+  .cf :global(i.bad) {
+    outline: 2px solid var(--g-red);
+    outline-offset: -2px;
+  }
+  .cf :global(i.idle) {
+    background: #2b2b2b;
+  }
+  .cf-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.6em;
+  }
+</style>
+
+<script>
+  type U = [string, number];
+  const FEW: U[] = [...Array.from({ length: 6 }, (_, i): U => ['a', i]), ...Array.from({ length: 3 }, (_, i): U => ['b', i]), ...Array.from({ length: 2 }, (_, i): U => ['c', i]), ['d', 0]];
+  const MANY: U[] = Array.from({ length: 24 }, (_, h) => Array.from({ length: 3 }, (_, i): U => [`h${h}`, i])).flat();
+  const PALETTE = ['#8ab4f8', '#f28b82', '#fdd663', '#81c995', '#d7aefb', '#78d9ec', '#ff8bcb', '#a8dab5'];
+  const colour = (host: string) => {
+    let h = 0;
+    for (const c of host) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+    return PALETTE[h % PALETTE.length];
+  };
+  function crawl(urls: U[], polite: boolean) {
+    const workers = 3;
+    const gap = 4;
+    const dur = 2;
+    const queue = [...urls];
+    const freeAt = new Array(workers).fill(0);
+    const last: Record<string, number> = {};
+    const rows: { host: string; bad: boolean; idle: boolean }[][] = Array.from({ length: workers }, () => []);
+    let tick = 0;
+    let violations = 0;
+    let idle = 0;
+    while (queue.length || Math.max(...freeAt) > tick) {
+      for (let w = 0; w < workers; w++) {
+        if (freeAt[w] > tick) {
+          rows[w].push(rows[w][rows[w].length - 1] ?? { host: '', bad: false, idle: true });
+          continue;
+        }
+        const ready = (u: U) => tick - (last[u[0]] ?? -gap) >= gap;
+        const idx = queue.findIndex((u) => !polite || ready(u));
+        if (idx < 0) {
+          idle++;
+          rows[w].push({ host: '', bad: false, idle: true });
+          continue;
+        }
+        const [pick] = queue.splice(idx, 1);
+        const bad = !ready(pick);
+        if (bad) violations++;
+        last[pick[0]] = tick;
+        freeAt[w] = tick + dur;
+        rows[w].push({ host: pick[0], bad, idle: false });
+      }
+      tick++;
+    }
+    // the generic "busy" cells repeated above should not be flagged twice
+    return { rows, ticks: tick, violations, idle };
+  }
+  class CrawlerFrontier extends HTMLElement {
+    s = 'many';
+    p = 'polite';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) => b.addEventListener('click', () => ((this.s = b.dataset.s!), this.mark('[data-s]', b), this.draw())));
+      this.querySelectorAll<HTMLButtonElement>('[data-p]').forEach((b) => b.addEventListener('click', () => ((this.p = b.dataset.p!), this.mark('[data-p]', b), this.draw())));
+      this.draw();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    draw() {
+      const urls = this.s === 'few' ? FEW : MANY;
+      const r = crawl(urls, this.p === 'polite');
+      this.querySelector('[data-grid]')!.innerHTML = r.rows
+        .map((row, w) => `<div class="w"><span class="lab">w${w + 1}</span>${row.map((c, k) => `<i class="${c.idle ? 'idle' : ''} ${c.bad && (k === 0 || row[k - 1] !== c) ? 'bad' : ''}" style="${c.idle ? '' : `background:${colour(c.host)}`}"></i>`).join('')}</div>`)
+        .join('');
+      this.querySelector('[data-msg]')!.textContent = `${this.p === 'polite' ? 'Per-host queues' : 'Plain FIFO'}, ${this.s === 'few' ? '4' : '24'} sites: all ${urls.length} pages fetched in ${(r.ticks * 0.25).toFixed(2)} s with ${r.violations} politeness violation${r.violations === 1 ? '' : 's'} and ${r.idle} idle worker-tick${r.idle === 1 ? '' : 's'}. ${this.p === 'fifo' ? 'FIFO is fast only because it ignores the one-per-second rule.' : this.s === 'few' ? 'With few sites the rule itself is the bottleneck: workers wait because every site is cooling down. Real crawlers have millions of sites, so there is always another ready.' : 'With many sites there is always another host ready, so politeness costs nothing.'}`;
+    }
+  }
+  customElements.define('crawler-frontier', CrawlerFrontier);
+</script>

@@ -1,0 +1,121 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How far does one change travel?"
+  caption="Each arrow reads 'depends on'. Click a module to change it: every module that depends on it, directly or indirectly, can break (highlighted). In the tangled design almost any change ripples everywhere; in the layered design modules depend on a small stable interface, so the same change stays local. This is what low coupling buys."
+>
+  <module-ripple>
+    <div class="ctl-row">
+      <button class="btn" data-m="tangled" aria-pressed="false">Tangled</button>
+      <button class="btn" data-m="layered" aria-pressed="true">Layered</button>
+    </div>
+    <svg viewBox="0 0 400 190" class="mr-svg" data-svg aria-label="Module dependency graph"></svg>
+    <p class="mr-msg" data-msg>Click a module to change it.</p>
+  </module-ripple>
+</Figure>
+
+<style>
+  .mr-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .mr-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text);
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .mr-svg :global(.n) {
+    fill: var(--bg-elev);
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+    cursor: pointer;
+  }
+  .mr-svg :global(.n.hit) {
+    fill: rgba(234, 67, 53, 0.35);
+    stroke: var(--g-red);
+  }
+  .mr-svg :global(.n.src) {
+    fill: rgba(251, 188, 4, 0.4);
+    stroke: var(--g-yellow);
+  }
+  .mr-svg :global(.e) {
+    stroke: var(--border-strong);
+    stroke-width: 1.2;
+    fill: none;
+  }
+  .mr-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  type G = { nodes: Record<string, [number, number]>; edges: [string, string][] };
+  const GRAPHS: Record<string, G> = {
+    tangled: {
+      nodes: { UI: [60, 40], Orders: [200, 30], Billing: [340, 40], Users: [60, 130], Tax: [200, 100], Mail: [340, 130], DB: [200, 165] },
+      edges: [['UI', 'Orders'], ['UI', 'Billing'], ['UI', 'Users'], ['UI', 'DB'], ['Orders', 'Billing'], ['Orders', 'Users'], ['Orders', 'Tax'], ['Orders', 'DB'], ['Billing', 'Tax'], ['Billing', 'Mail'], ['Billing', 'DB'], ['Users', 'DB'], ['Users', 'Mail'], ['Tax', 'DB'], ['Tax', 'Orders'], ['Mail', 'Users']],
+    },
+    layered: {
+      nodes: { UI: [200, 25], Orders: [100, 85], Billing: [300, 85], Tax: [300, 150], Repo: [100, 150], SqlRepo: [200, 150] },
+      edges: [['UI', 'Orders'], ['UI', 'Billing'], ['Orders', 'Repo'], ['Billing', 'Repo'], ['Billing', 'Tax'], ['SqlRepo', 'Repo']],
+    },
+  };
+  const LABEL: Record<string, string> = { Repo: 'Repo (interface)', SqlRepo: 'SqlRepo' };
+  class ModuleRipple extends HTMLElement {
+    m = 'layered';
+    sel: string | null = null;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.m = b.dataset.m!;
+          this.sel = null;
+          this.querySelectorAll('[data-m]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-svg]')!.addEventListener('click', (e) => {
+        const n = (e.target as SVGElement).closest('[data-n]') as SVGElement | null;
+        if (n) { this.sel = n.dataset.n!; this.draw(); }
+      });
+      this.draw();
+    }
+    draw() {
+      const g = GRAPHS[this.m];
+      const hit = new Set<string>();
+      if (this.sel) {
+        const walk = (x: string) => g.edges.forEach(([a, b]) => { if (b === x && !hit.has(a)) { hit.add(a); walk(a); } });
+        walk(this.sel);
+        hit.delete(this.sel);
+      }
+      let h = '<defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L8 4L0 8z" fill="#5f6368"></path></marker></defs>';
+      for (const [a, b] of g.edges) {
+        const [x1, y1] = g.nodes[a], [x2, y2] = g.nodes[b];
+        const dx = x2 - x1, dy = y2 - y1;
+        const k = Math.min(30 / (Math.abs(dx) || 1e-9), 12 / (Math.abs(dy) || 1e-9)); // fraction of the way from a node's centre to its box edge
+        const gap = 4 / (Math.hypot(dx, dy) || 1);
+        h += `<line class="e" x1="${x1 + dx * (k + gap)}" y1="${y1 + dy * (k + gap)}" x2="${x2 - dx * (k + gap)}" y2="${y2 - dy * (k + gap)}" marker-end="url(#arr)"></line>`;
+      }
+      for (const [n, [x, y]] of Object.entries(g.nodes)) {
+        const cls = n === this.sel ? 'src' : hit.has(n) ? 'hit' : '';
+        h += `<g data-n="${n}"><rect class="n ${cls}" x="${x - 30}" y="${y - 12}" width="60" height="24" rx="6"></rect><text x="${x}" y="${y + 3}">${LABEL[n] && LABEL[n].length > 9 ? n : LABEL[n] ?? n}</text></g>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const total = Object.keys(g.nodes).length - 1;
+      this.querySelector('[data-msg]')!.textContent = this.sel
+        ? `Changing ${this.sel} can break ${hit.size} of the other ${total} modules${hit.size ? ` (${[...hit].join(', ')})` : ''}. ${this.m === 'layered' && this.sel === 'SqlRepo' ? 'Nothing depends on the concrete implementation, only on the interface it implements, so it can be rewritten freely.' : this.m === 'tangled' ? 'Everything is connected to everything, and some dependencies even run in circles (Tax and Orders).' : this.sel === 'Repo' ? 'A change to the interface is the expensive one, which is why interfaces are kept small and stable.' : ''}`
+        : 'Click a module to change it.';
+    }
+  }
+  customElements.define('module-ripple', ModuleRipple);
+</script>

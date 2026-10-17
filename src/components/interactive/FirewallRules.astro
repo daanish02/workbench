@@ -1,0 +1,116 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Firewall rules: first match wins"
+  caption="A small network: the internet, a web server and a database. Pick a packet and see which rule decides it. Drag the order with the arrows or toggle default deny off to see how rule order and the default policy change what gets through."
+>
+  <firewall-rules>
+    <div class="ctl-row">
+      <span class="ctl-label">Source</span>
+      <select class="input" data-src><option>internet</option><option>admin-vpn</option><option>web</option></select>
+      <span class="ctl-label">Dest</span>
+      <select class="input" data-dst><option>web</option><option>db</option></select>
+      <span class="ctl-label">Port</span>
+      <select class="input" data-port><option>443</option><option>22</option><option>5432</option></select>
+      <button class="btn" data-deny aria-pressed="true">Default deny</button>
+    </div>
+    <table class="fw-table" data-rules></table>
+    <p class="fw-msg" data-msg aria-live="polite"></p>
+  </firewall-rules>
+</Figure>
+
+<style>
+  .fw-table {
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+    margin: 14px auto 0;
+  }
+  .fw-table :global(th),
+  .fw-table :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 4px 10px;
+    text-align: center;
+    color: var(--text);
+  }
+  .fw-table :global(th) {
+    color: var(--text-muted);
+    background: var(--bg-soft);
+    font-weight: 600;
+  }
+  .fw-table :global(tr.hit td) {
+    background: rgba(66, 133, 244, 0.28);
+  }
+  .fw-table :global(td.allow) {
+    color: var(--g-green-l);
+  }
+  .fw-table :global(td.deny) {
+    color: var(--g-red-l);
+  }
+  .fw-table :global(button) {
+    background: none;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text);
+    cursor: pointer;
+    padding: 0 6px;
+  }
+  .fw-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    min-height: 3em;
+    color: var(--text-muted);
+  }
+  .fw-msg.allow {
+    color: var(--g-green-l);
+  }
+  .fw-msg.deny {
+    color: var(--g-red-l);
+  }
+  select.input {
+    padding: 5px 8px;
+  }
+</style>
+
+<script>
+  type R = [string, string, string, number];
+  class FirewallRules extends HTMLElement {
+    rules: R[] = [
+      ['allow', 'internet', 'web', 443],
+      ['allow', 'admin-vpn', 'web', 22],
+      ['allow', 'web', 'db', 5432],
+    ];
+    deny = true;
+    connectedCallback() {
+      this.querySelectorAll('select').forEach((s) => s.addEventListener('change', () => this.draw()));
+      this.querySelector('[data-deny]')!.addEventListener('click', (e) => {
+        this.deny = !this.deny;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.deny));
+        (e.currentTarget as HTMLElement).textContent = this.deny ? 'Default deny' : 'Default allow';
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const src = this.querySelector<HTMLSelectElement>('[data-src]')!.value;
+      const dst = this.querySelector<HTMLSelectElement>('[data-dst]')!.value;
+      const port = +this.querySelector<HTMLSelectElement>('[data-port]')!.value;
+      const hit = this.rules.findIndex((r) => r[1] === src && r[2] === dst && r[3] === port);
+      const verdict = hit >= 0 ? this.rules[hit][0] : this.deny ? 'deny' : 'allow';
+      const table = this.querySelector('[data-rules]')!;
+      table.innerHTML = `<tr><th>#</th><th>action</th><th>from</th><th>to</th><th>port</th><th>order</th></tr>${this.rules.map((r, i) => `<tr class="${i === hit ? 'hit' : ''}"><td>${i + 1}</td><td class="${r[0]}">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td><button data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Move rule ${i + 1} up">↑</button></td></tr>`).join('')}<tr class="${hit < 0 ? 'hit' : ''}"><td>—</td><td class="${this.deny ? 'deny' : 'allow'}">${this.deny ? 'deny' : 'allow'}</td><td colspan="4">default policy (nothing matched)</td></tr>`;
+      table.querySelectorAll<HTMLButtonElement>('[data-up]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const i = +b.dataset.up!;
+          [this.rules[i - 1], this.rules[i]] = [this.rules[i], this.rules[i - 1]];
+          this.draw();
+        }),
+      );
+      const m = this.querySelector('[data-msg]') as HTMLElement;
+      m.className = `fw-msg ${verdict}`;
+      m.textContent = `${src} → ${dst}:${port} is ${verdict.toUpperCase()}. ${hit >= 0 ? `Rule ${hit + 1} matched first.` : this.deny ? 'No rule allows it, so default deny blocks it: the database is not reachable from the internet.' : 'No rule matched and the default is allow, so everything not explicitly blocked gets through. That is why default deny is the guiding principle.'}`;
+    }
+  }
+  customElements.define('firewall-rules', FirewallRules);
+</script>

@@ -1,0 +1,112 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How much traffic sees the bad release?"
+  caption="A release with a bug goes out while 1,000 requests per second arrive. Monitoring needs some minutes to notice and roll back. The chart shows the share of traffic on the new version over time; the red area is the damage. All-at-once exposes everyone until detection, a rolling update ramps quickly, a canary starts with 1% and widens only while the metrics stay healthy."
+>
+  <canary-rollout>
+    <div class="ctl-row">
+      <button class="btn" data-s="all" aria-pressed="false">All at once</button>
+      <button class="btn" data-s="rolling" aria-pressed="false">Rolling (25% a minute)</button>
+      <button class="btn" data-s="canary" aria-pressed="true">Canary (1%, 5%, 25%, 100%)</button>
+      <label class="stat">Detection <input type="range" min="1" max="10" value="3" data-d /> <b data-dv>3</b> min</label>
+      <label class="stat">Bad requests <input type="range" min="5" max="100" step="5" value="30" data-e /> <b data-ev>30</b>%</label>
+    </div>
+    <svg viewBox="0 0 400 170" class="cr-svg" data-svg aria-label="Traffic share on the new version over time"></svg>
+    <p class="cr-msg" data-msg></p>
+  </canary-rollout>
+</Figure>
+
+<style>
+  .cr-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .cr-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .cr-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .cr-svg :global(.share) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .cr-svg :global(.dmg) {
+    fill: rgba(234, 67, 53, 0.45);
+  }
+  .cr-svg :global(.halt) {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 3 3;
+  }
+  .cr-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4em;
+  }
+  input[type='range'] {
+    width: 90px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const RPS = 1000;
+  // share of traffic on the new version at minute t (before any rollback)
+  const SHARE: Record<string, (t: number) => number> = {
+    all: () => 1,
+    rolling: (t) => Math.min(1, 0.25 * (Math.floor(t) + 1)),
+    canary: (t) => (t < 5 ? 0.01 : t < 10 ? 0.05 : t < 15 ? 0.25 : 1),
+  };
+  const NAME: Record<string, string> = { all: 'all at once', rolling: 'rolling', canary: 'canary' };
+  class CanaryRollout extends HTMLElement {
+    s = 'canary';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.s = b.dataset.s!;
+          this.querySelectorAll('[data-s]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const det = +this.querySelector<HTMLInputElement>('[data-d]')!.value;
+      const err = +this.querySelector<HTMLInputElement>('[data-e]')!.value / 100;
+      this.querySelector('[data-dv]')!.textContent = String(det);
+      this.querySelector('[data-ev]')!.textContent = String(Math.round(err * 100));
+      const f = SHARE[this.s];
+      const T = 20;
+      const X = (t: number) => 30 + (t / T) * 360, Y = (v: number) => 140 - v * 110;
+      let line = '', area = `${X(0)},140 `, bad = 0;
+      for (let t = 0; t < det - 1e-9; t += 0.05) {
+        const v = f(Math.min(t, det - 1e-6));
+        line += `${X(t).toFixed(1)},${Y(v).toFixed(1)} `;
+        area += `${X(t).toFixed(1)},${Y(v).toFixed(1)} `;
+        bad += v * RPS * 60 * err * 0.05;
+      }
+      line += `${X(det)},${Y(0)} ${X(T)},${Y(0)}`;
+      area += `${X(det)},140`;
+      let h = `<line class="ax" x1="30" y1="140" x2="390" y2="140"></line><line class="ax" x1="30" y1="25" x2="30" y2="140"></line>`;
+      h += `<polygon class="dmg" points="${area}"></polygon><polyline class="share" points="${line}"></polyline>`;
+      h += `<line class="halt" x1="${X(det)}" y1="25" x2="${X(det)}" y2="140"></line><text x="${X(det) + 4}" y="36" style="fill:var(--g-yellow)">rollback at ${det} min</text>`;
+      h += `<text x="4" y="32">100%</text><text x="12" y="143">0</text><text x="150" y="160">minutes since release</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const mean = SHARE[this.s](det - 1e-6);
+      this.querySelector('[data-msg]')!.textContent = `${NAME[this.s]}: about ${Math.round(bad).toLocaleString('en-US')} failed requests before the rollback, with up to ${Math.round(mean * 100)}% of traffic on the bad version when it was caught. ${this.s === 'canary' ? 'The canary exposes a sliver of users while it gathers evidence, then widens only if the metrics hold.' : this.s === 'all' ? 'Every user is exposed until someone notices.' : 'Faster to finish than a canary, but each step exposes a quarter more of the traffic.'} The cost of a canary is time: it takes 15 minutes to reach 100% even for a good release.`;
+    }
+  }
+  customElements.define('canary-rollout', CanaryRollout);
+</script>

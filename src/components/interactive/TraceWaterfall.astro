@@ -1,0 +1,156 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One slow dependency, three signals"
+  caption="A checkout request passes through four services. Slide the payment provider's latency. Metrics (from 400 simulated requests) tell you that something is wrong and when; the trace of one request shows where the time went; the logs of that same trace ID say why. Each signal answers a different question, and the trace ID is what joins them."
+>
+  <trace-waterfall>
+    <div class="ctl-row">
+      <label class="stat">Payment provider latency <input type="range" min="50" max="3000" step="50" value="300" data-p /> <b data-pv>300</b> ms</label>
+    </div>
+    <div class="tw-grid">
+      <div class="tw-box"><b>Metrics</b><div data-metrics></div></div>
+      <div class="tw-box"><b>Trace</b><svg viewBox="0 0 300 120" class="tw-svg" data-svg aria-label="Request trace"></svg></div>
+    </div>
+    <div class="tw-box"><b>Logs for this trace</b><pre data-logs></pre></div>
+    <p class="tw-msg" data-msg></p>
+  </trace-waterfall>
+</Figure>
+
+<style>
+  .tw-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  @media (max-width: 640px) {
+    .tw-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .tw-box {
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-soft);
+    font-size: 0.8125rem;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+  .tw-box :global(.m) {
+    display: flex;
+    justify-content: space-between;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .tw-box :global(.m.bad b) {
+    color: var(--g-red-l);
+  }
+  .tw-box pre {
+    margin: 0;
+    font: 0.75rem/1.5 var(--font-mono);
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .tw-svg {
+    width: 100%;
+    display: block;
+  }
+  .tw-svg :global(text) {
+    font: 7.5px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .tw-svg :global(rect.sp) {
+    fill: var(--g-blue);
+    opacity: 0.85;
+  }
+  .tw-svg :global(rect.slow) {
+    fill: var(--g-red);
+  }
+  .tw-msg {
+    margin: 4px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 160px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const OTHER = 8 + 12 + 25 + 30 + 10 + 4; // gateway, auth, inventory, db write, checkout and gateway overhead
+  const TIMEOUT = 1500;
+  const fmt = (n: number) => Math.round(n).toLocaleString('en-US');
+  class TraceWaterfall extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const P = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      this.querySelector('[data-pv]')!.textContent = fmt(P);
+      const r = rng(5);
+      const lat: number[] = [];
+      let errs = 0;
+      for (let i = 0; i < 400; i++) {
+        let pay = P * (0.7 + 0.6 * r()) * (r() < 0.04 ? 3 : 1);
+        let err = false;
+        if (pay > TIMEOUT) { pay = TIMEOUT; err = r() < 0.9; }
+        if (err) errs++;
+        lat.push(OTHER + pay);
+      }
+      lat.sort((a, b) => a - b);
+      const q = (p: number) => lat[Math.min(lat.length - 1, Math.floor(p * lat.length))];
+      const slo = q(0.95) > 800 || errs / 400 > 0.01;
+      this.querySelector('[data-metrics]')!.innerHTML = `<div class="m"><span>requests</span><b>400</b></div><div class="m"><span>p50 latency</span><b>${fmt(q(0.5))} ms</b></div><div class="m ${q(0.95) > 800 ? 'bad' : ''}"><span>p95 latency</span><b>${fmt(q(0.95))} ms</b></div><div class="m"><span>p99 latency</span><b>${fmt(q(0.99))} ms</b></div><div class="m ${errs / 400 > 0.01 ? 'bad' : ''}"><span>error rate</span><b>${((errs / 400) * 100).toFixed(1)}%</b></div><div class="m ${slo ? 'bad' : ''}"><span>SLO (p95 ≤ 800 ms, errors ≤ 1%)</span><b>${slo ? 'breached' : 'met'}</b></div>`;
+      // trace of one request: spans on a shared timeline
+      const pay = Math.min(P, TIMEOUT);
+      const spans = [
+        { n: 'gateway', s: 0, d: 0 },
+        { n: 'checkout', s: 8, d: 0 },
+        { n: 'auth', s: 12, d: 12 },
+        { n: 'inventory', s: 24, d: 25 },
+        { n: 'payment', s: 49, d: pay },
+        { n: 'db write', s: 49 + pay, d: 30 },
+      ];
+      const total = 49 + pay + 30 + 10 + 4;
+      spans[0].d = total; spans[1].d = total - 8 - 4;
+      const X = (t: number) => 62 + (t / total) * 232;
+      let h = '';
+      spans.forEach((s, i) => {
+        const slow = s.n === 'payment' && pay > 500;
+        h += `<text x="2" y="${14 + i * 18}">${s.n}</text><rect class="sp ${slow ? 'slow' : ''}" x="${X(s.s).toFixed(1)}" y="${6 + i * 18}" width="${Math.max(2, (s.d / total) * 232).toFixed(1)}" height="11" rx="2"></rect>`;
+      });
+      h += `<text x="62" y="117">0</text><text x="260" y="117">${fmt(total)} ms</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const id = 'a41f09';
+      const lines = [
+        `INFO  trace=${id} svc=gateway   POST /checkout`,
+        `INFO  trace=${id} svc=inventory reserved 2 items (25 ms)`,
+      ];
+      if (P > 500) lines.push(`WARN  trace=${id} svc=payment   provider slow: ${fmt(Math.min(P, TIMEOUT))} ms`);
+      if (P > TIMEOUT) lines.push(`ERROR trace=${id} svc=payment   provider request timed out after ${fmt(TIMEOUT)} ms`);
+      else lines.push(`INFO  trace=${id} svc=payment   charge accepted`);
+      this.querySelector('[data-logs]')!.textContent = lines.join('\n');
+      this.querySelector('[data-msg]')!.textContent = slo
+        ? `Metrics flagged the problem (${fmt(q(0.95))} ms p95) but not its cause. The trace shows ${fmt(pay)} of ${fmt(total)} ms inside the payment span, and the logs sharing the trace ID give the reason.`
+        : 'Healthy: latency and errors are inside the objective, so no alert fires. Slide the provider latency up to see the signals diverge.';
+    }
+  }
+  customElements.define('trace-waterfall', TraceWaterfall);
+</script>

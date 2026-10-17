@@ -1,0 +1,106 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why 10× the servers is not 10× the capacity"
+  caption="Ideal scaling is a straight line: n servers handle n × r requests. Real systems lose some to contention (waiting on a shared resource such as a lock or database) and coherency (nodes coordinating with each other), following the Universal Scalability Law. Raise either cost and the curve flattens, then even turns down."
+>
+  <scaling-curve>
+    <div class="ctl-row">
+      <label class="stat">Contention α <input type="range" min="0" max="0.2" step="0.005" value="0.05" data-a /> <b data-av>0.05</b></label>
+      <label class="stat">Coherency β <input type="range" min="0" max="0.004" step="0.0002" value="0.001" data-b /> <b data-bv>0.001</b></label>
+      <label class="stat">Shared DB limit <input type="range" min="500" max="6400" step="100" value="2500" data-cap /> <b data-capv>2,500</b> req/s</label>
+    </div>
+    <svg viewBox="0 0 400 220" class="sc-svg" data-svg aria-label="Throughput versus number of servers"></svg>
+    <p class="sc-msg" data-msg></p>
+  </scaling-curve>
+</Figure>
+
+<style>
+  .sc-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .sc-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .sc-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .sc-svg :global(.ideal) {
+    stroke: var(--text-faint);
+    stroke-dasharray: 5 4;
+    fill: none;
+    stroke-width: 1.5;
+  }
+  .sc-svg :global(.usl) {
+    stroke: var(--g-blue);
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .sc-svg :global(.cap) {
+    stroke: var(--g-red);
+    stroke-dasharray: 3 3;
+    stroke-width: 1.5;
+  }
+  .sc-svg :global(.peak) {
+    fill: var(--g-yellow);
+  }
+  .sc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const R = 100;
+  const NMAX = 64;
+  class ScalingCurve extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      const cap = +this.querySelector<HTMLInputElement>('[data-cap]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(3);
+      this.querySelector('[data-bv]')!.textContent = b.toFixed(4);
+      this.querySelector('[data-capv]')!.textContent = cap.toLocaleString('en-US');
+      const x = (n: number) => 36 + ((n - 1) / (NMAX - 1)) * 350;
+      const ymax = NMAX * R;
+      const y = (v: number) => 195 - (Math.min(v, ymax) / ymax) * 175;
+      const usl = (n: number) => (n * R) / (1 + a * (n - 1) + b * n * (n - 1));
+      const real = (n: number) => Math.min(usl(n), cap);
+      let best = 1;
+      const pts: string[] = [];
+      for (let n = 1; n <= NMAX; n++) {
+        if (real(n) > real(best)) best = n;
+        pts.push(`${x(n).toFixed(1)},${y(real(n)).toFixed(1)}`);
+      }
+      let h = `<line class="ax" x1="36" y1="195" x2="390" y2="195"></line><line class="ax" x1="36" y1="15" x2="36" y2="195"></line>`;
+      h += `<polyline class="ideal" points="${x(1)},${y(R)} ${x(NMAX)},${y(NMAX * R)}"></polyline>`;
+      h += `<line class="cap" x1="36" y1="${y(cap)}" x2="390" y2="${y(cap)}"></line><text x="40" y="${y(cap) - 4}" style="fill:var(--g-red-l)">shared database limit</text>`;
+      h += `<polyline class="usl" points="${pts.join(' ')}"></polyline>`;
+      h += `<circle class="peak" cx="${x(best)}" cy="${y(real(best))}" r="4"></circle>`;
+      h += [1, 16, 32, 48, 64].map((n) => `<text x="${x(n) - 4}" y="209">${n}</text>`).join('') + `<text x="190" y="219">servers</text><text x="4" y="16">req/s</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const lim = real(best) >= cap - 1 ? 'the shared database' : 'contention and coordination';
+      this.querySelector('[data-msg]')!.textContent = `Best throughput ≈ ${Math.round(real(best)).toLocaleString('en-US')} req/s at ${best} servers (ideal there would be ${(best * R).toLocaleString('en-US')}). The limit is ${lim}. Past that point, extra servers add cost but not capacity${best < NMAX && real(NMAX) < real(best) - 1 ? ', and can even reduce it' : ''}.`;
+    }
+  }
+  customElements.define('scaling-curve', ScalingCurve);
+</script>

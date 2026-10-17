@@ -1,0 +1,254 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="AVL rotations, step by step"
+  caption="Small numbers are balance factors, BF = h(left) − h(right). Press Insert next ascending a few times: with AVL on, each time a node reaches BF −2 (red) a left rotation pulls the tree back to logarithmic height; switch to plain BST and the same inserts build a chain. The LR and RL presets show the double rotations."
+>
+  <avl-viz>
+    <div class="ctl-row">
+      <button class="btn" data-mode="avl" aria-pressed="true">AVL</button>
+      <button class="btn" data-mode="bst" aria-pressed="false">Plain BST</button>
+    </div>
+    <div class="stage"><svg data-svg role="img" aria-label="AVL tree"></svg></div>
+    <p class="msg" data-msg></p>
+    <div class="stat" data-stat></div>
+    <div class="ctl-row" style="margin-top:10px">
+      <button class="btn primary" data-next>Insert next ascending</button>
+      <label class="ctl-label" for="avl-k">Key</label>
+      <input class="input" id="avl-k" data-k type="number" value="25" style="width:5em" />
+      <button class="btn" data-ins>Insert</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Preset</span>
+      <button class="btn" data-preset="30,10,20">LR case: 30, 10, 20</button>
+      <button class="btn" data-preset="10,30,20">RL case: 10, 30, 20</button>
+      <button class="btn" data-preset="">Clear</button>
+    </div>
+  </avl-viz>
+</Figure>
+
+<style>
+  .stage {
+    display: flex;
+    justify-content: center;
+    min-height: 60px;
+    margin-top: 10px;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .stage :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+    transition: fill 0.2s;
+  }
+  .stage :global(.new circle) {
+    stroke: var(--g-green);
+    stroke-width: 2.4;
+  }
+  .stage :global(.bad circle) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+    stroke-width: 2.4;
+  }
+  .stage :global(.piv circle) {
+    fill: rgba(251, 188, 5, 0.2);
+    stroke: var(--g-yellow);
+    stroke-width: 2.4;
+  }
+  .stage :global(text) {
+    fill: var(--text);
+    font: 700 14px var(--font-mono);
+  }
+  .stage :global(text.bf) {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+  }
+  .stage :global(text.bf.off) {
+    fill: var(--g-red-l);
+    font-weight: 700;
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 8px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  interface N {
+    k: number;
+    l: N | null;
+    r: N | null;
+  }
+  interface Fr {
+    t: N | null;
+    marks: Record<number, string>;
+    msg: string;
+    rot?: number;
+  }
+  const h = (n: N | null): number => (n ? 1 + Math.max(h(n.l), h(n.r)) : 0);
+  const bf = (n: N) => h(n.l) - h(n.r);
+  const clone = (n: N | null): N | null => (n ? { k: n.k, l: clone(n.l), r: clone(n.r) } : null);
+  const rotL = (x: N) => {
+    const y = x.r!;
+    x.r = y.l;
+    y.l = x;
+    return y;
+  };
+  const rotR = (x: N) => {
+    const y = x.l!;
+    x.l = y.r;
+    y.r = x;
+    return y;
+  };
+
+  class AvlViz extends HTMLElement {
+    root: N | null = null;
+    avl = true;
+    queue: Fr[] = [];
+    timer = 0;
+    rotations = 0;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.avl = b.dataset.mode === 'avl';
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.load('');
+          this.show({ t: null, marks: {}, msg: `${this.avl ? 'AVL' : 'Plain BST'} mode. Tree cleared.` });
+        }),
+      );
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        const max = (n: N | null): number => (n ? Math.max(n.k, max(n.r)) : 0);
+        this.insert(max(this.root) + 1);
+      });
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(Math.trunc(+this.querySelector<HTMLInputElement>('[data-k]')!.value)));
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) => b.addEventListener('click', () => this.load(b.dataset.preset!)));
+      this.load('1,2,3');
+    }
+    load(s: string) {
+      clearInterval(this.timer);
+      this.root = null;
+      this.rotations = 0;
+      this.queue = [];
+      if (!s) return this.show({ t: null, marks: {}, msg: 'Empty tree.' });
+      s.split(',').forEach((k) => this.build(+k));
+      this.run();
+    }
+    insert(k: number) {
+      if (!Number.isFinite(k)) return;
+      clearInterval(this.timer);
+      if (this.queue.length) this.queue = [];
+      this.build(k);
+      this.run();
+    }
+    snap(marks: Record<number, string>, msg: string) {
+      this.queue.push({ t: clone(this.root), marks, msg, rot: this.rotations });
+    }
+    // Plain BST insert, then (in AVL mode) fix the lowest unbalanced ancestor, recording frames.
+    build(k: number) {
+      const path: N[] = [];
+      let c = this.root;
+      while (c) {
+        if (c.k === k) return this.snap({ [k]: 'new' }, `${k} is already in the tree.`);
+        path.push(c);
+        c = k < c.k ? c.l : c.r;
+      }
+      const n: N = { k, l: null, r: null };
+      const par = path[path.length - 1];
+      if (!par) this.root = n;
+      else if (k < par.k) par.l = n;
+      else par.r = n;
+      if (h(this.root) > 8) {
+        // keep the demo readable: undo and refuse
+        if (par) k < par.k ? (par.l = null) : (par.r = null);
+        return this.snap({}, 'Demo limit: 8 levels. Switch to AVL or Clear.');
+      }
+      const z = this.avl ? [...path].reverse().find((p) => Math.abs(bf(p)) > 1) : undefined;
+      if (!z) {
+        this.snap({ [k]: 'new' }, `Insert ${k} as a leaf.${this.avl ? ' Every ancestor still has BF in {−1, 0, +1}: no rotation.' : ''}`);
+        return;
+      }
+      const b = bf(z);
+      const child = b > 0 ? z.l! : z.r!;
+      const cb = bf(child);
+      const kind = b > 0 ? (cb >= 0 ? 'LL' : 'LR') : cb <= 0 ? 'RR' : 'RL';
+      this.snap({ [k]: 'new', [z.k]: 'bad', [child.k]: 'piv' }, `Insert ${k}: node ${z.k} now has BF ${b > 0 ? '+' : '−'}2, heavy on the ${b > 0 ? 'left' : 'right'}, and its ${b > 0 ? 'left' : 'right'} child ${child.k} leans ${kind[1] === kind[0] ? 'the same way' : 'the other way'}: ${kind} case.`);
+      const zp = path[path.indexOf(z) - 1];
+      const attach = (sub: N) => {
+        if (!zp) this.root = sub;
+        else if (zp.l === z) zp.l = sub;
+        else zp.r = sub;
+      };
+      if (kind === 'LR') {
+        z.l = rotL(child);
+        this.snap({ [z.k]: 'bad', [z.l.k]: 'piv' }, `Step 1: left rotation at ${child.k} turns the LR shape into an LL shape.`);
+      } else if (kind === 'RL') {
+        z.r = rotR(child);
+        this.snap({ [z.k]: 'bad', [z.r.k]: 'piv' }, `Step 1: right rotation at ${child.k} turns the RL shape into an RR shape.`);
+      }
+      const top = b > 0 ? rotR(z) : rotL(z);
+      attach(top);
+      this.rotations += kind.length === 2 && kind[0] !== kind[1] ? 2 : 1;
+      this.snap({ [top.k]: 'piv' }, `${kind === 'LR' || kind === 'RL' ? 'Step 2: ' : ''}${b > 0 ? 'Right' : 'Left'} rotation at ${z.k}: ${top.k} moves up. Inorder order is unchanged, and every BF is back in range.`);
+    }
+    run() {
+      clearInterval(this.timer);
+      const tick = () => {
+        const f = this.queue.shift();
+        if (f) this.show(f);
+        if (!this.queue.length) clearInterval(this.timer);
+      };
+      tick();
+      if (this.queue.length) this.timer = window.setInterval(tick, 1100);
+    }
+    show(f: Fr) {
+      const pos = new Map<N, [number, number]>();
+      let x = 0;
+      const lay = (n: N | null, d: number) => {
+        if (!n) return;
+        lay(n.l, d + 1);
+        pos.set(n, [x++, d]);
+        lay(n.r, d + 1);
+      };
+      lay(f.t, 0);
+      const SX = 46, SY = 54;
+      const w = Math.max(1, x) * SX + 20, ht = Math.max(1, h(f.t)) * SY;
+      const at = (n: N) => [pos.get(n)![0] * SX + SX / 2 + 10, pos.get(n)![1] * SY + 26];
+      let edges = '', nodes = '';
+      const rec = (n: N | null) => {
+        if (!n) return;
+        const [x1, y1] = at(n);
+        for (const c of [n.l, n.r]) if (c) {
+          const [x2, y2] = at(c);
+          edges += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+          rec(c);
+        }
+        const b = bf(n);
+        nodes += `<g class="${f.marks[n.k] ?? ''}"><circle cx="${x1}" cy="${y1}" r="16"/><text x="${x1}" y="${y1 + 5}" text-anchor="middle">${n.k}</text>${this.avl ? `<text class="bf ${Math.abs(b) > 1 ? 'off' : ''}" x="${x1 + 18}" y="${y1 - 12}">${b > 0 ? '+' + b : b === 0 ? '0' : '−' + -b}</text>` : ''}</g>`;
+      };
+      rec(f.t);
+      const svg = this.querySelector('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${w} ${ht}`);
+      svg.setAttribute('width', String(w));
+      svg.innerHTML = edges + nodes;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      let n = 0;
+      const cnt = (t: N | null) => t && (n++, cnt(t.l), cnt(t.r));
+      cnt(f.t);
+      this.querySelector('[data-stat]')!.innerHTML = `n <b>${n}</b> · height <b>${Math.max(0, h(f.t) - 1)}</b> edges · rotations so far <b>${f.rot ?? this.rotations}</b>`;
+    }
+  }
+  customElements.define('avl-viz', AvlViz);
+</script>

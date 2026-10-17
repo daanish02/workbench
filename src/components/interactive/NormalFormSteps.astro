@@ -1,0 +1,150 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="From one messy table to 3NF"
+  caption="Walk one table through the normal forms. At each step the note says which dependency is being removed. The same facts survive every step, but each one ends up stored exactly once, in the table whose key determines it."
+>
+  <normal-form-steps>
+    <div class="ctl-row">
+      <button class="btn" data-s="0" aria-pressed="true">Unnormalized</button>
+      <button class="btn" data-s="1" aria-pressed="false">1NF</button>
+      <button class="btn" data-s="2" aria-pressed="false">2NF</button>
+      <button class="btn" data-s="3" aria-pressed="false">3NF</button>
+    </div>
+    <div class="nf" data-tables></div>
+    <p class="nf-msg" data-msg aria-live="polite"></p>
+  </normal-form-steps>
+</Figure>
+
+<style>
+  .nf {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    justify-content: center;
+  }
+  .nf :global(table) {
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+  }
+  .nf :global(caption) {
+    font-weight: 700;
+    color: var(--text);
+    text-align: left;
+    padding-bottom: 3px;
+  }
+  .nf :global(th),
+  .nf :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 4px 9px;
+    text-align: center;
+    color: var(--text);
+  }
+  .nf :global(th) {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
+  }
+  .nf :global(th.k) {
+    color: var(--g-yellow-l);
+    text-decoration: underline;
+  }
+  .nf :global(td.bad) {
+    background: rgba(234, 67, 53, 0.18);
+  }
+  .nf-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4.5em;
+  }
+</style>
+
+<script>
+  type T = { name: string; head: [string, boolean][]; rows: (string | number)[][]; bad?: number[] };
+  const STAGES: { tables: T[]; msg: string }[] = [
+    {
+      tables: [
+        {
+          name: 'student_courses',
+          head: [['student_id', false], ['name', false], ['dept_id', false], ['dept_name', false], ['courses', false]],
+          rows: [[101, 'Maya', 'D10', 'Computer Science', 'CS101, MA201'], [102, 'Omar', 'D20', 'Mathematics', 'CS101'], [103, 'Lina', 'D10', 'Computer Science', 'MA201']],
+          bad: [4],
+        },
+      ],
+      msg: 'The courses column holds a list. You cannot index it, count enrollments reliably, or update a single course without string surgery. Red marks the problem cell.',
+    },
+    {
+      tables: [
+        {
+          name: 'student_courses',
+          head: [['student_id', true], ['name', false], ['dept_id', false], ['dept_name', false], ['course_id', true], ['grade', false]],
+          rows: [[101, 'Maya', 'D10', 'Computer Science', 'CS101', 90], [101, 'Maya', 'D10', 'Computer Science', 'MA201', 85], [102, 'Omar', 'D20', 'Mathematics', 'CS101', 92], [103, 'Lina', 'D10', 'Computer Science', 'MA201', 78]],
+          bad: [1, 2, 3],
+        },
+      ],
+      msg: '1NF: one value per cell, so each enrollment is a row, keyed by (student_id, course_id). But name, dept_id and dept_name now repeat for every course: they depend on student_id alone, only part of the key (red).',
+    },
+    {
+      tables: [
+        {
+          name: 'students',
+          head: [['student_id', true], ['name', false], ['dept_id', false], ['dept_name', false]],
+          rows: [[101, 'Maya', 'D10', 'Computer Science'], [102, 'Omar', 'D20', 'Mathematics'], [103, 'Lina', 'D10', 'Computer Science']],
+          bad: [3],
+        },
+        {
+          name: 'enrollments',
+          head: [['student_id', true], ['course_id', true], ['grade', false]],
+          rows: [[101, 'CS101', 90], [101, 'MA201', 85], [102, 'CS101', 92], [103, 'MA201', 78]],
+        },
+      ],
+      msg: '2NF: student facts moved to their own table, so they depend on the whole key. grade needs both student and course, so it stays in enrollments. One flaw left: dept_name depends on dept_id, not on student_id (red), so "Computer Science" is still stored twice.',
+    },
+    {
+      tables: [
+        {
+          name: 'students',
+          head: [['student_id', true], ['name', false], ['dept_id', false]],
+          rows: [[101, 'Maya', 'D10'], [102, 'Omar', 'D20'], [103, 'Lina', 'D10']],
+        },
+        {
+          name: 'departments',
+          head: [['dept_id', true], ['dept_name', false]],
+          rows: [['D10', 'Computer Science'], ['D20', 'Mathematics']],
+        },
+        {
+          name: 'enrollments',
+          head: [['student_id', true], ['course_id', true], ['grade', false]],
+          rows: [[101, 'CS101', 90], [101, 'MA201', 85], [102, 'CS101', 92], [103, 'MA201', 78]],
+        },
+      ],
+      msg: '3NF: dept_name now lives in departments, keyed by dept_id. Renaming a department is one update; a department can exist before it has students; deleting the last student keeps the department. Every fact depends on the key, the whole key, and nothing but the key.',
+    },
+  ];
+  class NormalFormSteps extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-s]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw(+b.dataset.s!);
+        }),
+      );
+      this.draw(0);
+    }
+    draw(i: number) {
+      const st = STAGES[i];
+      this.querySelector('[data-tables]')!.innerHTML = st.tables
+        .map((t) => {
+          const bad = new Set(t.bad ?? []);
+          return `<table><caption>${t.name}</caption><tr>${t.head.map(([h, k]) => `<th class="${k ? 'k' : ''}">${h}</th>`).join('')}</tr>${t.rows.map((r) => `<tr>${r.map((c, j) => `<td class="${bad.has(j) ? 'bad' : ''}">${c}</td>`).join('')}</tr>`).join('')}</table>`;
+        })
+        .join('');
+      this.querySelector('[data-msg]')!.textContent = st.msg;
+    }
+  }
+  customElements.define('normal-form-steps', NormalFormSteps);
+</script>

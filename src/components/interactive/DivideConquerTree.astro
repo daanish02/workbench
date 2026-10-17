@@ -1,0 +1,157 @@
+---
+import Figure from '../Figure.astro';
+const presets = [
+  ['merge', 'Merge sort'],
+  ['bsearch', 'Binary search'],
+  ['tree', 'Tree traversal'],
+  ['mult', 'Naive multiply'],
+];
+---
+
+<Figure
+  title="The recursion tree, level by level"
+  caption="Each row is one depth of the recursion: how many calls there are, how big each subproblem is, and the work done outside the recursive calls at that depth. Bars compare total work per level. Whether the top, every level equally, or the leaves dominate decides the final bound."
+>
+  <dc-tree>
+    <div class="ctl-row">
+      {presets.map(([id, label]) => <button class="btn" data-p={id} aria-pressed={id === 'merge' ? 'true' : 'false'}>{label}</button>)}
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">n</span>
+      {[8, 16, 32, 64].map((v) => <button class="btn" data-n={v} aria-pressed={v === 16 ? 'true' : 'false'}>{v}</button>)}
+    </div>
+    <p class="rec mono" data-rec></p>
+    <div class="levels" data-levels></div>
+    <p class="verdict" data-verdict></p>
+  </dc-tree>
+</Figure>
+
+<style>
+  .rec {
+    margin: 12px 0 8px;
+    font-size: 0.9375rem;
+    color: var(--text);
+  }
+  .levels {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .levels :global(.lv) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 10px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .levels :global(.nodes) {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .levels :global(.nodes i) {
+    display: block;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--g-blue);
+    opacity: 0.75;
+  }
+  .levels :global(.bar) {
+    grid-column: 1 / -1;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--g-yellow);
+  }
+  .levels :global(.lv b) {
+    color: var(--text);
+  }
+  .verdict {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .verdict :global(b) {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  type P = { a: number; f: (s: number) => number; fs: string; rec: string; verdict: (n: number, total: number) => string };
+  const lg = Math.log2;
+  const PRESETS: Record<string, P> = {
+    merge: {
+      a: 2,
+      f: (s) => s,
+      fs: 's',
+      rec: 'T(n) = 2T(n/2) + n',
+      verdict: (n, t) => `Every level does the same n = ${n} units of work, and there are log₂n + 1 = ${lg(n) + 1} levels: ${t} = n(log₂n + 1). <b>Θ(n log n)</b>.`,
+    },
+    bsearch: {
+      a: 1,
+      f: () => 1,
+      fs: '1',
+      rec: 'T(n) = T(n/2) + 1',
+      verdict: (n, t) => `One call per level and constant work each: ${t} = log₂n + 1 steps. <b>Θ(log n)</b>.`,
+    },
+    tree: {
+      a: 2,
+      f: () => 1,
+      fs: '1',
+      rec: 'T(n) = 2T(n/2) + 1',
+      verdict: (n, t) => `Work doubles each level, so the ${n} leaves dominate: ${t} = 2n − 1. <b>Θ(n)</b>.`,
+    },
+    mult: {
+      a: 4,
+      f: (s) => s,
+      fs: 's',
+      rec: 'T(n) = 4T(n/2) + n',
+      verdict: (n, t) => `Four subproblems of half size: work doubles every level, and the n² = ${n * n} leaves dominate (total ${t}). <b>Θ(n²)</b>. Dividing did not help.`,
+    },
+  };
+
+  class DcTree extends HTMLElement {
+    p = 'merge';
+    n = 16;
+    connectedCallback() {
+      for (const [attr, set] of [
+        ['data-p', (v: string) => (this.p = v)],
+        ['data-n', (v: string) => (this.n = +v)],
+      ] as const) {
+        this.querySelectorAll<HTMLButtonElement>(`[${attr}]`).forEach((b) =>
+          b.addEventListener('click', () => {
+            this.querySelectorAll(`[${attr}]`).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+            set(b.getAttribute(attr)!);
+            this.draw();
+          }),
+        );
+      }
+      this.draw();
+    }
+    draw() {
+      const P = PRESETS[this.p];
+      const n = this.n;
+      const depth = lg(n);
+      const rows: { calls: number; size: number; work: number }[] = [];
+      for (let d = 0; d <= depth; d++) {
+        const calls = P.a ** d;
+        const size = n / 2 ** d;
+        rows.push({ calls, size, work: calls * P.f(size) });
+      }
+      const total = rows.reduce((s, r) => s + r.work, 0);
+      const max = Math.max(...rows.map((r) => r.work));
+      this.querySelector('[data-rec]')!.textContent = `${P.rec},  T(1) = 1`;
+      this.querySelector('[data-levels]')!.innerHTML = rows
+        .map((r, d) => {
+          const shown = Math.min(r.calls, 64);
+          const w = Math.max(3, Math.min(48, Math.floor(260 / shown)));
+          const nodes = Array.from({ length: shown }, () => `<i style="width:${w}px"></i>`).join('') + (r.calls > shown ? `<span>… +${r.calls - shown}</span>` : '');
+          const per = d === depth ? 1 : P.f(r.size);
+          return `<div class="lv"><span>depth ${d}: <b>${r.calls}</b> call${r.calls > 1 ? 's' : ''} of size ${r.size} × ${per} work</span><b>${r.work}</b><div class="nodes">${nodes}</div><div class="bar" style="width:${(100 * r.work) / max}%"></div></div>`;
+        })
+        .join('');
+      this.querySelector('[data-verdict]')!.innerHTML = `Total work = ${total}. ${P.verdict(n, total)}`;
+    }
+  }
+  customElements.define('dc-tree', DcTree);
+</script>

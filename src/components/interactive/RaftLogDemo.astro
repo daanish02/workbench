@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Commit needs a majority"
+  caption="Append a client command on the leader, then replicate it. It becomes committed (green) only once 3 of 5 nodes hold it. Click followers to crash or revive them: with 3 down, nothing can commit; revive one and replication catches the log up."
+>
+  <raft-log>
+    <div class="ctl-row">
+      <button class="btn primary" data-act="append">1. Client writes</button>
+      <button class="btn primary" data-act="repl">2. Replicate</button>
+      <button class="btn" data-act="reset">Reset</button>
+      <span class="stat" data-stat></span>
+    </div>
+    <div class="rg" data-grid></div>
+    <p class="rg-msg" data-msg aria-live="polite"></p>
+  </raft-log>
+</Figure>
+
+<style>
+  .rg {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .rg :global(.rg-row) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rg :global(.rg-name) {
+    width: 74px;
+    flex: none;
+    text-align: left;
+    font: 0.6875rem var(--font-mono);
+    padding: 5px 6px;
+  }
+  .rg :global(.rg-name.dead) {
+    opacity: 0.4;
+    text-decoration: line-through;
+  }
+  .rg :global(.rg-slots) {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .rg :global(.rg-slot) {
+    width: 34px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px dashed var(--border-strong);
+    font: 0.6875rem/26px var(--font-mono);
+    text-align: center;
+    color: var(--text-faint);
+  }
+  .rg :global(.rg-slot.u) {
+    border: 1px solid var(--g-yellow);
+    background: rgba(251, 188, 5, 0.18);
+    color: #fff;
+  }
+  .rg :global(.rg-slot.c) {
+    border: 1px solid var(--g-green);
+    background: rgba(52, 168, 83, 0.25);
+    color: #fff;
+  }
+  .rg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  class RaftLog extends HTMLElement {
+    logs: string[][] = [];
+    commit = 0;
+    alive: boolean[] = [];
+    n = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) => b.addEventListener('click', () => this.act(b.dataset.act!)));
+      this.reset();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.logs = [[], [], [], [], []];
+      this.alive = [true, true, true, true, true];
+      this.commit = 0;
+      this.n = 0;
+      this.say('Node 0 is the leader. Write a command, then replicate it.');
+      this.draw();
+    }
+    act(a: string) {
+      if (a === 'reset') return this.reset();
+      if (a === 'append') {
+        if (this.logs[0].length >= 8) return this.say('Log is full for this demo; reset.');
+        this.logs[0].push(String.fromCharCode(97 + this.n++ % 26));
+        this.say(`Leader appended "${this.logs[0].at(-1)}" to its own log. Only 1 of 5 nodes has it: not committed.`);
+      } else {
+        let acks = 1;
+        for (let i = 1; i < 5; i++)
+          if (this.alive[i]) {
+            this.logs[i] = this.logs[0].slice();
+            acks++;
+          }
+        const total = this.logs[0].length;
+        if (acks >= 3) {
+          this.commit = total;
+          this.say(`${acks} of 5 nodes hold the log, a majority: entries up to ${total} are committed and safe to apply.`);
+        } else this.say(`Only ${acks} of 5 nodes reachable. 3 are needed, so nothing new can commit. Revive a node (click it) and replicate again.`);
+      }
+      this.draw();
+    }
+    draw() {
+      const grid = this.querySelector('[data-grid]')!;
+      grid.innerHTML = this.logs
+        .map((l, i) => {
+          const slots = Array.from({ length: 8 }, (_, k) => {
+            const has = k < l.length;
+            const cls = has ? (k < this.commit && l.length > k && this.logs[0][k] === l[k] ? 'c' : 'u') : '';
+            return `<div class="rg-slot ${cls}">${has ? l[k] : ''}</div>`;
+          }).join('');
+          return `<div class="rg-row"><button class="btn rg-name ${this.alive[i] ? '' : 'dead'}" data-i="${i}" ${i === 0 ? 'disabled' : ''}>${i === 0 ? 'leader' : 'node ' + i}</button><div class="rg-slots">${slots}</div></div>`;
+        })
+        .join('');
+      grid.querySelectorAll<HTMLButtonElement>('[data-i]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const i = +b.dataset.i!;
+          this.alive[i] = !this.alive[i];
+          this.say(this.alive[i] ? `Node ${i} is back; it will catch up on the next replicate.` : `Node ${i} crashed.`);
+          this.draw();
+        }),
+      );
+      const up = this.alive.filter(Boolean).length;
+      this.querySelector('[data-stat]')!.innerHTML = `up <b>${up}</b>/5 · committed <b>${this.commit}</b>`;
+    }
+  }
+  customElements.define('raft-log', RaftLog);
+</script>

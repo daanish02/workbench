@@ -1,0 +1,194 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How an HNSW index finds neighbours"
+  caption="A layered graph over 60 vectors: the top layer has a few long links, the bottom layer has everything. The search starts at the top, hops greedily toward the query, then drops a layer and repeats. Click to move the query. Compare how many distances it computed with brute force."
+>
+  <hnsw-walk>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next hop</button>
+      <button class="btn" data-all>Run to the end</button>
+      <button class="btn" data-reset>Restart</button>
+      <span class="stat" data-stat></span>
+    </div>
+    <svg viewBox="0 0 360 250" class="hn-svg" data-svg aria-label="Layered neighbour graph"></svg>
+    <p class="hn-msg" data-msg aria-live="polite"></p>
+  </hnsw-walk>
+</Figure>
+
+<style>
+  .hn-svg {
+    width: 100%;
+    max-width: 560px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  .hn-svg :global(.l) {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  .hn-svg :global(.cur) {
+    stroke: #fff;
+    stroke-width: 2;
+  }
+  .hn-svg :global(.hop2) {
+    stroke: var(--g-red);
+    stroke-width: 3;
+  }
+  .hn-svg :global(.hop1) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .hn-svg :global(.hop0) {
+    stroke: var(--g-green);
+    stroke-width: 3;
+  }
+  .hn-svg :global(.q) {
+    fill: #fff;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .hn-svg :global(text) {
+    font: 700 9px var(--font-mono);
+    fill: #fff;
+    pointer-events: none;
+  }
+  .hn-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  type Pt = [number, number];
+  const R = rng(5);
+  const PTS: Pt[] = [];
+  while (PTS.length < 60) {
+    const p: Pt = [14 + R() * 332, 14 + R() * 222];
+    if (PTS.every((q) => Math.hypot(p[0] - q[0], p[1] - q[1]) > 24)) PTS.push(p);
+  }
+  const d = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  // farthest-point sampling picks well-spread nodes for the sparse upper layers
+  function spread(k: number): number[] {
+    const out = [0];
+    while (out.length < k) {
+      let best = -1;
+      let bd = -1;
+      PTS.forEach((p, i) => {
+        const m = Math.min(...out.map((o) => d(p, PTS[o])));
+        if (m > bd) ((bd = m), (best = i));
+      });
+      out.push(best);
+    }
+    return out;
+  }
+  const LAYERS: number[][] = [PTS.map((_, i) => i), spread(14), spread(4)];
+  // each node links to its nearest neighbours in the same layer
+  const LINKS: Map<number, Set<number>>[] = LAYERS.map((members, li) => {
+    const m = new Map<number, Set<number>>();
+    members.forEach((a) => m.set(a, new Set()));
+    const k = li === 0 ? 4 : li === 1 ? 3 : 2;
+    members.forEach((a) => {
+      [...members].filter((b) => b !== a).sort((x, y) => d(PTS[a], PTS[x]) - d(PTS[a], PTS[y])).slice(0, k).forEach((b) => (m.get(a)!.add(b), m.get(b)!.add(a)));
+    });
+    return m;
+  });
+  type Step = { layer: number; from: number; to: number; tried: number };
+  class HnswWalk extends HTMLElement {
+    q: Pt = [200, 120];
+    steps: Step[] = [];
+    shown = 0;
+    dist = 0;
+    entry = LAYERS[2][0];
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.advance(1));
+      this.querySelector('[data-all]')!.addEventListener('click', () => this.advance(99));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      const svg = this.querySelector<SVGSVGElement>('[data-svg]')!;
+      svg.addEventListener('click', (e) => {
+        const r = svg.getBoundingClientRect();
+        this.q = [((e.clientX - r.left) / r.width) * 360, ((e.clientY - r.top) / r.height) * 250];
+        this.reset();
+      });
+      this.reset();
+    }
+    plan() {
+      this.steps = [];
+      this.dist = 0;
+      let cur = this.entry;
+      for (let layer = 2; layer >= 0; layer--) {
+        for (;;) {
+          let best = cur;
+          let bd = d(PTS[cur], this.q);
+          for (const n of LINKS[layer].get(cur)!) {
+            this.dist++;
+            const nd = d(PTS[n], this.q);
+            if (nd < bd) ((bd = nd), (best = n));
+          }
+          if (best === cur) break;
+          this.steps.push({ layer, from: cur, to: best, tried: this.dist });
+          cur = best;
+        }
+        this.steps.push({ layer, from: cur, to: cur, tried: this.dist }); // marks "local minimum, drop a layer"
+      }
+    }
+    reset() {
+      this.plan();
+      this.shown = 0;
+      this.draw();
+    }
+    advance(n: number) {
+      this.shown = Math.min(this.steps.length, this.shown + n);
+      this.draw();
+    }
+    draw() {
+      const svg = this.querySelector('[data-svg]')!;
+      const sh = this.steps.slice(0, this.shown);
+      const layer = sh.length ? sh[sh.length - 1].layer : 2;
+      const members = new Set(LAYERS[layer]);
+      let h = '';
+      for (const [a, ns] of LINKS[layer]) for (const b of ns) if (a < b) h += `<line class="l" x1="${PTS[a][0]}" y1="${PTS[a][1]}" x2="${PTS[b][0]}" y2="${PTS[b][1]}"></line>`;
+      for (const s of sh) if (s.from !== s.to) h += `<line class="hop${s.layer}" x1="${PTS[s.from][0]}" y1="${PTS[s.from][1]}" x2="${PTS[s.to][0]}" y2="${PTS[s.to][1]}"></line>`;
+      const cur = sh.length ? sh[sh.length - 1].to : this.entry;
+      PTS.forEach((p, i) => {
+        const on = members.has(i);
+        h += `<circle ${i === cur ? 'class="cur"' : ''} cx="${p[0]}" cy="${p[1]}" r="${i === cur ? 7 : on ? 5 : 3}" fill="${on ? (['var(--g-green)', 'var(--g-yellow)', 'var(--g-red)'][layer]) : '#555'}" fill-opacity="${on ? 0.95 : 0.5}"></circle>`;
+      });
+      h += `<circle class="q" cx="${this.q[0]}" cy="${this.q[1]}" r="5"></circle><text x="${this.q[0] + 8}" y="${this.q[1] - 7}">query</text>`;
+      svg.innerHTML = h;
+      let nearest = 0;
+      PTS.forEach((p, i) => d(p, this.q) < d(PTS[nearest], this.q) && (nearest = i));
+      const done = this.shown >= this.steps.length;
+      const last = sh[sh.length - 1];
+      const found = this.steps[this.steps.length - 1].to;
+      this.querySelector('[data-stat]')!.innerHTML = `layer <b>${layer}</b> · distances computed <b>${last ? last.tried : 0}</b> / ${PTS.length} (brute force)`;
+      this.querySelector('[data-msg]')!.textContent = !sh.length
+        ? 'The search starts at the entry point on the sparsest top layer (red). Press Next hop.'
+        : done
+          ? `Done after ${this.dist} distance computations instead of ${PTS.length}. Result: ${found === nearest ? 'the true nearest neighbour' : 'a close neighbour but not the exact nearest one (approximate search can miss)'}.`
+          : last!.from === last!.to
+            ? `No neighbour on layer ${last!.layer} is closer: this is a local best. Drop down to layer ${last!.layer - 1}, which has more nodes and finer links, starting from the same node.`
+            : `Layer ${last!.layer}: hop to a neighbour that is closer to the query. Keep hopping while a neighbour improves.`;
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = done;
+    }
+  }
+  customElements.define('hnsw-walk', HnswWalk);
+</script>

@@ -1,0 +1,227 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Min-heap: one array, read as a tree"
+  caption="The tree and the array are the same data: node i's children sit at 2i + 1 and 2i + 2. Insert 3 to reproduce the note's example (it swaps with 8, then stops under 2). Extract min moves the last element to the root and sifts it down past the smaller child. Each step compares only a parent and a child, so the work is one root-to-leaf path: O(log n)."
+>
+  <heap-viz>
+    <div class="stage"><svg data-svg viewBox="0 0 360 220" width="360" role="img" aria-label="heap as tree"></svg></div>
+    <div class="arr" data-arr></div>
+    <p class="msg" data-msg></p>
+    <div class="ctl-row">
+      <label class="ctl-label" for="hp-v">Value</label>
+      <input class="input" id="hp-v" data-v type="number" value="3" style="width:5em" />
+      <button class="btn primary" data-ins>Insert</button>
+      <button class="btn" data-rand>Insert random</button>
+      <button class="btn" data-ext>Extract min</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </heap-viz>
+</Figure>
+
+<style>
+  .stage {
+    display: flex;
+    justify-content: center;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .stage :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(line.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.6;
+  }
+  .stage :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(.a circle) {
+    fill: rgba(251, 188, 5, 0.2);
+    stroke: var(--g-yellow);
+  }
+  .stage :global(.b circle) {
+    fill: rgba(66, 133, 244, 0.22);
+    stroke: var(--g-blue);
+  }
+  .stage :global(.root circle) {
+    stroke: var(--g-green);
+  }
+  .stage :global(text) {
+    fill: var(--text);
+    font: 700 14px var(--font-mono);
+  }
+  .stage :global(text.ix) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+  }
+  .arr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+    justify-content: center;
+  }
+  .arr :global(div) {
+    width: 38px;
+    text-align: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    padding: 3px 0 2px;
+    font: 700 0.9375rem var(--font-mono);
+    color: var(--text);
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .arr :global(div small) {
+    display: block;
+    font: 9px var(--font-mono);
+    color: var(--text-faint);
+  }
+  .arr :global(div.a) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.14);
+  }
+  .arr :global(div.b) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.16);
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 10px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  interface Fr {
+    a: number[];
+    x: number; // highlighted index (moving element)
+    y: number; // compared index
+    msg: string;
+  }
+  const MAX = 15;
+  class HeapViz extends HTMLElement {
+    a = [2, 5, 8, 11, 14];
+    frames: Fr[] = [];
+    timer = 0;
+
+    connectedCallback() {
+      const val = () => Math.trunc(+this.querySelector<HTMLInputElement>('[data-v]')!.value);
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(val()));
+      this.querySelector('[data-rand]')!.addEventListener('click', () => this.insert(1 + Math.floor(Math.random() * 40)));
+      this.querySelector('[data-ext]')!.addEventListener('click', () => this.extract());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.a = [2, 5, 8, 11, 14];
+        this.play([{ a: [...this.a], x: -1, y: -1, msg: 'Heap [2, 5, 8, 11, 14]: every parent ≤ its children.' }]);
+      });
+      this.play([{ a: [...this.a], x: -1, y: -1, msg: 'Heap [2, 5, 8, 11, 14]: every parent ≤ its children.' }]);
+    }
+    f(x: number, y: number, msg: string) {
+      this.frames.push({ a: [...this.a], x, y, msg });
+    }
+    insert(v: number) {
+      if (!Number.isFinite(v)) return;
+      this.finish();
+      if (this.a.length >= MAX) return this.play([{ a: [...this.a], x: -1, y: -1, msg: 'Demo limit: 15 elements (4 levels).' }]);
+      this.frames = [];
+      this.a.push(v);
+      let i = this.a.length - 1;
+      this.f(i, -1, `Insert ${v}: place it at index ${i}, the next free slot, so the tree stays complete.`);
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (this.a[i] < this.a[p]) {
+          this.f(i, p, `Parent of ${i} is ⌊(${i} − 1)/2⌋ = ${p}. ${this.a[i]} &lt; ${this.a[p]}, so swap.`);
+          [this.a[i], this.a[p]] = [this.a[p], this.a[i]];
+          i = p;
+          this.f(i, -1, `${v} moved up to index ${i}.`);
+        } else {
+          this.f(i, p, `Parent of ${i} is index ${p}. ${this.a[p]} ≤ ${this.a[i]}: heap property holds, stop.`);
+          break;
+        }
+      }
+      if (i === 0) this.f(0, -1, `${v} reached the root: it is the new minimum.`);
+      this.frames.push({ a: [...this.a], x: -1, y: -1, msg: `Done: [${this.a.join(', ')}].` });
+      this.play(this.frames);
+    }
+    extract() {
+      this.finish();
+      this.frames = [];
+      if (!this.a.length) return this.play([{ a: [], x: -1, y: -1, msg: 'Heap is empty.' }]);
+      const min = this.a[0];
+      this.f(0, -1, `Extract min: the root, ${min}, is the answer. Now fill the hole.`);
+      const last = this.a.pop()!;
+      if (this.a.length) {
+        this.a[0] = last;
+        this.f(0, -1, `Move the last element, ${last}, into the root. The shape stays complete, but the order may be broken.`);
+        let i = 0;
+        for (;;) {
+          const l = 2 * i + 1, r = l + 1;
+          if (l >= this.a.length) {
+            this.f(i, -1, `Index ${i} has no children: stop.`);
+            break;
+          }
+          const c = r < this.a.length && this.a[r] < this.a[l] ? r : l;
+          if (this.a[c] < this.a[i]) {
+            this.f(i, c, `Children of ${i} are at ${l}${r < this.a.length ? ` and ${r}` : ''}; the smaller is ${this.a[c]}. ${this.a[c]} &lt; ${this.a[i]}, so swap.`);
+            [this.a[i], this.a[c]] = [this.a[c], this.a[i]];
+            i = c;
+          } else {
+            this.f(i, c, `Smaller child ${this.a[c]} ≥ ${this.a[i]}: heap property holds, stop.`);
+            break;
+          }
+        }
+      }
+      this.frames.push({ a: [...this.a], x: -1, y: -1, msg: `Returned ${min}. Heap: [${this.a.join(', ')}].` });
+      this.play(this.frames);
+    }
+    finish() {
+      clearInterval(this.timer);
+    }
+    play(frames: Fr[]) {
+      this.finish();
+      let i = 0;
+      const tick = () => {
+        this.draw(frames[i]);
+        if (++i >= frames.length) clearInterval(this.timer);
+      };
+      tick();
+      if (frames.length > 1) this.timer = window.setInterval(tick, 900);
+    }
+    draw(fr: Fr) {
+      const W = 360, SY = 52;
+      const at = (i: number) => {
+        const L = Math.floor(Math.log2(i + 1));
+        const pos = i - (2 ** L - 1);
+        return [((pos + 0.5) / 2 ** L) * W, 26 + L * SY];
+      };
+      let edges = '', nodes = '';
+      fr.a.forEach((v, i) => {
+        const [x, y] = at(i);
+        if (i > 0) {
+          const p = (i - 1) >> 1;
+          const [px, py] = at(p);
+          const on = (i === fr.x && p === fr.y) || (p === fr.x && i === fr.y);
+          edges += `<line class="${on ? 'on' : ''}" x1="${px}" y1="${py}" x2="${x}" y2="${y}"/>`;
+        }
+        const cls = i === fr.x ? 'a' : i === fr.y ? 'b' : i === 0 ? 'root' : '';
+        nodes += `<g class="${cls}"><circle cx="${x}" cy="${y}" r="16"/><text x="${x}" y="${y + 5}" text-anchor="middle">${v}</text><text class="ix" x="${x + 18}" y="${y - 12}">${i}</text></g>`;
+      });
+      const svg = this.querySelector('[data-svg]')!;
+      const levels = Math.max(1, Math.floor(Math.log2(fr.a.length || 1)) + 1);
+      svg.setAttribute('viewBox', `0 0 ${W} ${levels * SY + 4}`);
+      svg.innerHTML = edges + nodes;
+      this.querySelector('[data-arr]')!.innerHTML = fr.a.map((v, i) => `<div class="${i === fr.x ? 'a' : i === fr.y ? 'b' : ''}">${v}<small>${i}</small></div>`).join('') || '<span class="stat">empty</span>';
+      this.querySelector('[data-msg]')!.innerHTML = fr.msg;
+    }
+  }
+  customElements.define('heap-viz', HeapViz);
+</script>

@@ -1,0 +1,145 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Nearest neighbours in embedding space"
+  caption="Each dot is a word placed by meaning (a 2-D stand-in for a real 100s-of-dimensions embedding). Click anywhere to ask a query; the 3 nearest dots light up. Switch the metric, or switch to approximate search, which only looks inside the cluster nearest the query and can miss a true neighbour just across the border."
+>
+  <vector-search>
+    <div class="ctl-row">
+      <span class="ctl-label">Metric</span>
+      <button class="btn" data-m="euclid" aria-pressed="true">Euclidean</button>
+      <button class="btn" data-m="cosine" aria-pressed="false">Cosine</button>
+      <span class="ctl-label">Search</span>
+      <button class="btn" data-a="exact" aria-pressed="true">Exact</button>
+      <button class="btn" data-a="ann" aria-pressed="false">Approximate (1 cluster)</button>
+    </div>
+    <svg viewBox="0 0 360 250" class="vs-svg" data-svg aria-label="Embedding space scatter plot"></svg>
+    <p class="vs-msg" data-msg aria-live="polite"></p>
+  </vector-search>
+</Figure>
+
+<style>
+  .vs-svg {
+    width: 100%;
+    max-width: 560px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: crosshair;
+    touch-action: manipulation;
+  }
+  .vs-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+    pointer-events: none;
+  }
+  .vs-svg :global(text.hit) {
+    fill: #fff;
+    font-weight: 700;
+  }
+  .vs-svg :global(.cell) {
+    stroke: var(--border-strong);
+    stroke-dasharray: 3 4;
+    fill: none;
+  }
+  .vs-svg :global(.q) {
+    fill: #fff;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .vs-svg :global(.link) {
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 3 3;
+  }
+  .vs-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  type P = { w: string; x: number; y: number; c: number };
+  // x and y are in svg units (360 x 250). Clusters: 0 animals, 1 fruit, 2 vehicles. Magnitudes differ so cosine and Euclidean disagree.
+  const PTS: P[] = [
+    { w: 'cat', x: 60, y: 60, c: 0 }, { w: 'dog', x: 85, y: 45, c: 0 }, { w: 'kitten', x: 45, y: 90, c: 0 }, { w: 'puppy', x: 90, y: 85, c: 0 }, { w: 'horse', x: 120, y: 70, c: 0 }, { w: 'lion', x: 135, y: 110, c: 0 },
+    { w: 'apple', x: 250, y: 50, c: 1 }, { w: 'pear', x: 280, y: 70, c: 1 }, { w: 'banana', x: 305, y: 40, c: 1 }, { w: 'mango', x: 270, y: 100, c: 1 }, { w: 'grape', x: 235, y: 85, c: 1 }, { w: 'plum', x: 320, y: 95, c: 1 },
+    { w: 'car', x: 80, y: 190, c: 2 }, { w: 'bus', x: 120, y: 215, c: 2 }, { w: 'truck', x: 150, y: 180, c: 2 }, { w: 'bike', x: 55, y: 220, c: 2 }, { w: 'train', x: 190, y: 205, c: 2 }, { w: 'taxi', x: 105, y: 165, c: 2 },
+  ];
+  const COL = ['var(--g-blue)', 'var(--g-green)', 'var(--g-red)'];
+  const CENT = [0, 1, 2].map((c) => {
+    const m = PTS.filter((p) => p.c === c);
+    return { x: m.reduce((a, p) => a + p.x, 0) / m.length, y: m.reduce((a, p) => a + p.y, 0) / m.length };
+  });
+  class VectorSearch extends HTMLElement {
+    metric = 'euclid';
+    ann = false;
+    q: { x: number; y: number } | null = { x: 165, y: 135 };
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-m]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.metric = b.dataset.m!;
+          this.querySelectorAll('[data-m]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-a]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.ann = b.dataset.a === 'ann';
+          this.querySelectorAll('[data-a]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      const svg = this.querySelector<SVGSVGElement>('[data-svg]')!;
+      svg.addEventListener('click', (e) => {
+        const r = svg.getBoundingClientRect();
+        this.q = { x: ((e.clientX - r.left) / r.width) * 360, y: ((e.clientY - r.top) / r.height) * 250 };
+        this.draw();
+      });
+      this.draw();
+    }
+    dist(a: { x: number; y: number }, b: { x: number; y: number }) {
+      if (this.metric === 'euclid') return Math.hypot(a.x - b.x, a.y - b.y);
+      const cos = (a.x * b.x + a.y * b.y) / (Math.hypot(a.x, a.y) * Math.hypot(b.x, b.y));
+      return 1 - cos; // cosine distance: angle from the origin only, length is ignored
+    }
+    top(pool: P[]) {
+      return [...pool].sort((p, r) => this.dist(this.q!, p) - this.dist(this.q!, r)).slice(0, 3);
+    }
+    draw() {
+      const svg = this.querySelector('[data-svg]')!;
+      const q = this.q!;
+      const exact = this.top(PTS);
+      let near = 0;
+      CENT.forEach((c, i) => this.dist(q, c) < this.dist(q, CENT[near]) && (near = i));
+      const found = this.ann ? this.top(PTS.filter((p) => p.c === near)) : exact;
+      const hit = new Set(found.map((p) => p.w));
+      const true3 = new Set(exact.map((p) => p.w));
+      let h = '';
+      if (this.ann) {
+        // show the "probed" cluster as a ring around its members
+        const m = PTS.filter((p) => p.c === near);
+        const cx = CENT[near].x;
+        const cy = CENT[near].y;
+        const rad = Math.max(...m.map((p) => Math.hypot(p.x - cx, p.y - cy))) + 14;
+        h += `<circle class="cell" cx="${cx}" cy="${cy}" r="${rad}"></circle>`;
+      }
+      h += found.map((p) => `<line class="link" x1="${q.x}" y1="${q.y}" x2="${p.x}" y2="${p.y}"></line>`).join('');
+      h += PTS.map((p) => `<circle cx="${p.x}" cy="${p.y}" r="${hit.has(p.w) ? 6 : 4}" fill="${COL[p.c]}" fill-opacity="${hit.has(p.w) ? 1 : 0.55}" stroke="${hit.has(p.w) ? '#fff' : 'none'}" stroke-width="1.5"></circle><text class="${hit.has(p.w) ? 'hit' : ''}" x="${p.x + 8}" y="${p.y + 3}">${p.w}</text>`).join('');
+      h += `<circle class="q" cx="${q.x}" cy="${q.y}" r="5"></circle><text x="${q.x + 8}" y="${q.y - 7}" class="hit">query</text>`;
+      svg.innerHTML = h;
+      const missed = [...true3].filter((w) => !hit.has(w));
+      const names = found.map((p) => p.w).join(', ');
+      this.querySelector('[data-msg]')!.textContent = this.ann
+        ? `Approximate: scanned only the ${['animal', 'fruit', 'vehicle'][near]} cluster (${PTS.filter((p) => p.c === near).length} of ${PTS.length} points) → ${names}. ${missed.length ? `It missed true neighbour${missed.length > 1 ? 's' : ''}: ${missed.join(', ')}. That is the recall you trade for speed.` : 'Here it found the same answer as exact search, having looked at far fewer points.'}`
+        : `Exact: compared the query with all ${PTS.length} points → ${names}. ${this.metric === 'cosine' ? 'Cosine ignores distance from the origin and compares direction only, so two vectors on the same ray count as identical.' : 'Euclidean measures straight-line distance.'}`;
+    }
+  }
+  customElements.define('vector-search', VectorSearch);
+</script>

@@ -1,0 +1,154 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two-phase commit"
+  caption="Step through prepare, vote, decide. Make participant 3 vote no and everyone aborts. Crash the coordinator after the votes and the prepared participants are stuck holding locks: they voted yes, so they may neither commit nor abort on their own."
+>
+  <two-pc>
+    <div class="ctl-row">
+      <span class="ctl-label">Participant 3 votes</span>
+      <button class="btn" data-vote="yes" aria-pressed="true">Yes</button>
+      <button class="btn" data-vote="no" aria-pressed="false">No</button>
+      <span class="ctl-label">Coordinator</span>
+      <button class="btn" data-crash="0" aria-pressed="true">Healthy</button>
+      <button class="btn" data-crash="1" aria-pressed="false">Crashes after votes</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="tp" data-nodes></div>
+    <p class="tp-msg" data-msg aria-live="polite"></p>
+  </two-pc>
+</Figure>
+
+<style>
+  .tp {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .tp {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .tp :global(.tp-n) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tp :global(.tp-n span) {
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .tp :global(.tp-n.prep) {
+    border-color: var(--g-yellow);
+  }
+  .tp :global(.tp-n.commit) {
+    border-color: var(--g-green);
+  }
+  .tp :global(.tp-n.abort),
+  .tp :global(.tp-n.dead) {
+    border-color: var(--g-red);
+  }
+  .tp :global(.tp-n.stuck) {
+    border-color: var(--g-red);
+    border-style: dashed;
+  }
+  .tp-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  class TwoPc extends HTMLElement {
+    vote = 'yes';
+    crash = false;
+    s = 0;
+    st = ['init', 'init', 'init'];
+    coord = 'idle';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-vote]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.vote = b.dataset.vote!;
+          this.mark('[data-vote]', b);
+          this.reset();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-crash]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.crash = b.dataset.crash === '1';
+          this.mark('[data-crash]', b);
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.s = 0;
+      this.st = ['init', 'init', 'init'];
+      this.coord = 'idle';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+      this.say('A transaction touches three databases. The coordinator must make all of them commit or none.');
+      this.draw();
+    }
+    next() {
+      const votes = [true, true, this.vote === 'yes'];
+      if (this.s === 0) {
+        this.coord = 'collecting';
+        this.say('Phase 1, prepare: the coordinator asks every participant "can you commit?".');
+      } else if (this.s === 1) {
+        this.st = votes.map((v) => (v ? 'prepared' : 'abort'));
+        this.say(
+          votes.every(Boolean)
+            ? 'Votes in: all yes. Each prepared participant has durably logged its promise and holds its locks. It can no longer change its mind on its own.'
+            : 'Votes in: participant 3 said no (and aborted locally). Participants 1 and 2 are prepared, waiting on the coordinator.',
+        );
+      } else if (this.s === 2) {
+        if (this.crash) {
+          this.coord = 'dead';
+          (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+          this.say('The coordinator crashed before sending its decision. Prepared participants cannot ask each other safely and cannot time out into a guess: they block, locks held, until the coordinator recovers. This is the weakness of 2PC.');
+          this.s++;
+          return this.draw();
+        }
+        const commit = votes.every(Boolean);
+        this.coord = commit ? 'commit' : 'abort';
+        this.st = this.st.map(() => (commit ? 'commit' : 'abort'));
+        this.say(commit ? 'Phase 2, decide: all voted yes, so the coordinator logs COMMIT and tells everyone. All three commit atomically.' : 'Phase 2, decide: any no forces ABORT. Everyone rolls back and releases locks.');
+        (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+      }
+      this.s++;
+      this.draw();
+    }
+    draw() {
+      const label: Record<string, string> = { init: 'idle', prepared: 'PREPARED · locks held', commit: 'COMMITTED', abort: 'ABORTED' };
+      const blocked = this.coord === 'dead';
+      const html = [
+        `<div class="tp-n ${this.coord === 'dead' ? 'dead' : this.coord === 'commit' ? 'commit' : this.coord === 'abort' ? 'abort' : ''}"><b>Coordinator</b><span>${this.coord === 'dead' ? 'CRASHED' : this.coord}</span></div>`,
+        ...this.st.map((s, i) => `<div class="tp-n ${blocked && s === 'prepared' ? 'stuck' : s === 'prepared' ? 'prep' : s === 'commit' ? 'commit' : s === 'abort' ? 'abort' : ''}"><b>Participant ${i + 1}</b><span>${blocked && s === 'prepared' ? 'BLOCKED · locks held' : label[s]}</span></div>`),
+      ];
+      this.querySelector('[data-nodes]')!.innerHTML = html.join('');
+    }
+  }
+  customElements.define('two-pc', TwoPc);
+</script>

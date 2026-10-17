@@ -1,0 +1,169 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Half adder: binary addition from two gates"
+  caption="Adding two single bits needs exactly two gates. XOR gives the sum bit (1 when the bits differ) and AND gives the carry (1 only for 1 + 1). Chain these and you get the adder inside every ALU."
+>
+  <half-adder>
+    <div class="ha">
+      <div class="ins">
+        <button class="sw" data-in="a"><span>A</span><b>0</b></button>
+        <button class="sw" data-in="b"><span>B</span><b>0</b></button>
+      </div>
+      <svg viewBox="0 0 260 150" aria-hidden="true">
+        <!-- A and B each fan out to both gates -->
+        <path class="wire" data-w="a" d="M0,35 H40 V40 H110 M40,35 V100 H110"></path>
+        <path class="wire" data-w="b" d="M0,115 H60 V120 H110 M60,115 V60 H110"></path>
+        <path class="wire" data-w="s" d="M168,50 H260"></path>
+        <path class="wire" data-w="c" d="M146,110 H260"></path>
+        <path class="g" d="M98,25 Q135,25 168,50 Q135,75 98,75 Q116,50 98,25 Z"></path>
+        <path class="g-x" d="M90,25 Q108,50 90,75" fill="none"></path>
+        <path class="g" d="M106,85 H122 A25,25 0 0 1 122,135 H106 Z"></path>
+        <text x="122" y="54" class="t">XOR</text>
+        <text x="113" y="114" class="t">AND</text>
+        <circle cx="40" cy="35" r="3.5" class="dot" data-d="a"></circle>
+        <circle cx="60" cy="115" r="3.5" class="dot" data-d="b"></circle>
+      </svg>
+      <div class="outs">
+        <div class="o" data-o="s"><b>0</b><span>sum</span></div>
+        <div class="o" data-o="c"><b>0</b><span>carry</span></div>
+      </div>
+    </div>
+    <p class="eq" data-eq></p>
+  </half-adder>
+</Figure>
+
+<style>
+  .ha {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ins,
+  .outs {
+    display: grid;
+    gap: 40px;
+    flex: none;
+  }
+  svg {
+    flex: 1;
+    min-width: 0;
+    max-height: 170px;
+  }
+  .sw {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    cursor: pointer;
+    font: inherit;
+    color: var(--text-muted);
+  }
+  .sw b {
+    font: 700 1rem var(--font-mono);
+    color: var(--text);
+  }
+  .sw.on {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.16);
+  }
+  .wire {
+    stroke: #3a3a3a;
+    stroke-width: 3.5;
+    fill: none;
+    transition: stroke 0.2s;
+  }
+  .wire.on {
+    stroke: var(--g-green);
+  }
+  .dot {
+    fill: #3a3a3a;
+  }
+  .dot.on {
+    fill: var(--g-green);
+  }
+  .g {
+    fill: #0a0a0a;
+    stroke: #d0d0d0;
+    stroke-width: 2.2;
+  }
+  .g-x {
+    stroke: #d0d0d0;
+    stroke-width: 2.2;
+  }
+  .t {
+    font: 600 9px var(--font-mono);
+    fill: #a3a3a3;
+  }
+  .o {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    border: 2px solid #3a3a3a;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .o b {
+    font: 700 1.125rem var(--font-mono);
+  }
+  .o span {
+    font-size: 0.625rem;
+    color: var(--text-faint);
+  }
+  .o.on {
+    background: var(--g-yellow);
+    border-color: var(--g-yellow);
+  }
+  .o.on b,
+  .o.on span {
+    color: #000;
+  }
+  .eq {
+    margin: 12px 0 0;
+    font: 0.9375rem var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  class HalfAdder extends HTMLElement {
+    a = 0;
+    b = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-in]').forEach((sw) =>
+        sw.addEventListener('click', () => {
+          const k = sw.dataset.in as 'a' | 'b';
+          this[k] ^= 1;
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const { a, b } = this;
+      const s = a ^ b, c = a & b;
+      const set = (sel: string, on: number) => this.querySelectorAll(sel).forEach((e) => e.classList.toggle('on', !!on));
+      set('[data-w="a"], [data-d="a"]', a);
+      set('[data-w="b"], [data-d="b"]', b);
+      set('[data-w="s"], [data-o="s"]', s);
+      set('[data-w="c"], [data-o="c"]', c);
+      this.querySelectorAll<HTMLButtonElement>('[data-in]').forEach((sw) => {
+        const v = this[sw.dataset.in as 'a' | 'b'];
+        sw.classList.toggle('on', !!v);
+        sw.querySelector('b')!.textContent = String(v);
+      });
+      this.querySelector('[data-o="s"] b')!.textContent = String(s);
+      this.querySelector('[data-o="c"] b')!.textContent = String(c);
+      this.querySelector('[data-eq]')!.textContent = `${a} + ${b} = ${c}${s} in binary (= ${a + b})`;
+    }
+  }
+  customElements.define('half-adder', HalfAdder);
+</script>

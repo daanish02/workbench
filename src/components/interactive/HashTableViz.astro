@@ -1,0 +1,256 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Collisions, chaining vs linear probing"
+  caption="Keys go to slot h(k) = k mod m. Start with 12, 22 and 32, which all collide at slot 2: chaining stacks them in one slot, linear probing pushes them into slots 3 and 4, where they now block later keys (blue outline = key is in its home slot; grey = displaced). Insert more and watch the load factor α = n/m; with auto-resize on, crossing 0.75 doubles m and every key is rehashed to a new slot."
+>
+  <hash-table-viz>
+    <div class="ctl-row">
+      <button class="btn" data-mode="chain" aria-pressed="true">Separate chaining</button>
+      <button class="btn" data-mode="probe" aria-pressed="false">Linear probing</button>
+      <button class="btn" data-auto aria-pressed="true">Auto-resize at α &gt; 0.75</button>
+    </div>
+    <div class="slots" data-slots></div>
+    <div class="load">
+      <div class="bar"><span data-bar></span><i style="left:75%"></i></div>
+      <div class="stat" data-stat></div>
+    </div>
+    <p class="msg" data-msg></p>
+    <div class="ctl-row">
+      <label class="ctl-label" for="ht-key">Key</label>
+      <input class="input" id="ht-key" data-key type="number" min="0" max="999" value="42" style="width:6em" />
+      <button class="btn primary" data-ins>Insert</button>
+      <button class="btn" data-find>Look up</button>
+      <button class="btn" data-rand>Insert random</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </hash-table-viz>
+</Figure>
+
+<style>
+  .slots {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .slots :global(.slot) {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 14px 4px 4px;
+    min-height: 44px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    align-items: center;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .slots :global(.slot > i) {
+    position: absolute;
+    top: 1px;
+    left: 6px;
+    font: 10px var(--font-mono);
+    font-style: normal;
+    color: var(--text-faint);
+  }
+  .slots :global(.slot.probed) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.08);
+  }
+  .slots :global(.slot.hit) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.14);
+  }
+  .slots :global(.slot.miss) {
+    border-color: var(--g-red);
+  }
+  .slots :global(b) {
+    font: 700 0.875rem var(--font-mono);
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1px 7px;
+    color: var(--text);
+  }
+  .slots :global(b.home) {
+    border-color: var(--g-blue);
+  }
+  .load {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+  }
+  .bar {
+    position: relative;
+    flex: 0 1 220px;
+    min-width: 120px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+  }
+  .bar span {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 4px;
+    background: var(--g-blue);
+    transition: width 0.3s, background 0.3s;
+  }
+  .bar i {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--g-yellow);
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 10px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const START = [12, 22, 32, 47];
+  class HashTableViz extends HTMLElement {
+    probe = false;
+    auto = true;
+    m = 10;
+    keys: number[] = [];
+    chain: number[][] = [];
+    open: (number | null)[] = [];
+    marks: Record<number, string> = {};
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.probe = b.dataset.mode === 'probe';
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.rebuild(this.m);
+          this.say(`Same ${this.keys.length} keys, stored with ${this.probe ? 'linear probing' : 'separate chaining'}.`);
+        }),
+      );
+      const autoBtn = this.querySelector('[data-auto]')!;
+      autoBtn.addEventListener('click', () => {
+        this.auto = !this.auto;
+        autoBtn.setAttribute('aria-pressed', String(this.auto));
+        this.say(this.auto ? 'Auto-resize on.' : 'Auto-resize off: the table keeps m slots however full it gets.');
+      });
+      const key = () => Math.trunc(+this.querySelector<HTMLInputElement>('[data-key]')!.value);
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(key()));
+      this.querySelector('[data-find]')!.addEventListener('click', () => this.find(key()));
+      this.querySelector('[data-rand]')!.addEventListener('click', () => {
+        let k;
+        do k = 1 + Math.floor(Math.random() * 99);
+        while (this.keys.includes(k));
+        this.querySelector<HTMLInputElement>('[data-key]')!.value = String(k);
+        this.insert(k);
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.m = 10;
+      this.keys = [...START];
+      this.rebuild(10);
+      this.say('h(k) = k mod 10. Slot 2 already holds three colliding keys: 12, 22, 32.');
+    }
+    rebuild(m: number) {
+      this.m = m;
+      this.chain = Array.from({ length: m }, () => []);
+      this.open = Array(m).fill(null);
+      for (const k of this.keys) this.place(k);
+      this.marks = {};
+      this.draw();
+    }
+    place(k: number): number[] {
+      const h = k % this.m;
+      if (!this.probe) {
+        this.chain[h].push(k);
+        return [h];
+      }
+      const seq = [];
+      for (let j = 0; j < this.m; j++) {
+        const i = (h + j) % this.m;
+        seq.push(i);
+        if (this.open[i] === null) {
+          this.open[i] = k;
+          return seq;
+        }
+      }
+      return seq;
+    }
+    insert(k: number) {
+      if (!Number.isFinite(k) || k < 0) return this.say('Enter a non-negative integer key.');
+      if (this.keys.includes(k)) return this.find(k);
+      let pre = '';
+      const n = this.keys.length + 1;
+      if (this.auto && n / this.m > 0.75) {
+        pre = `α would become ${n}/${this.m} = ${(n / this.m).toFixed(2)} &gt; 0.75, so m doubles to ${this.m * 2} and all ${this.keys.length} keys are rehashed (an O(n) step). `;
+        this.rebuild(this.m * 2);
+      } else if (this.probe && this.keys.length >= this.m) {
+        return this.say('Table full: with open addressing every key needs its own slot, so α can never exceed 1.');
+      }
+      this.keys.push(k);
+      const seq = this.place(k);
+      this.marks = {};
+      seq.forEach((i) => (this.marks[i] = 'probed'));
+      this.marks[seq[seq.length - 1]] = 'hit';
+      const h = k % this.m;
+      let what;
+      if (!this.probe) {
+        const len = this.chain[h].length;
+        what = len > 1 ? `collision: appended to slot ${h}'s chain, now ${len} long.` : `slot ${h} was empty.`;
+      } else {
+        what = seq.length > 1 ? `collision: probed ${seq.join(' → ')} to find a free slot (${seq.length} probes).` : `slot ${h} was free (1 probe).`;
+      }
+      this.say(`${pre}Insert ${k}: ${k} mod ${this.m} = ${h}; ${what}`);
+      this.draw();
+    }
+    find(k: number) {
+      const h = k % this.m;
+      this.marks = {};
+      if (!this.probe) {
+        const found = this.chain[h].includes(k);
+        this.marks[h] = found ? 'hit' : 'miss';
+        const idx = this.chain[h].indexOf(k);
+        this.say(`Look up ${k}: go straight to slot ${h}, then scan its chain: ${found ? `found after ${idx + 1} comparison${idx ? 's' : ''}.` : `${this.chain[h].length} comparison${this.chain[h].length === 1 ? '' : 's'}, not present.`}`);
+      } else {
+        const seq = [];
+        let res = 'miss';
+        for (let j = 0; j < this.m; j++) {
+          const i = (h + j) % this.m;
+          seq.push(i);
+          if (this.open[i] === k) { res = 'hit'; break; }
+          if (this.open[i] === null) break;
+        }
+        seq.forEach((i) => (this.marks[i] = 'probed'));
+        this.marks[seq[seq.length - 1]] = res;
+        this.say(`Look up ${k}: follow the same probe sequence ${seq.join(' → ')}. ${res === 'hit' ? 'Found' : 'Hit an empty slot, so it is not present'} after ${seq.length} probe${seq.length > 1 ? 's' : ''}.`);
+      }
+      this.draw();
+    }
+    say(t: string) {
+      this.querySelector('[data-msg]')!.innerHTML = t;
+    }
+    draw() {
+      const box = this.querySelector('[data-slots]')!;
+      box.innerHTML = Array.from({ length: this.m }, (_, i) => {
+        const items = this.probe ? (this.open[i] === null ? [] : [this.open[i]!]) : this.chain[i];
+        return `<div class="slot ${this.marks[i] ?? ''}"><i>${i}</i>${items.map((k) => `<b class="${k % this.m === i ? 'home' : ''}">${k}</b>`).join('')}</div>`;
+      }).join('');
+      const n = this.keys.length, a = n / this.m;
+      const bar = this.querySelector<HTMLElement>('[data-bar]')!;
+      bar.style.width = Math.min(100, a * 100) + '%';
+      bar.style.background = a > 0.75 ? 'var(--g-red)' : 'var(--g-blue)';
+      const longest = this.probe ? '' : ` · longest chain <b>${Math.max(...this.chain.map((c) => c.length))}</b>`;
+      this.querySelector('[data-stat]')!.innerHTML = `n <b>${n}</b> · m <b>${this.m}</b> · α = n/m <b>${a.toFixed(2)}</b>${longest}`;
+    }
+  }
+  customElements.define('hash-table-viz', HashTableViz);
+</script>

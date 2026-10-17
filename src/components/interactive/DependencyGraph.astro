@@ -1,0 +1,93 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Blast radius of a vulnerable dependency"
+  caption="Your app (top) depends on a few libraries, which depend on others. Click any package to mark it vulnerable: everything that depends on it, directly or transitively, turns red. A flaw in a library you never chose can still reach you, and whether it is exploitable depends on whether the vulnerable code is actually reachable."
+>
+  <dep-graph>
+    <svg viewBox="0 0 360 230" class="dg-svg" data-svg aria-label="Dependency graph"></svg>
+    <p class="dg-msg" data-msg aria-live="polite"></p>
+  </dep-graph>
+</Figure>
+
+<style>
+  .dg-svg {
+    width: 100%;
+    max-width: 560px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .dg-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .dg-svg :global(line.hot) {
+    stroke: var(--g-red);
+    stroke-width: 2.5;
+  }
+  .dg-svg :global(.n) {
+    cursor: pointer;
+  }
+  .dg-svg :global(.n rect) {
+    stroke-width: 2;
+  }
+  .dg-svg :global(text) {
+    font: 700 10px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .dg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  const POS: Record<string, [number, number]> = {
+    app: [180, 28], web: [90, 85], orm: [270, 85], http: [50, 145], json: [180, 145], driver: [310, 145], tls: [50, 205],
+  };
+  const DEPS: Record<string, string[]> = { app: ['web', 'orm'], web: ['http', 'json'], orm: ['json', 'driver'], http: ['tls'], json: [], driver: [], tls: [] };
+  class DepGraph extends HTMLElement {
+    vuln: string | null = 'json';
+    connectedCallback() {
+      this.draw();
+    }
+    reach(v: string) {
+      const hit = new Set([v]);
+      let ch = true;
+      while (ch) {
+        ch = false;
+        for (const [p, ds] of Object.entries(DEPS)) if (!hit.has(p) && ds.some((d) => hit.has(d))) (hit.add(p), (ch = true));
+      }
+      return hit;
+    }
+    draw() {
+      const hit = this.vuln ? this.reach(this.vuln) : new Set<string>();
+      let h = '';
+      for (const [p, ds] of Object.entries(DEPS))
+        for (const d of ds) h += `<line class="${hit.has(p) && hit.has(d) ? 'hot' : ''}" x1="${POS[p][0]}" y1="${POS[p][1] + 12}" x2="${POS[d][0]}" y2="${POS[d][1] - 12}"></line>`;
+      for (const [n, [x, y]] of Object.entries(POS)) {
+        const c = n === this.vuln ? '#ea4335' : hit.has(n) ? '#f28b82' : n === 'app' ? '#8ab4f8' : '#5f6368';
+        h += `<g class="n" data-n="${n}"><rect x="${x - 30}" y="${y - 12}" width="60" height="24" rx="6" fill="${c}" fill-opacity="${hit.has(n) || n === 'app' ? 0.5 : 0.25}" stroke="${c}"></rect><text x="${x}" y="${y + 3.5}">${n}</text></g>`;
+      }
+      const svg = this.querySelector('[data-svg]')!;
+      svg.innerHTML = h;
+      svg.querySelectorAll<SVGGElement>('g.n').forEach((g) => g.addEventListener('click', () => ((this.vuln = this.vuln === g.dataset.n ? null : g.dataset.n!), this.draw())));
+      const msg = this.querySelector('[data-msg]')!;
+      if (!this.vuln) msg.textContent = 'Click a package to mark it vulnerable.';
+      else {
+        const others = [...hit].filter((x) => x !== this.vuln);
+        msg.textContent = `A flaw in "${this.vuln}" affects ${others.length ? others.join(', ') : 'nothing else'} through the dependency chain${hit.has('app') && this.vuln !== 'app' ? ', including your app, which never chose it directly' : ''}. Whether it is exploitable depends on whether your code can actually reach the vulnerable function.`;
+      }
+    }
+  }
+  customElements.define('dep-graph', DepGraph);
+</script>

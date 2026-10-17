@@ -1,0 +1,182 @@
+---
+import type { NavSection } from '../lib/nav';
+import { noteUrl, noteParts, url } from '../lib/nav';
+import AreaIcon from './AreaIcon.astro';
+
+interface Props {
+  areaId: string;
+  areaTitle: string;
+  nav: NavSection[];
+  /** "<area>/<section>/<slug>" of the current note, if any */
+  currentId?: string;
+}
+
+const { areaId, areaTitle, nav, currentId } = Astro.props;
+const currentSection = currentId?.split('/')[1];
+const onOverview = !currentId;
+---
+
+<div class="sidebar-scrim" data-sidebar-scrim></div>
+<aside class="sidebar" data-sidebar aria-label={`${areaTitle} navigation`}>
+  <div class="sidebar-inner">
+    <div class="area-chip">
+      <AreaIcon id={areaId} size={18} />
+      {areaTitle}
+    </div>
+    <a href={url(`${areaId}/`)} class:list={['side-link', 'overview', { active: onOverview }]}>Overview</a>
+    {
+      nav.map((section, i) => (
+        <details class="group" open={section.id === currentSection}>
+          <summary>
+            <span class="num">{String(i + 1).padStart(2, '0')}</span>
+            {section.title}
+            <svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M4 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.5" />
+            </svg>
+          </summary>
+          <ul>
+            {section.notes.map((n) => {
+              const active = n.id === currentId;
+              return (
+                <li>
+                  <a href={noteUrl(n)} class:list={['side-link', { active }]} aria-current={active ? 'page' : undefined}>
+                    <span>{n.data.title}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      ))
+    }
+  </div>
+</aside>
+
+<style>
+  .sidebar {
+    position: sticky;
+    top: var(--header-h);
+    height: calc(100dvh - var(--header-h));
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a2a transparent;
+  }
+  .sidebar-inner {
+    padding: 20px 14px 48px 24px;
+  }
+  .area-chip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+  }
+  .side-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+  .side-link:hover {
+    color: var(--text);
+    background: var(--bg-soft);
+  }
+  .side-link.active {
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
+  .overview {
+    margin-bottom: 8px;
+  }
+  .group {
+    border-top: 1px solid var(--border);
+    padding: 6px 0;
+  }
+  summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px 6px;
+    font-size: 0.8125rem;
+    font-weight: 650;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .num {
+    font: 500 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .chev {
+    margin-left: auto;
+    color: var(--text-faint);
+    transition: transform 0.15s;
+  }
+  details[open] .chev {
+    transform: rotate(90deg);
+  }
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 4px;
+  }
+  .sidebar-scrim {
+    display: none;
+  }
+
+  /* mobile: off-canvas drawer */
+  @media (max-width: 1023px) {
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      height: 100dvh;
+      width: min(320px, 86vw);
+      z-index: 60;
+      background: var(--bg);
+      transform: translateX(-100%);
+      transition: transform 0.22s ease;
+    }
+    .sidebar-inner {
+      padding: 20px 16px 48px;
+    }
+    :global(body.sidebar-open) .sidebar {
+      transform: none;
+    }
+    .sidebar-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 55;
+      background: rgba(0, 0, 0, 0.6);
+    }
+    :global(body.sidebar-open) .sidebar-scrim {
+      display: block;
+    }
+  }
+</style>
+
+<script>
+  const body = document.body;
+  const sidebar = document.querySelector<HTMLElement>('[data-sidebar]');
+  document.querySelector('[data-open-sidebar]')?.addEventListener('click', () => body.classList.add('sidebar-open'));
+  document.querySelector('[data-sidebar-scrim]')?.addEventListener('click', () => body.classList.remove('sidebar-open'));
+  window.addEventListener('keydown', (e) => e.key === 'Escape' && body.classList.remove('sidebar-open'));
+  // keep the active link in view when the page loads
+  sidebar?.querySelector('.side-link.active')?.scrollIntoView({ block: 'center' });
+</script>

@@ -1,0 +1,262 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Insert and delete by rewiring pointers"
+  caption="Pick a node, then Insert after it or Delete it, and press Next step to apply one pointer write at a time. In singly mode, deleting needs a walk from head to find the predecessor; in doubly mode the node's prev pointer gives it directly, at the cost of extra writes. Blue arrows are next, red arrows are prev."
+>
+  <linked-list-viz>
+    <div class="ctl-row">
+      <button class="btn" data-mode="s" aria-pressed="true">Singly</button>
+      <button class="btn" data-mode="d" aria-pressed="false">Doubly</button>
+    </div>
+    <div class="stage"><svg data-svg role="img" aria-label="linked list diagram"></svg></div>
+    <p class="msg" data-msg></p>
+    <div class="ctl-row">
+      <label class="ctl-label" for="ll-sel">Node</label>
+      <select class="input" id="ll-sel" data-sel></select>
+      <button class="btn" data-ins>Insert after</button>
+      <button class="btn" data-del>Delete</button>
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="stat" data-stat style="margin-top:8px"></div>
+  </linked-list-viz>
+</Figure>
+
+<style>
+  .stage {
+    overflow: hidden;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 8px 0 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .stage :global(.node rect) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .stage :global(.node.hl rect) {
+    stroke: var(--g-yellow);
+    fill: rgba(251, 188, 5, 0.12);
+  }
+  .stage :global(.node.new rect) {
+    stroke: var(--g-green);
+  }
+  .stage :global(.node.gone) {
+    opacity: 0.4;
+  }
+  .stage :global(.node.gone rect) {
+    stroke-dasharray: 4 3;
+  }
+  .stage :global(.node text) {
+    fill: var(--text);
+    font: 700 15px var(--font-mono);
+  }
+  .stage :global(.lbl) {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+  }
+  .stage :global(.nx) {
+    stroke: var(--g-blue-l);
+    stroke-width: 1.6;
+    fill: none;
+  }
+  .stage :global(.pv) {
+    stroke: var(--g-red-l);
+    stroke-width: 1.6;
+    fill: none;
+  }
+  .stage :global(.changed) {
+    stroke-width: 2.6;
+  }
+  select.input {
+    font-family: var(--font-mono);
+  }
+</style>
+
+<script>
+  type Ptr = Record<string, string | null>;
+  interface Frame {
+    order: string[];
+    low: string[];
+    gone: string[];
+    next: Ptr;
+    prev: Ptr;
+    head: string | null;
+    hl: string[];
+    changed: string[]; // "n:A" or "p:B" or "head"
+    msg: string;
+    writes: number;
+  }
+  const W = 50, H = 30, SP = 80, Y0 = 44, Y1 = 112;
+
+  class LinkedListViz extends HTMLElement {
+    list = ['A', 'B', 'C', 'D'];
+    doubly = false;
+    frames: Frame[] = [];
+    fi = 0;
+    uid = Math.random().toString(36).slice(2);
+    nextLetter = 4;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.doubly = b.dataset.mode === 'd';
+          this.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.idle('Switched mode. Pick a node and an operation.');
+        }),
+      );
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert());
+      this.querySelector('[data-del]')!.addEventListener('click', () => this.del());
+      this.querySelector('[data-step]')!.addEventListener('click', () => {
+        if (this.fi < this.frames.length - 1) this.fi++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.list = ['A', 'B', 'C', 'D'];
+        this.nextLetter = 4;
+        this.idle('Reset to A → B → C → D.');
+      });
+      this.idle('The list is reached only through head. Pick a node and an operation.');
+    }
+
+    base(order = this.list): Frame {
+      const next: Ptr = {}, prev: Ptr = {};
+      order.forEach((id, i) => {
+        next[id] = order[i + 1] ?? null;
+        prev[id] = order[i - 1] ?? null;
+      });
+      return { order: [...order], low: [], gone: [], next, prev, head: order[0] ?? null, hl: [], changed: [], msg: '', writes: 0 };
+    }
+    push(f: Frame, patch: Partial<Frame>) {
+      const n: Frame = { ...f, next: { ...f.next }, prev: { ...f.prev }, changed: [], hl: [...f.hl], ...patch };
+      this.frames.push(n);
+      return n;
+    }
+    idle(msg: string) {
+      const f = this.base();
+      f.msg = msg;
+      this.frames = [f];
+      this.fi = 0;
+      this.fillSelect();
+      this.draw();
+    }
+    fillSelect() {
+      const sel = this.querySelector<HTMLSelectElement>('[data-sel]')!;
+      const keep = sel.value;
+      sel.innerHTML = this.list.map((id) => `<option value="${id}">${id}</option>`).join('');
+      sel.value = this.list.includes(keep) ? keep : this.list[Math.min(1, this.list.length - 1)];
+    }
+
+    insert() {
+      const sel = this.querySelector<HTMLSelectElement>('[data-sel]')!.value;
+      if (this.list.length >= 6) return;
+      const i = this.list.indexOf(sel);
+      let x = String.fromCharCode(65 + (this.nextLetter++ % 26));
+      while (this.list.includes(x)) x = String.fromCharCode(65 + (this.nextLetter++ % 26));
+      const a = sel, b = this.list[i + 1] ?? null;
+      const order = [...this.list];
+      order.splice(i + 1, 0, x);
+      this.frames = [];
+      const f0 = this.base(this.list);
+      let f = this.push({ ...f0, order }, {
+        low: [x], next: { ...f0.next, [x]: null }, prev: { ...f0.prev, [x]: null }, hl: [a, x],
+        msg: `Create node ${x}. We already hold a reference to ${a}, so no walk is needed.`,
+      });
+      let w = 0;
+      f = this.push(f, { next: { ...f.next, [x]: b }, changed: ['n:' + x], writes: ++w,
+        msg: `${x}.next = ${a}.next${b ? ` (${b})` : ' (null)'}. Do this first: overwriting ${a}.next first would lose ${b ? b + ' and everything after it' : 'nothing here, but the habit matters'}.` });
+      if (this.doubly) f = this.push(f, { prev: { ...f.prev, [x]: a }, changed: ['p:' + x], writes: ++w, msg: `${x}.prev = ${a}.` });
+      f = this.push(f, { next: { ...f.next, [a]: x }, changed: ['n:' + a], writes: ++w, msg: `${a}.next = ${x}. Walking from head now reaches ${x}.` });
+      if (this.doubly && b) f = this.push(f, { prev: { ...f.prev, [b]: x }, changed: ['p:' + b], writes: ++w, msg: `${b}.prev = ${x}. Backward traversal now agrees with forward.` });
+      this.push(f, { low: [], hl: [x], msg: `Done: ${w} pointer writes, O(1) once ${a} was known.` });
+      this.list = order;
+      this.start();
+    }
+
+    del() {
+      const t = this.querySelector<HTMLSelectElement>('[data-sel]')!.value;
+      if (this.list.length <= 1) return;
+      const i = this.list.indexOf(t);
+      const p = this.list[i - 1] ?? null, nx = this.list[i + 1] ?? null;
+      this.frames = [];
+      let f = this.base(this.list);
+      let w = 0;
+      if (this.doubly) {
+        f = this.push(f, { hl: [t, ...(p ? [p] : [])], msg: p ? `Holding ${t}: ${t}.prev is ${p}, so the predecessor is found in O(1).` : `${t} is the head; it has no predecessor.` });
+      } else if (p) {
+        f = this.push(f, { hl: this.list.slice(0, i), msg: `${t} has no back pointer, so walk from head to its predecessor ${p}: ${i} hop${i > 1 ? 's' : ''}, O(n) in general.` });
+      } else {
+        f = this.push(f, { hl: [t], msg: `${t} is the head, so there is no predecessor to find.` });
+      }
+      if (p) f = this.push(f, { next: { ...f.next, [p]: nx }, low: [t], hl: [p], changed: ['n:' + p], writes: ++w, msg: `${p}.next = ${t}.next${nx ? ` (${nx})` : ' (null)'}. ${t} is now skipped going forward.` });
+      else f = this.push(f, { head: nx, low: [t], hl: [], changed: ['head'], writes: ++w, msg: `head = ${t}.next${nx ? ` (${nx})` : ''}.` });
+      if (this.doubly && nx) f = this.push(f, { prev: { ...f.prev, [nx]: p }, hl: [nx], changed: ['p:' + nx], writes: ++w, msg: `${nx}.prev = ${t}.prev${p ? ` (${p})` : ' (null)'}. ${t} is now unreachable in both directions.` });
+      const order = this.list.filter((x) => x !== t);
+      this.push(f, { order, low: [], hl: [], gone: [], msg: `Done: ${w} pointer write${w > 1 ? 's' : ''}. ${t}'s memory can now be reclaimed.` });
+      this.list = order;
+      this.start();
+    }
+
+    start() {
+      this.fi = 0;
+      this.fillSelect();
+      this.draw();
+    }
+
+    draw() {
+      const f = this.frames[this.fi];
+      const n = f.order.length;
+      const width = 24 + n * SP + 20;
+      const svg = this.querySelector<SVGSVGElement>('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${width} 156`);
+      svg.setAttribute('width', String(width));
+      const pos: Record<string, [number, number]> = {};
+      f.order.forEach((id, i) => (pos[id] = [16 + i * SP, f.low.includes(id) ? Y1 : Y0]));
+      const mk = (c: string) => `url(#${c}-${this.uid})`;
+      let s = `<defs>${['nx', 'pv'].map((c) => `<marker id="${c}-${this.uid}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" style="fill:var(${c === 'nx' ? '--g-blue-l' : '--g-red-l'})"/></marker>`).join('')}</defs>`;
+      for (const id of f.order) {
+        const [x, y] = pos[id];
+        const to = f.next[id];
+        if (to && pos[to]) {
+          const [tx, ty] = pos[to];
+          s += `<line class="nx ${f.changed.includes('n:' + id) ? 'changed' : ''}" x1="${x + W}" y1="${y + 10}" x2="${tx - 1}" y2="${ty + 10}" marker-end="${mk('nx')}"/>`;
+        } else if (to === null && !f.low.includes(id)) {
+          s += `<text class="lbl" x="${x + W + 4}" y="${y + 14}">null</text>`;
+        }
+        const pv = f.prev[id];
+        if (this.doubly && pv && pos[pv]) {
+          const [tx, ty] = pos[pv];
+          s += `<line class="pv ${f.changed.includes('p:' + id) ? 'changed' : ''}" x1="${x}" y1="${y + 21}" x2="${tx + W + 1}" y2="${ty + 21}" marker-end="${mk('pv')}"/>`;
+        }
+      }
+      if (f.head && pos[f.head]) {
+        const [x] = pos[f.head];
+        s += `<text class="lbl" x="${x + W / 2}" y="12" text-anchor="middle" ${f.changed.includes('head') ? 'style="fill:var(--g-yellow)"' : ''}>head</text><line class="nx" x1="${x + W / 2}" y1="16" x2="${x + W / 2}" y2="${Y0 - 2}" marker-end="${mk('nx')}"/>`;
+      }
+      for (const id of f.order) {
+        const [x, y] = pos[id];
+        const cls = ['node', f.hl.includes(id) ? 'hl' : '', f.low.includes(id) && !this.list.includes(id) ? 'gone' : '', f.low.includes(id) && this.list.includes(id) ? 'new' : ''].join(' ');
+        s += `<g class="${cls}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="7"/><text x="${x + W / 2}" y="${y + 20}" text-anchor="middle">${id}</text></g>`;
+      }
+      svg.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const last = this.frames.length - 1;
+      this.querySelector('[data-stat]')!.innerHTML = `step <b>${this.fi}/${last}</b> · pointer writes <b>${f.writes}</b> · length <b>${this.list.length}</b>`;
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = this.fi >= last;
+      (this.querySelector('[data-ins]') as HTMLButtonElement).disabled = this.list.length >= 6;
+      (this.querySelector('[data-del]') as HTMLButtonElement).disabled = this.list.length <= 1;
+    }
+  }
+  customElements.define('linked-list-viz', LinkedListViz);
+</script>

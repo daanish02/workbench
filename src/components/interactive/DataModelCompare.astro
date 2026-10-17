@@ -1,0 +1,113 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One order, four data models"
+  caption="The same data modelled four ways. Pick an operation to see what each model has to do. Nothing here is 'faster' in general: each model makes some operations a single step and others expensive or impossible without extra structure."
+>
+  <data-model-compare>
+    <div class="ctl-row">
+      <span class="ctl-label">Operation</span>
+      <button class="btn" data-op="0" aria-pressed="true">Show one order with items</button>
+      <button class="btn" data-op="1" aria-pressed="false">All orders containing a product</button>
+      <button class="btn" data-op="2" aria-pressed="false">Change a product's name</button>
+    </div>
+    <div class="dm" data-grid></div>
+  </data-model-compare>
+</Figure>
+
+<style>
+  .dm {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 640px) {
+    .dm {
+      grid-template-columns: 1fr;
+    }
+  }
+  .dm :global(.cell) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dm :global(.cell b) {
+    color: var(--text);
+  }
+  .dm :global(.cell pre) {
+    margin: 0;
+    font: 0.6875rem/1.5 var(--font-mono);
+    white-space: pre-wrap;
+    color: var(--text-muted);
+  }
+  .dm :global(.cell.easy) {
+    border-color: var(--g-green);
+  }
+  .dm :global(.cell.mid) {
+    border-color: var(--g-yellow);
+  }
+  .dm :global(.cell.hard) {
+    border-color: var(--g-red);
+  }
+  .dm :global(.tag) {
+    font: 700 0.6875rem var(--font-mono);
+  }
+  .dm :global(.easy .tag) {
+    color: var(--g-green-l);
+  }
+  .dm :global(.mid .tag) {
+    color: var(--g-yellow-l);
+  }
+  .dm :global(.hard .tag) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  type Cell = { model: string; layout: string; level: 'easy' | 'mid' | 'hard'; verdict: string; how: string };
+  const OPS: Cell[][] = [
+    [
+      { model: 'Relational', layout: 'customers, orders, order_items, products', level: 'mid', verdict: 'joins', how: 'JOIN orders, order_items and products on their keys, then reassemble. Flexible, but several tables are touched.' },
+      { model: 'Document', layout: '{ order, customer, items: [...] } in one document', level: 'easy', verdict: '1 read', how: 'Fetch the order document by id: everything needed is already inside it.' },
+      { model: 'Key-value', layout: 'order:9001 → blob', level: 'easy', verdict: '1 read', how: 'GET order:9001. The key is known, so a single lookup returns the whole value.' },
+      { model: 'Wide-column', layout: 'partition key = order_id, one row per item', level: 'easy', verdict: '1 partition read', how: 'Read the partition for that order_id: all item rows live together, already sorted.' },
+    ],
+    [
+      { model: 'Relational', layout: 'order_items(product_id) with an index', level: 'easy', verdict: 'index + join', how: 'SELECT … WHERE product_id = 42 uses the index; joining back to orders is routine. Ad hoc queries are the strength.' },
+      { model: 'Document', layout: 'items nested inside orders', level: 'mid', verdict: 'needs index', how: 'Works if you create an index on the nested field (items.sku). Without one it scans every order document.' },
+      { model: 'Key-value', layout: 'order:9001 → blob', level: 'hard', verdict: 'full scan', how: 'You do not know the keys, and values are opaque. Unless you maintain a second key like product:42:orders, you must scan everything.' },
+      { model: 'Wide-column', layout: 'partitioned by order_id', level: 'hard', verdict: 'wrong partition', how: 'The partition key is order_id, so finding orders by product touches every partition. Solution: write a second table keyed by product (duplicate the data on purpose).' },
+    ],
+    [
+      { model: 'Relational', layout: 'products(name) stored once', level: 'easy', verdict: '1 row', how: 'UPDATE products SET name = … WHERE product_id = 42. Every order sees it through the join.' },
+      { model: 'Document', layout: 'name copied into every order that contains it', level: 'hard', verdict: 'many documents', how: 'The name is duplicated into each order document. Update them all, or accept that old orders keep the old name (often correct for invoices!).' },
+      { model: 'Key-value', layout: 'product:42 → { name }', level: 'easy', verdict: '1 write', how: 'Overwrite product:42. If the name was also copied into order blobs, those copies are stale.' },
+      { model: 'Wide-column', layout: 'name duplicated in each denormalized table', level: 'hard', verdict: 'many writes', how: 'Each query-specific table holds its own copy, so the application updates every copy. The price of reads shaped to queries.' },
+    ],
+  ];
+  class DataModelCompare extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-op]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-op]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw(+b.dataset.op!);
+        }),
+      );
+      this.draw(0);
+    }
+    draw(i: number) {
+      this.querySelector('[data-grid]')!.innerHTML = OPS[i]
+        .map((c) => `<div class="cell ${c.level}"><b>${c.model}</b><span class="tag">${c.verdict}</span><pre>${c.layout}</pre><span>${c.how}</span></div>`)
+        .join('');
+    }
+  }
+  customElements.define('data-model-compare', DataModelCompare);
+</script>

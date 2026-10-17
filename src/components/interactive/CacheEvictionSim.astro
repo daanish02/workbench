@@ -1,0 +1,181 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="FIFO vs LRU vs LFU on the same accesses"
+  caption="Pick an access pattern and a cache size. The bars compare hit rates for all three policies on the identical sequence; step through one policy to see which key it evicts and why. A one-off scan pollutes the cache (LRU recovers more slowly than LFU, which remembers which keys are popular), and a loop bigger than the cache defeats every policy: only a larger cache helps."
+>
+  <cache-sim>
+    <div class="ctl-row">
+      <span class="ctl-label">Pattern</span>
+      <button class="btn" data-p="hot" aria-pressed="true">Hot set</button>
+      <button class="btn" data-p="scan" aria-pressed="false">Hot set + one-off scan</button>
+      <button class="btn" data-p="loop" aria-pressed="false">Loop of 5 keys</button>
+      <label class="stat">Cache size <input type="range" min="2" max="8" value="4" data-size /> <b data-sv>4</b></label>
+    </div>
+    <div class="cs-bars" data-bars></div>
+    <div class="ctl-row">
+      <span class="ctl-label">Step through</span>
+      <button class="btn" data-pol="FIFO" aria-pressed="false">FIFO</button>
+      <button class="btn" data-pol="LRU" aria-pressed="true">LRU</button>
+      <button class="btn" data-pol="LFU" aria-pressed="false">LFU</button>
+      <button class="btn primary" data-step>Next access</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="cs-state" data-state></div>
+    <p class="cs-msg" data-msg aria-live="polite"></p>
+  </cache-sim>
+</Figure>
+
+<style>
+  .cs-bars {
+    display: grid;
+    gap: 6px;
+    margin: 14px 0;
+  }
+  .cs-bars :global(.row) {
+    display: grid;
+    grid-template-columns: 50px 1fr 46px;
+    gap: 8px;
+    align-items: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cs-bars :global(.bar) {
+    height: 14px;
+    border-radius: 4px;
+    background: var(--g-blue);
+  }
+  .cs-bars :global(.best .bar) {
+    background: var(--g-green);
+  }
+  .cs-state {
+    margin-top: 12px;
+    font: 0.75rem var(--font-mono);
+  }
+  .cs-state :global(.seq) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-bottom: 10px;
+  }
+  .cs-state :global(.k) {
+    min-width: 22px;
+    text-align: center;
+    padding: 3px 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    color: var(--text-muted);
+  }
+  .cs-state :global(.k.done.hit) {
+    background: rgba(52, 168, 83, 0.3);
+    color: #fff;
+  }
+  .cs-state :global(.k.done.miss) {
+    background: rgba(234, 67, 53, 0.25);
+    color: #fff;
+  }
+  .cs-state :global(.k.now) {
+    border-color: #fff;
+    color: #fff;
+  }
+  .cs-state :global(.slots) {
+    display: flex;
+    gap: 6px;
+  }
+  .cs-state :global(.slot) {
+    width: 42px;
+    height: 34px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    text-align: center;
+    line-height: 32px;
+    color: #fff;
+    font-weight: 700;
+  }
+  .cs-state :global(.slot.new) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.2);
+  }
+  .cs-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  input[type='range'] {
+    width: 90px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const HOT = 'ABCABDACABEACBADABCAABDC'.split('');
+  const SEQ: Record<string, string[]> = {
+    hot: [...HOT, ...HOT],
+    scan: [...HOT, ...'PQRSTUVWXYZ'.split(''), ...HOT],
+    loop: 'ABCDEABCDEABCDEABCDEABCDEABCDEABCDE'.split(''),
+  };
+  type Pol = 'FIFO' | 'LRU' | 'LFU';
+  function run(seq: string[], size: number, pol: Pol) {
+    const cache: string[] = []; // order: oldest/least recent first
+    const freq: Record<string, number> = {};
+    const out: { k: string; hit: boolean; evicted?: string; cache: string[] }[] = [];
+    for (const k of seq) {
+      freq[k] = (freq[k] ?? 0) + 1;
+      const idx = cache.indexOf(k);
+      let evicted: string | undefined;
+      if (idx >= 0) {
+        if (pol === 'LRU') (cache.splice(idx, 1), cache.push(k));
+      } else {
+        if (cache.length >= size) {
+          let v = 0;
+          if (pol === 'LFU') cache.forEach((c, i) => freq[c] < freq[cache[v]] && (v = i));
+          evicted = cache.splice(v, 1)[0];
+        }
+        cache.push(k);
+      }
+      out.push({ k, hit: idx >= 0, evicted, cache: [...cache] });
+    }
+    return out;
+  }
+  class CacheSim extends HTMLElement {
+    p = 'hot';
+    pol: Pol = 'LRU';
+    i = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-p]').forEach((b) => b.addEventListener('click', () => ((this.p = b.dataset.p!), this.mark('[data-p]', b), this.reset())));
+      this.querySelectorAll<HTMLButtonElement>('[data-pol]').forEach((b) => b.addEventListener('click', () => ((this.pol = b.dataset.pol as Pol), this.mark('[data-pol]', b), this.reset())));
+      this.querySelector('[data-size]')!.addEventListener('input', () => this.reset());
+      this.querySelector('[data-step]')!.addEventListener('click', () => ((this.i = Math.min(this.i + 1, SEQ[this.p].length)), this.draw()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    reset() {
+      this.i = 0;
+      this.draw();
+    }
+    draw() {
+      const size = +this.querySelector<HTMLInputElement>('[data-size]')!.value;
+      this.querySelector('[data-sv]')!.textContent = String(size);
+      const seq = SEQ[this.p];
+      const rates = (['FIFO', 'LRU', 'LFU'] as Pol[]).map((p) => ({ p, r: run(seq, size, p).filter((x) => x.hit).length / seq.length }));
+      const best = Math.max(...rates.map((x) => x.r));
+      this.querySelector('[data-bars]')!.innerHTML = rates.map((x) => `<div class="row ${x.r === best ? 'best' : ''}"><span>${x.p}</span><div class="bar" style="width:${x.r * 100}%"></div><span>${Math.round(x.r * 100)}%</span></div>`).join('');
+      const trace = run(seq, size, this.pol);
+      const cur = this.i > 0 ? trace[this.i - 1] : null;
+      const seqHtml = seq.map((k, j) => `<span class="k ${j < this.i ? 'done ' + (trace[j].hit ? 'hit' : 'miss') : ''} ${j === this.i - 1 ? 'now' : ''}">${k}</span>`).join('');
+      const slots = Array.from({ length: size }, (_, s) => `<div class="slot ${cur && !cur.hit && cur.cache[s] === cur.k ? 'new' : ''}">${cur ? (cur.cache[s] ?? '') : ''}</div>`).join('');
+      this.querySelector('[data-state]')!.innerHTML = `<div class="seq">${seqHtml}</div><div class="slots">${slots}</div>`;
+      const hits = trace.slice(0, this.i).filter((x) => x.hit).length;
+      this.querySelector('[data-msg]')!.textContent = cur
+        ? `${this.pol}: access ${cur.k} → ${cur.hit ? 'HIT' : 'MISS'}${cur.evicted ? `, evicted ${cur.evicted}` : ''}. ${hits}/${this.i} hits so far (green = hit, red = miss).`
+        : `Press Next access to replay the sequence under ${this.pol}. Slots show the cache; yellow is a newly loaded key.`;
+    }
+  }
+  customElements.define('cache-sim', CacheSim);
+</script>

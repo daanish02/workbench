@@ -1,0 +1,153 @@
+---
+import Figure from '../Figure.astro';
+const classes = [
+  ['c1', 'O(1)'],
+  ['log', 'O(log n)'],
+  ['n', 'O(n)'],
+  ['nlog', 'O(n log n)'],
+  ['n2', 'O(n²)'],
+  ['exp', 'O(2ⁿ)'],
+];
+---
+
+<Figure
+  title="How growth classes pull apart"
+  caption="Drag n and watch the curves. On a linear axis the cheaper classes are flattened by n², and 2ⁿ swamps everything; switch to a log axis to see them all. The table gives exact step counts at this n, what happens when n doubles, and the wall-clock time at one microsecond per step."
+>
+  <bigo-growth>
+    <div class="ctl-row">
+      <label class="ctl-label" for="bg-n">n</label>
+      <input id="bg-n" type="range" min="2" max="64" value="16" data-n style="flex:1;min-width:140px" />
+      <b class="mono" data-nv>16</b>
+    </div>
+    <div class="ctl-row">
+      {classes.map(([id, label]) => <button class="btn" data-cls={id} aria-pressed={id === 'exp' ? 'false' : 'true'}>{label}</button>)}
+      <button class="btn" data-log aria-pressed="false">Log axis</button>
+    </div>
+    <svg class="plot" viewBox="0 0 600 240" preserveAspectRatio="none" aria-hidden="true" data-svg></svg>
+    <div class="tbl-wrap">
+      <table class="ops">
+        <thead><tr><th>Class</th><th>Steps at n</th><th>If n doubles</th><th>At 1 µs/step</th></tr></thead>
+        <tbody data-rows></tbody>
+      </table>
+    </div>
+  </bigo-growth>
+</Figure>
+
+<style>
+  .plot {
+    display: block;
+    width: 100%;
+    height: 220px;
+    margin: 12px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-soft);
+  }
+  .tbl-wrap {
+    overflow-x: auto;
+  }
+  .ops {
+    width: 100%;
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+  }
+  .ops :global(th),
+  .ops :global(td) {
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .ops :global(th) {
+    color: var(--text-faint);
+    font-weight: 600;
+  }
+  .ops :global(td i) {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 6px;
+  }
+  .ops :global(tr.off) {
+    opacity: 0.4;
+  }
+</style>
+
+<script>
+  type Cls = { id: string; label: string; color: string; f: (n: number) => number };
+  const log2 = Math.log2;
+  const CLS: Cls[] = [
+    { id: 'c1', label: 'O(1)', color: '#9aa0a6', f: () => 1 },
+    { id: 'log', label: 'O(log n)', color: 'var(--g-green)', f: (n) => log2(n) },
+    { id: 'n', label: 'O(n)', color: 'var(--g-blue)', f: (n) => n },
+    { id: 'nlog', label: 'O(n log n)', color: 'var(--g-yellow)', f: (n) => n * log2(n) },
+    { id: 'n2', label: 'O(n²)', color: 'var(--g-red)', f: (n) => n * n },
+    { id: 'exp', label: 'O(2ⁿ)', color: '#c58af9', f: (n) => 2 ** n },
+  ];
+
+  const num = (v: number) => (v < 1e6 ? (Number.isInteger(v) ? v.toLocaleString('en-US') : v.toFixed(1)) : v.toExponential(2).replace('e+', '×10^'));
+  function dur(us: number) {
+    const s = us / 1e6;
+    if (s < 1e-3) return `${us.toFixed(us < 10 ? 1 : 0)} µs`;
+    if (s < 1) return `${(s * 1e3).toFixed(1)} ms`;
+    if (s < 120) return `${s.toFixed(1)} s`;
+    if (s < 7200) return `${(s / 60).toFixed(1)} min`;
+    if (s < 172800) return `${(s / 3600).toFixed(1)} h`;
+    if (s < 3.156e7 * 2) return `${(s / 86400).toFixed(0)} days`;
+    return `${num(Math.round(s / 3.156e7))} years`;
+  }
+
+  class BigOGrowth extends HTMLElement {
+    on = new Set(['c1', 'log', 'n', 'nlog', 'n2']);
+    logY = false;
+    connectedCallback() {
+      const slider = this.querySelector<HTMLInputElement>('[data-n]')!;
+      slider.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-cls]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const id = b.dataset.cls!;
+          this.on.has(id) ? this.on.delete(id) : this.on.add(id);
+          b.setAttribute('aria-pressed', String(this.on.has(id)));
+          this.draw();
+        }),
+      );
+      const lb = this.querySelector<HTMLButtonElement>('[data-log]')!;
+      lb.addEventListener('click', () => {
+        this.logY = !this.logY;
+        lb.setAttribute('aria-pressed', String(this.logY));
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const W = 600, H = 240, P = 10;
+      const vis = CLS.filter((c) => this.on.has(c.id));
+      const tr = (v: number) => (this.logY ? Math.log10(Math.max(v, 1)) : v);
+      const ymax = Math.max(1e-9, ...vis.map((c) => tr(c.f(n))));
+      let svg = '';
+      // horizontal guides
+      for (let k = 1; k < 4; k++) svg += `<line x1="0" x2="${W}" y1="${(H * k) / 4}" y2="${(H * k) / 4}" stroke="#1f1f1f" stroke-width="1"/>`;
+      for (const c of vis) {
+        const pts: string[] = [];
+        for (let s = 0; s <= 120; s++) {
+          const x = 1 + ((n - 1) * s) / 120;
+          const y = tr(c.f(x)) / ymax;
+          pts.push(`${(P + ((W - 2 * P) * s) / 120).toFixed(1)},${(H - P - (H - 2 * P) * Math.min(y, 1.05)).toFixed(1)}`);
+        }
+        svg += `<polyline fill="none" stroke="${c.color}" stroke-width="2.5" vector-effect="non-scaling-stroke" points="${pts.join(' ')}"/>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = svg;
+      this.querySelector('[data-rows]')!.innerHTML = CLS.map((c) => {
+        const v = c.f(n);
+        const v2 = c.f(2 * n);
+        const grow = c.id === 'c1' ? 'same' : c.id === 'log' ? '+1' : `×${num(+(v2 / v).toFixed(2))}`;
+        return `<tr class="${this.on.has(c.id) ? '' : 'off'}"><td><i style="background:${c.color}"></i>${c.label}</td><td>${num(Number.isInteger(v) ? v : +v.toFixed(1))}</td><td>${grow}</td><td>${dur(v)}</td></tr>`;
+      }).join('');
+    }
+  }
+  customElements.define('bigo-growth', BigOGrowth);
+</script>

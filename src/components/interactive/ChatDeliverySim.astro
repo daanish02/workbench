@@ -1,0 +1,158 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One message, end to end"
+  caption="Alice sends 'hi' to Bob. Choose whether Bob is online and whether the server's acknowledgement gets lost on the way back, then step through. Watch the ticks on Alice's phone and how the client-generated message id makes the retry safe: at-least-once delivery plus an idempotent server gives the effect of exactly once."
+>
+  <chat-delivery>
+    <div class="ctl-row">
+      <span class="ctl-label">Bob is</span>
+      <button class="btn" data-bob="on" aria-pressed="true">Online</button>
+      <button class="btn" data-bob="off" aria-pressed="false">Offline</button>
+      <span class="ctl-label">Server ack to Alice</span>
+      <button class="btn" data-ack="ok" aria-pressed="true">Arrives</button>
+      <button class="btn" data-ack="lost" aria-pressed="false">Lost once</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="cd">
+      <div class="phone"><b>Alice</b><div class="bubble" data-alice></div></div>
+      <ol class="cd-log" data-log></ol>
+      <div class="phone"><b>Bob</b><div class="bubble" data-bobv></div></div>
+    </div>
+    <p class="cd-msg" data-msg aria-live="polite"></p>
+  </chat-delivery>
+</Figure>
+
+<style>
+  .cd {
+    display: grid;
+    grid-template-columns: 110px 1fr 110px;
+    gap: 10px;
+    margin-top: 14px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .cd {
+      grid-template-columns: 1fr 1fr;
+    }
+    .cd-log {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+  .phone {
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    padding: 10px;
+    min-height: 120px;
+    font-size: 0.8125rem;
+  }
+  .bubble {
+    margin-top: 8px;
+    min-height: 3.2em;
+    font: 0.75rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .bubble :global(.msg) {
+    display: inline-block;
+    background: rgba(66, 133, 244, 0.28);
+    border-radius: 10px;
+    padding: 4px 9px;
+    color: #fff;
+  }
+  .bubble :global(.tick) {
+    margin-left: 6px;
+    color: var(--text-muted);
+  }
+  .bubble :global(.tick.blue) {
+    color: var(--g-blue);
+  }
+  .cd-log {
+    margin: 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.7 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cd-log :global(li.now) {
+    color: #fff;
+  }
+  .cd-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+  .cd-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+  .cd-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  type Step = { log: string; cls?: string; alice: string; bob: string; why: string };
+  class ChatDelivery extends HTMLElement {
+    bobOn = true;
+    ackLost = false;
+    i = 0;
+    steps: Step[] = [];
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-bob]').forEach((b) => b.addEventListener('click', () => ((this.bobOn = b.dataset.bob === 'on'), this.mark('[data-bob]', b), this.reset())));
+      this.querySelectorAll<HTMLButtonElement>('[data-ack]').forEach((b) => b.addEventListener('click', () => ((this.ackLost = b.dataset.ack === 'lost'), this.mark('[data-ack]', b), this.reset())));
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    build() {
+      const m = (t: string) => `<span class="msg">hi</span><span class="tick ${t.includes('blue') ? 'blue' : ''}">${t.replace(' blue', '')}</span>`;
+      const s: Step[] = [];
+      s.push({ log: 'Alice creates msg id a-17 (client-generated)', alice: m('🕓'), bob: '', why: 'The app generates a unique id itself, so it can retry safely later. The message shows a clock: not yet confirmed by the server.' });
+      s.push({ log: 'Alice → gateway → chat service: send a-17', alice: m('🕓'), bob: '', why: 'The message travels over Alice\'s open WebSocket to a gateway, which hands it to the chat service that owns this conversation.' });
+      s.push({ log: 'Server assigns seq #42 and persists a-17', cls: 'good', alice: m('🕓'), bob: '', why: 'The conversation owner gives the message the next sequence number (this defines the order everyone sees) and stores it durably BEFORE acknowledging.' });
+      if (this.ackLost) {
+        s.push({ log: 'ack to Alice is LOST on the network', cls: 'bad', alice: m('🕓'), bob: '', why: 'The server stored the message, but Alice never hears back. From her side, "lost request" and "lost reply" look identical.' });
+        s.push({ log: 'Alice\'s app times out and retries a-17', alice: m('🕓'), bob: '', why: 'At-least-once delivery: the client keeps retrying until it gets an ack.' });
+        s.push({ log: 'Server sees duplicate id a-17 → returns seq #42, stores nothing new', cls: 'good', alice: m('✓'), bob: '', why: 'The server remembers the id, so the retry is harmless: no second copy, same sequence number. Alice\'s message now shows one tick (sent).' });
+      } else s.push({ log: 'ack(seq #42) → Alice', alice: m('✓'), bob: '', why: 'One tick: the server has the message safely. It does not yet say anything about Bob.' });
+      if (this.bobOn) {
+        s.push({ log: 'Server finds Bob\'s gateway and pushes #42', alice: m('✓'), bob: '<span class="msg">hi</span>', why: 'A connection registry maps users to the gateway holding their WebSocket. Bob is online, so the message is pushed straight away.' });
+        s.push({ log: 'Bob\'s app acks → server marks delivered', cls: 'good', alice: m('✓✓'), bob: '<span class="msg">hi</span>', why: 'Bob\'s device confirms receipt, and the server relays that to Alice: two ticks (delivered).' });
+      } else {
+        s.push({ log: 'Bob offline: message waits in his inbox', cls: 'bad', alice: m('✓'), bob: '<i>offline</i>', why: 'There is no connection to push to. The message stays stored, and the server sends a push notification (APNs/FCM) so the phone can wake the app.' });
+        s.push({ log: 'Bob reconnects, asks "everything after seq #41"', alice: m('✓'), bob: '<span class="msg">hi</span>', why: 'The device keeps the last sequence number it saw and syncs from there, so nothing is missed however long it was away.' });
+        s.push({ log: 'Bob\'s app acks → server marks delivered', cls: 'good', alice: m('✓✓'), bob: '<span class="msg">hi</span>', why: 'Once Bob\'s device acknowledges, Alice sees two ticks, even though delivery happened hours after sending.' });
+      }
+      s.push({ log: 'Bob opens the chat → read receipt', cls: 'good', alice: m('✓✓ blue'), bob: '<span class="msg">hi</span> <span class="tick blue">read</span>', why: 'Read receipts are just another small message flowing back the same way. Presence, typing indicators and receipts are separate, low-value traffic that can be throttled or dropped first.' });
+      return s;
+    }
+    reset() {
+      this.i = 0;
+      this.steps = this.build();
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-alice]')!.innerHTML = '';
+      this.querySelector('[data-bobv]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'Press Next step.';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    next() {
+      const s = this.steps[this.i++];
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      log.insertAdjacentHTML('beforeend', `<li class="${s.cls ?? ''} now">${s.log}</li>`);
+      this.querySelector('[data-alice]')!.innerHTML = s.alice;
+      this.querySelector('[data-bobv]')!.innerHTML = s.bob;
+      this.querySelector('[data-msg]')!.textContent = s.why;
+      if (this.i >= this.steps.length) (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+    }
+  }
+  customElements.define('chat-delivery', ChatDelivery);
+</script>

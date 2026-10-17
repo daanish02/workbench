@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Review the change, not the lines"
+  caption="A pull request adds retries to a payment call. Every line looks reasonable on its own. Click a line to read the question an experienced reviewer would ask, tagged by risk area. Notice how the serious findings come from asking what happens under failure, not from reading syntax."
+>
+  <review-diff>
+    <div class="ctl-row"><button class="btn" data-all>Reveal every comment</button><span class="stat" data-count>0 of 6 opened</span></div>
+    <div class="rd-code" data-code></div>
+    <p class="rd-msg" data-msg>Click a highlighted line.</p>
+  </review-diff>
+</Figure>
+
+<style>
+  .rd-code {
+    margin-top: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-soft);
+    font: 0.8125rem/1.6 var(--font-mono);
+  }
+  .rd-code :global(button) {
+    all: unset;
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    padding: 1px 12px;
+    white-space: pre;
+    overflow-x: auto;
+    cursor: pointer;
+    color: var(--text);
+    background: rgba(52, 168, 83, 0.1);
+  }
+  .rd-code :global(button:hover),
+  .rd-code :global(button:focus-visible) {
+    background: rgba(52, 168, 83, 0.22);
+  }
+  .rd-code :global(button.open) {
+    background: rgba(251, 188, 4, 0.18);
+  }
+  .rd-code :global(.note) {
+    display: block;
+    padding: 8px 12px 8px 24px;
+    font: 0.8125rem/1.5 var(--font-sans);
+    color: var(--text-muted);
+    white-space: normal;
+    border-left: 3px solid var(--g-yellow);
+    background: var(--bg-elev);
+  }
+  .rd-code :global(.note b) {
+    color: var(--text);
+  }
+  .rd-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const LINES: { code: string; tag?: string; note?: string }[] = [
+    { code: '+ def charge(order, card):', tag: 'Design', note: 'Where should retries live? In every caller, here, or once in the payments client? Duplicated retry logic drifts apart.' },
+    { code: '+     for attempt in range(10):', tag: 'Reliability', note: 'Ten attempts with a one-second pause is up to ten seconds of blocked request. Is there a deadline, and what does the user see meanwhile?' },
+    { code: '+         try:' },
+    { code: '+             return payments.post("/charge", amount=order.total, card=card)', tag: 'Correctness', note: 'POST is not idempotent. If the request succeeds but the response is lost, the retry charges the customer twice. Is there an idempotency key?' },
+    { code: '+         except Exception:', tag: 'Correctness', note: 'This retries everything, including permanent failures: a declined card or a 401 will be retried ten times. Retry only transient errors (timeouts, 503).' },
+    { code: '+             time.sleep(1)', tag: 'Reliability', note: 'A fixed delay with no backoff or jitter: when the provider is struggling, every client retries in lockstep and makes it worse (a retry storm).' },
+    { code: '+     log.info("charge failed for card %s", card.number)', tag: 'Security', note: 'The full card number goes into the logs. That is a privacy and compliance problem, and it is the kind of issue no linter finds.' },
+  ];
+  const COLORS: Record<string, string> = { Design: 'var(--g-blue)', Reliability: 'var(--g-yellow)', Correctness: 'var(--g-red-l)', Security: '#c58af9' };
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  class ReviewDiff extends HTMLElement {
+    open = new Set<number>();
+    connectedCallback() {
+      this.querySelector('[data-all]')!.addEventListener('click', () => {
+        LINES.forEach((l, i) => l.note && this.open.add(i));
+        this.draw();
+      });
+      this.querySelector('[data-code]')!.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest('button[data-i]') as HTMLElement | null;
+        if (!b) return;
+        const i = +b.dataset.i!;
+        this.open.has(i) ? this.open.delete(i) : this.open.add(i);
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const total = LINES.filter((l) => l.note).length;
+      this.querySelector('[data-code]')!.innerHTML = LINES.map((l, i) => {
+        if (!l.note) return `<button class="open" data-i="${i}" style="cursor:default;background:transparent" tabindex="-1">${esc(l.code)}</button>`;
+        const o = this.open.has(i);
+        return `<button class="${o ? 'open' : ''}" data-i="${i}">${esc(l.code)}</button>` + (o ? `<span class="note"><b style="color:${COLORS[l.tag!]}">${l.tag}:</b> ${l.note}</span>` : '');
+      }).join('');
+      this.querySelector('[data-count]')!.textContent = `${this.open.size} of ${total} opened`;
+    }
+  }
+  customElements.define('review-diff', ReviewDiff);
+</script>

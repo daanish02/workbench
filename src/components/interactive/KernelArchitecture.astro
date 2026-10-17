@@ -1,0 +1,164 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Monolithic vs. microkernel"
+  caption="Switch architectures, then trace a file read or crash the disk driver. In a monolithic kernel the read is one system call, but a driver crash takes down the whole kernel. In a microkernel the read hops between user-space servers through the kernel, and the crash stays inside one restartable process."
+>
+  <kernel-arch>
+    <div class="ctl-row">
+      <button class="btn" data-k="mono" aria-pressed="true">Monolithic</button>
+      <button class="btn" data-k="micro" aria-pressed="false">Microkernel</button>
+      <span style="flex:1"></span>
+      <button class="btn primary" data-trace>Trace a file read</button>
+      <button class="btn" data-crash>Crash the disk driver</button>
+    </div>
+    <div class="ka" data-ka></div>
+    <p class="say" data-say aria-live="polite"></p>
+  </kernel-arch>
+</Figure>
+
+<style>
+  .ka {
+    margin-top: 14px;
+    display: grid;
+    gap: 6px;
+  }
+  .ka :global(.zone) {
+    border-radius: 10px;
+    padding: 18px 8px 8px;
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+  }
+  .ka :global(.zone::before) {
+    content: attr(data-label);
+    position: absolute;
+    top: 3px;
+    left: 8px;
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .ka :global(.user) {
+    border: 1px dashed var(--g-blue);
+  }
+  .ka :global(.kernel) {
+    border: 1px solid var(--g-red);
+    background: rgba(234, 67, 53, 0.06);
+  }
+  .ka :global(.box) {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    font-size: 0.75rem;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .ka :global(.box.on) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.22);
+  }
+  .ka :global(.box.dead),
+  .ka :global(.zone.dead) {
+    border-color: var(--g-red);
+    background: rgba(234, 67, 53, 0.35);
+    text-decoration: line-through;
+  }
+  .ka :global(.box.restart) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.2);
+  }
+  .say {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+  .say :global(b) {
+    color: var(--text);
+  }
+</style>
+
+<script>
+  const LAYOUT = {
+    mono: { user: ['App'], kernel: ['Scheduler', 'Memory', 'File system', 'Network', 'Disk driver', 'IPC'] },
+    micro: { user: ['App', 'File system', 'Disk driver', 'Network'], kernel: ['Scheduler', 'Memory', 'IPC'] },
+  };
+  // path of a read(): which boxes light up, and how many user/kernel crossings
+  const TRACE = {
+    mono: { path: ['App', 'File system', 'Disk driver', 'File system', 'App'], crossings: 2 },
+    micro: { path: ['App', 'IPC', 'File system', 'IPC', 'Disk driver', 'IPC', 'File system', 'IPC', 'App'], crossings: 8 },
+  };
+  type K = 'mono' | 'micro';
+
+  class KernelArch extends HTMLElement {
+    k: K = 'mono';
+    timer = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.k = b.dataset.k as K;
+          this.querySelectorAll('[data-k]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.render();
+          this.say('');
+        }),
+      );
+      this.querySelector('[data-trace]')!.addEventListener('click', () => this.trace());
+      this.querySelector('[data-crash]')!.addEventListener('click', () => this.crash());
+      this.render();
+    }
+    say(s: string) {
+      this.querySelector('[data-say]')!.innerHTML = s;
+    }
+    render() {
+      clearInterval(this.timer);
+      const l = LAYOUT[this.k];
+      const boxes = (xs: string[]) => xs.map((x) => `<span class="box" data-b="${x}">${x}</span>`).join('');
+      this.querySelector('[data-ka]')!.innerHTML =
+        `<div class="zone user" data-label="user space">${boxes(l.user)}</div>` +
+        `<div class="zone kernel" data-label="kernel space${this.k === 'micro' ? ' (minimal)' : ''}">${boxes(l.kernel)}</div>`;
+    }
+    trace() {
+      this.render();
+      const { path, crossings } = TRACE[this.k];
+      let i = 0;
+      const tick = () => {
+        this.querySelectorAll('.box').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.b === path[i]));
+        if (++i > path.length) {
+          clearInterval(this.timer);
+          this.querySelectorAll('.box').forEach((b) => b.classList.remove('on'));
+          this.say(
+            this.k === 'mono'
+              ? `Done: <b>${crossings}</b> user/kernel crossings (in and out of one system call). File system and driver talk by direct function calls.`
+              : `Done: <b>${crossings}</b> crossings. Every hop between servers is a message through the kernel's IPC, which is the microkernel's main overhead.`,
+          );
+        }
+      };
+      tick();
+      this.timer = window.setInterval(tick, 550);
+    }
+    crash() {
+      this.render();
+      if (this.k === 'mono') {
+        this.querySelector('.zone.kernel')!.classList.add('dead');
+        this.say('The driver shares the kernel’s address space, so its bad write corrupts kernel memory: <b>kernel panic, the whole machine stops</b>.');
+      } else {
+        const d = this.querySelector('[data-b="Disk driver"]')!;
+        d.classList.add('dead');
+        this.say('The driver is an ordinary process: it dies alone. File reads fail for a moment while <b>the system restarts the driver</b>…');
+        setTimeout(() => {
+          d.classList.remove('dead');
+          d.classList.add('restart');
+          this.say('Driver restarted. Every other service kept running throughout.');
+        }, 1600);
+      }
+    }
+  }
+  customElements.define('kernel-arch', KernelArch);
+</script>

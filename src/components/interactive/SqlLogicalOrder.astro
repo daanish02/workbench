@@ -1,0 +1,145 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How a query is evaluated"
+  caption="Step through the logical order of one query. Each step shows the rows that survive it: WHERE removes rows, GROUP BY collapses them, HAVING removes whole groups, and only then does SELECT compute the output columns."
+>
+  <sql-order>
+    <pre class="so-sql mono" data-sql></pre>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next clause</button>
+      <button class="btn" data-reset>Reset</button>
+      <span class="stat" data-stat></span>
+    </div>
+    <div class="so-table" data-table></div>
+    <p class="so-msg" data-msg aria-live="polite"></p>
+  </sql-order>
+</Figure>
+
+<style>
+  .so-sql {
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    line-height: 1.8;
+    color: var(--text);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .so-sql :global(span) {
+    opacity: 0.55;
+  }
+  .so-sql :global(.on) {
+    opacity: 1;
+    color: #fff;
+    font-weight: 700;
+    background: rgba(66, 133, 244, 0.35);
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+  .so-table {
+    margin-top: 12px;
+    overflow-x: auto;
+  }
+  .so-table :global(table) {
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+    margin: 0 auto;
+  }
+  .so-table :global(th),
+  .so-table :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 5px 14px;
+    text-align: center;
+    color: var(--text);
+  }
+  .so-table :global(th) {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
+  }
+  .so-table :global(tr.gone td) {
+    color: var(--g-red-l);
+    background: rgba(234, 67, 53, 0.16);
+    border-color: rgba(234, 67, 53, 0.5);
+    text-decoration: line-through;
+  }
+  .so-msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  type R = { student: string; major: string; course: string; grade: number };
+  const DATA: R[] = [
+    { student: 'Maya', major: 'CS', course: 'CS101', grade: 90 },
+    { student: 'Maya', major: 'CS', course: 'MA201', grade: 85 },
+    { student: 'Omar', major: 'Math', course: 'MA201', grade: 92 },
+    { student: 'Lina', major: 'CS', course: 'CS101', grade: 78 },
+    { student: 'Omar', major: 'Math', course: 'CS101', grade: 81 },
+    { student: 'Zed', major: 'Math', course: 'MA201', grade: 70 },
+    { student: 'Kim', major: 'Art', course: 'AR100', grade: 95 },
+  ];
+  const LINES = [
+    ['SELECT major, COUNT(*) AS n, AVG(grade) AS avg_grade', 5],
+    ['FROM enr', 1],
+    ['WHERE grade >= 80', 2],
+    ['GROUP BY major', 3],
+    ['HAVING COUNT(*) >= 2', 4],
+    ['ORDER BY avg_grade DESC;', 6],
+  ] as const;
+  const NAMES = ['', 'FROM', 'WHERE', 'GROUP BY', 'HAVING', 'SELECT', 'ORDER BY'];
+  class SqlOrder extends HTMLElement {
+    s = 0;
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.s = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    table(head: string[], rows: (string | number)[][], gone: boolean[] = []) {
+      return `<table><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r, i) => `<tr class="${gone[i] ? 'gone' : ''}">${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</table>`;
+    }
+    next() {
+      if (this.s < 6) this.s++;
+      this.draw();
+    }
+    draw() {
+      const s = this.s;
+      this.querySelector('[data-sql]')!.innerHTML = LINES.map(([t, n]) => `<span class="${s === n ? 'on' : ''}">${t}</span>`).join('\n');
+      const where = DATA.map((r) => r.grade >= 80);
+      const kept = DATA.filter((r) => r.grade >= 80);
+      const groups = new Map<string, R[]>();
+      kept.forEach((r) => groups.set(r.major, [...(groups.get(r.major) ?? []), r]));
+      const g = [...groups.entries()].map(([major, rs]) => ({ major, n: rs.length, avg: rs.reduce((a, r) => a + r.grade, 0) / rs.length }));
+      const passed = g.filter((x) => x.n >= 2);
+      let html = '';
+      let msg = 'Press Next clause to evaluate the query in its logical order.';
+      const head = ['student', 'major', 'course', 'grade'];
+      const rows = DATA.map((r) => [r.student, r.major, r.course, r.grade]);
+      if (s === 1) (html = this.table(head, rows)), (msg = `FROM: start with all ${DATA.length} source rows (a join would be combined here).`);
+      if (s === 2) (html = this.table(head, rows, where.map((w) => !w))), (msg = `WHERE: ${DATA.length - kept.length} rows fail grade ≥ 80 and are removed before any grouping. ${kept.length} remain.`);
+      if (s === 3) (html = this.table(['major', 'rows in group'], g.map((x) => [x.major, x.n])), (msg = 'GROUP BY: the remaining rows are partitioned by major. Each group is now one unit; individual students are no longer visible.'));
+      if (s === 4) (html = this.table(['major', 'COUNT(*)'], g.map((x) => [x.major, x.n]), g.map((x) => x.n < 2))), (msg = `HAVING: filters groups by an aggregate. ${g.length - passed.length} group(s) with fewer than 2 rows are removed. WHERE could not do this: the count did not exist yet.`);
+      if (s >= 5) {
+        const out = [...passed].sort((a, b) => (s === 6 ? b.avg - a.avg : 0));
+        html = this.table(['major', 'n', 'avg_grade'], out.map((x) => [x.major, x.n, x.avg]));
+        msg = s === 5 ? 'SELECT: only now are the output expressions computed (COUNT, AVG) from each surviving group.' : 'ORDER BY: sorts the result by avg_grade, highest first. It runs after SELECT, which is why it can use the alias avg_grade.';
+      }
+      if (s === 0) html = this.table(head, rows);
+      this.querySelector('[data-table]')!.innerHTML = html;
+      this.querySelector('[data-msg]')!.textContent = msg;
+      this.querySelector('[data-stat]')!.innerHTML = s ? `step <b>${s}/6</b> · ${NAMES[[0, 1, 2, 3, 4, 5, 6][s]]}` : '';
+    }
+  }
+  customElements.define('sql-order', SqlOrder);
+</script>

@@ -1,0 +1,251 @@
+---
+import Figure from '../Figure.astro';
+interface Props {
+  algorithm?: 'bubble' | 'insertion' | 'merge' | 'quick' | 'heap';
+}
+const { algorithm = 'bubble' } = Astro.props;
+const algos = [
+  ['bubble', 'Bubble'],
+  ['insertion', 'Insertion'],
+  ['merge', 'Merge'],
+  ['quick', 'Quick'],
+  ['heap', 'Heap'],
+];
+const shapes = [
+  ['random', 'Random'],
+  ['nearly', 'Nearly sorted'],
+  ['reversed', 'Reversed'],
+];
+---
+
+<Figure title="Sorting, step by step" caption="Blue bars are being compared, red bars are being written or swapped, green bars are in their final place. Run the same array through each algorithm and compare the counters, then change the input shape: insertion sort flies through a nearly sorted array, while this quicksort (last element as pivot) degrades to quadratic on sorted or reversed input.">
+  <sort-viz data-algo={algorithm}>
+    <div class="ctl-row">
+      {algos.map(([id, label]) => <button class="btn" data-algo-btn={id} aria-pressed={id === algorithm ? 'true' : 'false'}>{label}</button>)}
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Input</span>
+      {shapes.map(([id, label]) => <button class="btn" data-shape={id} aria-pressed={id === 'random' ? 'true' : 'false'}>{label}</button>)}
+    </div>
+    <div class="bars" aria-hidden="true"></div>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-shuffle>Shuffle</button>
+      <label class="ctl-label" style="margin-left:auto">Speed <input type="range" min="1" max="10" value="5" data-speed /></label>
+    </div>
+    <div class="ctl-row stats">
+      <span class="stat">comparisons <b data-cmp>0</b></span>
+      <span class="stat">writes <b data-wr>0</b></span>
+      <span class="stat" data-status></span>
+    </div>
+  </sort-viz>
+</Figure>
+
+<style>
+  .bars {
+    height: 200px;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    margin: 14px 0;
+    padding: 0 2px;
+  }
+  .bars :global(div) {
+    flex: 1;
+    background: #3c3c3c;
+    border-radius: 3px 3px 0 0;
+    transition: height 0.08s linear;
+  }
+  .bars :global(div.cmp) {
+    background: var(--g-blue);
+  }
+  .bars :global(div.wr) {
+    background: var(--g-red);
+  }
+  .bars :global(div.done) {
+    background: var(--g-green);
+  }
+  .stats {
+    gap: 16px;
+  }
+</style>
+
+<script>
+  type Frame = { a: number[]; cmp?: number[]; wr?: number[]; done?: Set<number>; c: number; w: number };
+
+  // Each algorithm records a list of frames; playback just walks the list.
+  function record(algo: string, input: number[]): Frame[] {
+    const a = [...input];
+    const frames: Frame[] = [];
+    const done = new Set<number>();
+    let c = 0,
+      w = 0;
+    const snap = (cmp: number[] = [], wr: number[] = []) => frames.push({ a: [...a], cmp, wr, done: new Set(done), c, w });
+    const less = (i: number, j: number) => (c++, snap([i, j]), a[i] < a[j]);
+    const swap = (i: number, j: number) => {
+      [a[i], a[j]] = [a[j], a[i]];
+      w += 2;
+      snap([], [i, j]);
+    };
+    const n = a.length;
+
+    if (algo === 'bubble') {
+      for (let end = n - 1; end > 0; end--) {
+        let swapped = false;
+        for (let i = 0; i < end; i++) if (less(i + 1, i)) (swap(i, i + 1), (swapped = true));
+        done.add(end);
+        if (!swapped) break; // already sorted: early exit
+      }
+    } else if (algo === 'insertion') {
+      for (let i = 1; i < n; i++) for (let j = i; j > 0 && less(j, j - 1); j--) swap(j, j - 1);
+    } else if (algo === 'merge') {
+      const merge = (lo: number, mid: number, hi: number) => {
+        const left = a.slice(lo, mid), right = a.slice(mid, hi);
+        let i = 0, j = 0, k = lo;
+        while (i < left.length && j < right.length) {
+          c++;
+          snap([lo + i, mid + j]);
+          a[k] = left[i] <= right[j] ? left[i++] : right[j++];
+          w++;
+          snap([], [k++]);
+        }
+        while (i < left.length) (a[k] = left[i++], w++, snap([], [k++]));
+        while (j < right.length) (a[k] = right[j++], w++, snap([], [k++]));
+      };
+      const sort = (lo: number, hi: number) => {
+        if (hi - lo < 2) return;
+        const mid = (lo + hi) >> 1;
+        sort(lo, mid);
+        sort(mid, hi);
+        merge(lo, mid, hi);
+      };
+      sort(0, n);
+    } else if (algo === 'quick') {
+      // Lomuto partition, last element as pivot
+      const qs = (lo: number, hi: number) => {
+        if (lo >= hi) {
+          if (lo === hi) done.add(lo);
+          return;
+        }
+        let p = lo;
+        for (let i = lo; i < hi; i++) if (less(i, hi)) (i !== p && swap(i, p), p++);
+        if (p !== hi) swap(p, hi);
+        done.add(p);
+        qs(lo, p - 1);
+        qs(p + 1, hi);
+      };
+      qs(0, n - 1);
+    } else if (algo === 'heap') {
+      const sift = (i: number, size: number) => {
+        for (;;) {
+          let big = i;
+          const l = 2 * i + 1, r = l + 1;
+          if (l < size && less(big, l)) big = l;
+          if (r < size && less(big, r)) big = r;
+          if (big === i) return;
+          swap(i, big);
+          i = big;
+        }
+      };
+      for (let i = (n >> 1) - 1; i >= 0; i--) sift(i, n); // build max-heap
+      for (let end = n - 1; end > 0; end--) {
+        swap(0, end); // move max to its final slot
+        done.add(end);
+        sift(0, end);
+      }
+    }
+    for (let i = 0; i < n; i++) done.add(i);
+    snap();
+    return frames;
+  }
+
+  class SortViz extends HTMLElement {
+    algo = 'bubble';
+    shape = 'random';
+    data: number[] = [];
+    frames: Frame[] = [];
+    i = 0;
+    timer = 0;
+
+    connectedCallback() {
+      this.algo = this.dataset.algo ?? 'bubble';
+      this.querySelectorAll<HTMLButtonElement>('[data-algo-btn]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-algo-btn]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.algo = b.dataset.algoBtn!;
+          this.reset();
+        }),
+      );
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.advance()));
+      this.q('[data-shuffle]').addEventListener('click', () => this.shuffle());
+      this.querySelectorAll<HTMLButtonElement>('[data-shape]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-shape]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.shape = b.dataset.shape!;
+          this.shuffle();
+        }),
+      );
+      this.shuffle();
+    }
+    q<T extends HTMLElement = HTMLElement>(s: string) {
+      return this.querySelector<T>(s)!;
+    }
+    shuffle() {
+      const n = window.innerWidth < 500 ? 24 : 36;
+      this.data = Array.from({ length: n }, () => 5 + Math.floor(Math.random() * 95));
+      if (this.shape !== 'random') {
+        this.data.sort((x, y) => x - y);
+        if (this.shape === 'reversed') this.data.reverse();
+        else
+          for (let k = 0; k < 3; k++) {
+            // a few adjacent swaps: almost, but not quite, sorted
+            const i = Math.floor(Math.random() * (n - 1));
+            [this.data[i], this.data[i + 1]] = [this.data[i + 1], this.data[i]];
+          }
+      }
+      this.reset();
+    }
+    reset() {
+      this.pause();
+      this.frames = record(this.algo, this.data);
+      this.i = 0;
+      this.draw();
+    }
+    play() {
+      if (this.i >= this.frames.length - 1) this.i = 0;
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.advance();
+        if (this.i >= this.frames.length - 1) return this.pause();
+        const speed = +this.q<HTMLInputElement>('[data-speed]').value;
+        this.timer = window.setTimeout(tick, 420 / speed ** 1.4);
+      };
+      tick();
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    advance() {
+      if (this.i < this.frames.length - 1) this.i++;
+      this.draw();
+    }
+    draw() {
+      const f = this.frames[this.i];
+      const box = this.q('.bars');
+      if (box.children.length !== f.a.length) box.replaceChildren(...f.a.map(() => document.createElement('div')));
+      f.a.forEach((v, k) => {
+        const el = box.children[k] as HTMLElement;
+        el.style.height = `${v}%`;
+        el.className = f.wr?.includes(k) ? 'wr' : f.cmp?.includes(k) ? 'cmp' : f.done?.has(k) ? 'done' : '';
+      });
+      this.q('[data-cmp]').textContent = String(f.c);
+      this.q('[data-wr]').textContent = String(f.w);
+      this.q('[data-status]').textContent = this.i === this.frames.length - 1 ? '✓ sorted' : `step ${this.i}/${this.frames.length - 1}`;
+    }
+  }
+  customElements.define('sort-viz', SortViz);
+</script>

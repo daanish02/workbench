@@ -1,0 +1,182 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="fib(n): naive recursion vs memoization"
+  caption="Every circle is one function call, labelled with its argument; numbers above show the order calls start. Without memoization the same subproblems are solved again and again (the highlighted repeats). With memoization, a repeated call finds its answer in the cache (green ring) and returns immediately, so the tree collapses to a single spine. Red circles recompute an argument that was already evaluated (the note's memo does not cache the base cases, so a second fib(1) still runs)."
+>
+  <dp-fib>
+    <div class="ctl-row">
+      <span class="ctl-label">n</span>
+      {[4, 5, 6].map((k) => <button class="btn" data-k={k} aria-pressed={k === 5 ? 'true' : 'false'}>{k}</button>)}
+      <button class="btn" data-memo aria-pressed="false">Memoize</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-step>Step</button>
+      <button class="btn" data-all>Show all</button>
+      <span class="stat">calls <b data-calls>0</b></span>
+      <span class="stat">recomputed <b data-rep>0</b></span>
+      <span class="stat">cache hits <b data-hits>0</b></span>
+    </div>
+    <svg class="tree" data-svg aria-hidden="true"></svg>
+  </dp-fib>
+</Figure>
+
+<style>
+  .tree {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-top: 12px;
+  }
+  .tree :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .tree :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .tree :global(g.rep circle) {
+    fill: rgba(234, 67, 53, 0.22);
+    stroke: var(--g-red);
+  }
+  .tree :global(g.hit circle) {
+    fill: rgba(52, 168, 83, 0.18);
+    stroke: var(--g-green);
+    stroke-width: 3;
+  }
+  .tree :global(g.base circle) {
+    stroke: var(--text-faint);
+  }
+  .tree :global(text) {
+    fill: var(--text);
+    font: 700 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .tree :global(text.ord) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+  }
+  .tree :global(g.hidden) {
+    opacity: 0;
+  }
+</style>
+
+<script>
+  type Node = { n: number; kids: Node[]; order: number; x: number; y: number; kind: 'rep' | 'hit' | 'base' | ''; parent?: Node };
+
+  // Build the call tree exactly as the memoized/naive Python in the note executes it.
+  function build(n: number, memo: boolean) {
+    const cache = new Set<number>();
+    const seen = new Set<number>();
+    let order = 0;
+    const nodes: Node[] = [];
+    const call = (k: number, depth: number, parent?: Node): Node => {
+      const node: Node = { n: k, kids: [], order: order++, x: 0, y: depth, kind: '', parent };
+      nodes.push(node);
+      if (memo && cache.has(k)) node.kind = 'hit';
+      else if (seen.has(k)) node.kind = 'rep';
+      else if (k <= 1) node.kind = 'base';
+      seen.add(k);
+      if (node.kind !== 'hit' && k > 1) {
+        node.kids.push(call(k - 1, depth + 1, node));
+        node.kids.push(call(k - 2, depth + 1, node));
+        cache.add(k);
+      }
+      return node;
+    };
+    const root = call(n, 0);
+    let leaf = 0;
+    const place = (nd: Node) => {
+      if (!nd.kids.length) nd.x = leaf++;
+      else (nd.kids.forEach(place), (nd.x = (nd.kids[0].x + nd.kids[nd.kids.length - 1].x) / 2));
+    };
+    place(root);
+    return { nodes, leaves: leaf };
+  }
+
+  class DpFib extends HTMLElement {
+    n = 5;
+    memo = false;
+    shown = 0;
+    nodes: Node[] = [];
+    timer = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-k]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-k]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.n = +b.dataset.k!;
+          this.rebuild();
+        }),
+      );
+      const mb = this.q('[data-memo]');
+      mb.addEventListener('click', () => {
+        this.memo = !this.memo;
+        mb.setAttribute('aria-pressed', String(this.memo));
+        this.rebuild();
+      });
+      this.q('[data-play]').addEventListener('click', () => (this.timer ? this.pause() : this.play()));
+      this.q('[data-step]').addEventListener('click', () => (this.pause(), this.step()));
+      this.q('[data-all]').addEventListener('click', () => (this.pause(), (this.shown = this.nodes.length), this.update()));
+      this.rebuild();
+    }
+    q(s: string) {
+      return this.querySelector<HTMLElement>(s)!;
+    }
+    rebuild() {
+      this.pause();
+      const { nodes, leaves } = build(this.n, this.memo);
+      this.nodes = nodes;
+      const depth = Math.max(...nodes.map((d) => d.y));
+      const colW = 34, rowH = 52, pad = 22;
+      const W = Math.max(leaves * colW, 200) + pad * 2;
+      const H = depth * rowH + pad * 2 + 8;
+      const off = (W - leaves * colW) / 2 + colW / 2;
+      const px = (d: Node) => off + d.x * colW;
+      const py = (d: Node) => pad + 8 + d.y * rowH;
+      const svg = this.q('[data-svg]');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.style.maxWidth = `${W * 1.4}px`;
+      svg.innerHTML =
+        nodes.map((d) => (d.parent ? `<line data-e="${d.order}" x1="${px(d.parent)}" y1="${py(d.parent)}" x2="${px(d)}" y2="${py(d)}"/>` : '')).join('') +
+        nodes.map((d) => `<g data-o="${d.order}" class="${d.kind}"><circle cx="${px(d)}" cy="${py(d)}" r="13"/><text x="${px(d)}" y="${py(d)}">${d.n}</text><text class="ord" x="${px(d)}" y="${py(d) - 20}">${d.order + 1}</text></g>`).join('');
+      this.shown = nodes.length;
+      this.update();
+    }
+    step() {
+      if (this.shown >= this.nodes.length) this.shown = 0;
+      this.shown++;
+      this.update();
+    }
+    play() {
+      this.shown = 0;
+      this.update();
+      this.q('[data-play]').textContent = 'Pause';
+      const tick = () => {
+        this.step();
+        if (this.shown >= this.nodes.length) return this.pause();
+        this.timer = window.setTimeout(tick, 350);
+      };
+      this.timer = window.setTimeout(tick, 200);
+    }
+    pause() {
+      clearTimeout(this.timer);
+      this.timer = 0;
+      this.q('[data-play]').textContent = 'Play';
+    }
+    update() {
+      this.querySelectorAll<SVGGElement>('[data-o]').forEach((g) => g.classList.toggle('hidden', +g.dataset.o! >= this.shown));
+      this.querySelectorAll<SVGLineElement>('[data-e]').forEach((l) => (l.style.opacity = +l.dataset.e! >= this.shown ? '0' : '1'));
+      const vis = this.nodes.slice(0, this.shown);
+      this.q('[data-calls]').textContent = String(vis.length);
+      this.q('[data-rep]').textContent = String(vis.filter((d) => d.kind === 'rep').length);
+      this.q('[data-hits]').textContent = String(vis.filter((d) => d.kind === 'hit').length);
+    }
+  }
+  customElements.define('dp-fib', DpFib);
+</script>

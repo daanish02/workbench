@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+const steps = [
+  { side: 'user', title: 'Application', text: 'Calls read(fd, buf, 1024) through the C library wrapper.' },
+  { side: 'user', title: 'Wrapper', text: 'Puts the system-call number and arguments in the registers the ABI specifies.' },
+  { side: 'edge', title: 'Trap', text: 'A special instruction (syscall on x86-64) switches the CPU to kernel mode and jumps to one fixed entry point.' },
+  { side: 'kernel', title: 'Validate', text: 'The kernel looks up the call number, checks fd is open and buf is writable memory owned by this process.' },
+  { side: 'kernel', title: 'Do the work', text: 'File system and driver fetch the data, possibly putting the thread to sleep until the disk answers.' },
+  { side: 'edge', title: 'Return', text: 'The kernel copies the result into buf, sets the return value (bytes read, or −1 and errno) and drops back to user mode.' },
+  { side: 'user', title: 'Application', text: 'Continues with the next instruction, as if read() were an ordinary function.' },
+];
+---
+
+<Figure
+  kind="Diagram"
+  title="One read() crossing the boundary"
+  caption="Press play to follow a system call. Only the trap and return steps cross between user mode and kernel mode, and they go through entry points the kernel chose, never an arbitrary address."
+>
+  <syscall-flow>
+    <div class="lanes">
+      <div class="legend"><span class="u">user space</span><span class="k">kernel space</span></div>
+      <ol class="steps">
+        {
+          steps.map((s, i) => (
+            <li class={s.side} data-i={i}>
+              <b>{s.title}</b>
+              <p>{s.text}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+    <div class="ctl-row" style="margin-top:12px">
+      <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-next>Step</button>
+    </div>
+  </syscall-flow>
+</Figure>
+
+<style>
+  .lanes {
+    position: relative;
+  }
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+  .steps li {
+    width: 62%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    opacity: 0.35;
+    transition: opacity 0.25s, border-color 0.25s, background 0.25s;
+  }
+  .steps li.user {
+    --c: var(--g-blue);
+  }
+  .steps li.kernel {
+    --c: var(--g-red);
+    margin-left: 38%;
+  }
+  .steps li.edge {
+    --c: var(--g-yellow);
+    margin-left: 19%;
+    border-style: dashed;
+  }
+  .steps li.seen {
+    opacity: 0.75;
+  }
+  .steps li.on {
+    opacity: 1;
+    border-color: var(--c);
+    background: color-mix(in srgb, var(--c) 12%, transparent);
+  }
+  .steps b {
+    font-size: 0.8125rem;
+    color: var(--c);
+  }
+  .steps p {
+    margin: 2px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .legend {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    font-size: 0.625rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .legend .u {
+    color: var(--g-blue-l);
+  }
+  .legend .k {
+    color: var(--g-red-l);
+  }
+  @media (max-width: 520px) {
+    .steps li,
+    .steps li.kernel,
+    .steps li.edge {
+      width: auto;
+      margin-left: 0;
+    }
+    .steps li.kernel {
+      margin-left: 18px;
+    }
+  }
+</style>
+
+<script>
+  class SyscallFlow extends HTMLElement {
+    i = -1;
+    timer = 0;
+    connectedCallback() {
+      this.querySelector('[data-play]')!.addEventListener('click', () => {
+        clearInterval(this.timer);
+        this.i = -1;
+        this.querySelectorAll('li').forEach((l) => l.classList.remove('seen', 'on'));
+        this.next();
+        this.timer = window.setInterval(() => (this.i >= 6 ? clearInterval(this.timer) : this.next()), 1100);
+      });
+      this.querySelector('[data-next]')!.addEventListener('click', () => (clearInterval(this.timer), this.next()));
+    }
+    next() {
+      const items = this.querySelectorAll('li');
+      this.i = (this.i + 1) % items.length;
+      if (this.i === 0) items.forEach((l) => l.classList.remove('seen'));
+      items.forEach((l, k) => {
+        l.classList.toggle('on', k === this.i);
+        if (k <= this.i) l.classList.add('seen');
+      });
+    }
+  }
+  customElements.define('syscall-flow', SyscallFlow);
+</script>

@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where your change lives"
+  caption="Git keeps a change in four places. You edit in the working directory, choose what goes into the next commit by staging it, commit it to your local repository, then push it to the remote. Run the commands in order and watch the file move, with the git status text Git would print. Use the teammate button to see why a push can be rejected and what pull does."
+>
+  <git-areas>
+    <div class="ga-areas" data-areas></div>
+    <div class="ctl-row">
+      <button class="btn" data-a="edit">Edit file</button>
+      <button class="btn" data-a="add">git add</button>
+      <button class="btn" data-a="commit">git commit</button>
+      <button class="btn" data-a="push">git push</button>
+      <button class="btn" data-a="pull">git pull</button>
+      <button class="btn" data-a="mate">Teammate pushes</button>
+      <button class="btn" data-a="reset">Reset</button>
+    </div>
+    <pre class="ga-out" data-out></pre>
+  </git-areas>
+</Figure>
+
+<style>
+  .ga-areas {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 640px) {
+    .ga-areas {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  .ga-areas :global(.a) {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    background: var(--bg-soft);
+    display: grid;
+    gap: 4px;
+    align-content: start;
+    min-height: 92px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ga-areas :global(.a b) {
+    color: var(--text);
+    font-size: 0.8125rem;
+  }
+  .ga-areas :global(.v) {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: rgba(66, 133, 244, 0.25);
+    border: 1px solid var(--g-blue);
+    color: var(--text);
+  }
+  .ga-areas :global(.v.new) {
+    background: rgba(251, 188, 4, 0.22);
+    border-color: var(--g-yellow);
+  }
+  .ga-out {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    font: 0.75rem/1.55 var(--font-mono);
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    white-space: pre-wrap;
+    min-height: 7em;
+  }
+</style>
+
+<script>
+  class GitAreas extends HTMLElement {
+    work = 1; // version of the file in the working directory
+    idx = 1; // staged
+    local: string[] = ['v1'];
+    remote: string[] = ['v1'];
+    log = '';
+    t = 0;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-a]').forEach((b) => b.addEventListener('click', () => this.act(b.dataset.a!)));
+      this.reset();
+    }
+    reset() {
+      this.work = 1; this.idx = 1; this.local = ['v1']; this.remote = ['v1']; this.t = 0;
+      this.log = '$ git status\nOn branch main\nYour branch is up to date with \'origin/main\'.\nnothing to commit, working tree clean';
+      this.draw();
+    }
+    ahead() { return this.local.filter((c) => !this.remote.includes(c)); }
+    behind() { return this.remote.filter((c) => !this.local.includes(c)); }
+    head() { return +this.local.filter((c) => c.startsWith('v')).slice(-1)[0].slice(1); }
+    status() {
+      const lines = ['$ git status', 'On branch main'];
+      const a = this.ahead().length, b = this.behind().length;
+      lines.push(a && b ? `Your branch and 'origin/main' have diverged,\nand have ${a} and ${b} different commits each.` : a ? `Your branch is ahead of 'origin/main' by ${a} commit(s).` : b ? `Your branch is behind 'origin/main' by ${b} commit(s).` : "Your branch is up to date with 'origin/main'.");
+      if (this.idx !== this.head()) lines.push('Changes to be committed:\n  modified:   app.py');
+      if (this.work !== this.idx) lines.push('Changes not staged for commit:\n  modified:   app.py');
+      if (this.work === this.idx && this.idx === this.head()) lines.push('nothing to commit, working tree clean');
+      return lines.join('\n');
+    }
+    act(a: string) {
+      if (a === 'reset') return this.reset();
+      let cmd = '';
+      let note = '';
+      if (a === 'edit') { this.work++; cmd = '(edit app.py)'; }
+      else if (a === 'add') { this.idx = this.work; cmd = '$ git add app.py'; }
+      else if (a === 'commit') {
+        cmd = '$ git commit -m "update app"';
+        if (this.idx === this.head()) note = 'nothing added to commit: stage a change with git add first';
+        else this.local.push(`v${this.idx}`);
+      } else if (a === 'push') {
+        cmd = '$ git push';
+        if (this.behind().length) note = "! [rejected] main -> main (fetch first)\nThe remote has commits you do not have. Run git pull, then push again.";
+        else if (!this.ahead().length) note = 'Everything up-to-date';
+        else { this.remote = [...this.local]; note = 'Pushed: the remote now has your commits.'; }
+      } else if (a === 'mate') {
+        cmd = '(a teammate pushes a commit to origin/main)';
+        this.remote.push(`t${++this.t}`);
+      } else if (a === 'pull') {
+        cmd = '$ git pull';
+        const b = this.behind();
+        if (!b.length) note = 'Already up to date.';
+        else if (this.ahead().length) { this.local.push(...b, `m${++this.t}`); note = 'Merge made: your commits and theirs were combined with a merge commit. (Pull = fetch + merge; git pull --rebase would replay yours instead.) Now push.'; }
+        else { this.local.push(...b); note = `Fast-forward: ${b.length} commit(s) downloaded and your branch moved forward.`; }
+      }
+      this.log = `${cmd}${note ? '\n' + note : ''}\n\n${this.status()}`;
+      this.draw();
+    }
+    draw() {
+      const tag = (v: number, fresh: boolean) => `<span class="v ${fresh ? 'new' : ''}">app.py v${v}</span>`;
+      const head = this.head();
+      const lastRemote = this.remote.filter((c) => c.startsWith('v')).slice(-1)[0];
+      this.querySelector('[data-areas]')!.innerHTML = [
+        `<div class="a"><b>Working directory</b>${tag(this.work, this.work !== this.idx)}<span>your files on disk</span></div>`,
+        `<div class="a"><b>Staging area</b>${tag(this.idx, this.idx !== head)}<span>what the next commit will contain</span></div>`,
+        `<div class="a"><b>Local repository</b>${this.local.map((c) => `<span class="v ${this.remote.includes(c) ? '' : 'new'}">${c}</span>`).join(' ')}<span>commits on your machine</span></div>`,
+        `<div class="a"><b>Remote (origin)</b>${this.remote.map((c) => `<span class="v ${this.local.includes(c) ? '' : 'new'}">${c}</span>`).join(' ')}<span>shared copy (${lastRemote ?? 'v1'})</span></div>`,
+      ].join('');
+      this.querySelector('[data-out]')!.textContent = this.log;
+    }
+  }
+  customElements.define('git-areas', GitAreas);
+</script>

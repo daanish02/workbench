@@ -1,0 +1,90 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Who runs which layer?"
+  caption="Slide from running everything yourself to using a finished product. Blue layers are yours to build, patch and pay attention to; green layers belong to the provider; yellow layers are shared. Notice that identity and access never leave your side, and the data layer never becomes fully the provider's: moving up the stack transfers operations, not accountability."
+>
+  <responsibility-stack>
+    <div class="ctl-row">
+      <label class="stat">Model <input type="range" min="0" max="4" value="1" data-m /> <b data-mv>IaaS</b></label>
+    </div>
+    <div class="rs-rows" data-rows></div>
+    <p class="rs-msg" data-msg></p>
+  </responsibility-stack>
+</Figure>
+
+<style>
+  .rs-rows {
+    display: grid;
+    gap: 4px;
+    margin: 12px 0 0;
+  }
+  .rs-rows :global(.r) {
+    display: grid;
+    grid-template-columns: minmax(120px, 190px) 1fr;
+    gap: 8px;
+    align-items: center;
+    font: 0.8125rem var(--font-mono);
+  }
+  .rs-rows :global(.r span.l) {
+    color: var(--text-muted);
+  }
+  .rs-rows :global(.r div.b) {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .rs-rows :global(.b.you) {
+    background: rgba(66, 133, 244, 0.25);
+    border-color: var(--g-blue);
+  }
+  .rs-rows :global(.b.shared) {
+    background: rgba(251, 188, 4, 0.2);
+    border-color: var(--g-yellow);
+  }
+  .rs-rows :global(.b.prov) {
+    background: rgba(52, 168, 83, 0.2);
+    border-color: var(--g-green);
+  }
+  .rs-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 150px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  // 0 = you, 1 = shared, 2 = provider
+  const LAYERS = ['Identity and access', 'Application code', 'Your data', 'Scaling and capacity', 'Runtime', 'Operating system', 'Virtualization', 'Servers and storage', 'Network and data centre'];
+  const MODELS = [
+    { name: 'On-premises', who: [0, 0, 0, 0, 0, 0, 0, 0, 0], ex: 'You buy racks, hire people to cool and cable them, and run every layer.' },
+    { name: 'IaaS', who: [0, 0, 0, 0, 0, 0, 2, 2, 2], ex: 'You rent virtual machines. The provider runs the buildings, hardware and hypervisor; you still patch the OS and run everything above it.' },
+    { name: 'PaaS', who: [0, 0, 0, 1, 2, 2, 2, 2, 2], ex: 'You push code to a managed platform. The runtime and OS are patched for you; you set how it scales.' },
+    { name: 'Serverless', who: [0, 0, 0, 2, 2, 2, 2, 2, 2], ex: 'You supply functions. Even capacity is automatic; you still own code, permissions and data design.' },
+    { name: 'SaaS', who: [0, 2, 1, 2, 2, 2, 2, 2, 2], ex: 'You use a finished product. You manage users, settings and what you put into it.' },
+  ];
+  const CLS = ['you', 'shared', 'prov'];
+  const WHO = ['You', 'Shared', 'Provider'];
+  class ResponsibilityStack extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const m = MODELS[+this.querySelector<HTMLInputElement>('[data-m]')!.value];
+      this.querySelector('[data-mv]')!.textContent = m.name;
+      this.querySelector('[data-rows]')!.innerHTML = LAYERS.map((l, i) => `<div class="r"><span class="l">${l}</span><div class="b ${CLS[m.who[i]]}">${WHO[m.who[i]]}</div></div>`).join('');
+      const you = m.who.filter((w) => w === 0).length;
+      this.querySelector('[data-msg]')!.textContent = `${m.name}: you manage ${you} of ${LAYERS.length} layers. ${m.ex}`;
+    }
+  }
+  customElements.define('responsibility-stack', ResponsibilityStack);
+</script>

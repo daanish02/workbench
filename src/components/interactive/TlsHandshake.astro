@@ -1,0 +1,123 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A TLS 1.3 handshake"
+  caption="Step through the handshake. Both sides exchange public key shares in the clear, yet end up with the same secret an eavesdropper cannot compute. Now give the server a bad certificate and watch the client refuse before any application data is sent."
+>
+  <tls-handshake>
+    <div class="ctl-row">
+      <span class="ctl-label">Server certificate</span>
+      <button class="btn" data-cert="ok" aria-pressed="true">Valid for example.com</button>
+      <button class="btn" data-cert="host" aria-pressed="false">Issued for other.com</button>
+      <button class="btn" data-cert="ca" aria-pressed="false">Signed by unknown CA</button>
+    </div>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Next step</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="th-head"><b>Client (browser)</b><b>Server</b></div>
+    <ol class="th-log" data-log></ol>
+    <p class="th-msg" data-msg aria-live="polite"></p>
+  </tls-handshake>
+</Figure>
+
+<style>
+  .th-head {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 14px;
+    padding: 0 6px;
+    font-size: 0.8125rem;
+  }
+  .th-log {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .th-log :global(li) {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: 0.75rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .th-log :global(li.r) {
+    text-align: right;
+  }
+  .th-log :global(li.now) {
+    border-color: var(--g-blue);
+    color: #fff;
+  }
+  .th-log :global(li.enc) {
+    border-color: var(--g-green);
+    color: var(--g-green-l);
+  }
+  .th-log :global(li.bad) {
+    border-color: var(--g-red);
+    color: var(--g-red-l);
+  }
+  .th-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.5em;
+  }
+</style>
+
+<script>
+  type S = ['c' | 's', string, string, string];
+  class TlsHandshake extends HTMLElement {
+    cert = 'ok';
+    i = 0;
+    done = false;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-cert]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.cert = b.dataset.cert!;
+          this.querySelectorAll('[data-cert]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.reset();
+        }),
+      );
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      this.done = false;
+      this.querySelector('[data-log]')!.innerHTML = '';
+      this.querySelector('[data-msg]')!.textContent = 'The TCP connection is already open. Press Next step to begin TLS.';
+      (this.querySelector('[data-step]') as HTMLButtonElement).disabled = false;
+    }
+    steps(): S[] {
+      return [
+        ['c', 'ClientHello: ciphers I support, my key share g^a, server name example.com', '', 'The client picks a random secret a and sends only g^a (its public key share), plus the list of algorithms it can use.'],
+        ['s', 'ServerHello: chosen cipher, my key share g^b', '', 'The server picks b and sends g^b. Each side can now combine its own secret with the other\'s share: both compute g^(ab). An eavesdropper sees g^a and g^b but cannot feasibly derive g^(ab).'],
+        ['s', '{Certificate, CertificateVerify, Finished}  (encrypted)', 'enc', 'From here the server\'s messages are already encrypted with keys derived from g^(ab). It sends its certificate, a signature proving it holds the private key, and a MAC over the whole handshake.'],
+        ['c', 'validate certificate', this.cert === 'ok' ? '' : 'bad', this.cert === 'ok' ? 'The client checks: signed by a trusted CA, not expired, valid for example.com, and the signature verifies. All pass.' : this.cert === 'host' ? 'FAIL: the certificate names other.com, not example.com. Anyone can get a valid certificate for their own domain, so the name must match. The client aborts with a warning.' : 'FAIL: the certificate chain does not end at a CA the client trusts. It could be an impostor\'s self-signed certificate. The client aborts with a warning.'],
+        ['c', '{Finished}  (encrypted)', 'enc', 'The client proves it derived the same keys. Handshake complete after one round trip.'],
+        ['c', '{HTTP GET /}  application data', 'enc', 'The request is encrypted and authenticated with symmetric keys (AES-GCM or ChaCha20-Poly1305).'],
+        ['s', '{HTTP 200 OK ...}  application data', 'enc', 'The response is protected the same way. An eavesdropper sees only ciphertext, and any tampering is detected.'],
+      ];
+    }
+    next() {
+      if (this.done) return;
+      const s = this.steps()[this.i++];
+      const log = this.querySelector('[data-log]')!;
+      log.querySelectorAll('.now').forEach((e) => e.classList.remove('now'));
+      log.insertAdjacentHTML('beforeend', `<li class="${s[0] === 's' ? 'r' : ''} ${s[2]} now">${s[0] === 'c' ? s[1] + ' →' : '← ' + s[1]}</li>`);
+      this.querySelector('[data-msg]')!.textContent = s[3];
+      if (s[2] === 'bad') this.done = true;
+      if (this.done || this.i >= this.steps().length) {
+        this.done = true;
+        (this.querySelector('[data-step]') as HTMLButtonElement).disabled = true;
+      }
+    }
+  }
+  customElements.define('tls-handshake', TlsHandshake);
+</script>

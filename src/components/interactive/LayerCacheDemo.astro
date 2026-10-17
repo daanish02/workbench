@@ -1,0 +1,104 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why Dockerfile order matters"
+  caption="Each instruction becomes a layer, and a layer is reused from cache only if its inputs and every layer below it are unchanged. Pick an ordering, then change a file and rebuild. Putting rarely changing steps (installing dependencies) before frequently changing ones (your source code) keeps the slow layer cached. Times are illustrative."
+>
+  <layer-cache-demo>
+    <div class="ctl-row">
+      <button class="btn" data-o="bad" aria-pressed="false">Copy everything first</button>
+      <button class="btn" data-o="good" aria-pressed="true">Install dependencies first</button>
+    </div>
+    <div class="ctl-row">
+      <span class="stat">Then change:</span>
+      <button class="btn" data-c="none" aria-pressed="false">nothing</button>
+      <button class="btn" data-c="src" aria-pressed="true">app code</button>
+      <button class="btn" data-c="req" aria-pressed="false">requirements.txt</button>
+    </div>
+    <div class="lc-layers" data-layers></div>
+    <p class="lc-msg" data-msg></p>
+  </layer-cache-demo>
+</Figure>
+
+<style>
+  .lc-layers {
+    display: grid;
+    gap: 4px;
+    margin-top: 12px;
+  }
+  .lc-layers :global(.l) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    font: 0.8125rem var(--font-mono);
+  }
+  .lc-layers :global(.l.hit) {
+    background: rgba(52, 168, 83, 0.15);
+    border-color: var(--g-green);
+  }
+  .lc-layers :global(.l.miss) {
+    background: rgba(251, 188, 4, 0.15);
+    border-color: var(--g-yellow);
+  }
+  .lc-layers :global(.l b) {
+    font-weight: 600;
+  }
+  .lc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+</style>
+
+<script>
+  type L = { t: string; secs: number; reads: string[] };
+  const FILES: Record<string, L[]> = {
+    bad: [
+      { t: 'FROM python:3.12-slim', secs: 0, reads: [] },
+      { t: 'COPY . /app', secs: 1, reads: ['src', 'req'] },
+      { t: 'RUN pip install -r requirements.txt', secs: 40, reads: ['req'] },
+      { t: 'CMD ["python", "app.py"]', secs: 0, reads: [] },
+    ],
+    good: [
+      { t: 'FROM python:3.12-slim', secs: 0, reads: [] },
+      { t: 'COPY requirements.txt /app/', secs: 1, reads: ['req'] },
+      { t: 'RUN pip install -r requirements.txt', secs: 40, reads: ['req'] },
+      { t: 'COPY . /app', secs: 1, reads: ['src', 'req'] },
+      { t: 'CMD ["python", "app.py"]', secs: 0, reads: [] },
+    ],
+  };
+  class LayerCacheDemo extends HTMLElement {
+    o = 'good';
+    c = 'src';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-o]').forEach((b) => b.addEventListener('click', () => { this.o = b.dataset.o!; this.mark('o'); this.draw(); }));
+      this.querySelectorAll<HTMLButtonElement>('[data-c]').forEach((b) => b.addEventListener('click', () => { this.c = b.dataset.c!; this.mark('c'); this.draw(); }));
+      this.mark('o'); this.mark('c');
+      this.draw();
+    }
+    mark(k: 'o' | 'c') {
+      this.querySelectorAll<HTMLButtonElement>(`[data-${k}]`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset[k] === this[k])));
+    }
+    draw() {
+      const ls = FILES[this.o];
+      let dirty = false, secs = 0, rebuilt = 0;
+      const html = ls.map((l) => {
+        // a layer is rebuilt if a file it reads changed, or any layer below it was rebuilt
+        if (l.reads.includes(this.c)) dirty = true;
+        if (dirty) { secs += l.secs; rebuilt += 1; }
+        return `<div class="l ${dirty ? 'miss' : 'hit'}"><span><b>${dirty ? 'rebuild' : 'cached'}</b>  ${l.t}</span><span>${dirty ? l.secs + ' s' : '0 s'}</span></div>`;
+      }).join('');
+      this.querySelector('[data-layers]')!.innerHTML = html;
+      this.querySelector('[data-msg]')!.textContent = this.c === 'none'
+        ? 'Nothing changed: every layer comes from cache and the build is instant.'
+        : `${rebuilt} of ${ls.length} layers rebuilt, ${secs} s. ${this.c === 'src' && this.o === 'bad' ? 'Changing one source file invalidated the COPY layer, and everything below it, including the 40 s dependency install, reruns every time.' : this.c === 'src' ? 'Only the final COPY and below rebuild: the slow dependency install stayed cached.' : 'New dependencies must be installed in either ordering: the cache cannot help when its inputs really changed.'}`;
+    }
+  }
+  customElements.define('layer-cache-demo', LayerCacheDemo);
+</script>

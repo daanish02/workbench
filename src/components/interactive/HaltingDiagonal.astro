@@ -1,0 +1,153 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Diagonalization: why no halting decider exists"
+  caption="Pretend H exists and fills in this table: row = program, column = input, H = halts, ∞ = loops. Click cells to change H's answers. D reads the yellow diagonal and does the opposite, so D's row differs from every P_i at column i: D cannot be any listed program. But D is a program, so it needs a row of its own, and at the cell D(⟨D⟩) every answer H could give is wrong."
+>
+  <halt-diag>
+    <div class="wrap">
+      <table class="grid mono" data-grid></table>
+    </div>
+    <div class="ctl-row" style="margin-top:12px">
+      <span class="ctl-label">Suppose H(D, D) says</span>
+      <button class="btn" data-dd="1" aria-pressed="true">halts</button>
+      <button class="btn" data-dd="0" aria-pressed="false">loops</button>
+      <button class="btn" data-shuffle>Random H</button>
+    </div>
+    <p class="msg" data-msg></p>
+  </halt-diag>
+</Figure>
+
+<style>
+  .wrap {
+    overflow-x: auto;
+  }
+  .grid {
+    border-collapse: separate;
+    border-spacing: 4px;
+    margin: 0 auto;
+    font-size: 0.875rem;
+  }
+  .grid :global(th) {
+    color: var(--text-faint);
+    font-weight: 600;
+    padding: 2px 4px;
+    white-space: nowrap;
+  }
+  .grid :global(th.drow) {
+    color: var(--g-red);
+  }
+  .grid :global(td) {
+    padding: 0;
+  }
+  .grid :global(button),
+  .grid :global(span.cell) {
+    width: 40px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .grid :global(span.cell) {
+    cursor: default;
+  }
+  .grid :global(.diag) {
+    border-color: var(--g-yellow);
+    color: var(--g-yellow);
+  }
+  .grid :global(.dval) {
+    border-color: var(--g-blue);
+    color: #fff;
+    background: rgba(66, 133, 244, 0.16);
+  }
+  .grid :global(.boom) {
+    border-color: var(--g-red);
+    color: var(--g-red);
+    background: rgba(234, 67, 53, 0.18);
+    font-weight: 700;
+  }
+  .msg {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .msg :global(b) {
+    color: var(--g-red);
+  }
+</style>
+
+<script>
+  const N = 4;
+  const sym = (h: boolean) => (h ? 'H' : '∞');
+
+  class HaltDiag extends HTMLElement {
+    // h[i][j]: H's claimed answer for program P_i on input <P_j>; column N is input <D>
+    h: boolean[][] = [
+      [true, false, true, true, false],
+      [false, false, true, false, true],
+      [true, true, true, false, false],
+      [false, true, false, false, true],
+    ];
+    dd = true;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-dd]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.dd = b.dataset.dd === '1';
+          this.querySelectorAll('[data-dd]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-shuffle]')!.addEventListener('click', () => {
+        this.h = this.h.map((r) => r.map(() => Math.random() < 0.5));
+        this.draw();
+      });
+      this.querySelector('[data-grid]')!.addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-i]');
+        if (!b) return;
+        const i = +b.dataset.i!;
+        const j = +b.dataset.j!;
+        this.h[i][j] = !this.h[i][j];
+        this.draw();
+      });
+      this.draw();
+    }
+    build() {
+      const cols = [...Array(N).keys()].map((j) => `<th>⟨P${j + 1}⟩</th>`).join('') + '<th>⟨D⟩</th>';
+      let html = `<tr><th></th>${cols}</tr>`;
+      for (let i = 0; i < N; i++) {
+        html += `<tr><th>P${i + 1}</th>`;
+        for (let j = 0; j <= N; j++) html += `<td><button type="button" data-i="${i}" data-j="${j}" class="${i === j ? 'diag' : ''}"></button></td>`;
+        html += '</tr>';
+      }
+      html += '<tr><th class="drow">D</th>';
+      for (let j = 0; j < N; j++) html += `<td><span class="cell dval" data-d="${j}" title="opposite of the diagonal"></span></td>`;
+      html += '<td><span class="cell boom" data-boom></span></td></tr>';
+      this.querySelector('[data-grid]')!.innerHTML = html;
+    }
+    draw() {
+      if (!this.querySelector('[data-boom]')) this.build();
+      this.querySelectorAll<HTMLButtonElement>('button[data-i]').forEach((b) => {
+        const i = +b.dataset.i!;
+        const j = +b.dataset.j!;
+        const v = this.h[i][j];
+        b.textContent = sym(v);
+        b.setAttribute('aria-label', `H(P${i + 1}, ${j === N ? 'D' : 'P' + (j + 1)}) = ${v ? 'halts' : 'loops'}`);
+      });
+      // D on input <P_j> does the opposite of H's diagonal answer for P_j
+      this.querySelectorAll<HTMLElement>('[data-d]').forEach((c) => (c.textContent = sym(!this.h[+c.dataset.d!][+c.dataset.d!])));
+      this.querySelector('[data-boom]')!.textContent = this.dd ? 'H→∞' : '∞→H';
+      this.querySelector('[data-msg]')!.innerHTML = this.dd
+        ? 'H(D, D) says <i>halts</i>, so D runs its infinite loop: D(⟨D⟩) <b>loops</b>. H was wrong.'
+        : 'H(D, D) says <i>loops</i>, so D returns immediately: D(⟨D⟩) <b>halts</b>. H was wrong.';
+    }
+  }
+  customElements.define('halt-diag', HaltDiag);
+</script>

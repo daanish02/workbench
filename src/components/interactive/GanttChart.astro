@@ -1,0 +1,75 @@
+---
+// Static Gantt chart. segments="P1:0-8,P2:8-10,P3:10-11"  ("idle" draws a gap)
+import Figure from '../Figure.astro';
+interface Props {
+  segments: string;
+  title?: string;
+  caption?: string;
+}
+const { segments, title = 'Gantt chart', caption } = Astro.props;
+const segs = segments.split(',').map((s) => {
+  const [id, range] = s.trim().split(':');
+  const [a, b] = range.split('-').map(Number);
+  return { id, a, b };
+});
+const end = Math.max(...segs.map((s) => s.b));
+const ids = [...new Set(segs.map((s) => s.id).filter((id) => id !== 'idle'))];
+const palette = ['var(--g-blue)', 'var(--g-red)', 'var(--g-yellow)', 'var(--g-green)', '#a142f4', '#24c1e0'];
+const color = (id: string) => palette[ids.indexOf(id) % palette.length];
+const ticks = [...new Set(segs.flatMap((s) => [s.a, s.b]))].sort((x, y) => x - y);
+---
+
+<Figure kind="Diagram" title={title} caption={caption}>
+  <div class="gantt" role="img" aria-label={segs.map((s) => `${s.id} from ${s.a} to ${s.b}`).join(', ')}>
+    <div class="bar">
+      {
+        segs.map((s) => (
+          <div class:list={['seg', { idle: s.id === 'idle' }]} style={`left:${(s.a / end) * 100}%;width:${((s.b - s.a) / end) * 100}%;--c:${color(s.id)}`}>
+            {s.id !== 'idle' && s.id}
+          </div>
+        ))
+      }
+    </div>
+    <div class="axis">
+      {ticks.map((t) => <span style={`left:${(t / end) * 100}%`}>{t}</span>)}
+    </div>
+  </div>
+</Figure>
+
+<style>
+  .gantt {
+    padding: 4px 10px 0;
+  }
+  .bar {
+    position: relative;
+    height: 40px;
+  }
+  .seg {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--c) 28%, #000);
+    border: 1.5px solid var(--c);
+    border-radius: 6px;
+    font: 600 0.8125rem var(--font-mono);
+    color: #fff;
+    overflow: hidden;
+  }
+  .seg.idle {
+    background: repeating-linear-gradient(45deg, #111 0 6px, #1a1a1a 6px 12px);
+    border-color: var(--border-strong);
+  }
+  .axis {
+    position: relative;
+    height: 22px;
+    margin-top: 4px;
+  }
+  .axis span {
+    position: absolute;
+    transform: translateX(-50%);
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+</style>

@@ -1,0 +1,183 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same inputs, opposite outputs"
+  caption="Each Add sends the same item to both structures; each Remove takes one from each. The stack hands back the newest item, the queue the oldest. Both sit on a fixed array of 6 slots: the stack only moves its top index, and the queue's front and rear indices chase each other around the array (a circular buffer), so no element is ever shifted."
+>
+  <stack-queue-viz>
+    <div class="panels">
+      <div class="panel">
+        <div class="ctl-label">Stack (LIFO)</div>
+        <div class="stack" data-stack></div>
+        <div class="stat" data-sstat></div>
+      </div>
+      <div class="panel">
+        <div class="ctl-label">Queue (FIFO), circular buffer</div>
+        <div class="queue" data-queue></div>
+        <div class="stat" data-qstat></div>
+      </div>
+    </div>
+    <p class="msg" data-msg></p>
+    <div class="ctl-row">
+      <button class="btn primary" data-add>Add (push / enqueue)</button>
+      <button class="btn" data-rm>Remove (pop / dequeue)</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </stack-queue-viz>
+</Figure>
+
+<style>
+  .panels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 28px;
+  }
+  .panel {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+  .stack {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 4px;
+    width: 150px;
+    margin: 8px 0;
+  }
+  .queue {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 44px));
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .stack :global(.cell),
+  .queue :global(.cell) {
+    position: relative;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 1rem var(--font-mono);
+    color: var(--text);
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .stack :global(.cell.empty),
+  .queue :global(.cell.empty) {
+    color: transparent;
+    background: transparent;
+    border-style: dashed;
+  }
+  .stack :global(.cell.mark),
+  .queue :global(.cell.mark) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.16);
+  }
+  .queue :global(.cell.front) {
+    border-color: var(--g-green);
+  }
+  .stack :global(.cell i),
+  .queue :global(.cell i) {
+    position: absolute;
+    left: 5px;
+    top: 2px;
+    font: 9px var(--font-mono);
+    font-style: normal;
+    color: var(--text-faint);
+  }
+  .stack :global(.cell em) {
+    position: absolute;
+    right: -46px;
+    font: 11px var(--font-mono);
+    font-style: normal;
+    color: var(--g-blue-l);
+  }
+  .queue :global(.tags) {
+    font: 10px var(--font-mono);
+    text-align: center;
+    color: var(--text-faint);
+    min-height: 12px;
+  }
+  .msg {
+    min-height: 1.5em;
+    margin: 10px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const CAP = 6;
+  class StackQueueViz extends HTMLElement {
+    st: string[] = [];
+    q: (string | null)[] = [];
+    front = 0;
+    size = 0;
+    letter = 0;
+    lastS = -1;
+    lastQ = -1;
+
+    connectedCallback() {
+      this.querySelector('[data-add]')!.addEventListener('click', () => this.add());
+      this.querySelector('[data-rm]')!.addEventListener('click', () => this.rm());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+      ['A', 'B', 'C'].forEach(() => this.add());
+      this.msg('Pushed and enqueued A, B, C in that order.');
+    }
+    reset() {
+      this.st = [];
+      this.q = Array(CAP).fill(null);
+      this.front = 0;
+      this.size = 0;
+      this.letter = 0;
+      this.msg('Both empty.');
+      this.draw();
+    }
+    msg(t: string) {
+      this.querySelector('[data-msg]')!.innerHTML = t;
+    }
+    add() {
+      if (this.st.length >= CAP) return this.msg('Full: a fixed array of 6 has no room. A dynamic array would now resize.');
+      const v = String.fromCharCode(65 + (this.letter++ % 26));
+      this.st.push(v);
+      const rear = (this.front + this.size) % CAP;
+      this.q[rear] = v;
+      this.size++;
+      this.lastS = this.st.length - 1;
+      this.lastQ = rear;
+      this.msg(`push <b>${v}</b> → stack[${this.lastS}] · enqueue <b>${v}</b> → queue[${rear}] (rear = (front + size) mod 6)`);
+      this.draw();
+    }
+    rm() {
+      if (!this.st.length) return this.msg('Both empty: pop and dequeue would fail (underflow).');
+      const s = this.st.pop()!;
+      const qi = this.front;
+      const qv = this.q[qi]!;
+      this.q[qi] = null;
+      this.front = (this.front + 1) % CAP;
+      this.size--;
+      this.lastS = -1;
+      this.lastQ = -1;
+      this.msg(`pop → <b>${s}</b> (newest) · dequeue → <b>${qv}</b> (oldest); front moves to ${this.front}`);
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-stack]')!.innerHTML = Array.from({ length: CAP }, (_, i) => {
+        const v = this.st[i];
+        const top = i === this.st.length - 1;
+        return `<div class="cell ${v ? '' : 'empty'} ${i === this.lastS ? 'mark' : ''}"><i>${i}</i>${v ?? '·'}${top ? '<em>← top</em>' : ''}</div>`;
+      }).join('');
+      const rear = (this.front + this.size) % CAP;
+      this.querySelector('[data-queue]')!.innerHTML =
+        this.q.map((v, i) => `<div class="cell ${v ? '' : 'empty'} ${i === this.lastQ ? 'mark' : ''} ${v && i === this.front ? 'front' : ''}"><i>${i}</i>${v ?? '·'}</div>`).join('') +
+        this.q.map((_, i) => `<div class="tags">${[i === this.front ? 'F' : '', i === rear && this.size < CAP ? 'R' : ''].filter(Boolean).join(' ')}</div>`).join('');
+      this.querySelector('[data-sstat]')!.innerHTML = `size <b>${this.st.length}</b> · top index <b>${this.st.length - 1}</b>`;
+      this.querySelector('[data-qstat]')!.innerHTML = `F front <b>${this.front}</b> · R next rear <b>${rear}</b> · size <b>${this.size}</b>`;
+    }
+  }
+  customElements.define('stack-queue-viz', StackQueueViz);
+</script>

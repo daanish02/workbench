@@ -1,0 +1,182 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Lamport and vector clocks"
+  caption="Add local events and messages between three processes (up to 12 events). Click two events to compare them: vector clocks say before, after or concurrent; the single Lamport number inside each dot cannot tell concurrent from ordered."
+>
+  <vclock-sim>
+    <div class="ctl-row">
+      <span class="ctl-label">Local event on</span>
+      <button class="btn" data-ev="0">P0</button>
+      <button class="btn" data-ev="1">P1</button>
+      <button class="btn" data-ev="2">P2</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Message</span>
+      <select class="input" data-from><option value="0">P0</option><option value="1">P1</option><option value="2">P2</option></select>
+      <span>→</span>
+      <select class="input" data-to><option value="1">P1</option><option value="0">P0</option><option value="2">P2</option></select>
+      <button class="btn primary" data-send>Send</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <svg viewBox="0 0 400 150" class="vc-svg" data-svg aria-label="Process timelines"></svg>
+    <p class="vc-msg" data-msg aria-live="polite"></p>
+  </vclock-sim>
+</Figure>
+
+<style>
+  .vc-svg {
+    width: 100%;
+    display: block;
+    margin-top: 10px;
+  }
+  .vc-svg :global(.lane) {
+    stroke: var(--border-strong);
+  }
+  .vc-svg :global(.lbl) {
+    font: 700 10px var(--font-mono);
+    fill: var(--text-faint);
+  }
+  .vc-svg :global(.dot) {
+    fill: rgba(66, 133, 244, 0.3);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+    cursor: pointer;
+  }
+  .vc-svg :global(.dot.sel) {
+    fill: rgba(251, 188, 5, 0.4);
+    stroke: var(--g-yellow);
+  }
+  .vc-svg :global(.num) {
+    font: 700 9px var(--font-mono);
+    fill: #fff;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .vc-svg :global(.msg) {
+    stroke: var(--g-green);
+    stroke-width: 1.5;
+  }
+  .vc-msg {
+    margin: 8px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.2em;
+  }
+  select.input {
+    padding: 5px 8px;
+  }
+</style>
+
+<script>
+  interface Ev {
+    p: number;
+    l: number;
+    v: number[];
+    from?: number;
+  }
+  class VClockSim extends HTMLElement {
+    evs: Ev[] = [];
+    last: (number | null)[] = [null, null, null];
+    sel: number[] = [];
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-ev]').forEach((b) => b.addEventListener('click', () => this.local(+b.dataset.ev!)));
+      this.querySelector('[data-send]')!.addEventListener('click', () => {
+        const f = +this.querySelector<HTMLSelectElement>('[data-from]')!.value;
+        const t = +this.querySelector<HTMLSelectElement>('[data-to]')!.value;
+        if (f !== t) this.send(f, t);
+        else this.say('Pick two different processes.');
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    reset() {
+      this.evs = [];
+      this.last = [null, null, null];
+      this.sel = [];
+      this.say('Add events, then click two of them to compare.');
+      this.draw();
+    }
+    clock(p: number): Ev {
+      const prev = this.last[p] === null ? null : this.evs[this.last[p]!];
+      return { p, l: prev ? prev.l : 0, v: prev ? prev.v.slice() : [0, 0, 0] };
+    }
+    full() {
+      if (this.evs.length >= 12) {
+        this.say('12 events is the limit for this demo. Reset to start again.');
+        return true;
+      }
+      return false;
+    }
+    local(p: number) {
+      if (this.full()) return;
+      const e = this.clock(p);
+      e.l++;
+      e.v[p]++;
+      this.evs.push(e);
+      this.last[p] = this.evs.length - 1;
+      this.draw();
+    }
+    send(f: number, t: number) {
+      if (this.evs.length + 2 > 12) return void this.say('Not enough room for a send and receive. Reset to start again.');
+      const s = this.clock(f);
+      s.l++;
+      s.v[f]++;
+      this.evs.push(s);
+      this.last[f] = this.evs.length - 1;
+      const sIdx = this.evs.length - 1;
+      const r = this.clock(t);
+      r.l = Math.max(r.l, s.l) + 1;
+      r.v = r.v.map((x, i) => Math.max(x, s.v[i]));
+      r.v[t]++;
+      r.from = sIdx;
+      this.evs.push(r);
+      this.last[t] = this.evs.length - 1;
+      this.draw();
+    }
+    cmp(a: number[], b: number[]) {
+      const le = a.every((x, i) => x <= b[i]);
+      const ge = a.every((x, i) => x >= b[i]);
+      return le && ge ? 'identical' : le ? 'before' : ge ? 'after' : 'concurrent';
+    }
+    draw() {
+      const svg = this.querySelector('[data-svg]')!;
+      const X = (i: number) => 50 + i * 28;
+      const Y = (p: number) => 25 + p * 50;
+      let h = [0, 1, 2].map((p) => `<line class="lane" x1="30" x2="395" y1="${Y(p)}" y2="${Y(p)}"></line><text class="lbl" x="2" y="${Y(p) + 3}">P${p}</text>`).join('');
+      this.evs.forEach((e, i) => {
+        if (e.from !== undefined) h += `<line class="msg" x1="${X(e.from)}" y1="${Y(this.evs[e.from].p)}" x2="${X(i)}" y2="${Y(e.p)}"></line>`;
+      });
+      this.evs.forEach((e, i) => {
+        h += `<g data-i="${i}"><circle class="dot ${this.sel.includes(i) ? 'sel' : ''}" cx="${X(i)}" cy="${Y(e.p)}" r="10"></circle><text class="num" x="${X(i)}" y="${Y(e.p) + 3}">${e.l}</text></g>`;
+      });
+      svg.innerHTML = h;
+      svg.querySelectorAll<SVGGElement>('g[data-i]').forEach((g) =>
+        g.addEventListener('click', () => {
+          const i = +g.dataset.i!;
+          this.sel = this.sel.length >= 2 ? [i] : [...this.sel, i];
+          this.compare();
+          this.draw();
+        }),
+      );
+    }
+    compare() {
+      if (this.sel.length === 1) {
+        const e = this.evs[this.sel[0]];
+        return this.say(`Event on P${e.p}: Lamport ${e.l}, vector [${e.v.join(', ')}]. Click a second event.`);
+      }
+      const [a, b] = this.sel.map((i) => this.evs[i]);
+      const rel = this.cmp(a.v, b.v);
+      const lam = a.l < b.l ? 'smaller' : a.l > b.l ? 'larger' : 'equal';
+      this.say(
+        `First [${a.v}] vs second [${b.v}]: ${rel === 'concurrent' ? 'CONCURRENT, neither could have influenced the other.' : rel === 'before' ? 'first happened before second.' : rel === 'after' ? 'first happened after second.' : 'the same event.'} Lamport alone says first is ${lam}${rel === 'concurrent' ? ', which wrongly suggests an order' : ''}.`,
+      );
+    }
+  }
+  customElements.define('vclock-sim', VClockSim);
+</script>

@@ -1,0 +1,119 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Polling vs. interrupts on one timeline"
+  caption="The CPU starts a device operation, then either spins checking status (polling) or runs other work until the device interrupts. Slide the device latency: long waits make polling waste most of the CPU, while very short waits make the fixed cost of an interrupt look large."
+>
+  <poll-irq>
+    <div class="ctl-row">
+      <label class="ctl-label">device latency <input type="range" min="1" max="40" value="20" data-lat /></label>
+      <b class="mono" data-latv></b>
+    </div>
+    <div class="rows">
+      <span class="lab">Polling</span><div class="tl" data-tl="poll"></div>
+      <span class="lab">Interrupt</span><div class="tl" data-tl="irq"></div>
+    </div>
+    <p class="legend">
+      <span class="k start">start I/O</span><span class="k spin">busy-wait</span><span class="k work">other useful work</span><span class="k isr">interrupt handler</span><span class="k fin">finish I/O</span>
+    </p>
+    <p class="say" data-say></p>
+  </poll-irq>
+</Figure>
+
+<style>
+  .rows {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 10px;
+    align-items: center;
+    margin-top: 14px;
+  }
+  .lab {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .tl {
+    display: flex;
+    height: 28px;
+    border-radius: 5px;
+    overflow: hidden;
+    background: #111;
+  }
+  .tl :global(div),
+  .k::before {
+    background: var(--c);
+  }
+  .tl :global(.start),
+  .k.start {
+    --c: var(--g-blue);
+  }
+  .tl :global(.spin),
+  .k.spin {
+    --c: repeating-linear-gradient(90deg, #ea4335 0 4px, #5c1d18 4px 8px);
+  }
+  .tl :global(.work),
+  .k.work {
+    --c: var(--g-green);
+  }
+  .tl :global(.isr),
+  .k.isr {
+    --c: var(--g-yellow);
+  }
+  .tl :global(.fin),
+  .k.fin {
+    --c: #a142f4;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 10px 0 0;
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+  }
+  .k::before {
+    content: '';
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 5px;
+    vertical-align: -1px;
+  }
+  .say {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .say :global(b) {
+    color: var(--text);
+  }
+</style>
+
+<script>
+  const START = 2, FINISH = 2, ISR = 3; // fixed costs, in arbitrary time units
+  class PollIrq extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-lat]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const L = +this.querySelector<HTMLInputElement>('[data-lat]')!.value;
+      this.querySelector('[data-latv]')!.textContent = `${L} units`;
+      const total = START + L + ISR + FINISH;
+      const seg = (cls: string, w: number) => `<div class="${cls}" style="flex:${w}"></div>`;
+      // polling: the CPU spins for the whole latency, then finishes immediately
+      this.querySelector('[data-tl="poll"]')!.innerHTML = seg('start', START) + seg('spin', L) + seg('fin', FINISH) + seg('', ISR);
+      // interrupt: the CPU does other work during the latency, then pays for the handler
+      this.querySelector('[data-tl="irq"]')!.innerHTML = seg('start', START) + seg('work', L) + seg('isr', ISR) + seg('fin', FINISH);
+      const pollWaste = Math.round((100 * L) / (START + L + FINISH));
+      const irqUseful = Math.round((100 * L) / total);
+      this.querySelector('[data-say]')!.innerHTML =
+        `Polling burns <b>${pollWaste}%</b> of its CPU time spinning. Interrupts free <b>${irqUseful}%</b> for other work but add a ${ISR}-unit handler, so the I/O itself completes ${ISR} units later.` +
+        (L <= ISR ? ' At this latency the handler costs as much as the wait: <b>polling is reasonable</b>.' : '');
+    }
+  }
+  customElements.define('poll-irq', PollIrq);
+</script>

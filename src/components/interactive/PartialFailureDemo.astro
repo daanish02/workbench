@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One timeout, four different truths"
+  caption="Charge a card for 20. Run each scenario: the client sees the same timeout in three of them, yet the account differs. Then switch on the retry and compare the balance with and without an idempotency key."
+>
+  <partial-failure>
+    <div class="ctl-row">
+      <span class="ctl-label">Scenario</span>
+      <button class="btn" data-s="ok" aria-pressed="true">All fine</button>
+      <button class="btn" data-s="lost" aria-pressed="false">Request lost</button>
+      <button class="btn" data-s="crash" aria-pressed="false">Server crashes first</button>
+      <button class="btn" data-s="reply" aria-pressed="false">Reply lost</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Client on timeout</span>
+      <button class="btn" data-r="none" aria-pressed="true">Give up</button>
+      <button class="btn" data-r="retry" aria-pressed="false">Retry</button>
+      <button class="btn" data-r="key" aria-pressed="false">Retry + idempotency key</button>
+    </div>
+    <div class="pf">
+      <div class="pf-box"><b>Client</b><span data-client class="mono"></span></div>
+      <div class="pf-box"><b>Server</b><span data-server class="mono"></span></div>
+      <div class="pf-box"><b>Account</b><span data-acct class="mono"></span></div>
+    </div>
+    <ol class="pf-log" data-log></ol>
+  </partial-failure>
+</Figure>
+
+<style>
+  .pf {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .pf {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pf-box {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .pf-box span {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+  .pf-box :global(.bad) {
+    color: var(--g-red-l);
+  }
+  .pf-box :global(.good) {
+    color: var(--g-green-l);
+  }
+  .pf-log {
+    margin: 12px 0 0;
+    padding-left: 1.4em;
+    font: 0.75rem/1.8 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pf-log :global(li.bad) {
+    color: var(--g-red-l);
+  }
+  .pf-log :global(li.good) {
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  class PartialFailure extends HTMLElement {
+    s = 'ok';
+    r = 'none';
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.s = b.dataset.s!;
+          this.mark('[data-s]', b);
+          this.run();
+        }),
+      );
+      this.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.r = b.dataset.r!;
+          this.mark('[data-r]', b);
+          this.run();
+        }),
+      );
+      this.run();
+    }
+    mark(sel: string, on: HTMLElement) {
+      this.querySelectorAll(sel).forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+    }
+    run() {
+      const log: [string, string][] = [];
+      let balance = 100;
+      const seen = new Set<string>();
+      // one attempt; returns what the client perceives and whether the server applied the charge
+      const attempt = (n: number, key: string | null) => {
+        log.push(['', `attempt ${n}: client sends charge(20)${key ? ` key=${key}` : ''}`]);
+        const first = n === 1;
+        if (first && this.s === 'lost') {
+          log.push(['bad', 'request lost in the network; server never saw it']);
+          return false;
+        }
+        if (first && this.s === 'crash') {
+          log.push(['bad', 'server crashed before writing anything']);
+          return false;
+        }
+        if (key && seen.has(key)) log.push(['good', 'server recognises the key and returns the saved result; no second charge']);
+        else {
+          balance -= 20;
+          if (key) seen.add(key);
+          log.push(['', `server charges the card; balance is now ${balance}`]);
+        }
+        if (first && this.s === 'reply') {
+          log.push(['bad', 'reply lost on the way back']);
+          return false;
+        }
+        log.push(['good', 'client receives "200 OK"']);
+        return true;
+      };
+      const key = this.r === 'key' ? 'k-42' : null;
+      let ok = attempt(1, key);
+      if (!ok) {
+        log.push(['bad', 'client times out: it cannot tell which of the failures happened']);
+        if (this.r !== 'none') ok = attempt(2, key);
+      }
+      const correct = balance === 80;
+      const q = this.querySelector.bind(this);
+      q('[data-client]')!.innerHTML = ok ? '<span class="good">got a confirmation</span>' : '<span class="bad">gave up, outcome unknown</span>';
+      q('[data-server]')!.textContent = this.s === 'ok' ? 'healthy' : this.s === 'lost' ? 'never received it' : this.s === 'crash' ? 'crashed, then restarted' : 'processed it, reply dropped';
+      q('[data-acct]')!.innerHTML = `balance ${balance} · <span class="${correct ? 'good' : 'bad'}">${balance === 80 ? 'charged once ✓' : balance === 100 ? 'never charged' : 'charged twice ✗'}</span>`;
+      q('[data-log]')!.innerHTML = log.map(([c, t]) => `<li class="${c}">${t}</li>`).join('');
+    }
+  }
+  customElements.define('partial-failure', PartialFailure);
+</script>

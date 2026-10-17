@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+// col: 0 = static, 1 = dynamic. row: 0 = stricter, 1 = more permissive.
+const langs = [
+  { name: 'Rust', col: 0, row: 0, code: 'let x = 3 + "4";', when: 'compile time', result: 'error[E0277]: cannot add `&str` to `{integer}`', ok: false },
+  { name: 'Haskell', col: 0, row: 0, code: 'x = 3 + "4"', when: 'compile time', result: 'type error: no Num instance for String', ok: false },
+  { name: 'Java', col: 0, row: 0, code: 'int x = "4";', when: 'compile time', result: 'error: incompatible types: String cannot be converted to int (yet 3 + "4" is legal and gives "34")', ok: false },
+  { name: 'TypeScript', col: 0, row: 1, code: 'const x = 3 + "4";', when: 'compile time passes', result: '"34": the checker accepts the coercion JavaScript defines', ok: true },
+  { name: 'C', col: 0, row: 1, code: 'int x = 3.9;  char *p = 3 + "4";', when: 'compiles', result: 'x is silently 3; p points 3 bytes past a 2-byte string', ok: true },
+  { name: 'Python', col: 1, row: 0, code: 'x = 3 + "4"', when: 'run time', result: "TypeError: unsupported operand type(s) for +: 'int' and 'str'", ok: false },
+  { name: 'Ruby', col: 1, row: 0, code: 'x = 3 + "4"', when: 'run time', result: "TypeError: String can't be coerced into Integer", ok: false },
+  { name: 'JavaScript', col: 1, row: 1, code: 'let x = 3 + "4";', when: 'run time', result: '"34" (and 3 - "4" is -1)', ok: true },
+  { name: 'PHP', col: 1, row: 1, code: '$x = 3 + "4";', when: 'run time', result: '7: the numeric string is converted', ok: true },
+];
+const cells = [
+  { col: 0, row: 0, title: 'Static · stricter' },
+  { col: 1, row: 0, title: 'Dynamic · stricter' },
+  { col: 0, row: 1, title: 'Static · permissive' },
+  { col: 1, row: 1, title: 'Dynamic · permissive' },
+];
+---
+
+<Figure
+  title="Two independent typing dimensions"
+  caption="Columns answer when types are checked; rows answer how readily different types are mixed. Click a language to see what it does with a mixed-type operation. Placement is a rough, conventional one: strong/weak has no formal boundary, and Java and TypeScript in particular sit near the middle."
+>
+  <typing-quadrant>
+    <div class="axis-x"><span>Static: checked before running</span><span>Dynamic: checked while running</span></div>
+    <div class="grid">
+      {
+        cells.map((c) => (
+          <div class={`cell r${c.row} c${c.col}`}>
+            <span class="ctl-label">{c.title}</span>
+            <div class="chips">
+              {langs
+                .filter((l) => l.col === c.col && l.row === c.row)
+                .map((l) => (
+                  <button class="btn" data-lang={l.name} data-code={l.code} data-when={l.when} data-result={l.result} data-ok={String(l.ok)} aria-pressed="false">
+                    {l.name}
+                  </button>
+                ))}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+    <div class="out" data-out>
+      <div class="mono code" data-o-code></div>
+      <div class="verdict"><span class="pill" data-o-when></span><span class="mono" data-o-res></span></div>
+    </div>
+  </typing-quadrant>
+</Figure>
+
+<style>
+  .axis-x {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+    text-align: center;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .cell {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    min-height: 92px;
+    min-width: 0;
+  }
+  .r0 {
+    background: rgba(52, 168, 83, 0.07);
+  }
+  .r1 {
+    background: rgba(251, 188, 5, 0.07);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .chips .btn {
+    font-size: 0.8125rem;
+  }
+  .out {
+    margin-top: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px 12px;
+    min-height: 64px;
+  }
+  .code {
+    font-size: 0.875rem;
+    overflow-wrap: anywhere;
+  }
+  .verdict {
+    margin-top: 6px;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    font-size: 0.8125rem;
+  }
+  .verdict .mono {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .pill {
+    border-radius: 999px;
+    padding: 1px 8px;
+    font-size: 0.6875rem;
+    border: 1px solid var(--c, var(--border-strong));
+    color: var(--c, var(--text-muted));
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+  class TypingQuadrant extends HTMLElement {
+    connectedCallback() {
+      const btns = [...this.querySelectorAll<HTMLButtonElement>('[data-lang]')];
+      const show = (b: HTMLButtonElement) => {
+        btns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        const ok = b.dataset.ok === 'true';
+        this.querySelector('[data-o-code]')!.textContent = `${b.dataset.lang}:  ${b.dataset.code}`;
+        const when = this.querySelector<HTMLElement>('[data-o-when]')!;
+        when.textContent = (ok ? 'accepted · ' : 'rejected · ') + b.dataset.when;
+        when.style.setProperty('--c', ok ? 'var(--g-yellow)' : 'var(--g-green)');
+        this.querySelector('[data-o-res]')!.textContent = '→ ' + b.dataset.result;
+      };
+      btns.forEach((b) => b.addEventListener('click', () => show(b)));
+      show(btns.find((b) => b.dataset.lang === 'Python')!);
+    }
+  }
+  customElements.define('typing-quadrant', TypingQuadrant);
+</script>

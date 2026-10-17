@@ -1,0 +1,201 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Trie: shared prefixes and autocomplete"
+  caption="Green rings mark terminal nodes, where a stored word ends. Type a prefix (or tap one): the blue path is the O(p) walk to the prefix node, and every terminal node beneath it is a completion. Add words like cart or do and notice how few new nodes a word with a familiar prefix costs."
+>
+  <trie-viz>
+    <div class="stage"><svg data-svg role="img" aria-label="trie diagram"></svg></div>
+    <div class="ctl-row">
+      <label class="ctl-label" for="trie-p">Prefix</label>
+      <input class="input" id="trie-p" data-p value="ca" autocomplete="off" spellcheck="false" style="width:8em" />
+      <button class="btn" data-q="c">c</button>
+      <button class="btn" data-q="ca">ca</button>
+      <button class="btn" data-q="car">car</button>
+      <button class="btn" data-q="do">do</button>
+      <button class="btn" data-q="x">x</button>
+    </div>
+    <div class="out" data-out></div>
+    <div class="ctl-row" style="margin-top:10px">
+      <label class="ctl-label" for="trie-w">Word</label>
+      <input class="input" id="trie-w" data-w value="cart" autocomplete="off" spellcheck="false" style="width:8em" />
+      <button class="btn primary" data-add>Add word</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="stat" data-stat style="margin-top:8px"></div>
+  </trie-viz>
+</Figure>
+
+<style>
+  .stage {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .stage :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(line.on) {
+    stroke: var(--g-blue);
+    stroke-width: 2.8;
+  }
+  .stage :global(line.sub) {
+    stroke: rgba(52, 168, 83, 0.6);
+  }
+  .stage :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .stage :global(.end circle) {
+    stroke: var(--g-green);
+    stroke-width: 3;
+  }
+  .stage :global(.on circle) {
+    fill: rgba(66, 133, 244, 0.3);
+  }
+  .stage :global(.sub.end circle) {
+    fill: rgba(52, 168, 83, 0.3);
+  }
+  .stage :global(text) {
+    fill: var(--text);
+    font: 700 14px var(--font-mono);
+  }
+  .stage :global(text.r) {
+    fill: var(--text-faint);
+    font-size: 10px;
+  }
+  .out {
+    margin-top: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+  .out :global(b) {
+    font-family: var(--font-mono);
+    color: var(--g-green-l);
+  }
+</style>
+
+<script>
+  interface T {
+    ch: string;
+    kids: Map<string, T>;
+    end: boolean;
+    id: number;
+  }
+  const START = ['car', 'care', 'cat', 'dog'];
+  class TrieViz extends HTMLElement {
+    root!: T;
+    ids = 0;
+    words: string[] = [];
+    last = '';
+
+    connectedCallback() {
+      const p = this.querySelector<HTMLInputElement>('[data-p]')!;
+      p.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-q]').forEach((b) =>
+        b.addEventListener('click', () => {
+          p.value = b.dataset.q!;
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-add]')!.addEventListener('click', () => {
+        const w = this.querySelector<HTMLInputElement>('[data-w]')!.value.trim().toLowerCase().replace(/[^a-z]/g, '').slice(0, 8);
+        if (!w) return;
+        if (this.words.length >= 12 && !this.words.includes(w)) return (this.last = 'Demo limit: 12 words.'), this.draw();
+        const added = this.add(w);
+        this.last = added === -1 ? `"${w}" was already stored.` : `Added "${w}": ${added} new node${added === 1 ? '' : 's'} for ${w.length} characters (${w.length - added} shared with existing prefixes).`;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.ids = 0;
+      this.root = { ch: '', kids: new Map(), end: false, id: this.ids++ };
+      this.words = [];
+      this.last = '';
+      START.forEach((w) => this.add(w));
+      this.draw();
+    }
+    add(w: string) {
+      let n = this.root, made = 0;
+      for (const c of w) {
+        if (!n.kids.has(c)) {
+          n.kids.set(c, { ch: c, kids: new Map(), end: false, id: this.ids++ });
+          made++;
+        }
+        n = n.kids.get(c)!;
+      }
+      if (n.end) return -1;
+      n.end = true;
+      this.words.push(w);
+      return made;
+    }
+    draw() {
+      const prefix = this.querySelector<HTMLInputElement>('[data-p]')!.value.trim().toLowerCase();
+      // walk the prefix
+      const on = new Set<number>([this.root.id]);
+      let n: T | undefined = this.root;
+      for (const c of prefix) {
+        n = n.kids.get(c);
+        if (!n) break;
+        on.add(n.id);
+      }
+      const sub = new Set<number>();
+      const found: string[] = [];
+      const collect = (t: T, s: string) => {
+        sub.add(t.id);
+        if (t.end) found.push(s);
+        [...t.kids.keys()].sort().forEach((c) => collect(t.kids.get(c)!, s + c));
+      };
+      if (n && prefix) collect(n, prefix);
+      // layout: leaves left to right, parents centred over children
+      const pos = new Map<number, [number, number]>();
+      let leaf = 0, depth = 0;
+      const lay = (t: T, d: number): number => {
+        depth = Math.max(depth, d);
+        const ks = [...t.kids.keys()].sort().map((c) => t.kids.get(c)!);
+        const x = ks.length ? ks.map((k) => lay(k, d + 1)).reduce((a, b) => a + b) / ks.length : leaf++;
+        pos.set(t.id, [x, d]);
+        return x;
+      };
+      lay(this.root, 0);
+      const SX = 42, SY = 52;
+      const w = Math.max(leaf, 1) * SX, h = (depth + 1) * SY;
+      const at = (t: T) => [pos.get(t.id)![0] * SX + SX / 2, pos.get(t.id)![1] * SY + 24];
+      let edges = '', nodes = '';
+      const rec = (t: T) => {
+        const [x, y] = at(t);
+        [...t.kids.values()].forEach((k) => {
+          const [x2, y2] = at(k);
+          edges += `<line class="${on.has(k.id) && prefix ? 'on' : sub.has(k.id) ? 'sub' : ''}" x1="${x}" y1="${y}" x2="${x2}" y2="${y2}"/>`;
+          rec(k);
+        });
+        const cls = [t.end ? 'end' : '', on.has(t.id) && (prefix || t === this.root) ? 'on' : '', sub.has(t.id) ? 'sub' : ''].join(' ');
+        nodes += `<g class="${cls}"><circle cx="${x}" cy="${y}" r="15"/>${t === this.root ? `<text class="r" x="${x}" y="${y + 4}" text-anchor="middle">root</text>` : `<text x="${x}" y="${y + 5}" text-anchor="middle">${t.ch}</text>`}</g>`;
+      };
+      rec(this.root);
+      const svg = this.querySelector('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      svg.setAttribute('width', String(w));
+      svg.innerHTML = edges + nodes;
+      const out = this.querySelector('[data-out]')!;
+      if (!prefix) out.textContent = 'Type a prefix to autocomplete.';
+      else if (!n) out.innerHTML = `No edge for "${prefix[on.size - 1]}" after ${on.size - 1} step${on.size === 2 ? '' : 's'}: no stored word starts with "${prefix}".`;
+      else out.innerHTML = `Walked ${prefix.length} edge${prefix.length > 1 ? 's' : ''}. Completions: ${found.length ? found.map((f) => `<b>${f}</b>`).join(', ') : 'none (prefix exists, but no word ends below it)'}`;
+      const nodesCount = this.ids - 1, chars = this.words.reduce((s, x) => s + x.length, 0);
+      this.querySelector('[data-stat]')!.innerHTML = `<b>${this.words.length}</b> words · <b>${chars}</b> characters · <b>${nodesCount}</b> nodes. ${this.last}`;
+    }
+  }
+  customElements.define('trie-viz', TrieViz);
+</script>

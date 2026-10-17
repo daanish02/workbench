@@ -1,0 +1,127 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Offset vs cursor pagination while data changes"
+  caption="Read page 1 of the newest orders (3 per page), then let a new order arrive, then read page 2. Offset pagination skips by position, so the new row shifts everything and an item appears twice. Cursor pagination continues after the last id seen, so nothing repeats or is skipped."
+>
+  <pagination-demo>
+    <div class="ctl-row">
+      <button class="btn primary" data-next>Fetch next page (both ways)</button>
+      <button class="btn" data-new>New order arrives</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="pg">
+      <div><b>Offset: <code>LIMIT 3 OFFSET n</code></b><div class="seen" data-off></div></div>
+      <div><b>Cursor: <code>WHERE id &lt; last</code></b><div class="seen" data-cur></div></div>
+    </div>
+    <p class="pg-msg" data-msg aria-live="polite"></p>
+  </pagination-demo>
+</Figure>
+
+<style>
+  .pg {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 14px;
+    font-size: 0.8125rem;
+  }
+  @media (max-width: 520px) {
+    .pg {
+      grid-template-columns: 1fr;
+    }
+  }
+  .pg code {
+    font-size: 0.75rem;
+  }
+  .seen {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+    min-height: 2em;
+  }
+  .seen :global(.p) {
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 7px;
+  }
+  .seen :global(.i) {
+    min-width: 28px;
+    text-align: center;
+    padding: 3px 4px;
+    border-radius: 5px;
+    border: 1px solid var(--border-strong);
+    font: 0.75rem var(--font-mono);
+    color: #fff;
+  }
+  .seen :global(.i.dup) {
+    background: rgba(234, 67, 53, 0.35);
+    border-color: var(--g-red);
+  }
+  .seen :global(.i.miss) {
+    background: rgba(251, 188, 5, 0.25);
+    border-color: var(--g-yellow);
+  }
+  .pg-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3em;
+  }
+</style>
+
+<script>
+  const SIZE = 3;
+  class PaginationDemo extends HTMLElement {
+    data: number[] = [];
+    off: number[][] = [];
+    cur: number[][] = [];
+    nextId = 11;
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => this.next());
+      this.querySelector('[data-new]')!.addEventListener('click', () => this.add());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.data = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+      this.off = [];
+      this.cur = [];
+      this.nextId = 11;
+      this.say('Fetch page 1, then add a new order, then fetch page 2.');
+      this.draw();
+    }
+    say(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    add() {
+      this.data.unshift(this.nextId++);
+      this.say(`Order ${this.nextId - 1} arrived at the top of the list. The data under the client has shifted.`);
+    }
+    next() {
+      const n = this.off.length;
+      const o = this.data.slice(n * SIZE, n * SIZE + SIZE);
+      const last = this.cur.length ? this.cur[this.cur.length - 1].at(-1)! : Infinity;
+      const c = this.data.filter((x) => x < last).slice(0, SIZE);
+      if (!o.length && !c.length) return this.say('End of the data.');
+      this.off.push(o);
+      this.cur.push(c);
+      const seenOff = this.off.flat();
+      const dupes = seenOff.filter((x, i) => seenOff.indexOf(x) !== i);
+      if (dupes.length) this.say(`Offset pagination returned ${[...new Set(dupes)].join(', ')} a second time (red): the new row pushed it from page 1 into page 2. Cursor pagination, which resumes after the last id it saw, repeated nothing.`);
+      else this.say('Both return the same pages so far, because nothing changed between fetches. Add an order, then fetch again.');
+      this.draw();
+    }
+    draw() {
+      const render = (pages: number[][]) => pages.map((p, pi) => `<div class="p">${p.map((x, i) => `<span class="i ${pages.slice(0, pi).flat().includes(x) ? 'dup' : ''}">${x}</span>`).join('')}</div>`).join('');
+      this.querySelector('[data-off]')!.innerHTML = render(this.off) || '<span class="stat">no pages yet</span>';
+      this.querySelector('[data-cur]')!.innerHTML = render(this.cur) || '<span class="stat">no pages yet</span>';
+    }
+  }
+  customElements.define('pagination-demo', PaginationDemo);
+</script>

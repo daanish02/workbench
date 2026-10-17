@@ -1,0 +1,156 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An auto-scaler closing the loop"
+  caption="Each tick is a minute. Yellow is demand, blue is the capacity that is actually ready, and red is demand nobody could serve. The controller measures last minute's demand, computes how many instances keep each at the target utilization, and launches or removes them. New instances take the start-up delay to become ready, and scale-in waits out the cooldown. Try a fast spike with a long delay, then the flapping load with no cooldown."
+>
+  <auto-scaler-sim>
+    <div class="ctl-row">
+      <label class="stat">Load
+        <select data-s>
+          <option value="spike">Sudden spike</option>
+          <option value="wave">Daily wave</option>
+          <option value="flap">Flapping</option>
+        </select>
+      </label>
+      <label class="stat">Target <input type="range" min="30" max="90" step="5" value="60" data-t /> <b data-tv>60</b>%</label>
+      <label class="stat">Start-up <input type="range" min="0" max="10" value="3" data-d /> <b data-dv>3</b> min</label>
+      <label class="stat">Cooldown <input type="range" min="0" max="15" value="5" data-c /> <b data-cv>5</b> min</label>
+      <label class="stat">Minimum <input type="range" min="1" max="10" value="2" data-n /> <b data-nv>2</b></label>
+    </div>
+    <svg viewBox="0 0 400 190" class="as-svg" data-svg aria-label="Demand and capacity over time"></svg>
+    <p class="as-msg" data-msg></p>
+  </auto-scaler-sim>
+</Figure>
+
+<style>
+  .as-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .as-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .as-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .as-svg :global(.dem) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .as-svg :global(.cap) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .as-svg :global(.lost) {
+    fill: rgba(234, 67, 53, 0.45);
+  }
+  .as-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 4em;
+  }
+  select {
+    background: var(--bg-soft);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 3px 6px;
+    font: inherit;
+  }
+  input[type='range'] {
+    flex: none;
+    width: 90px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const TICKS = 120;
+  const PER = 100; // requests/s one instance serves
+  const MAXI = 30;
+  const DEMAND: Record<string, (t: number) => number> = {
+    spike: (t) => (t >= 30 && t < 70 ? 1500 : 300),
+    wave: (t) => 800 + 600 * Math.sin((2 * Math.PI * (t - 30)) / 120),
+    flap: (t) => 400 + (Math.floor(t / 6) % 2) * 700,
+  };
+  function simulate(kind: string, target: number, delay: number, cool: number, min: number) {
+    const demand = Array.from({ length: TICKS }, (_, t) => DEMAND[kind](t));
+    let ready = min;
+    const arriving: number[] = []; // tick at which each launched instance becomes ready
+    let below = 0;
+    const cap: number[] = [];
+    let launched = 0;
+    let removed = 0;
+    let cost = 0;
+    for (let t = 0; t < TICKS; t++) {
+      for (let i = arriving.length - 1; i >= 0; i--) if (arriving[i] <= t) { ready++; arriving.splice(i, 1); }
+      const obs = demand[Math.max(0, t - 1)];
+      const want = Math.max(min, Math.min(MAXI, Math.ceil(obs / (PER * target))));
+      const have = ready + arriving.length;
+      if (want > have) {
+        for (let i = 0; i < want - have; i++) arriving.push(t + delay);
+        launched += want - have;
+        below = 0;
+        for (let i = arriving.length - 1; i >= 0; i--) if (arriving[i] <= t) { ready++; arriving.splice(i, 1); }
+      } else if (want < have) {
+        below++;
+        if (below > cool) {
+          const drop = Math.min(ready - min, have - want);
+          if (drop > 0) { ready -= drop; removed += drop; }
+          below = 0;
+        }
+      } else below = 0;
+      cap.push(ready * PER);
+      cost += ready + arriving.length;
+    }
+    const total = demand.reduce((a, b) => a + b, 0);
+    const lost = demand.reduce((a, d, t) => a + Math.max(0, d - cap[t]), 0);
+    return { demand, cap, lost, total, cost, launched, removed };
+  }
+  class AutoScalerSim extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input, select').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const kind = this.querySelector<HTMLSelectElement>('[data-s]')!.value;
+      const target = q('[data-t]') / 100;
+      const delay = q('[data-d]');
+      const cool = q('[data-c]');
+      const min = q('[data-n]');
+      this.querySelector('[data-tv]')!.textContent = String(Math.round(target * 100));
+      this.querySelector('[data-dv]')!.textContent = String(delay);
+      this.querySelector('[data-cv]')!.textContent = String(cool);
+      this.querySelector('[data-nv]')!.textContent = String(min);
+      const r = simulate(kind, target, delay, cool, min);
+      const max = Math.max(...r.demand, ...r.cap) * 1.1;
+      const X = (t: number) => 30 + (t / (TICKS - 1)) * 360;
+      const Y = (v: number) => 160 - (v / max) * 140;
+      let h = `<line class="ax" x1="30" y1="160" x2="390" y2="160"></line><line class="ax" x1="30" y1="15" x2="30" y2="160"></line>`;
+      for (let t = 0; t < TICKS; t++) {
+        if (r.demand[t] > r.cap[t]) h += `<rect class="lost" x="${X(t) - 1.5}" y="${Y(r.demand[t])}" width="3" height="${Y(r.cap[t]) - Y(r.demand[t])}"></rect>`;
+      }
+      h += `<polyline class="dem" points="${r.demand.map((d, t) => `${X(t).toFixed(1)},${Y(d).toFixed(1)}`).join(' ')}"></polyline>`;
+      h += `<polyline class="cap" points="${r.cap.map((c, t) => `${X(t).toFixed(1)},${Y(c).toFixed(1)}`).join(' ')}"></polyline>`;
+      h += `<text x="26" y="22" text-anchor="end">${Math.round(max).toLocaleString('en-US')}</text><text x="26" y="163" text-anchor="end">0</text><text x="34" y="10">requests/s</text><text x="190" y="176">time (minutes)</text><text x="250" y="30" style="fill:var(--g-yellow)">demand</text><text x="250" y="42" style="fill:var(--g-blue)">ready capacity</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const pct = (r.lost / r.total) * 100;
+      const flap = r.launched > 18 && cool < 3;
+      this.querySelector('[data-msg]')!.textContent = `${pct.toFixed(1)}% of requests went unserved. ${r.launched} instances launched and ${r.removed} removed over two hours; ${r.cost.toLocaleString('en-US')} instance-minutes paid for. ${pct > 3 ? 'The loop reacted after the demand arrived: start-up delay plus the one-minute measurement lag left a window of overload. A higher minimum, a lower target (more headroom) or a faster start closes it.' : flap ? 'Heavy churn: instances are launched and removed over and over. A longer cooldown stops the flapping.' : 'Capacity kept up with demand.'}`;
+    }
+  }
+  customElements.define('auto-scaler-sim', AutoScalerSim);
+</script>

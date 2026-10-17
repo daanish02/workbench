@@ -1,0 +1,222 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="B-tree insertion: overflow, split, promote"
+  caption="Each node here holds at most 3 keys (a B-tree of order 4). Keep pressing Insert next: a key always lands in a leaf; when a node overflows to 4 keys (red) it splits in two and its third key moves up to the parent. The tree only grows taller when the root itself splits, which is why every leaf stays at the same depth. Real database nodes hold hundreds of keys, so even billions of rows need only 3 to 5 levels."
+>
+  <b-tree-viz>
+    <div class="stage"><svg data-svg role="img" aria-label="B-tree"></svg></div>
+    <p class="msg" data-msg></p>
+    <div class="stat" data-stat></div>
+    <div class="ctl-row" style="margin-top:10px">
+      <button class="btn primary" data-next>Insert next</button>
+      <label class="ctl-label" for="bt-k">Key</label>
+      <input class="input" id="bt-k" data-k type="number" value="33" style="width:5em" />
+      <button class="btn" data-ins>Insert</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+  </b-tree-viz>
+</Figure>
+
+<style>
+  .stage {
+    display: flex;
+    justify-content: center;
+    min-height: 50px;
+  }
+  .stage svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  .stage :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+  }
+  .stage :global(rect) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+  }
+  .stage :global(.leaf rect) {
+    stroke: var(--g-green);
+  }
+  .stage :global(.over rect) {
+    fill: rgba(234, 67, 53, 0.2);
+    stroke: var(--g-red);
+    stroke-width: 2.2;
+  }
+  .stage :global(.up rect) {
+    fill: rgba(251, 188, 5, 0.18);
+    stroke: var(--g-yellow);
+    stroke-width: 2.2;
+  }
+  .stage :global(text) {
+    fill: var(--text);
+    font: 700 12px var(--font-mono);
+  }
+  .stage :global(text.nk) {
+    fill: var(--g-yellow);
+  }
+  .stage :global(.sep) {
+    stroke: var(--border-strong);
+    stroke-width: 1;
+  }
+  .msg {
+    min-height: 2.8em;
+    margin: 8px 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  interface B {
+    keys: number[];
+    kids: B[];
+  }
+  interface Fr {
+    t: B;
+    mark: B | null; // node in the cloned tree
+    cls: string;
+    key: number;
+    msg: string;
+  }
+  const MAXK = 3;
+  const SEQ = [10, 20, 30, 40, 50, 60, 70, 80, 90, 25, 35, 45, 55, 65, 75, 85, 5, 15, 95, 22];
+
+  class BTreeViz extends HTMLElement {
+    root: B = { keys: [], kids: [] };
+    seq = 0;
+    q: Fr[] = [];
+    timer = 0;
+
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        let k = SEQ[this.seq++ % SEQ.length];
+        while (this.has(k)) k++;
+        this.insert(k);
+      });
+      this.querySelector('[data-ins]')!.addEventListener('click', () => this.insert(Math.trunc(+this.querySelector<HTMLInputElement>('[data-k]')!.value)));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+      for (let i = 0; i < 3; i++) this.insert(SEQ[this.seq++]);
+      clearInterval(this.timer);
+      this.q = [];
+      this.show({ t: this.root, mark: null, cls: '', key: NaN, msg: 'Root leaf holds 10, 20, 30: it is full. The next insert will overflow it.' });
+    }
+    reset() {
+      clearInterval(this.timer);
+      this.root = { keys: [], kids: [] };
+      this.seq = 0;
+      this.q = [];
+      this.show({ t: this.root, mark: null, cls: '', key: NaN, msg: 'Empty tree.' });
+    }
+    has(k: number, n: B = this.root): boolean {
+      if (n.keys.includes(k)) return true;
+      if (!n.kids.length) return false;
+      return this.has(k, n.kids[n.keys.filter((x) => x < k).length]);
+    }
+    count(n: B = this.root): number {
+      return n.keys.length + n.kids.reduce((s, c) => s + this.count(c), 0);
+    }
+    snap(mark: B | null, cls: string, key: number, msg: string) {
+      // clone and find the marked node's twin
+      let twin: B | null = null;
+      const cp = (n: B): B => {
+        const c: B = { keys: [...n.keys], kids: n.kids.map(cp) };
+        if (n === mark) twin = c;
+        return c;
+      };
+      const t = cp(this.root);
+      this.q.push({ t, mark: twin, cls, key, msg });
+    }
+    insert(k: number) {
+      if (!Number.isFinite(k)) return;
+      clearInterval(this.timer);
+      this.q = [];
+      if (this.has(k)) return this.show({ t: this.root, mark: null, cls: '', key: k, msg: `${k} is already in the tree.` });
+      if (this.count() >= 40) return this.show({ t: this.root, mark: null, cls: '', key: NaN, msg: 'Demo limit: 40 keys. Reset to start again.' });
+      const path: B[] = [];
+      let n = this.root;
+      const route: string[] = [];
+      while (n.kids.length) {
+        path.push(n);
+        const i = n.keys.filter((x) => x < k).length;
+        route.push(i === 0 ? `&lt; ${n.keys[0]}` : i === n.keys.length ? `&gt; ${n.keys[i - 1]}` : `${n.keys[i - 1]}–${n.keys[i]}`);
+        n = n.kids[i];
+      }
+      n.keys.push(k);
+      n.keys.sort((a, b) => a - b);
+      this.snap(n, n.keys.length > MAXK ? 'over' : 'up', k, `Insert ${k}: ${route.length ? 'descend by range (' + route.join(', ') + ') to a leaf, ' : ''}add it in sorted position.${n.keys.length > MAXK ? ` The leaf now has ${n.keys.length} keys: overflow.` : ''}`);
+      while (n.keys.length > MAXK) {
+        const up = n.keys[2];
+        const left: B = { keys: n.keys.slice(0, 2), kids: n.kids.slice(0, 3) };
+        const right: B = { keys: n.keys.slice(3), kids: n.kids.slice(3) };
+        const parent = path.pop();
+        if (!parent) {
+          this.root = { keys: [up], kids: [left, right] };
+          this.snap(this.root, 'up', up, `Split [${[...left.keys, up, ...right.keys].join(', ')}]: ${up} becomes a new root. The tree grows by one level, at the top, so all leaves stay level.`);
+          break;
+        }
+        const i = parent.kids.indexOf(n);
+        parent.kids.splice(i, 1, left, right);
+        parent.keys.splice(i, 0, up);
+        this.snap(parent, parent.keys.length > MAXK ? 'over' : 'up', up, `Split [${[...left.keys, up, ...right.keys].join(', ')}] into [${left.keys.join(', ')}] and [${right.keys.join(', ')}]; promote ${up} into the parent.${parent.keys.length > MAXK ? ' Now the parent overflows too.' : ''}`);
+        n = parent;
+      }
+      const tick = () => {
+        const f = this.q.shift();
+        if (f) this.show(f);
+        if (!this.q.length) clearInterval(this.timer);
+      };
+      tick();
+      if (this.q.length) this.timer = window.setInterval(tick, 1100);
+    }
+    show(f: Fr) {
+      const KW = 26, PAD = 6, GAP = 12, SY = 62, NH = 26;
+      const width = (n: B) => Math.max(1, n.keys.length) * KW + PAD;
+      const pos = new Map<B, number>();
+      let x = 0, depth = 0;
+      const lay = (n: B, d: number): number => {
+        depth = Math.max(depth, d);
+        let cx;
+        if (!n.kids.length) {
+          cx = x + width(n) / 2;
+          x += width(n) + GAP;
+        } else {
+          const cs = n.kids.map((c) => lay(c, d + 1));
+          cx = (cs[0] + cs[cs.length - 1]) / 2;
+        }
+        pos.set(n, cx);
+        return cx;
+      };
+      lay(f.t, 0);
+      const W = Math.max(x - GAP, 60) + 4;
+      let edges = '', nodes = '';
+      const rec = (n: B, d: number) => {
+        const cx = pos.get(n)!, w = width(n), x0 = cx - w / 2 + 2, y = d * SY + 4;
+        n.kids.forEach((c, i) => {
+          edges += `<line x1="${x0 + PAD / 2 + i * KW}" y1="${y + NH}" x2="${pos.get(c)! + 2}" y2="${y + SY}"/>`;
+          rec(c, d + 1);
+        });
+        const cls = n === f.mark ? f.cls : !n.kids.length ? 'leaf' : '';
+        nodes += `<g class="${cls}"><rect x="${x0}" y="${y}" width="${w}" height="${NH}" rx="5"/>${n.keys.map((k, i) => `${i ? `<line class="sep" x1="${x0 + PAD / 2 + i * KW}" y1="${y + 4}" x2="${x0 + PAD / 2 + i * KW}" y2="${y + NH - 4}"/>` : ''}<text class="${k === f.key ? 'nk' : ''}" x="${x0 + PAD / 2 + i * KW + KW / 2}" y="${y + 17}" text-anchor="middle">${k}</text>`).join('')}</g>`;
+      };
+      rec(f.t, 0);
+      const H = (depth + 1) * SY - SY + NH + 8;
+      const svg = this.querySelector('[data-svg]')!;
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('width', String(W));
+      svg.innerHTML = edges + nodes;
+      this.querySelector('[data-msg]')!.innerHTML = f.msg;
+      let nodesN = 0, keys = 0;
+      const cnt = (n: B) => ((nodesN += 1), (keys += n.keys.length), n.kids.forEach(cnt));
+      cnt(f.t);
+      this.querySelector('[data-stat]')!.innerHTML = `keys <b>${keys}</b> · nodes <b>${nodesN}</b> · levels <b>${depth + 1}</b> (a perfectly balanced BST would need ${Math.ceil(Math.log2(keys + 1)) || 0})`;
+    }
+  }
+  customElements.define('b-tree-viz', BTreeViz);
+</script>

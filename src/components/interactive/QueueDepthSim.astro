@@ -1,0 +1,122 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A queue is a buffer, not a bottomless pit"
+  caption="Messages arrive at a steady rate and consumers each handle 2 per tick. The line is the queue depth over 80 ticks. If consumers keep up it stays flat; during an outage the queue absorbs the work and drains afterwards; if production exceeds consumption the backlog grows without limit. Failing messages are retried and, after 3 failures, parked in the dead-letter queue."
+>
+  <queue-sim>
+    <div class="ctl-row">
+      <label class="stat">Messages/tick <input type="range" min="0" max="16" value="6" data-p /> <b data-pv>6</b></label>
+      <label class="stat">Consumers <input type="range" min="1" max="8" value="4" data-c /> <b data-cv>4</b></label>
+      <label class="stat">Failure % <input type="range" min="0" max="60" step="5" value="10" data-f /> <b data-fv>10</b></label>
+      <button class="btn" data-out aria-pressed="false">Consumers down, ticks 20–40</button>
+    </div>
+    <svg viewBox="0 0 400 180" class="qs-svg" data-svg aria-label="Queue depth over time"></svg>
+    <p class="qs-msg" data-msg></p>
+  </queue-sim>
+</Figure>
+
+<style>
+  .qs-svg {
+    width: 100%;
+    max-width: 640px;
+    display: block;
+    margin: 10px auto 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+  }
+  .qs-svg :global(text) {
+    font: 9px var(--font-mono);
+    fill: var(--text-muted);
+  }
+  .qs-svg :global(.ax) {
+    stroke: var(--border-strong);
+  }
+  .qs-svg :global(.depth) {
+    stroke: var(--g-blue);
+    fill: rgba(66, 133, 244, 0.18);
+    stroke-width: 2;
+  }
+  .qs-svg :global(.out) {
+    fill: rgba(234, 67, 53, 0.15);
+  }
+  .qs-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.2em;
+  }
+  input[type='range'] {
+    width: 100px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const T = 80;
+  class QueueSim extends HTMLElement {
+    outage = false;
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-out]')!.addEventListener('click', (e) => {
+        this.outage = !this.outage;
+        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(this.outage));
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      const f = +this.querySelector<HTMLInputElement>('[data-f]')!.value / 100;
+      this.querySelector('[data-pv]')!.textContent = String(p);
+      this.querySelector('[data-cv]')!.textContent = String(c);
+      this.querySelector('[data-fv]')!.textContent = String(Math.round(f * 100));
+      const r = rng(11);
+      let queue: number[] = []; // attempts already made by each queued message
+      let dead = 0;
+      let done = 0;
+      const depth: number[] = [];
+      for (let t = 0; t < T; t++) {
+        for (let i = 0; i < p; i++) queue.push(0);
+        const down = this.outage && t >= 20 && t < 40;
+        let capacity = down ? 0 : c * 2;
+        const retry: number[] = [];
+        while (capacity-- > 0 && queue.length) {
+          const tries = queue.shift()!;
+          if (r() < f) {
+            if (tries + 1 >= 3) dead++;
+            else retry.push(tries + 1);
+          } else done++;
+        }
+        queue = [...queue, ...retry];
+        depth.push(queue.length);
+      }
+      const max = Math.max(10, ...depth);
+      const x = (t: number) => 30 + (t / (T - 1)) * 360;
+      const y = (v: number) => 160 - (v / max) * 140;
+      let h = `<line class="ax" x1="30" y1="160" x2="390" y2="160"></line><line class="ax" x1="30" y1="15" x2="30" y2="160"></line>`;
+      if (this.outage) h += `<rect class="out" x="${x(20)}" y="15" width="${x(40) - x(20)}" height="145"></rect><text x="${x(20) + 4}" y="28" style="fill:var(--g-red-l)">consumers down</text>`;
+      h += `<polygon class="depth" points="${x(0)},160 ${depth.map((d, t) => `${x(t)},${y(d)}`).join(' ')} ${x(T - 1)},160"></polygon>`;
+      h += `<text x="4" y="22">${max}</text><text x="12" y="163">0</text><text x="190" y="175">time (ticks)</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const last = depth[T - 1];
+      const cap = c * 2;
+      const msg = p > cap * (1 - f) + 0.01 ? `Producers (${p}/tick) outpace the effective consumer capacity (about ${(cap * (1 - f)).toFixed(1)}/tick after retries), so the backlog grows without bound: add consumers, slow producers, or shed work.` : last > 0.25 * max ? 'Consumers are still draining the backlog at the end.' : 'Consumers keep up; the queue stays small.';
+      this.querySelector('[data-msg]')!.textContent = `Final depth ${last}, peak ${Math.max(...depth)}; ${done} processed, ${dead} dead-lettered. ${msg}`;
+    }
+  }
+  customElements.define('queue-sim', QueueSim);
+</script>

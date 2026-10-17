@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Agreeing on a secret in public"
+  caption="Alice and Bob pick private numbers and publish only g^a and g^b. Both compute the same shared secret; the eavesdropper sees p, g, A and B and must search for a. With p = 23 the search is instant. With a 2048-bit prime it is out of reach, and that gap is the security."
+>
+  <dh-demo>
+    <div class="ctl-row">
+      <label class="stat">Alice's private a <input type="range" min="2" max="20" value="6" data-a /> <b data-av>6</b></label>
+      <label class="stat">Bob's private b <input type="range" min="2" max="20" value="15" data-b /> <b data-bv>15</b></label>
+    </div>
+    <div class="dh">
+      <div class="dh-box"><b>Public</b><span class="mono">p = 23, g = 5</span></div>
+      <div class="dh-box alice"><b>Alice</b><span class="mono" data-alice></span></div>
+      <div class="dh-box bob"><b>Bob</b><span class="mono" data-bob></span></div>
+      <div class="dh-box eve"><b>Eavesdropper</b><span class="mono" data-eve></span></div>
+    </div>
+    <p class="dh-msg" data-msg></p>
+  </dh-demo>
+</Figure>
+
+<style>
+  .dh {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 520px) {
+    .dh {
+      grid-template-columns: 1fr;
+    }
+  }
+  .dh-box {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 0.8125rem;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .dh-box span {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .dh-box.alice {
+    border-color: var(--g-blue);
+  }
+  .dh-box.bob {
+    border-color: var(--g-green);
+  }
+  .dh-box.eve {
+    border-color: var(--g-red);
+  }
+  .dh-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const P = 23;
+  const G = 5;
+  const pw = (b: number, e: number) => {
+    let r = 1;
+    for (let i = 0; i < e; i++) r = (r * b) % P;
+    return r;
+  };
+  class DhDemo extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      this.querySelector('[data-av]')!.textContent = String(a);
+      this.querySelector('[data-bv]')!.textContent = String(b);
+      const A = pw(G, a);
+      const B = pw(G, b);
+      const sA = pw(B, a);
+      const sB = pw(A, b);
+      this.querySelector('[data-alice]')!.innerHTML = `private a = ${a} (never sent)<br>sends A = 5^${a} mod 23 = <b>${A}</b><br>secret = B^a mod 23 = ${B}^${a} mod 23 = <b>${sA}</b>`;
+      this.querySelector('[data-bob]')!.innerHTML = `private b = ${b} (never sent)<br>sends B = 5^${b} mod 23 = <b>${B}</b><br>secret = A^b mod 23 = ${A}^${b} mod 23 = <b>${sB}</b>`;
+      let guess = 1;
+      let tries = 0;
+      for (let x = 1; x < P; x++) {
+        tries++;
+        if (pw(G, x) === A) {
+          guess = x;
+          break;
+        }
+      }
+      this.querySelector('[data-eve]')!.innerHTML = `sees p=23, g=5, A=${A}, B=${B}<br>tries a = 1, 2, 3…: finds a = ${guess} after ${tries} tries, then computes ${B}^${guess} mod 23 = <b>${pw(B, guess)}</b>`;
+      this.querySelector('[data-msg]')!.textContent = `Alice and Bob agree on ${sA}${sA === sB ? '' : ' (mismatch!)'}. With only 22 possible exponents Eve breaks it at once; real systems use 2048-bit primes or elliptic curves where the search has astronomically many candidates. This does not stop an active attacker who sits in the middle: authentication is a separate job.`;
+    }
+  }
+  customElements.define('dh-demo', DhDemo);
+</script>

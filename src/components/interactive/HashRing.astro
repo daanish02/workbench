@@ -1,0 +1,122 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A consistent-hash ring"
+  caption="Servers (large dots) and keys (small dots) are placed on a ring by hash. A key belongs to the first server clockwise from it, and takes that server's colour. Add or remove a server: only the keys in the affected arc change owner, whereas hash-mod-N would reshuffle most of them. More virtual nodes make the arcs more even."
+>
+  <hash-ring>
+    <div class="ctl-row">
+      <button class="btn primary" data-add>Add server</button>
+      <button class="btn" data-remove>Remove last server</button>
+      <label class="stat">Virtual nodes <input type="range" min="1" max="12" value="1" data-v /> <b data-vv>1</b></label>
+    </div>
+    <svg viewBox="0 0 260 260" class="hr-svg" data-svg aria-label="Hash ring"></svg>
+    <p class="hr-msg" data-msg aria-live="polite"></p>
+  </hash-ring>
+</Figure>
+
+<style>
+  .hr-svg {
+    width: 100%;
+    max-width: 340px;
+    display: block;
+    margin: 8px auto 0;
+  }
+  .hr-svg :global(.ring) {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .hr-svg :global(text) {
+    font: 700 9px var(--font-mono);
+    fill: #000;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .hr-msg {
+    margin: 8px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.4em;
+  }
+  input[type='range'] {
+    width: 100px;
+    vertical-align: middle;
+  }
+</style>
+
+<script>
+  const COLORS = ['#8ab4f8', '#f28b82', '#fdd663', '#81c995', '#d7aefb', '#78d9ec'];
+  const NKEYS = 60;
+  const fnv = (s: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+    h ^= h >>> 15;
+    h = Math.imul(h, 2246822507);
+    h ^= h >>> 13;
+    return (h >>> 0) / 4294967296;
+  };
+  class HashRing extends HTMLElement {
+    n = 3;
+    prev: string[] | null = null;
+    prevN = 3;
+    moved: [number, number] | null = null;
+    connectedCallback() {
+      this.querySelector('[data-add]')!.addEventListener('click', () => this.change(1));
+      this.querySelector('[data-remove]')!.addEventListener('click', () => this.change(-1));
+      this.querySelector('[data-v]')!.addEventListener('input', () => ((this.moved = null), this.draw()));
+      this.draw();
+    }
+    vn() {
+      return +this.querySelector<HTMLInputElement>('[data-v]')!.value;
+    }
+    points(n: number) {
+      const out: { p: number; s: number }[] = [];
+      for (let s = 0; s < n; s++) for (let i = 0; i < this.vn(); i++) out.push({ p: fnv(`server-${s}#${i}`), s });
+      return out.sort((a, b) => a.p - b.p);
+    }
+    owners(n: number) {
+      const pts = this.points(n);
+      return Array.from({ length: NKEYS }, (_, k) => {
+        const kp = fnv(`key-${k}`);
+        return (pts.find((x) => x.p >= kp) ?? pts[0]).s;
+      });
+    }
+    change(d: number) {
+      const n2 = this.n + d;
+      if (n2 < 1 || n2 > 6) return;
+      const before = this.owners(this.n);
+      const after = this.owners(n2);
+      const ringMoved = before.filter((o, i) => o !== after[i]).length;
+      let modMoved = 0;
+      for (let k = 0; k < NKEYS; k++) if (Math.floor(fnv(`key-${k}`) * 1e9) % this.n !== Math.floor(fnv(`key-${k}`) * 1e9) % n2) modMoved++;
+      this.moved = [ringMoved, modMoved];
+      this.prevN = this.n;
+      this.n = n2;
+      this.draw();
+    }
+    draw() {
+      this.querySelector('[data-vv]')!.textContent = String(this.vn());
+      const C = 130;
+      const R = 100;
+      const pos = (p: number, r: number) => [C + r * Math.sin(p * 2 * Math.PI), C - r * Math.cos(p * 2 * Math.PI)];
+      const own = this.owners(this.n);
+      let h = `<circle class="ring" cx="${C}" cy="${C}" r="${R}"></circle>`;
+      for (let k = 0; k < NKEYS; k++) {
+        const [x, y] = pos(fnv(`key-${k}`), R);
+        h += `<circle cx="${x}" cy="${y}" r="3.2" fill="${COLORS[own[k]]}"></circle>`;
+      }
+      for (const pt of this.points(this.n)) {
+        const [x, y] = pos(pt.p, R);
+        h += `<circle cx="${x}" cy="${y}" r="8" fill="${COLORS[pt.s]}" stroke="#000" stroke-width="2"></circle><text x="${x}" y="${y + 3}">S${pt.s + 1}</text>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = h;
+      const counts = Array.from({ length: this.n }, (_, s) => own.filter((o) => o === s).length);
+      this.querySelector('[data-msg]')!.textContent =
+        (this.moved ? `Last change (${this.prevN} → ${this.n} servers): ${this.moved[0]} of ${NKEYS} keys moved on the ring; hash-mod-N would have moved ${this.moved[1]}. ` : 'Press Add server and watch which dots change colour. ') + `Keys per server: ${counts.join(', ')}.`;
+    }
+  }
+  customElements.define('hash-ring', HashRing);
+</script>

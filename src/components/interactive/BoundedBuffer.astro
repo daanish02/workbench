@@ -1,0 +1,164 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Producer–consumer with two semaphores"
+  caption="Produce and consume by hand, or press Auto. A producer facing a full buffer blocks on wait(empty); a consumer facing an empty buffer blocks on wait(full). The mutex only protects the moment of insertion or removal. Note that empty + full stays equal to N between operations."
+>
+  <bounded-buffer>
+    <div class="sems">
+      <span class="sem" data-sem="empty"></span>
+      <span class="sem" data-sem="full"></span>
+      <span class="sem" data-sem="mutex"></span>
+    </div>
+    <div class="buf" data-buf></div>
+    <div class="actors">
+      <span class="actor" data-actor="p">Producer</span>
+      <span class="actor" data-actor="c">Consumer</span>
+    </div>
+    <div class="ctl-row" style="margin-top:10px">
+      <button class="btn primary" data-produce>Produce</button>
+      <button class="btn primary" data-consume>Consume</button>
+      <button class="btn" data-auto>Auto</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <p class="log" data-log aria-live="polite"></p>
+  </bounded-buffer>
+</Figure>
+
+<style>
+  .sems {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+  }
+  .sem {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+  }
+  .sem :global(b) {
+    color: var(--text);
+  }
+  .buf {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin: 14px 0 8px;
+  }
+  .buf :global(div) {
+    height: 46px;
+    border-radius: 8px;
+    border: 1.5px dashed var(--border-strong);
+    display: grid;
+    place-items: center;
+    font: 600 0.875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .buf :global(div.item) {
+    border: 1.5px solid var(--g-green);
+    background: rgba(52, 168, 83, 0.16);
+    color: #fff;
+  }
+  .actors {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+  }
+  .actor {
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+  .actor.blocked {
+    border-color: var(--g-red);
+    color: var(--g-red-l);
+  }
+  .actor.blocked::after {
+    content: ' · blocked';
+  }
+  .log {
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+</style>
+
+<script>
+  const N = 5;
+  class BoundedBuffer extends HTMLElement {
+    items: number[] = [];
+    next = 1;
+    timer = 0;
+    blocked = { p: false, c: false };
+    connectedCallback() {
+      this.querySelector('[data-produce]')!.addEventListener('click', () => this.produce());
+      this.querySelector('[data-consume]')!.addEventListener('click', () => this.consume());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-auto]')!.addEventListener('click', (e) => {
+        const b = e.currentTarget as HTMLElement;
+        if (this.timer) {
+          clearInterval(this.timer);
+          this.timer = 0;
+          b.textContent = 'Auto';
+          return;
+        }
+        b.textContent = 'Stop';
+        // a producer that is slightly faster than the consumer, so the buffer fills up
+        this.timer = window.setInterval(() => (Math.random() < 0.6 ? this.produce() : this.consume()), 700);
+      });
+      this.reset();
+    }
+    reset() {
+      this.items = [];
+      this.next = 1;
+      this.blocked = { p: false, c: false };
+      this.log('Buffer of N = 5 slots: empty = 5, full = 0.');
+      this.draw();
+    }
+    log(s: string) {
+      this.querySelector('[data-log]')!.textContent = s;
+    }
+    produce() {
+      if (this.items.length === N) {
+        this.blocked.p = true;
+        this.log('wait(empty) blocks: no free slot. The producer sleeps until a consumer signals empty.');
+      } else {
+        this.items.push(this.next);
+        this.log(`wait(empty) → lock → insert item ${this.next++} → unlock → signal(full)`);
+        this.blocked.p = false;
+        if (this.blocked.c) (this.blocked.c = false), this.log(this.querySelector('[data-log]')!.textContent + '  (wakes the consumer)');
+      }
+      this.draw();
+    }
+    consume() {
+      if (!this.items.length) {
+        this.blocked.c = true;
+        this.log('wait(full) blocks: nothing to take. The consumer sleeps until a producer signals full.');
+      } else {
+        const x = this.items.shift();
+        this.log(`wait(full) → lock → remove item ${x} → unlock → signal(empty)`);
+        this.blocked.c = false;
+        if (this.blocked.p) (this.blocked.p = false), this.log(this.querySelector('[data-log]')!.textContent + '  (wakes the producer)');
+      }
+      this.draw();
+    }
+    draw() {
+      const full = this.items.length;
+      const sem = (k: string, v: string) => (this.querySelector(`[data-sem="${k}"]`)!.innerHTML = `${k} = <b>${v}</b>`);
+      sem('empty', String(N - full));
+      sem('full', String(full));
+      sem('mutex', '1 (free)');
+      this.querySelector('[data-buf]')!.innerHTML = Array.from({ length: N }, (_, i) =>
+        i < full ? `<div class="item">#${this.items[i]}</div>` : '<div>·</div>',
+      ).join('');
+      this.querySelector('[data-actor="p"]')!.classList.toggle('blocked', this.blocked.p);
+      this.querySelector('[data-actor="c"]')!.classList.toggle('blocked', this.blocked.c);
+    }
+  }
+  customElements.define('bounded-buffer', BoundedBuffer);
+</script>

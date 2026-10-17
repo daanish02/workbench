@@ -1,0 +1,198 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Join types on the same two tables"
+  caption="Dee has no department, and Legal has no employees. Switch the join type: lines show which rows were matched, and the result rows are coloured by where they came from. LEFT, RIGHT and FULL keep unmatched rows and pad the other side with NULL."
+>
+  <join-visualizer>
+    <div class="ctl-row">
+      <button class="btn" data-j="INNER" aria-pressed="true">INNER</button>
+      <button class="btn" data-j="LEFT" aria-pressed="false">LEFT</button>
+      <button class="btn" data-j="RIGHT" aria-pressed="false">RIGHT</button>
+      <button class="btn" data-j="FULL" aria-pressed="false">FULL</button>
+      <button class="btn" data-j="CROSS" aria-pressed="false">CROSS</button>
+    </div>
+    <div class="jv-stage" data-stage></div>
+    <pre class="jv-sql mono" data-sql></pre>
+    <div class="jv-legend">
+      <span><i style="background: rgba(52, 168, 83, 0.55)"></i>matched pair</span>
+      <span><i style="background: rgba(251, 188, 5, 0.55)"></i>left row only</span>
+      <span><i style="background: rgba(66, 133, 244, 0.55)"></i>right row only</span>
+    </div>
+    <div class="jv-result" data-result></div>
+    <p class="jv-msg" data-msg aria-live="polite"></p>
+  </join-visualizer>
+</Figure>
+
+<style>
+  .jv-stage {
+    display: grid;
+    grid-template-columns: auto minmax(60px, 160px) auto;
+    justify-content: center;
+    margin-top: 16px;
+  }
+  .jv-stage :global(.side) {
+    min-width: 0;
+  }
+  .jv-stage :global(.label) {
+    height: 26px;
+    font: 700 0.8125rem var(--font-mono);
+    color: var(--text);
+  }
+  .jv-stage :global(svg) {
+    width: 100%;
+    display: block;
+    margin-top: 0;
+  }
+  .jv-stage :global(line) {
+    stroke: var(--g-green);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+  .jv-stage :global(line.x) {
+    stroke: var(--text-faint);
+    stroke-width: 1;
+    opacity: 0.6;
+  }
+  .jv-stage :global(table),
+  .jv-result :global(table) {
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+  }
+  .jv-stage :global(th),
+  .jv-stage :global(td),
+  .jv-result :global(th),
+  .jv-result :global(td) {
+    border: 1px solid var(--border-strong);
+    padding: 0 14px;
+    height: 30px;
+    box-sizing: border-box;
+    text-align: center;
+    color: var(--text);
+  }
+  .jv-stage :global(th),
+  .jv-result :global(th) {
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
+  }
+  .jv-stage :global(tr.hit td) {
+    background: rgba(52, 168, 83, 0.28);
+    border-color: rgba(52, 168, 83, 0.6);
+  }
+  .jv-stage :global(tr.miss td) {
+    background: rgba(251, 188, 5, 0.22);
+    border-color: rgba(251, 188, 5, 0.55);
+  }
+  .jv-stage :global(tr.miss.rtable td) {
+    background: rgba(66, 133, 244, 0.25);
+    border-color: rgba(66, 133, 244, 0.6);
+  }
+  .jv-sql {
+    margin: 16px 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  .jv-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    justify-content: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .jv-legend i {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    margin-right: 6px;
+    vertical-align: -2px;
+  }
+  .jv-result {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .jv-result :global(td.nul) {
+    color: var(--g-yellow-l);
+    font-style: italic;
+  }
+  .jv-result :global(tr.m td) {
+    background: rgba(52, 168, 83, 0.28);
+  }
+  .jv-result :global(tr.l td) {
+    background: rgba(251, 188, 5, 0.22);
+  }
+  .jv-result :global(tr.r td) {
+    background: rgba(66, 133, 244, 0.25);
+  }
+  .jv-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 2.5em;
+    text-align: center;
+  }
+</style>
+
+<script>
+  type Emp = [string, number | null];
+  type Dept = [number, string];
+  const EMP: Emp[] = [['Ana', 10], ['Ben', 10], ['Cy', 20], ['Dee', null]];
+  const DEPT: Dept[] = [[10, 'Eng'], [20, 'Sales'], [30, 'Legal']];
+  const ROW = 30;
+  const HEAD = 26 + ROW; // label + header row
+  class JoinVisualizer extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-j]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.querySelectorAll('[data-j]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw(b.dataset.j!);
+        }),
+      );
+      this.draw('INNER');
+    }
+    draw(kind: string) {
+      const pairs: [number, number][] = [];
+      EMP.forEach((e, i) =>
+        DEPT.forEach((d, j) => {
+          if (kind === 'CROSS' || (e[1] !== null && e[1] === d[0])) pairs.push([i, j]);
+        }),
+      );
+      const eHit = new Set(pairs.map((p) => p[0]));
+      const dHit = new Set(pairs.map((p) => p[1]));
+      const keepL = kind === 'LEFT' || kind === 'FULL';
+      const keepR = kind === 'RIGHT' || kind === 'FULL';
+      const cls = (hit: Set<number>, i: number, keep: boolean, right = false) => (hit.has(i) ? 'hit' : keep ? `miss${right ? ' rtable' : ''}` : '');
+      const H = HEAD + ROW * EMP.length;
+      const lines = pairs.map(([i, j]) => `<line class="${kind === 'CROSS' ? 'x' : ''}" x1="0" y1="${HEAD + ROW * i + ROW / 2}" x2="100" y2="${HEAD + ROW * j + ROW / 2}"></line>`).join('');
+      this.querySelector('[data-stage]')!.innerHTML = `
+        <div class="side"><div class="label">employees</div><table><tr><th>emp</th><th>dept_id</th></tr>${EMP.map((e, i) => `<tr class="${cls(eHit, i, keepL)}"><td>${e[0]}</td><td>${e[1] ?? 'NULL'}</td></tr>`).join('')}</table></div>
+        <svg viewBox="0 0 100 ${H}" preserveAspectRatio="none" style="height:${H}px" aria-hidden="true">${lines}</svg>
+        <div class="side"><div class="label">departments</div><table><tr><th>dept_id</th><th>name</th></tr>${DEPT.map((d, i) => `<tr class="${cls(dHit, i, keepR, true)}"><td>${d[0]}</td><td>${d[1]}</td></tr>`).join('')}</table></div>`;
+      this.querySelector('[data-sql]')!.textContent = kind === 'CROSS' ? 'SELECT e.emp, d.name\nFROM employees e CROSS JOIN departments d;' : `SELECT e.emp, d.name\nFROM employees e ${kind} JOIN departments d\n  ON e.dept_id = d.dept_id;`;
+      const rows: [string | null, string | null, string][] = pairs.map(([i, j]) => [EMP[i][0], DEPT[j][1], 'm']);
+      if (keepL) EMP.forEach((e, i) => !eHit.has(i) && rows.push([e[0], null, 'l']));
+      if (keepR) DEPT.forEach((d, j) => !dHit.has(j) && rows.push([null, d[1], 'r']));
+      const cell = (v: string | null) => (v === null ? '<td class="nul">NULL</td>' : `<td>${v}</td>`);
+      this.querySelector('[data-result]')!.innerHTML = `<table><tr><th>emp</th><th>name</th></tr>${rows.map((r) => `<tr class="${r[2]}">${cell(r[0])}${cell(r[1])}</tr>`).join('')}</table>`;
+      const note: Record<string, string> = {
+        INNER: 'Only matched pairs. Dee (no department) and Legal (no employees) disappear.',
+        LEFT: 'Every employee is kept; Dee gets NULL for the department. Legal is dropped.',
+        RIGHT: 'Every department is kept; Legal gets NULL for the employee. Dee is dropped.',
+        FULL: 'Everything is kept; unmatched sides are padded with NULL.',
+        CROSS: `No condition: 4 × 3 = ${rows.length} rows, every combination. Usually a mistake, occasionally exactly what you want.`,
+      };
+      this.querySelector('[data-msg]')!.textContent = `${rows.length} row(s). ${note[kind]}`;
+    }
+  }
+  customElements.define('join-visualizer', JoinVisualizer);
+</script>

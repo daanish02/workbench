@@ -1,0 +1,100 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Push, pull or hybrid?"
+  caption="Costs of the three feed strategies, on a log scale. Fan-out on write (push) copies each post to every follower's timeline: cheap reads, expensive writes for popular accounts. Fan-out on read (pull) merges followees' posts when you open the app: cheap writes, expensive reads. The hybrid pushes for ordinary accounts and pulls only the few celebrities you follow."
+>
+  <fanout-compare>
+    <div class="ctl-row">
+      <label class="stat">Poster's followers <input type="range" min="1" max="8" step="0.1" value="2.3" data-f /> <b data-fv></b></label>
+      <label class="stat">Celebrity threshold <input type="range" min="3" max="7" step="0.1" value="5" data-t /> <b data-tv></b></label>
+    </div>
+    <div class="ctl-row">
+      <label class="stat">Accounts a reader follows <input type="range" min="10" max="2000" step="10" value="200" data-n /> <b data-nv></b></label>
+      <label class="stat">…of which celebrities <input type="range" min="0" max="20" value="5" data-c /> <b data-cv></b></label>
+    </div>
+    <div class="fc" data-out></div>
+    <p class="fc-msg" data-msg></p>
+  </fanout-compare>
+</Figure>
+
+<style>
+  .fc {
+    margin-top: 14px;
+    display: grid;
+    gap: 14px;
+  }
+  .fc :global(.grp b) {
+    font-size: 0.8125rem;
+  }
+  .fc :global(.row) {
+    display: grid;
+    grid-template-columns: 120px 1fr 90px;
+    gap: 8px;
+    align-items: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .fc :global(.bar) {
+    height: 12px;
+    border-radius: 4px;
+    min-width: 2px;
+  }
+  .fc :global(.val) {
+    text-align: right;
+    color: var(--text);
+  }
+  .fc-msg {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    min-height: 3.6em;
+  }
+  input[type='range'] {
+    width: 110px;
+    vertical-align: middle;
+  }
+  @media (max-width: 520px) {
+    .fc :global(.row) {
+      grid-template-columns: 90px 1fr 70px;
+    }
+  }
+</style>
+
+<script>
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  class FanoutCompare extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => this.querySelector<HTMLInputElement>(s)!;
+      const followers = Math.round(10 ** +q('[data-f]').value);
+      const threshold = Math.round(10 ** +q('[data-t]').value);
+      const n = +q('[data-n]').value;
+      const c = +q('[data-c]').value;
+      this.querySelector('[data-fv]')!.textContent = fmt(followers);
+      this.querySelector('[data-tv]')!.textContent = fmt(threshold);
+      this.querySelector('[data-nv]')!.textContent = fmt(n);
+      this.querySelector('[data-cv]')!.textContent = String(c);
+      const isCeleb = followers > threshold;
+      const S = {
+        push: { write: followers, read: 1, c: 'var(--g-red)' },
+        pull: { write: 1, read: n, c: 'var(--g-blue)' },
+        hybrid: { write: isCeleb ? 1 : followers, read: 1 + c, c: 'var(--g-green)' },
+      };
+      const MAX = 1e8;
+      const bar = (label: string, v: number, col: string) => `<div class="row"><span>${label}</span><div class="bar" style="width:${Math.max(0.8, (Math.log10(v + 1) / Math.log10(MAX)) * 100)}%;background:${col}"></div><span class="val">${fmt(v)}</span></div>`;
+      const grp = (title: string, key: 'write' | 'read') => `<div class="grp"><b>${title}</b>${bar('push', S.push[key], S.push.c)}${bar('pull', S.pull[key], S.pull.c)}${bar('hybrid', S.hybrid[key], S.hybrid.c)}</div>`;
+      this.querySelector('[data-out]')!.innerHTML = grp('Work when this account posts (timeline writes)', 'write') + grp('Work when a reader opens their feed (lookups)', 'read');
+      this.querySelector('[data-msg]')!.textContent = isCeleb
+        ? `This account has ${fmt(followers)} followers, above the ${fmt(threshold)} threshold, so the hybrid does NOT push its posts (1 write instead of ${fmt(followers)}); readers merge it in at read time, costing each reader only ${c} extra lookups. Pure push would do ${fmt(followers)} writes for a single post.`
+        : `This account has ${fmt(followers)} followers, below the threshold, so the hybrid pushes like fan-out on write: reads stay at about ${1 + c} lookups. Pure pull would make every one of the reader's ${fmt(n)} followees a lookup on every feed load.`;
+    }
+  }
+  customElements.define('fanout-compare', FanoutCompare);
+</script>

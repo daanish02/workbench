@@ -1,0 +1,253 @@
+---
+import Figure from '../Figure.astro';
+const algos = [
+  ['fcfs', 'FCFS'],
+  ['sjf', 'SJF'],
+  ['rr', 'Round Robin'],
+  ['prio', 'Priority (preemptive)'],
+];
+---
+
+<Figure
+  title="Scheduler playground"
+  caption="Edit the processes or load a preset, then switch algorithms and compare the averages. Lower priority number = more important. Watch the convoy effect under FCFS, the context-switch count climb as the RR quantum shrinks, and how priority scheduling can push one process to the very end."
+>
+  <sched-play>
+    <div class="ctl-row">
+      {algos.map(([id, label], i) => <button class="btn" data-algo={id} aria-pressed={i === 0 ? 'true' : 'false'}>{label}</button>)}
+    </div>
+    <div class="ctl-row" data-qrow hidden>
+      <span class="ctl-label">Quantum</span>
+      <input type="range" min="1" max="8" value="2" data-q />
+      <b class="mono" data-qv>2</b>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Preset</span>
+      <button class="btn" data-preset="convoy">Convoy (P1 long)</button>
+      <button class="btn" data-preset="mixed">Staggered arrivals</button>
+      <button class="btn" data-add>+ process</button>
+    </div>
+    <div class="table-wrap">
+      <table class="procs">
+        <thead><tr><th></th><th>arrival</th><th>burst</th><th>priority</th><th>wait</th><th>turnaround</th><th>response</th><th></th></tr></thead>
+        <tbody data-rows></tbody>
+      </table>
+    </div>
+    <div class="gantt" data-gantt></div>
+    <div class="ctl-row stats" data-stats></div>
+  </sched-play>
+</Figure>
+
+<style>
+  .table-wrap {
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  .procs {
+    border-collapse: collapse;
+    font: 0.8125rem var(--font-mono);
+    width: 100%;
+  }
+  .procs :global(th) {
+    font: 600 0.6875rem var(--font-sans);
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 4px 6px;
+    text-align: center;
+  }
+  .procs :global(td) {
+    padding: 3px 6px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+  }
+  .procs :global(input) {
+    width: 3.2em;
+    text-align: center;
+    padding: 3px 4px;
+  }
+  .procs :global(.pid) {
+    font-weight: 700;
+    color: var(--c);
+  }
+  .procs :global(.x) {
+    background: none;
+    border: 0;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+  .gantt {
+    position: relative;
+    margin-top: 14px;
+    height: 62px;
+  }
+  .gantt :global(.seg) {
+    position: absolute;
+    top: 0;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    border: 1.5px solid var(--c);
+    background: color-mix(in srgb, var(--c) 28%, #000);
+    font: 600 0.75rem var(--font-mono);
+    overflow: hidden;
+  }
+  .gantt :global(.seg.idle) {
+    border-color: var(--border-strong);
+    background: repeating-linear-gradient(45deg, #111 0 6px, #1a1a1a 6px 12px);
+  }
+  .gantt :global(.tick) {
+    position: absolute;
+    top: 42px;
+    transform: translateX(-50%);
+    font: 0.625rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .stats {
+    gap: 16px;
+  }
+</style>
+
+<script>
+  type P = { id: string; arrival: number; burst: number; priority: number };
+  type Seg = { id: string; a: number; b: number };
+  const COLORS = ['#4285F4', '#EA4335', '#FBBC05', '#34A853', '#a142f4', '#24c1e0'];
+  const PRESETS: Record<string, P[]> = {
+    convoy: [
+      { id: 'P1', arrival: 0, burst: 8, priority: 3 },
+      { id: 'P2', arrival: 0, burst: 2, priority: 1 },
+      { id: 'P3', arrival: 0, burst: 1, priority: 2 },
+    ],
+    mixed: [
+      { id: 'P1', arrival: 0, burst: 7, priority: 3 },
+      { id: 'P2', arrival: 2, burst: 4, priority: 1 },
+      { id: 'P3', arrival: 4, burst: 1, priority: 4 },
+      { id: 'P4', arrival: 5, burst: 4, priority: 2 },
+    ],
+  };
+
+  // Unit-time simulation of one CPU. Each dispatch (a process being given the CPU) gets a
+  // number, so consecutive RR slices of the same process still show as separate segments.
+  function schedule(procs: P[], algo: string, q: number): Seg[] {
+    const left = new Map(procs.map((p) => [p.id, p.burst]));
+    const order = new Map(procs.map((p, i) => [p.id, i]));
+    const ticks: { id: string; d: number }[] = [];
+    const queue: string[] = [];
+    let t = 0, current: string | null = null, slice = 0, dispatch = 0;
+    const ready = () => procs.filter((p) => p.arrival <= t && left.get(p.id)! > 0);
+    const byKey = (key: (p: P) => number[]) => (x: P, y: P) => {
+      const a = key(x), b = key(y);
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i];
+      return 0;
+    };
+    while ([...left.values()].some((v) => v > 0) && t < 500) {
+      if (algo === 'rr') {
+        // arrivals at time t join the queue before the preempted process goes to the back
+        for (const p of procs) if (p.arrival === t) queue.push(p.id);
+        if (current && (left.get(current) === 0 || slice === q)) {
+          if (left.get(current)! > 0) queue.push(current);
+          current = null;
+        }
+        if (!current && queue.length) (current = queue.shift()!), (slice = 0), dispatch++;
+      } else {
+        if (current && left.get(current) === 0) current = null;
+        const r = ready();
+        let pick: string | null = current;
+        if (algo === 'prio' && r.length) pick = r.sort(byKey((p) => [p.priority, p.arrival, order.get(p.id)!]))[0].id;
+        else if (!current && r.length)
+          pick = r.sort(byKey((p) => (algo === 'sjf' ? [p.burst, p.arrival, order.get(p.id)!] : [p.arrival, order.get(p.id)!])))[0].id;
+        if (pick !== current) (current = pick), dispatch++;
+      }
+      if (current) {
+        ticks.push({ id: current, d: dispatch });
+        left.set(current, left.get(current)! - 1);
+        slice++;
+      } else ticks.push({ id: 'idle', d: -1 });
+      t++;
+    }
+    const segs: Seg[] = [];
+    let lastD = NaN;
+    ticks.forEach((k, i) => {
+      const last = segs[segs.length - 1];
+      if (last && last.id === k.id && k.d === lastD) last.b = i + 1;
+      else segs.push({ id: k.id, a: i, b: i + 1 });
+      lastD = k.d;
+    });
+    return segs;
+  }
+
+  class SchedPlay extends HTMLElement {
+    procs: P[] = PRESETS.convoy.map((p) => ({ ...p }));
+    algo = 'fcfs';
+    q = 2;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-algo]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.algo = b.dataset.algo!;
+          this.querySelectorAll('[data-algo]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.render();
+        }),
+      );
+      const qIn = this.querySelector<HTMLInputElement>('[data-q]')!;
+      qIn.addEventListener('input', () => ((this.q = +qIn.value), this.render()));
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+        b.addEventListener('click', () => ((this.procs = PRESETS[b.dataset.preset!].map((p) => ({ ...p }))), this.render(true))),
+      );
+      this.querySelector('[data-add]')!.addEventListener('click', () => {
+        if (this.procs.length >= 6) return;
+        const n = this.procs.length + 1;
+        this.procs.push({ id: `P${n}`, arrival: n, burst: 3, priority: n });
+        this.render(true);
+      });
+      this.render(true);
+    }
+    render(rebuildRows = false) {
+      this.querySelector<HTMLElement>('[data-qrow]')!.hidden = this.algo !== 'rr';
+      this.querySelector('[data-qv]')!.textContent = String(this.q);
+      this.procs.forEach((p, i) => (p.id = `P${i + 1}`));
+      const segs = schedule(this.procs, this.algo, this.q);
+      const end = segs.length ? segs[segs.length - 1].b : 1;
+      const stats = this.procs.map((p) => {
+        const mine = segs.filter((s) => s.id === p.id);
+        const completion = Math.max(...mine.map((s) => s.b));
+        const turnaround = completion - p.arrival;
+        return { wait: turnaround - p.burst, turnaround, response: Math.min(...mine.map((s) => s.a)) - p.arrival };
+      });
+      const tbody = this.querySelector('[data-rows]')!;
+      if (rebuildRows) {
+        tbody.innerHTML = this.procs
+          .map(
+            (p, i) => `<tr style="--c:${COLORS[i]}"><td class="pid">${p.id}</td>
+            ${(['arrival', 'burst', 'priority'] as const).map((k) => `<td><input class="input" type="number" min="${k === 'burst' ? 1 : 0}" max="20" value="${p[k]}" data-i="${i}" data-k="${k}"></td>`).join('')}
+            <td data-s="wait"></td><td data-s="turnaround"></td><td data-s="response"></td>
+            <td>${this.procs.length > 1 ? `<button class="x" data-del="${i}" aria-label="remove ${p.id}">✕</button>` : ''}</td></tr>`,
+          )
+          .join('');
+        tbody.querySelectorAll<HTMLInputElement>('input').forEach((inp) =>
+          inp.addEventListener('input', () => {
+            const v = Math.round(+inp.value);
+            const k = inp.dataset.k as 'arrival' | 'burst' | 'priority';
+            if (Number.isFinite(v) && v >= (k === 'burst' ? 1 : 0) && v <= 20) (this.procs[+inp.dataset.i!][k] = v), this.render();
+          }),
+        );
+        tbody.querySelectorAll<HTMLButtonElement>('[data-del]').forEach((b) =>
+          b.addEventListener('click', () => (this.procs.splice(+b.dataset.del!, 1), this.render(true))),
+        );
+      }
+      tbody.querySelectorAll('tr').forEach((tr, i) => {
+        for (const k of ['wait', 'turnaround', 'response'] as const) tr.querySelector(`[data-s="${k}"]`)!.textContent = String(stats[i][k]);
+      });
+      const color = (id: string) => COLORS[+id.slice(1) - 1];
+      const ticks = [...new Set(segs.flatMap((s) => [s.a, s.b]))];
+      this.querySelector('[data-gantt]')!.innerHTML =
+        segs
+          .map((s) => `<div class="seg ${s.id === 'idle' ? 'idle' : ''}" style="left:${(s.a / end) * 100}%;width:calc(${((s.b - s.a) / end) * 100}% - 2px);--c:${s.id === 'idle' ? '#333' : color(s.id)}">${s.id === 'idle' ? '' : s.id}</div>`)
+          .join('') + ticks.map((t) => `<span class="tick" style="left:${(t / end) * 100}%">${t}</span>`).join('');
+      const avg = (k: 'wait' | 'turnaround' | 'response') => (stats.reduce((s, x) => s + x[k], 0) / stats.length).toFixed(2);
+      const switches = segs.filter((s, i) => i > 0 && s.id !== 'idle' && segs[i - 1].id !== 'idle' && segs[i - 1].id !== s.id).length;
+      this.querySelector('[data-stats]')!.innerHTML = `<span class="stat">avg wait <b>${avg('wait')}</b></span><span class="stat">avg turnaround <b>${avg('turnaround')}</b></span><span class="stat">avg response <b>${avg('response')}</b></span><span class="stat">context switches <b>${switches}</b></span>`;
+    }
+  }
+  customElements.define('sched-play', SchedPlay);
+</script>
