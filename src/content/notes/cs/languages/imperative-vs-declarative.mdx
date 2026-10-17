@@ -1,0 +1,143 @@
+---
+title: "Imperative vs. Declarative"
+description: "Describing how to compute versus describing what you want."
+order: 1
+tier: core
+takeaways:
+  - "**Imperative** code spells out the steps and the state changes; **declarative** code states the result or relationship wanted."
+  - "Both end up as executed instructions. The difference is how much of the procedure the code exposes, a spectrum rather than two boxes."
+  - "Declarative systems need an **execution engine**: a SQL query optimizer, a CSS layout engine, an infrastructure controller."
+  - "Pick imperative when order and precise control matter; declarative when the goal is clearer than the route to it."
+resources:
+  - title: "Imperative programming"
+    url: "https://en.wikipedia.org/wiki/Imperative_programming"
+  - title: "Declarative programming"
+    url: "https://en.wikipedia.org/wiki/Declarative_programming"
+  - title: "SQLite: The Query Planner"
+    url: "https://www.sqlite.org/queryplanner.html"
+    note: "How a database turns a declarative query into an actual procedure."
+---
+
+Imperative and declarative programming are two ways of expressing computation. **Imperative programming** describes the steps a computer should execute; **declarative programming** describes the result or relationship that should hold. The distinction is about how a programmer expresses a solution, not whether the computer ultimately performs instructions. Both approaches are implemented through executable mechanisms, and many languages combine them.
+
+## The difference is between describing a procedure and describing a goal
+
+Suppose you want to find all even numbers in a list.
+
+An imperative solution specifies how to build the answer:
+
+```python
+numbers = [1, 2, 3, 4, 5, 6]
+evens = []
+for n in numbers:
+    if n % 2 == 0:
+        evens.append(n)
+print(evens)  # [2, 4, 6]
+```
+
+The code explicitly describes the process: create an empty list, inspect each number, test whether it is even, and append matching values.
+
+A more declarative expression in Python is:
+
+```python
+evens = [n for n in numbers if n % 2 == 0]
+print(evens)  # [2, 4, 6]
+```
+
+This describes the collection of values wanted: the numbers satisfying the evenness condition. Python still executes steps internally, but the programmer does not explicitly manage the output list's construction.
+
+<Callout type="key">
+The distinction is not that one approach has steps and the other has none. Rather, imperative code exposes more of the procedure, while declarative code expresses more of the desired outcome and leaves the procedure to the language or runtime.
+</Callout>
+
+## Imperative programming makes state changes explicit
+
+Imperative programs commonly use variables, assignments, loops, conditionals, and function calls to control execution. The program's behavior emerges from a sequence of operations that change state.
+
+For example, calculating a running total:
+
+```python
+prices = [10, 20, 30]
+total = 0
+for price in prices:
+    total = total + price   # each pass depends on the previous value of total
+print(total)  # 60
+```
+
+The variable `total` changes repeatedly. Each iteration depends on the result of the previous one.
+
+This style is useful when the sequence of operations matters: implementing algorithms, managing resources, controlling hardware, or coordinating stateful workflows. It gives the programmer direct control over the procedure.
+
+The cost is that the programmer must reason about intermediate states and execution order. As code grows, bugs can arise from an unexpected mutation, a loop boundary, or an operation occurring in the wrong order.
+
+## Declarative programming emphasizes relationships and constraints
+
+Declarative code states what should be true, what data is wanted, or what relationship defines a solution. The language, runtime, or underlying system determines how to produce it.
+
+Consider retrieving active users from a database:
+
+```sql
+SELECT name
+FROM users
+WHERE active = TRUE;
+```
+
+The query specifies which rows and columns are wanted. It does not tell the database exactly how to scan the table, which index to use, or how to order internal operations. The **query optimizer** chooses an **execution plan** based on available indexes, statistics, and other constraints.
+
+This separation is powerful because the same query can be executed using different plans without changing the query's meaning.
+
+Declarative programming appears in several forms:
+
+- **SQL**: Describe the data to retrieve.
+- **HTML and CSS**: Describe document structure and presentation.
+- **Logic programming**: State facts and rules from which answers can be derived.
+- **Configuration and infrastructure tools**: Specify a desired system state that a tool attempts to achieve.
+
+<Callout type="pitfall">
+Declarative code is not necessarily shorter, easier, or more efficient. It shifts responsibility for choosing the procedure to another layer of the system.
+</Callout>
+
+## The same task can be expressed both ways
+
+Sorting illustrates how the distinction works in practice.
+
+An imperative approach might implement a sorting algorithm directly, specifying comparisons, swaps, and loop conditions. A declarative or higher-level approach might simply request:
+
+```python
+sorted_numbers = sorted(numbers)
+```
+
+The second expression states the required result without exposing the sorting algorithm. The runtime chooses how to compute it.
+
+However, declarative and imperative are not always strict categories. Calling `sorted()` is a high-level operation, but it is still a function call in an imperative language. A program can use imperative control flow to coordinate declarative queries, or use declarative expressions inside an otherwise imperative application.
+
+The distinction is best understood as a spectrum of how much procedural detail the code exposes.
+
+## Declarative systems still need execution engines
+
+A declarative statement does not execute itself. Some mechanism must interpret it, transform it into a plan, or derive the requested result.
+
+For a SQL query, the database typically parses the query, validates it, optimizes an execution plan, and runs that plan. For a declarative infrastructure configuration, a controller may compare the desired state with the actual state and make changes until they match.
+
+This creates a useful separation:
+
+- The specification expresses what is wanted.
+- The execution mechanism determines how to achieve it.
+- The runtime environment supplies resources, data, and operational constraints.
+
+Because the procedure is abstracted away, the underlying system can sometimes optimize execution more effectively than a manually specified procedure. But this depends on the quality of the implementation and how much control the programmer needs.
+
+Declarative specifications also have limits. If the desired behavior is ambiguous, if the execution engine has poor optimization, or if side effects must occur in a precise order, more explicit procedural control may be necessary.
+
+## Choosing between the two approaches
+
+| Situation                                         | Often a good fit | Reason                                                          |
+| ------------------------------------------------- | ---------------- | --------------------------------------------------------------- |
+| Implementing a custom algorithm                   | Imperative       | The sequence of operations matters                              |
+| Querying a database                               | Declarative      | The desired data matters more than the access procedure         |
+| Styling a web page                                | Declarative      | Rules describe how elements should appear                       |
+| Managing infrastructure to a target configuration | Declarative      | The system can reconcile actual and desired state               |
+| Controlling hardware with precise timing          | Imperative       | Explicit control over operations may be necessary               |
+| Transforming collections of data                  | Either           | Loops and mutation or declarative transformations may both work |
+
+The best choice depends on the problem, the language, and the execution environment. Imperative code offers explicit procedural control; declarative code can reduce implementation detail and make intent easier to inspect. Neither guarantees correctness or performance.

@@ -1,0 +1,159 @@
+---
+title: "Type Systems"
+description: "Static versus dynamic typing, and strong versus weak typing."
+order: 2
+tier: core
+takeaways:
+  - "A **type** fixes what a value means and which operations are legal on it; the same `+` adds integers and concatenates strings."
+  - "**Static vs. dynamic** is about when types are checked: before the program runs, or as each operation executes."
+  - "**Strong vs. weak** is about how readily different types are mixed through implicit conversion. It is informal, with no precise boundary."
+  - "The two axes are independent: Python is dynamic and strict, TypeScript is static yet allows `3 + \"4\"`."
+  - "Static typing does not require annotations everywhere (**type inference**), and dynamic typing still enforces rules, just at run time."
+resources:
+  - title: "Type system"
+    url: "https://en.wikipedia.org/wiki/Type_system"
+  - title: "Strong and weak typing"
+    url: "https://en.wikipedia.org/wiki/Strong_and_weak_typing"
+    note: "Why the terms have no single accepted definition."
+  - title: "MDN: Type coercion"
+    url: "https://developer.mozilla.org/en-US/docs/Glossary/Type_coercion"
+  - title: "mypy: Getting started"
+    url: "https://mypy.readthedocs.io/en/stable/getting_started.html"
+    note: "Adding static checking to dynamically typed Python."
+---
+
+A **type system** defines how a programming language classifies values and determines which operations are valid for them. It helps answer questions such as whether a string can be added to a number, whether a function receives the kind of argument it expects, and when an invalid operation should be detected. Two common distinctions are static versus dynamic typing, which concerns when type-related checks happen, and strong versus weak typing, which concerns how a language handles values of different types. These are separate dimensions: a language can be static and permissive in some conversions, or dynamic and strict about mixing types.
+
+## Types describe what values mean and what operations they support
+
+A **type** groups values according to their representation, meaning, and permitted operations. For example, an integer type represents whole numbers, while a string type represents text.
+
+```python
+age = 25
+name = "Alex"
+```
+
+Here, `25` is an integer and `"Alex"` is a string. The types matter because operations have different meanings for different values.
+
+```python
+25 + 5         # 30
+"Hello" + "!"  # 'Hello!'
+```
+
+Both expressions use `+`, but the operation depends on the operand types. With integers, it performs arithmetic addition; with strings in Python, it concatenates text.
+
+A type system defines rules for such operations. Depending on the language, it may reject an invalid expression before execution, detect the problem when the expression runs, or permit a conversion that changes how the operation behaves.
+
+Types are therefore more than labels attached to values. They help define the legal behavior of a program.
+
+## Static versus dynamic typing: when are types checked?
+
+The static/dynamic distinction concerns when a language determines whether operations are compatible with the types involved.
+
+**Static typing** checks type correctness before the program runs, usually during compilation or a related analysis phase.
+
+```java
+int age = 25;
+age = "twenty-five";  // error: incompatible types: String cannot be converted to int
+```
+
+In Java, the variable `age` is declared as an integer, so assigning a string to it is rejected by the compiler.
+
+**Dynamic typing** checks types as operations execute. Variables can refer to values of different types at different times.
+
+```python
+value = 25
+value = "twenty-five"  # Valid
+```
+
+Python allows this reassignment because the name `value` is not restricted to one declared type. However, operations still have type rules:
+
+```python
+value = 25 + "five"  # TypeError: unsupported operand type(s) for +: 'int' and 'str'
+```
+
+<Callout type="key">
+The difference is not that dynamically typed languages have no types. Python values have types, and the interpreter enforces rules about how those values can be used. The distinction is that compatibility is generally checked during execution rather than being established for the whole program before it runs.
+</Callout>
+
+Static typing can catch many errors early and support compiler optimizations and tooling. Dynamic typing can make experimentation and flexible data manipulation easier, but some errors may only appear when the relevant code executes.
+
+There are nuances: statically typed languages may use **type inference**, so programmers do not always need to write type annotations. Dynamically typed languages can also use optional type annotations and external analyzers to catch some mistakes before execution.
+
+## Strong versus weak typing: how strictly are types kept separate?
+
+**Strong** and **weak typing** are less precisely defined terms than static and dynamic typing. They generally describe how readily a language allows values of different types to interact, particularly through implicit conversions or reinterpretation.
+
+Consider adding an integer to a string.
+
+In Python:
+
+```python
+3 + "4"  # TypeError: unsupported operand type(s) for +: 'int' and 'str'
+```
+
+Python does not automatically convert the string `"4"` into an integer for this operation. The programmer must make the intended conversion explicit:
+
+```python
+3 + int("4")  # 7
+```
+
+JavaScript behaves differently:
+
+```javascript
+3 + "4"  // "34"
+3 - "4"  // -1
+```
+
+The `+` operator concatenates when string conversion is involved, while `-` converts the string to a number in this example. These implicit conversions can be convenient, but they can also produce surprising results.
+
+This is why Python is commonly described as strongly typed and JavaScript as more weakly typed in informal comparisons. The labels are not absolute: JavaScript still enforces many type rules, and Python also performs implicit conversions in certain situations.
+
+The practical question is whether a language permits an operation by automatically converting, coercing, or reinterpreting values that have different types.
+
+## The two distinctions describe different dimensions
+
+Static/dynamic and strong/weak typing are not opposite ends of one scale.
+
+One dimension asks **when** types are checked (static: before execution; dynamic: as operations execute). The other asks **how type boundaries are handled** (stricter: fewer implicit cross-type operations; more permissive: more implicit conversions or coercions). Crossing them gives four quadrants, and real languages occupy all of them:
+
+<TypingQuadrant />
+
+A useful rough classification is:
+
+| Language   | Typing time | Type conversion behavior                                                  |
+| ---------- | ----------- | ------------------------------------------------------------------------- |
+| Python     | Dynamic     | Generally strict about incompatible operations                            |
+| JavaScript | Dynamic     | Many implicit coercions                                                   |
+| Java       | Static      | Some implicit numeric conversions and conversions defined by the language |
+| Rust       | Static      | Generally requires explicit conversions between distinct types            |
+
+This table is a practical approximation, not a formal ranking of languages by strength. Strong/weak typing has no universally accepted technical boundary, and individual language features can complicate any simple classification.
+
+## Static typing does not mean inflexible, and dynamic typing does not mean unsafe
+
+A common misconception is that static typing requires programmers to declare every variable's type manually. Modern statically typed languages often infer types from expressions:
+
+```rust
+let count = 10;
+```
+
+The compiler can infer that `count` is an integer without an explicit type annotation. The variable is still subject to Rust's static type rules.
+
+Conversely, dynamic typing does not mean a program has no structure or safeguards. A dynamically typed program can validate inputs, use clear interfaces, test behavior, and employ tools that analyze likely type errors. Its type checks simply happen primarily at runtime.
+
+<Callout type="pitfall">
+Neither approach eliminates every bug. Static typing can detect many classes of incompatible operations, but a program can still be logically incorrect. Dynamic typing can allow more flexible code, but flexibility does not require abandoning validation or discipline.
+</Callout>
+
+The trade-off is about where constraints are expressed and when violations are detected. Static type systems can move certain failures earlier in development; dynamic type systems allow types to vary more freely during execution, while enforcing operation rules as needed.
+
+## Type systems shape how programs evolve
+
+Types become particularly valuable as programs grow. A function that accepts an integer has a clearer contract than one that accepts an arbitrary value and fails unpredictably when given the wrong input.
+
+For example, a function that calculates the average of measurements conceptually expects numeric inputs. A static type system may catch a string argument before execution; a dynamic language may accept the call and detect a problem when the function tries to perform arithmetic.
+
+Type systems can also express more sophisticated guarantees through features such as generics, algebraic data types, nullability checks, and refinement types. These features let programmers encode constraints so that some invalid states become harder or impossible to represent.
+
+The deeper principle is that a type system makes assumptions about data explicit and enforceable. Static versus dynamic typing determines largely when those assumptions are checked; strong versus weak typing informally describes how permissively different types can interact. Understanding both dimensions gives a better basis for comparing languages than treating typing as a single spectrum from strict to flexible.

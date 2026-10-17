@@ -1,0 +1,217 @@
+---
+title: "Functional Programming"
+description: "Pure functions, immutability, and higher-order functions."
+order: 4
+tier: core
+takeaways:
+  - "A **pure function** depends only on its arguments and has no side effects, so the same input always gives the same output."
+  - "**Immutable** data is never changed in place; an update produces a new value, so no other holder of a reference is surprised."
+  - "**Higher-order functions** such as `map`, `filter` and `reduce` take behavior as an argument instead of hard-coding a loop."
+  - "**Composition** (g ∘ f)(x) = g(f(x)) builds pipelines from small functions; order matters, since it is not commutative."
+  - "Functional style isolates side effects at the edges rather than banning them."
+resources:
+  - title: "Python Functional Programming HOWTO"
+    url: "https://docs.python.org/3/howto/functional.html"
+    note: "Iterators, generators, map/filter, functools and itertools."
+  - title: "Functional programming"
+    url: "https://en.wikipedia.org/wiki/Functional_programming"
+  - title: "Pure function"
+    url: "https://en.wikipedia.org/wiki/Pure_function"
+---
+
+**Functional programming** is a programming paradigm that treats computation primarily as the evaluation and composition of functions. Rather than relying heavily on mutable state and sequences of commands, it emphasizes pure functions, immutable data, and functions that operate on other functions. The central idea is to make a program's behavior easier to reason about by reducing hidden dependencies: the same inputs should produce the same outputs, and computing a result should not unexpectedly change something elsewhere in the program.
+
+## Pure functions make behavior predictable
+
+A **pure function** has two defining properties: its result depends only on its inputs, and evaluating it produces no observable side effects.
+
+For example:
+
+```python
+def square(x):
+    return x * x
+```
+
+Every call to `square(4)` returns `16`. The function does not read changing external state, modify a global variable, write a file, or send a network request.
+
+Contrast this with:
+
+```python
+tax_rate = 0.1
+
+def total_with_tax(price):
+    return price * (1 + tax_rate)
+```
+
+The result depends on `tax_rate`, which can change outside the function. The function is therefore not pure in the strict sense.
+
+A pure version makes the dependency explicit:
+
+```python
+def total_with_tax(price, tax_rate):
+    return price * (1 + tax_rate)
+```
+
+Now the result can be understood from the arguments alone.
+
+Purity is useful because it makes functions easier to test, reuse, cache, and reason about independently. If a function receives the same inputs, its result can be predicted without reconstructing the program's external state.
+
+<Callout type="key">
+Real programs still need side effects: they must read input, write files, communicate over networks, and update databases. Functional programming does not eliminate these operations. It aims to isolate them so that the core transformations of data remain predictable.
+</Callout>
+
+## Immutability prevents changes from spreading invisibly
+
+**Mutable** data can be changed after it is created. **Immutable** data cannot be modified in place; a change produces a new value instead.
+
+Consider a list that is modified directly:
+
+```python
+numbers = [1, 2, 3]
+numbers.append(4)
+```
+
+The original list now contains `[1, 2, 3, 4]`. Any other part of the program holding a reference to that same list observes the change.
+
+A more functional approach creates a new list:
+
+```python
+numbers = [1, 2, 3]
+updated = numbers + [4]
+print(numbers, updated)  # [1, 2, 3] [1, 2, 3, 4]
+```
+
+Now `numbers` remains `[1, 2, 3]`, while `updated` is `[1, 2, 3, 4]`.
+
+This reduces the need to track who might have changed a shared object. A function receiving immutable data can inspect it without worrying that its operations will alter the caller's copy.
+
+There is an important distinction between an immutable reference and immutable data. In Python, assigning one variable to another does not copy an object:
+
+```python
+a = [1, 2, 3]
+b = a          # a second name for the same list, not a copy
+b.append(4)
+print(a)       # [1, 2, 3, 4]
+```
+
+<Callout type="pitfall" title="A new name is not a copy">
+Both names refer to the same mutable list. Immutability must be provided by the data structure or enforced by the program's design; simply using a new variable name is not enough.
+</Callout>
+
+Immutable data can make concurrent programs easier to reason about because multiple tasks can safely read the same value without coordinating mutations to it. However, immutability alone does not eliminate every race condition or guarantee thread safety.
+
+## Higher-order functions let programs compose behavior
+
+A **higher-order function** either takes another function as an argument or returns a function as its result. This allows behavior to be passed around and combined rather than hard-coded into one procedure.
+
+For example, suppose we want to transform a collection of prices:
+
+```python
+prices = [10, 20, 30]
+
+def apply_discount(price):
+    return price * 0.9
+
+discounted = list(map(apply_discount, prices))
+print(discounted)  # [9.0, 18.0, 27.0]
+```
+
+The function `map` applies `apply_discount` to each element. Instead of writing a loop specifically for this transformation, the program supplies the operation to perform.
+
+Other common higher-order functions include:
+
+- `filter`, which selects values satisfying a predicate.
+- `map`, which transforms each value.
+- `reduce`, which combines a sequence into one result.
+- Functions that accept callbacks to customize behavior.
+
+For example, a filter-and-map pipeline can express a data transformation directly:
+
+```python
+from functools import reduce
+
+numbers = [1, 2, 3, 4, 5, 6]
+result = list(map(
+    lambda n: n * n,
+    filter(lambda n: n % 2 == 0, numbers),
+))
+print(result)                                     # [4, 16, 36]
+print(reduce(lambda acc, n: acc + n, result, 0))  # 56: folds the list into one value
+```
+
+The pipeline first selects even numbers, then squares them. Its structure describes the transformation without manually managing an output list or updating a running variable.
+
+<FpPipeline />
+
+Higher-order functions are not exclusive to functional programming. Many imperative and object-oriented languages support them. Functional programming makes them central to how programs are organized.
+
+## Function composition builds larger behavior from smaller parts
+
+If one function transforms a value from one form to another, and a second function can consume that result, the two can be **composed**.
+
+Suppose:
+
+$$
+f(x)=2x,\qquad g(x)=x+3
+$$
+
+Their composition is:
+
+$$
+(g\circ f)(x)=g(f(x))=2x+3
+$$
+
+In words: apply $f$ first, then feed its output to $g$; the symbol $\circ$ is read right to left. The output of $f$ becomes the input of $g$. Larger computations can be built by connecting small functions, each responsible for one transformation.
+
+In code:
+
+```python
+def double(x):
+    return x * 2
+
+def add_three(x):
+    return x + 3
+
+def transform(x):
+    return add_three(double(x))
+
+print(transform(5))            # 13 = (5 * 2) + 3
+print(double(add_three(5)))    # 16 = (5 + 3) * 2: reversed order, different result
+```
+
+Each function can be tested independently, then combined into a larger operation. This structure is particularly useful for data processing, validation pipelines, text transformation, and systems where many operations must be composed consistently.
+
+Composition also makes the order of operations explicit. In general, function composition is not commutative: applying `double` and then `add_three` produces a different result from applying them in the reverse order.
+
+## Functional programming handles state by making changes explicit
+
+A functional style does not require a program to have no state. Instead, it encourages state transitions to be represented as transformations from one value to another.
+
+Imagine a program that tracks a bank account. An imperative implementation might update a mutable balance repeatedly. A functional implementation can model a deposit as a function that returns a new balance:
+
+```python
+def deposit(balance, amount):
+    if amount <= 0:
+        raise ValueError("Amount must be positive")
+    return balance + amount
+
+balance = 100
+updated_balance = deposit(balance, 50)
+print(balance, updated_balance)  # 100 150
+```
+
+The original value remains `100`, and the new value is `150`. The transition is explicit: the function receives the old state and returns the new state.
+
+This makes it easier to inspect, test, and replay state transitions. The same approach can be used in application reducers, event processing, and state-management systems.
+
+But there is a trade-off. If an application creates many versions of large data structures, copying everything can be expensive. Functional languages and libraries often use **persistent data structures**, which share unchanged parts between versions instead of copying the entire structure.
+
+## Functional programming is a design approach, not a ban on loops or objects
+
+Functional programming is often contrasted with imperative programming, but practical languages commonly combine both. Python, JavaScript, Java, and C# support functional techniques alongside mutable variables, loops, objects, and side effects.
+
+The distinction lies in what the design emphasizes. A functional approach prefers explicit data transformations, predictable functions, and controlled state changes. An imperative approach often describes a sequence of commands that mutate state as the computation proceeds.
+
+Functional techniques are especially valuable for data transformations, parallel computation, testing, and systems where hidden state makes bugs difficult to reproduce. They are not automatically superior for every task: explicit mutation can be simpler for certain algorithms, and side effects must still be managed at the boundaries of real applications.
+
+The deeper principle is that predictability comes from controlling dependencies and state. Pure functions make behavior easier to isolate, immutability makes data easier to share safely, and higher-order functions let small transformations combine into larger computations.

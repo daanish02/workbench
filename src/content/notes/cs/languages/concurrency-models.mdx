@@ -1,0 +1,186 @@
+---
+title: "Concurrency Models"
+description: "Actors, CSP, and async/await: how concurrency models differ under the hood."
+order: 6
+tier: optional
+takeaways:
+  - "**Concurrency** is structuring work so tasks overlap in time; **parallelism** is running them at the same instant on separate cores."
+  - "**Actors** own private state and change it only by processing messages from their mailbox, one at a time."
+  - "**CSP** connects sequential processes with channels; a send/receive is both data transfer and synchronization."
+  - "`async`/`await` suspends a task at each `await` so one thread can serve many waiting tasks; it does **not** make CPU-bound work parallel."
+  - "The runtime, not the model, decides how many threads exist and whether anything actually runs in parallel."
+resources:
+  - title: "Python asyncio documentation"
+    url: "https://docs.python.org/3/library/asyncio.html"
+  - title: "MDN: The event loop"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Event_loop"
+    note: "JavaScript's run-to-completion model, call stack and task queue."
+  - title: "A Tour of Go: Concurrency"
+    url: "https://go.dev/tour/concurrency/1"
+    note: "Runnable goroutine and channel exercises in the browser."
+  - title: "Actor model"
+    url: "https://en.wikipedia.org/wiki/Actor_model"
+---
+
+**Concurrency** is about structuring programs so multiple activities can make progress during overlapping periods, while **parallelism** is about executing multiple activities at the same instant. Different concurrency models provide different ways to coordinate those activities and control access to shared state. The actor model isolates state inside independent actors, Communicating Sequential Processes (CSP) coordinates activities through channels, and `async/await` lets code express asynchronous control flow without blocking a thread while waiting. These models are not mutually exclusive: they are different abstractions that can be implemented on top of threads, event loops, message queues, and operating-system scheduling.
+
+## Concurrency is a coordination problem
+
+Consider a server handling thousands of requests. Each request may need to read a file, query a database, wait for a network response, and then send a result. Much of this time is spent waiting rather than computing.
+
+A sequential program completes one request before starting the next. A concurrent program can make progress on another request while the first is waiting. A parallel program can additionally run work on multiple CPU cores at the same time.
+
+The difficulty is that concurrent activities can interact unpredictably. If two threads increment the same counter, both might read the value `5`, both calculate `6`, and both write `6`. The final value is `6` instead of `7`. This is a **race condition**: the result depends on the timing of operations.
+
+Concurrency models define rules for structuring these interactions. They differ primarily in how they handle state, communication, and waiting.
+
+## The actor model isolates state inside independent actors
+
+In the **actor model**, an actor is an independent unit that has private state, processes messages, and may send messages to other actors or create new actors.
+
+An actor's state is not ordinarily modified directly by other actors. Instead, they send it messages asking it to perform operations.
+
+For example, a bank account actor might process messages like these:
+
+```
+Deposit(100)
+Withdraw(30)
+GetBalance
+```
+
+The actor handles one message at a time, updating its private balance as it processes each request. Other actors cannot directly change that balance midway through an operation.
+
+This design reduces the need for locks around the actor's internal state. The actor serializes its own operations, while different actors can process messages concurrently.
+
+```
+Actor A ── Deposit(100) ──> Mailbox [Deposit, Withdraw, GetBalance]
+                                 │  one message at a time
+                                 ▼
+                          Account actor (private balance)
+```
+
+The actor model is especially useful for distributed services, fault-isolated systems, and applications with many independent entities. For example, a multiplayer game might represent each player or game session as an actor.
+
+However, actors do not eliminate every concurrency problem. Messages may arrive in unexpected orders, mailboxes can grow without bound, and an actor that waits synchronously for another actor can participate in a deadlock. Message delivery guarantees also depend on the particular actor framework.
+
+The essential idea is that state changes happen through messages rather than arbitrary shared-memory access.
+
+## CSP coordinates processes through channels
+
+Communicating Sequential Processes, or **CSP**, models a system as independent processes that communicate through channels. Each process performs its own sequence of operations, while channels provide explicit paths for data exchange.
+
+A producer-consumer system illustrates the idea. One process produces work items; another consumes them. Rather than sharing a mutable collection that both access directly, they communicate through a channel.
+
+```
+Producer ── send(item) ──> Channel ── receive() ──> Consumer
+```
+
+Depending on the channel implementation, sending may block until a receiver is ready, or it may place the item in a buffer and return. A bounded buffer can also apply **backpressure**: when it fills, the producer must slow down until the consumer makes room.
+
+This makes synchronization part of the communication mechanism rather than a separate set of locks around shared data.
+
+The Go programming language popularized a CSP-inspired style through goroutines and channels:
+
+```go
+ch := make(chan int)
+
+go func() {
+    ch <- 42
+}()
+
+value := <-ch
+```
+
+A goroutine sends `42` through the channel, and the receiving operation obtains it. With an unbuffered Go channel, the send and receive synchronize with each other.
+
+CSP and the actor model both use message passing, but their abstractions differ. An actor has identity, private state, and a mailbox; CSP emphasizes processes and the communication events that coordinate them. Real-world implementations often blend the two.
+
+CSP-style communication is useful when a program can be decomposed into stages or workers with clear data flows. Pipelines, worker pools, and concurrent data processing are natural examples.
+
+## Async/await suspends work without blocking the thread
+
+The `async/await` model addresses a different problem: expressing operations that may take time without forcing the program to block a thread while waiting.
+
+Consider a network request. A synchronous function might wait until the response arrives, occupying its thread the entire time. An asynchronous function can instead suspend its current task and allow the runtime to execute other ready work.
+
+```python
+async def fetch_data():
+    response = await request()
+    return response
+```
+
+The `await` does not inherently create a new thread. It marks a point where the current asynchronous task may suspend until the awaited operation completes.
+
+A typical runtime works conceptually like this:
+
+1. The asynchronous function starts running.
+2. At `await`, it checks whether the awaited operation is complete.
+3. If the operation is pending, the task suspends and yields control to the runtime.
+4. The runtime schedules another ready task instead of leaving the current thread idle.
+5. When the awaited operation completes, the suspended task becomes eligible to resume.
+
+Here is that sequence in a runnable program. Two tasks wait concurrently on one thread:
+
+```python
+import asyncio, time
+
+async def fetch(name, delay):
+    print(f"{name} waiting")
+    await asyncio.sleep(delay)   # suspend: the loop can run other tasks meanwhile
+    print(f"{name} done")
+    return name
+
+async def main():
+    start = time.perf_counter()
+    results = await asyncio.gather(fetch("A", 1.0), fetch("B", 0.5))
+    print(results, f"{time.perf_counter() - start:.1f}s")
+
+asyncio.run(main())
+# A waiting
+# B waiting
+# B done
+# A done
+# ['A', 'B'] 1.0s     <- the longest wait, not 1.5 s: the waits overlapped
+```
+
+<AsyncEventLoop />
+
+The runtime typically represents a suspended task using a **future**, **promise**, **coroutine** frame, or another state object that records what remains to be done. When the awaited operation completes, a continuation or scheduler callback makes the task runnable again.
+
+This is why `async/await` can make asynchronous code look sequential while avoiding a thread-per-waiting-operation design.
+
+The exact implementation depends on the language. Python's `asyncio` generally schedules coroutines on an event loop; JavaScript uses promises and an event loop; C# compilers transform async methods into state machines. Some runtimes also use multiple threads to execute tasks.
+
+<Callout type="pitfall" title="await is not parallelism">
+One crucial limitation: `await` does not automatically make CPU-intensive work parallel. If a task performs a long computation without yielding, it can monopolize an event-loop thread. CPU-bound work often needs worker threads, processes, or another parallel execution mechanism.
+</Callout>
+
+## The models differ in what they make explicit
+
+The three approaches can all support concurrent systems, but they expose different coordination mechanisms.
+
+| Property            | Actor model                       | CSP                               | Async/await                                |
+| ------------------- | --------------------------------- | --------------------------------- | ------------------------------------------ |
+| Primary abstraction | Stateful actors                   | Processes and channels            | Suspended asynchronous tasks               |
+| Coordination        | Messages to actors                | Communication over channels       | Awaiting completion and scheduling         |
+| State management    | Private actor state               | Often isolated process state      | Depends on the surrounding program         |
+| Waiting             | Mailbox or message operations     | Send/receive synchronization      | Suspend a task until completion            |
+| Typical use         | Independent entities and services | Pipelines and worker coordination | I/O-heavy applications and network servers |
+
+<Callout type="key">
+The most important distinction is that actors and CSP primarily describe how concurrent components communicate, while `async/await` primarily describes how a task suspends and resumes around asynchronous operations.
+</Callout>
+
+They can be combined. An actor may use asynchronous operations internally. A CSP-style pipeline can use asynchronous tasks to avoid blocking threads while waiting on channels. An async server may distribute work among actors or channel-based workers.
+
+## The runtime determines how concurrency actually executes
+
+A concurrency abstraction does not, by itself, determine how many threads exist or whether work runs in parallel. That depends on the runtime and operating system.
+
+A runtime may schedule many lightweight tasks on one operating-system thread, map tasks onto a pool of threads, or use separate processes. If several tasks share one thread, only one can execute ordinary instructions on that thread at a time, though other tasks can run while one is suspended. If tasks execute on separate CPU cores, they can run in parallel.
+
+The runtime also determines how completion is detected, how tasks become runnable, how cancellation works, and what happens when a task fails.
+
+These details matter because the apparent simplicity of a concurrency model does not remove the underlying costs. Message passing has overhead; scheduling and context switching consume resources; queues require capacity management; and shared state can still introduce races when the programming model permits it.
+
+A good concurrency model makes the dangerous interactions explicit and limits the ways components can interfere with one another. The actor model does this through ownership and messages, CSP through channels and communication, and `async/await` through explicit suspension points and runtime scheduling.

@@ -1,0 +1,175 @@
+---
+title: "Object-Oriented Programming"
+description: "Classes, inheritance, polymorphism, and encapsulation, and their trade-offs."
+order: 3
+tier: core
+takeaways:
+  - "A **class** is a blueprint; each **object** is an instance with its own state."
+  - "**Encapsulation** keeps an object responsible for its own invariants by routing every change through its methods."
+  - "**Inheritance** fits a genuine is-a relationship; when you only need another object's abilities, prefer **composition**."
+  - "**Polymorphism**: one call site, `channel.send(msg)`, runs whichever implementation the object's class provides, found by walking its MRO."
+  - "**Abstraction** separates what callers may rely on (the interface) from how it is done (the implementation)."
+resources:
+  - title: "Python Tutorial: Classes"
+    url: "https://docs.python.org/3/tutorial/classes.html"
+  - title: "The Python 2.3 Method Resolution Order"
+    url: "https://docs.python.org/3/howto/mro.html"
+    note: "How Python decides which inherited method runs, including multiple inheritance."
+  - title: "Liskov substitution principle"
+    url: "https://en.wikipedia.org/wiki/Liskov_substitution_principle"
+    note: "The rule a subclass must follow to be safely usable as its parent."
+---
+
+**Object-oriented programming (OOP)** organizes software around objects that combine state with behavior. Instead of representing a program only as a sequence of operations, OOP models entities as objects that hold data and expose operations through defined interfaces. Its four commonly taught principles are encapsulation, inheritance, polymorphism, and abstraction. The central idea is to manage complexity by grouping related responsibilities together while allowing different parts of a program to interact through stable interfaces.
+
+## Classes define a blueprint; objects hold actual state
+
+A **class** defines the structure and behavior that its instances share. An **object** is a particular instance of that class, with its own state.
+
+For example, a program representing bank accounts might define a class with a balance and operations for depositing and withdrawing money.
+
+```python
+class BankAccount:
+    def __init__(self, owner, balance=0):
+        self.owner = owner
+        self.balance = balance
+
+    def deposit(self, amount):
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+        self.balance += amount
+
+account_a = BankAccount("Alex", 100)
+account_b = BankAccount("Sam", 250)
+account_a.deposit(50)
+print(account_a.balance, account_b.balance)  # 150 250
+```
+
+Both objects follow the same class definition, but their states differ. After the deposit, `account_a.balance` is `150`, while `account_b.balance` remains `250`.
+
+The class defines what an account can do; each object stores the data relevant to one particular account.
+
+This organization is useful when a program needs to represent many entities with similar behavior. It also creates a natural place to put operations that depend on an entity's state, rather than scattering those operations throughout the program.
+
+## Encapsulation protects an object's invariants
+
+**Encapsulation** means grouping state and behavior together while controlling how other code interacts with that state.
+
+A bank account should not allow arbitrary operations that violate its rules. For instance, withdrawing more money than the account contains might be forbidden. If every part of a program can freely modify the balance, every caller must remember to enforce the same rule.
+
+A better design exposes operations that preserve the object's **invariants**: conditions that should remain true whenever an operation finishes.
+
+```python
+class BankAccount:
+    def __init__(self, balance=0):
+        if balance < 0:
+            raise ValueError("Initial balance cannot be negative")
+        self._balance = balance
+
+    @property
+    def balance(self):
+        return self._balance   # read-only view: no setter is defined
+
+    def withdraw(self, amount):
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+        if amount > self._balance:
+            raise ValueError("Insufficient funds")
+        self._balance -= amount
+
+acct = BankAccount(100)
+acct.withdraw(500)     # ValueError: Insufficient funds
+acct.balance = 10**6   # AttributeError: property 'balance' of 'BankAccount' object has no setter
+```
+
+The intended interface lets callers inspect the balance and request a withdrawal, while the class controls how the balance changes. In Python, the underscore is a convention indicating that `_balance` is internal; it is not strict access control. Other languages provide stronger mechanisms for restricting access.
+
+<Callout type="key">
+Encapsulation is not merely hiding variables. Its deeper purpose is to ensure that an object remains responsible for preserving the rules governing its own state.
+</Callout>
+
+## Inheritance expresses an existing relationship
+
+**Inheritance** allows one class to derive from another, reusing or extending its behavior. The original class is called the base class or parent class, and the derived class is the subclass or child class.
+
+Consider a general notification system:
+
+```python
+class Notification:
+    def send(self, message):
+        raise NotImplementedError   # subclasses must supply the real behavior
+
+class EmailNotification(Notification):
+    def send(self, message):
+        print(f"Sending email: {message}")
+
+class SMSNotification(Notification):
+    def send(self, message):
+        print(f"Sending SMS: {message}")
+```
+
+Both specialized classes inherit the general concept of a notification, but each provides its own sending behavior.
+
+Inheritance is most appropriate when the subclass genuinely represents a more specific kind of the parent class. An email notification is a kind of notification. By contrast, an email notification does not naturally become a logging service merely because both need to write messages somewhere.
+
+Inheritance can reduce duplicated code, but deep inheritance hierarchies can make behavior difficult to trace. Changes in a base class may affect many subclasses, sometimes in unexpected ways.
+
+<Callout type="practice" title="Prefer composition for has-a">
+When a class merely needs another object's capabilities, **composition** is often preferable: one object contains or uses another rather than inheriting from it. For example, a notification service can contain an email sender without itself being a kind of email sender.
+</Callout>
+
+## Polymorphism lets one interface support different behaviors
+
+**Polymorphism** means that the same operation can work with different types of objects, with each type providing its own appropriate behavior.
+
+Using the notification classes, a program can send messages without needing to know whether the recipient mechanism is email or SMS.
+
+```python
+def notify(channel, message):
+    channel.send(message)   # which send() runs is decided by channel's class, at run time
+
+email = EmailNotification()
+sms = SMSNotification()
+notify(email, "Your order has shipped")  # Sending email: Your order has shipped
+notify(sms, "Your order has shipped")    # Sending SMS: Your order has shipped
+```
+
+The function calls `send()` in both cases. The object supplied determines which implementation runs. Python finds it by searching the object's class and then its ancestors in order, the **method resolution order (MRO)**: for an SMS notification that is `SMSNotification → Notification → object`.
+
+<OopDispatch />
+
+This is useful because the calling code depends on a shared capability rather than a specific implementation. A new notification type can be added without rewriting `notify()`, provided it follows the expected interface.
+
+There are several forms of polymorphism across programming languages. Object-oriented discussions commonly focus on subtype polymorphism, where different objects can be used through a shared interface. Other forms include parametric polymorphism, as seen in generics, and ad hoc polymorphism, as seen in overloaded operations.
+
+The important design benefit is that code can remain stable while the implementations it works with vary.
+
+## Abstraction exposes what matters and hides unnecessary detail
+
+**Abstraction** means representing something through the properties and operations relevant to a particular task, without exposing every implementation detail.
+
+A notification interface might promise that every supported channel can send a message. Callers do not need to know whether the implementation uses an SMTP server, an SMS gateway, retries, or a message queue.
+
+This separates two concerns:
+
+- The interface defines what callers can rely on.
+- The implementation defines how the behavior is achieved.
+
+Abstraction and encapsulation are related but distinct. Abstraction focuses on which details an interface exposes; encapsulation focuses on controlling access to internal state and implementation.
+
+Many languages support abstraction through interfaces, abstract classes, protocols, or traits. These mechanisms can define required behavior without requiring all implementations to share the same inheritance hierarchy.
+
+## The four principles work together
+
+| Principle | Question it answers | Answer |
+| --- | --- | --- |
+| Encapsulation | How is state protected? | Objects control access to their internal state and preserve invariants. |
+| Inheritance | What behavior can be reused or specialized? | A subclass derives from a base class and can extend or replace its behavior. |
+| Polymorphism | How can different objects share one interface? | The same operation can invoke different implementations depending on the object. |
+| Abstraction | Which details should callers need to know? | An interface exposes relevant capabilities while hiding implementation details. |
+
+These principles are not four independent features that every object-oriented design must use equally. A simple class can benefit from encapsulation without inheritance. Polymorphism can work through interfaces even when classes do not inherit implementation from one another. Abstraction is useful in procedural and functional programs as well.
+
+OOP is most effective when objects represent meaningful responsibilities and their interfaces make the relationships between components clear. It becomes less effective when every piece of data is forced into a class, inheritance is used only to avoid a few lines of duplication, or objects expose so much mutable state that their rules become impossible to enforce.
+
+The deeper purpose of object-oriented design is not to maximize the number of classes. It is to control dependencies: each component should know enough about other components to collaborate, but not so much that a change in one implementation forces changes throughout the system.

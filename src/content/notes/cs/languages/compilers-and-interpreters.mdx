@@ -1,0 +1,187 @@
+---
+title: "Compilers & Interpreters"
+description: "Lexing, parsing, and the pipeline from source to execution."
+order: 5
+tier: core
+takeaways:
+  - "Source code passes through stages: **lexing** (characters → tokens), **parsing** (tokens → AST), **semantic analysis**, then translation or execution."
+  - "The **AST** encodes structure and precedence: `price + 10 * 2` is an addition whose right child is a multiplication."
+  - "An **intermediate representation** decouples language front ends from machine back ends and is where optimizations such as constant folding happen."
+  - "Compiled vs. interpreted describes an **implementation**, not a language: CPython compiles to bytecode and then interprets it; the JVM interprets and JIT-compiles."
+  - "Different errors surface at different stages: syntax errors at parse time, type errors at check time, name errors often only at run time."
+resources:
+  - title: "Crafting Interpreters"
+    url: "https://craftinginterpreters.com/"
+    note: "Free book that builds a scanner, parser, tree-walker and bytecode VM from scratch."
+  - title: "Python ast module"
+    url: "https://docs.python.org/3/library/ast.html"
+    note: "Inspect the real AST CPython builds for any source string."
+  - title: "Python dis module"
+    url: "https://docs.python.org/3/library/dis.html"
+    note: "Disassemble functions into the bytecode the CPython VM executes."
+---
+
+A **compiler** or **interpreter** transforms source code into behavior the computer can execute. The process begins by recognizing characters as meaningful tokens, organizing those tokens into a grammatical structure, checking their meaning, and then translating or executing the resulting representation. A compiler typically translates a program into another form before it runs, while an interpreter executes a program through a runtime system. Modern languages often combine both approaches. The key idea is that source code must pass through several layers of interpretation before its meaning becomes machine operations.
+
+## Lexing turns characters into tokens
+
+A source file begins as a sequence of characters. The **lexer**, also called the lexical analyzer or scanner, groups those characters into **tokens** such as identifiers, keywords, operators, and literals.
+
+Consider this expression:
+
+```python
+total = price + 10
+```
+
+A lexer might produce the following token sequence:
+
+| Token   | Category            |
+| ------- | ------------------- |
+| `total` | Identifier          |
+| `=`     | Assignment operator |
+| `price` | Identifier          |
+| `+`     | Addition operator   |
+| `10`    | Numeric literal     |
+
+The lexer recognizes `10` as a numeric literal rather than two unrelated characters. It also distinguishes the identifier `price` from a keyword such as `if`.
+
+Whitespace and comments are usually discarded or handled specially, depending on the language. In Python, indentation is significant, so the lexer also emits indentation-related tokens.
+
+Lexing does not determine whether the expression makes sense. It identifies the pieces from which the next stage can construct a meaningful structure.
+
+## Parsing turns tokens into a grammatical structure
+
+The **parser** checks whether the token sequence follows the language's grammar and organizes it into a structure, commonly an **abstract syntax tree (AST)**.
+
+For the expression:
+
+```python
+total = price + 10
+```
+
+the AST conceptually represents an assignment whose right-hand side is an addition:
+
+```
+Assign
+├── target: Name total
+└── value:  BinOp +
+            ├── Name price
+            └── Constant 10
+```
+
+The tree captures the expression's structure and operator precedence. For example, `price + 10 * 2` is normally parsed as `price + (10 * 2)`, not `(price + 10) * 2`.
+
+Parsing also detects syntax errors, such as an unmatched parenthesis or an operator placed where the grammar does not allow it.
+
+<CompilerPipeline />
+
+The AST is abstract because it omits many details of the original spelling, such as unnecessary parentheses and often whitespace. It preserves the structure needed for later analysis and execution.
+
+## Semantic analysis checks whether the program makes sense
+
+A program can be grammatically valid but still be invalid according to the language's rules.
+
+For example:
+
+```python
+result = unknown_variable + 10
+```
+
+This is syntactically valid Python, but evaluating it raises a `NameError` if `unknown_variable` has not been defined in the relevant scope.
+
+Compilers for statically typed languages may detect many such issues before execution. Semantic analysis can include:
+
+- **Name resolution**: Determining which declaration an identifier refers to.
+- **Type checking**: Verifying that operations use compatible types.
+- **Scope checking**: Ensuring names are used in permitted regions.
+- **Control-flow checks**: Detecting certain invalid operations, such as returning a value from a function that must not return one.
+
+For example, a statically typed compiler may reject an attempt to add an integer to a file handle before generating executable code. A dynamically typed language may permit the source and report the problem when that operation actually executes.
+
+The exact boundary varies by language. Some checks happen during compilation, others during loading, and others at runtime.
+
+## Intermediate representations connect source code to execution
+
+After parsing and semantic analysis, many compilers translate the program into one or more **intermediate representations (IRs)**. An IR expresses the program in a form that is easier to analyze, optimize, or translate into another target.
+
+A compiler might transform:
+
+```python
+result = price + 10
+```
+
+into a simplified intermediate operation resembling:
+
+```
+t1 = load price
+t2 = add t1, 10
+store result, t2
+```
+
+This is illustrative pseudocode, not the exact IR generated by a particular compiler.
+
+Intermediate representations create separation between the source language and the target machine. The front end can understand a programming language, while the back end can generate code for a processor architecture. Optimizers can work on the IR without needing to preserve every detail of the original source syntax.
+
+For example, a compiler may simplify `3 * 4` to `12` before execution. This is called **constant folding**. Other optimizations can eliminate unnecessary computations, inline functions, or improve register use.
+
+CPython lets you watch two of these stages directly: `ast` shows the tree the parser built, and `dis` shows the bytecode the compiler produced from it.
+
+```python
+import ast, dis
+
+src = "total = price + 10 * 2"
+print(ast.dump(ast.parse(src).body[0]))
+dis.dis(compile(src, "<demo>", "exec"))
+```
+
+```text
+Assign(targets=[Name(id='total', ctx=Store())], value=BinOp(left=Name(id='price', ctx=Load()), op=Add(), right=BinOp(left=Constant(value=10), op=Mult(), right=Constant(value=2))))
+  0           RESUME                   0
+
+  1           LOAD_NAME                0 (price)
+              LOAD_SMALL_INT          20
+              BINARY_OP                0 (+)
+              STORE_NAME               1 (total)
+              LOAD_CONST               1 (None)
+              RETURN_VALUE
+```
+
+The tree still contains `10 * 2`, but the bytecode loads the constant `20`: the compiler folded the multiplication before the program ever ran (output from Python 3.14; opcode names change between versions). The stack-machine shape is the same one the interactive figure above generates.
+
+Not every language or implementation uses a single explicit IR, and some pipelines have several. The architectural benefit is that parsing, optimization, and machine-code generation do not need to be implemented as one indivisible step.
+
+## Compilers and interpreters take different paths to execution
+
+A traditional **ahead-of-time (AOT) compiler** translates a program into machine code or another executable form before it runs. An interpreter, in the broad sense, executes a program through software that implements its semantics, rather than requiring the entire program to be translated into native machine code first.
+
+| Ahead-of-time compilation | Interpretation |
+| --- | --- |
+| Source code | Source code or intermediate code |
+| ↓ Lexing, parsing, semantic analysis | ↓ Parsing and runtime preparation |
+| ↓ Optimization and code generation | ↓ Interpreter executes program operations |
+| Executable machine code, run later | Behavior produced while the interpreter runs |
+
+The distinction is not absolute. Many implementations combine compilation and interpretation:
+
+- C and C++: Commonly compiled ahead of time into native machine code.
+- Python: Common implementations compile source into bytecode, then execute that bytecode using a virtual machine.
+- Java: Commonly compiles source into JVM bytecode, which the Java runtime interprets and may compile into native machine code using a **just-in-time (JIT)** compiler.
+- JavaScript: Modern engines commonly use bytecode, interpretation, and JIT compilation, with implementation-specific optimization strategies.
+
+<Callout type="key">
+Consequently, “compiled versus interpreted” is often an oversimplification. A language's specification defines its behavior; a particular implementation chooses how to realize that behavior.
+</Callout>
+
+## Runtime execution completes the pipeline
+
+Generated machine code is not the entire story. Programs also need a runtime environment to manage operations such as memory allocation, exceptions, library calls, and interaction with the operating system.
+
+For a native executable, the operating system loads the program, prepares its execution environment, and transfers control to its entry point. The program then executes machine instructions on the processor.
+
+For a virtual machine, the runtime may interpret bytecode, compile frequently executed sections into native code, manage memory, and provide services such as garbage collection.
+
+<Callout type="pitfall" title="Errors surface at different stages">
+These stages explain why a source-code error can appear at different times. A syntax error may be caught by the parser, a type error may be rejected by a static checker, an undefined name may fail during execution, and a logic error may produce a valid but incorrect result without any stage reporting a problem.
+</Callout>
+
+The pipeline therefore does more than translate syntax. It progressively transforms a human-readable description into a structured representation, checks what can be checked, optimizes operations where possible, and executes the resulting program according to the language's rules.

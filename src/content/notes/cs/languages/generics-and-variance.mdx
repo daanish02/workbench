@@ -1,0 +1,228 @@
+---
+title: "Generics & Variance"
+description: "Type theory basics: generics, covariance, and contravariance."
+order: 7
+tier: advanced
+takeaways:
+  - "**Generics** keep type information: `first&lt;T>(items: T[]): T` returns a `string` for a `string[]`, with no casts."
+  - "Cat &lt;: Animal does **not** automatically give List&lt;Cat> &lt;: List&lt;Animal>. Whether it does depends on how the container uses T."
+  - "**Covariant** (same direction) is safe for producers: read-only collections, return types."
+  - "**Contravariant** (reversed) is safe for consumers: function parameters, callbacks, comparators."
+  - "**Invariant** (neither) is required for anything that both reads and writes T, such as a mutable list."
+resources:
+  - title: "Covariance and contravariance (computer science)"
+    url: "https://en.wikipedia.org/wiki/Covariance_and_contravariance_(computer_science)"
+    note: "Language-by-language survey, including the array covariance problem."
+  - title: "mypy: Generics and variance"
+    url: "https://mypy.readthedocs.io/en/stable/generics.html"
+    note: "How covariant=True and contravariant=True type variables are checked in Python."
+  - title: "TypeScript Handbook: Generics"
+    url: "https://www.typescriptlang.org/docs/handbook/2/generics.html"
+---
+
+**Generics** let a type or function work with multiple data types while preserving information about those types. Variance determines when a generic type built around one type can safely be used where a generic type built around another is expected. The central difficulty is that a relationship between two types does not automatically carry over to containers of those types: even if a `Cat` is an `Animal`, a container that accepts cats is not necessarily a container that accepts animals. Understanding variance means tracking how a type is used—whether it produces values, consumes values, or does both.
+
+## Generics preserve type relationships
+
+Without generics, a function that works with many types might use a broad type such as `Object` or `Any`. This sacrifices information: the caller may need casts, and the compiler may be unable to catch invalid operations.
+
+A generic function instead introduces a **type variable**:
+
+```typescript
+function first<T>(items: T[]): T {
+    return items[0];
+}
+```
+
+Here, `T` represents a type chosen by the caller or inferred by the compiler. If the input is a `string[]`, the result is a `string`; if the input is a `number[]`, the result is a `number`.
+
+The important relationship is:
+
+$$
+\texttt{T[]} \quad \longrightarrow \quad \texttt{T}
+$$
+
+The function does not need to know which concrete type `T` represents. It only needs to preserve the relationship between its input and output.
+
+Generics also parameterize data structures:
+
+```typescript
+type Box<T> = {
+    value: T;
+};
+
+const numberBox: Box<number> = { value: 42 };
+const textBox: Box<string> = { value: "hello" };
+```
+
+`Box<number>` and `Box<string>` share the same generic definition, but they are distinct types. The compiler can reject assigning a string to `numberBox.value` because the type information remains available.
+
+Some generic types impose constraints, such as `T extends Comparable`, meaning that `T` must satisfy a particular requirement. This lets generic code use certain operations without knowing the exact type.
+
+## Subtyping does not automatically extend to generics
+
+Suppose `Cat` is a **subtype** of `Animal`, written $\text{Cat} <: \text{Animal}$: anywhere an `Animal` is expected, a `Cat` can be supplied. The natural question is whether that relationship lifts to containers:
+
+$$
+\text{Cat} <: \text{Animal} \;\overset{?}{\Longrightarrow}\; \text{List}\langle\text{Cat}\rangle <: \text{List}\langle\text{Animal}\rangle
+$$
+
+In words: if every cat is an animal, is every list of cats also a list of animals?
+
+It is tempting to say yes, but consider a function that accepts a `List<Animal>` and inserts a dog into it. That is perfectly legal for a list of animals. If a `List<Cat>` could be passed to that function, the cat list would now contain a dog, despite promising to contain only cats.
+
+<Callout type="key">
+The problem is not the inheritance relationship. It is the ability to **write** new values into the container.
+</Callout>
+
+Python's type checker rejects exactly this call:
+
+```python
+from collections.abc import Sequence
+
+class Animal: ...
+class Cat(Animal): ...
+class Dog(Animal): ...
+
+def add_dog(animals: list[Animal]) -> None:
+    animals.append(Dog())          # fine for a list of animals...
+
+def count(animals: Sequence[Animal]) -> int:
+    return len(animals)            # Sequence has no append: read-only view
+
+cats: list[Cat] = [Cat()]
+count(cats)    # accepted: a read-only sequence of cats is a sequence of animals
+add_dog(cats)  # ...but not for a list that was promised to hold only cats
+
+# mypy says:
+# error: Argument 1 to "add_dog" has incompatible type "list[Cat]"; expected "list[Animal]"
+# note: "List" is invariant
+# note: Consider using "Sequence" instead, which is covariant
+```
+
+At runtime Python performs no such check, so running the script anyway leaves `cats` holding `['Cat', 'Dog']`: the promise the type made is broken silently.
+
+This distinction leads to **variance**: a formal rule for how subtype relationships behave when types are placed inside generic constructions. The answer depends on what the generic type allows its users to do.
+
+<VarianceArrows />
+
+## Covariance allows types to flow from specific to general
+
+A generic type `F` is **covariant** in a type parameter when the subtype relationship is preserved:
+
+$$
+\text{Cat} <: \text{Animal} \;\Longrightarrow\; F\langle\text{Cat}\rangle <: F\langle\text{Animal}\rangle
+$$
+
+In words: the arrow points the same way after wrapping both types in `F`.
+
+Covariance is safe for **producers**: types that only hand out values of `T` and never accept them. A read-only list of cats can be used as a read-only list of animals, because everything read from it is a cat, and every cat is an animal. Nothing can be written into it, so no dog can sneak in.
+
+```typescript
+class Animal { eat(): void {} }
+class Cat extends Animal { purr(): void {} }
+class Dog extends Animal { bark(): void {} }
+
+const cats: ReadonlyArray<Cat> = [new Cat()];
+const animals: ReadonlyArray<Animal> = cats;  // OK: ReadonlyArray only produces T
+animals[0].eat();                              // whatever comes out is an Animal
+```
+
+In Python, a type variable declared with `covariant=True` makes the same promise, and the checker verifies that `T` only appears in output positions:
+
+```python
+from typing import Generic, TypeVar
+
+T_co = TypeVar("T_co", covariant=True)
+
+class Box(Generic[T_co]):
+    def __init__(self, item: T_co) -> None:
+        self._item = item
+
+    def get(self) -> T_co:   # T_co only flows out
+        return self._item
+
+def describe(box: Box[Animal]) -> str:
+    return type(box.get()).__name__
+
+print(describe(Box(Cat())))  # Cat   (a Box[Cat] is accepted as a Box[Animal])
+```
+
+Return types, immutable collections, and iterators are typical covariant positions.
+
+## Contravariance reverses the direction
+
+A generic type is **contravariant** in a type parameter when the subtype relationship is reversed:
+
+$$
+\text{Cat} <: \text{Animal} \;\Longrightarrow\; F\langle\text{Animal}\rangle <: F\langle\text{Cat}\rangle
+$$
+
+In words: wrapping flips the arrow, so the more general version becomes the more widely usable one.
+
+Contravariance is safe for **consumers**: types that only accept values of `T`. Function parameters are the standard example:
+
+```typescript
+type AnimalHandler = (animal: Animal) => void;
+type CatHandler = (cat: Cat) => void;
+
+const feedAnimal: AnimalHandler = (a) => a.eat();
+const onCat: CatHandler = feedAnimal;   // OK: it can handle any animal, so certainly a cat
+
+const purr: CatHandler = (c) => c.purr();
+const onAnimal: AnimalHandler = purr;   // error (strictFunctionTypes): might be called with a Dog
+```
+
+An `AnimalHandler` can be used where a `CatHandler` is needed: every cat passed to it is an animal. But a `CatHandler` cannot safely replace an `AnimalHandler`, which may be called with a dog.
+
+Contravariance is therefore useful for callback parameters, event handlers, comparators, and other APIs that consume values.
+
+## Invariance prevents either substitution
+
+A generic type is **invariant** in a type parameter when neither the covariant nor the contravariant substitution is permitted.
+
+Mutable containers are the classic example. If a mutable `List<Cat>` were treated as a `List<Animal>`, code could insert a dog. If a `List<Animal>` were treated as a `List<Cat>`, code could retrieve a dog where a cat was promised.
+
+Because the container both produces and consumes values of `T`, neither direction is generally safe.
+
+<Callout type="pitfall" title="Covariant arrays are a known hole">
+Not every language enforces this. Java arrays and TypeScript's mutable `T[]` are covariant anyway, for convenience: TypeScript accepts `const animals: Animal[] = cats; animals.push(new Dog());` without complaint, and Java compiles the equivalent and then throws `ArrayStoreException` at run time. Prefer `ReadonlyArray<T>`, `Sequence[T]`, or `List<? extends Animal>` when you only need to read.
+</Callout>
+
+| Variance | Subtype relationship | Typical use |
+|---|---|---|
+| Covariant | Preserved | Producing or returning `T` |
+| Contravariant | Reversed | Consuming or accepting `T` |
+| Invariant | Neither direction | Reading and writing `T` |
+
+The table describes the conceptual rules, not the exact enforcement of every programming language. Some languages infer variance; others require annotations, restrict certain uses, or implement special compatibility rules.
+
+## Variance follows how a type parameter is used
+
+The most useful way to reason about variance is to inspect where a type parameter appears.
+
+<Callout type="practice" title="Rule of thumb">
+A type that only returns `T` tends toward covariance. A type that only accepts `T` tends toward contravariance. A type that does both tends toward invariance.
+</Callout>
+
+For example, consider a type with a getter and setter:
+
+```typescript
+interface Cell<T> {
+    get(): T;
+    set(value: T): void;
+}
+```
+
+The `get` method produces `T`, while `set` consumes `T`. These opposing uses prevent unrestricted covariance or contravariance.
+
+In languages with explicit variance annotations, the declaration might look conceptually like this:
+
+```kotlin
+Producer<out T>  // T is produced
+Consumer<in T>   // T is consumed
+```
+
+The exact syntax varies. Kotlin and C# support explicit variance annotations in relevant generic declarations, while Java commonly expresses related restrictions through wildcards such as `? extends Animal` and `? super Cat`.
+
+Variance is ultimately a type-safety rule. It determines which substitutions preserve the guarantees made by an API, allowing generic code to be reusable without making those guarantees meaningless.
