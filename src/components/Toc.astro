@@ -1,10 +1,14 @@
 ---
 import type { MarkdownHeading } from 'astro';
+import katex from 'katex';
 
 interface Props {
   headings: MarkdownHeading[];
 }
 const headings = Astro.props.headings.filter((h) => h.depth === 2 || h.depth === 3);
+// heading text keeps its $...$ math source, so render it here like the rest of the page
+const withMath = (s: string) =>
+  s.replace(/\$(.+?)\$/g, (_, tex) => katex.renderToString(tex, { throwOnError: false, strict: false }));
 ---
 
 {
@@ -19,9 +23,7 @@ const headings = Astro.props.headings.filter((h) => h.depth === 2 || h.depth ===
       <ul>
         {headings.map((h) => (
           <li class={`d${h.depth}`}>
-            <a href={`#${h.slug}`} data-slug={h.slug}>
-              {h.text}
-            </a>
+            <a href={`#${h.slug}`} data-slug={h.slug} set:html={withMath(h.text)}></a>
           </li>
         ))}
       </ul>
