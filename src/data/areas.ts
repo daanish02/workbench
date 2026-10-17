@@ -22,14 +22,15 @@ export const areas: Area[] = [
     title: 'Mathematics',
     blurb: 'The math behind the rest: from logic and proofs to linear algebra, calculus and probability.',
     sections: [
+      // learning order: each section leans on the ones before it
       { id: 'foundations', title: 'Foundations' },
-      { id: 'geometry', title: 'Geometry' },
+      { id: 'discrete-math', title: 'Discrete Math' },
       { id: 'linear-algebra', title: 'Linear Algebra' },
       { id: 'calculus', title: 'Calculus' },
+      { id: 'geometry', title: 'Geometry' },
       { id: 'probability', title: 'Probability' },
       { id: 'statistics', title: 'Statistics' },
       { id: 'optimization', title: 'Optimization' },
-      { id: 'discrete-math', title: 'Discrete Math' },
       { id: 'information-theory', title: 'Information Theory' },
       { id: 'signals-fourier', title: 'Signals & Fourier' },
       { id: 'appendix', title: 'Appendix' },
