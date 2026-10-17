@@ -1,0 +1,122 @@
+---
+title: "Deployment Models"
+description: "Public, private, and hybrid cloud, and what each one trades off."
+order: 2
+tier: core
+takeaways:
+  - "**Public cloud** is shared provider infrastructure rented on demand; **private cloud** is dedicated to one organization; **hybrid** connects the two so workloads and data can move between them."
+  - "Deployment is about **where it runs and who owns it**, separate from the service model (IaaS, PaaS, SaaS) you use on top."
+  - "Public cloud buys **elasticity and managed services**, private buys **dedicated control**, hybrid buys **a migration path** at the price of integration work."
+  - "Neither is automatically more secure or cheaper: the answer depends on the workload, the compliance rules that really apply, and how steady the demand is."
+  - "Decide **per workload**, not per company. One organization often uses all three."
+resources:
+  - title: "NIST SP 800-145: The NIST Definition of Cloud Computing"
+    url: "https://csrc.nist.gov/pubs/sp/800/145/final"
+    note: "Defines private, community, public and hybrid deployment models."
+  - title: "Google Cloud: What is hybrid cloud?"
+    url: "https://cloud.google.com/learn/what-is-hybrid-cloud"
+  - title: "Cloud computing: deployment models (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cloud_computing#Deployment_models"
+  - title: "AWS: Hybrid cloud overview"
+    url: "https://aws.amazon.com/hybrid/"
+---
+
+Cloud deployment models describe where computing infrastructure runs, who controls it, and how an organization uses it. Public cloud uses infrastructure offered by a provider to multiple customers, private cloud dedicates cloud infrastructure to one organization, and hybrid cloud combines private infrastructure with public cloud services. The choice is not simply about security: it involves cost, control, operational effort, elasticity, compliance, and how easily workloads can move between environments.
+
+## Public Cloud Shares Provider Infrastructure
+
+In the public cloud, a provider such as AWS, Microsoft Azure, or Google Cloud operates large pools of computing, storage, and networking resources that customers access on demand. Customers use logically isolated resources, even though the underlying physical infrastructure is shared.
+
+The major advantage is elasticity. An organization can provision resources quickly, scale capacity as demand changes, and avoid buying and maintaining its own physical servers. The provider also handles data-center facilities, hardware replacement, and much of the underlying infrastructure operation.
+
+The trade-off is reduced control over the physical environment and dependence on the provider's service offerings, pricing, regional availability, and operational decisions. Costs can also become difficult to predict if resources are poorly managed or demand grows unexpectedly.
+
+Public cloud is well suited to startups, web applications, variable workloads, development environments, and organizations that want access to managed services without operating their own data centers.
+
+<Callout type="pitfall">
+**Public cloud** does not mean public access to your data. The word describes who owns and shares the infrastructure. Properly configured public-cloud resources are private and access-controlled.
+</Callout>
+
+## Private Cloud Is Dedicated to One Organization
+
+A private cloud provides cloud-style infrastructure for the exclusive use of one organization. It may run in the organization's own data center or be hosted by a third party. The defining characteristic is dedicated use, not necessarily physical ownership.
+
+Private clouds can offer greater control over infrastructure configuration, data placement, network boundaries, and operational policies. They may be useful when legacy systems, specialized hardware, regulatory requirements, or internal governance make a dedicated environment preferable.
+
+However, that control comes with responsibility. Someone must maintain the infrastructure, capacity, security, virtualization layer, and resilience mechanisms. A private cloud can require substantial capital investment or hosting fees, and scaling may be slower when new physical capacity must be acquired.
+
+A private cloud is not automatically more secure than a public cloud. Security depends on architecture, configuration, operational discipline, access controls, and threat exposure. A poorly maintained private environment may be less secure than a well-managed public-cloud service.
+
+Private cloud makes sense when the benefits of dedicated control outweigh the additional cost and operational burden.
+
+The economics usually turn on **utilization**. Renting charges only for hours used, owning charges whether or not the machine is busy. A quick model shows how high utilization has to be before owning wins:
+
+```python
+# own vs rent: at what utilisation does owning a server beat renting the same capacity?
+hardware, years = 12_000, 4
+own_month = hardware / (years * 12) + 150          # amortised hardware + power, space and a share of staff time
+cloud_hour = 0.60                                   # on-demand price of a comparable instance
+cloud_full_month = cloud_hour * 730                 # if it ran every hour of the month
+print(f"own: ${own_month:,.0f}/month fixed   rent: ${cloud_full_month:,.0f}/month if busy 100% of hours")
+for busy in (0.10, 0.25, 0.50, 0.75, 1.00):
+    rent = cloud_full_month * busy                  # you pay only for the hours you use
+    print(f"busy {busy:>4.0%}: rent ${rent:>5,.0f}  own ${own_month:,.0f}  -> {'rent' if rent < own_month else 'own'} is cheaper")
+print(f"break-even utilisation: {own_month / cloud_full_month:.0%}")
+reserved = cloud_full_month * 0.6                   # a committed-use discount of 40%
+print(f"with a 40% commitment discount a fully busy rented instance costs ${reserved:,.0f}, below the ${own_month:,.0f} owned: renting wins at every load")
+# own: $400/month fixed   rent: $438/month if busy 100% of hours
+# busy  10%: rent $   44  own $400  -> rent is cheaper
+# busy  25%: rent $  110  own $400  -> rent is cheaper
+# busy  50%: rent $  219  own $400  -> rent is cheaper
+# busy  75%: rent $  328  own $400  -> rent is cheaper
+# busy 100%: rent $  438  own $400  -> own is cheaper
+# break-even utilisation: 91%
+# with a 40% commitment discount a fully busy rented instance costs $263, below the $400 owned: renting wins at every load
+```
+
+In words: owning only beats on-demand renting when the machine is busy almost all of the time, and the gap widens once you count committed-use discounts. That is why steady, very large, predictable workloads are the strongest case for private infrastructure, and bursty ones are the strongest case for public.
+
+## Hybrid Cloud Combines Environments
+
+A hybrid cloud combines private infrastructure with public-cloud services, connected in a way that allows workloads or data to interact across the environments.
+
+For example, a financial organization might keep a legacy transaction system in its private environment while using public cloud services for analytics, customer-facing applications, or temporary increases in processing capacity.
+
+Hybrid cloud can preserve investments in existing systems while providing access to public-cloud elasticity and managed services. It can also support gradual migration: an organization can move suitable workloads to the public cloud without relocating everything at once.
+
+The main challenge is integration. Identity management, network connectivity, data synchronization, security policies, monitoring, and disaster recovery must work across environments. Moving data between them may add latency, transfer costs, and operational complexity.
+
+Hybrid cloud is therefore not simply owning a server and also using a public-cloud service. The environments need deliberate integration if the organization wants to operate them as a coordinated system.
+
+## The Models Trade Control Against Flexibility
+
+| Dimension          | Public cloud                   | Private cloud                      | Hybrid cloud                                     |
+| ------------------ | ------------------------------ | ---------------------------------- | ------------------------------------------------ |
+| Infrastructure use | Shared provider infrastructure | Dedicated to one organization      | Mix of public and private                        |
+| Control            | Less physical control          | Greater environmental control      | Varies by workload                               |
+| Upfront investment | Usually low                    | Often higher                       | Depends on existing infrastructure               |
+| Elasticity         | Generally high                 | Limited by available capacity      | Can use public capacity where appropriate        |
+| Operational burden | Lower at infrastructure level  | Higher                             | Often highest due to integration                 |
+| Common motivation  | Agility and elasticity         | Dedicated control and requirements | Combine existing systems with cloud capabilities |
+
+These models describe deployment, not service abstraction. A public cloud can provide IaaS, PaaS, or SaaS. A private cloud can offer virtual machines and managed internal platforms. A hybrid architecture can combine services at different abstraction levels. (NIST also names a fourth model, **community cloud**, shared by several organizations with common concerns such as one regulator.)
+
+## Choose by Workload, Not by Label
+
+An organization should evaluate each workload against its actual constraints.
+
+- Use public cloud when rapid provisioning, elastic capacity, and managed services are more valuable than control over physical infrastructure.
+- Use private cloud when dedicated infrastructure or specialized control is necessary and the organization can support the cost and operations.
+- Use hybrid cloud when some workloads need to remain in a private environment while others benefit from public-cloud capabilities, and the organization can manage the integration.
+
+Data sensitivity alone does not automatically dictate private cloud. Compliance obligations may permit public-cloud hosting if the service, region, access controls, and contractual arrangements satisfy the requirements. Conversely, a private environment does not guarantee compliance by itself.
+
+Try it: tick the facts that are true for a workload and watch which model the constraints favour.
+
+<DeploymentChooser />
+
+The most important questions are where the workload must run, which controls it requires, how much demand varies, and what it costs to operate reliably. The deployment model should follow those constraints rather than an assumption that one environment is universally safer, cheaper, or more scalable.
+
+<Callout type="key">
+Deployment model and service model are independent choices. "Public cloud, PaaS" and "private cloud, IaaS" are both valid combinations; see [Cloud Service Models](../service-models/).
+</Callout>

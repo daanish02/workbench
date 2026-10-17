@@ -1,0 +1,150 @@
+---
+title: "Cloud Service Models"
+description: "IaaS, PaaS, SaaS: what you manage vs. what the provider manages."
+order: 1
+tier: core
+takeaways:
+  - "A **service model** says which layers of the stack the provider runs and which you run. **IaaS** rents machines, **PaaS** rents a platform for your code, **SaaS** rents a finished application."
+  - "Moving up the stack trades **control for convenience**: less to patch and operate, fewer knobs to turn."
+  - "The three labels are a **spectrum**, not boxes. Managed databases and serverless sit in between, so read the service contract rather than the label."
+  - "**Responsibility never fully transfers.** Identity, permissions, data handling and configuration stay yours at every level."
+  - "Choose the **highest level of abstraction** that still gives the control, security and cost profile you need."
+resources:
+  - title: "NIST SP 800-145: The NIST Definition of Cloud Computing"
+    url: "https://csrc.nist.gov/pubs/sp/800/145/final"
+    note: "The standard definitions of IaaS, PaaS and SaaS and the five essential cloud characteristics."
+  - title: "AWS shared responsibility model"
+    url: "https://aws.amazon.com/compliance/shared-responsibility-model/"
+    note: "Who secures what, in a provider's own words."
+  - title: "Microsoft Learn: Shared responsibility in the cloud"
+    url: "https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility"
+    note: "The same split drawn for on-premises, IaaS, PaaS and SaaS."
+  - title: "Cloud computing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cloud_computing"
+---
+
+Cloud service models describe how responsibility for running software is divided between a cloud provider and the customer. IaaS (Infrastructure as a Service) gives you virtualized infrastructure to manage, PaaS (Platform as a Service) gives you a managed environment for building and running applications, and SaaS (Software as a Service) gives you a complete application to use. The fundamental trade-off is control versus operational responsibility: the more of the technology stack the provider manages, the less infrastructure work you do, but the fewer implementation details you directly control.
+
+## Each Model Moves the Management Boundary
+
+Think of running a web application as a stack of responsibilities: networking, physical hardware, operating systems, runtime environments, application code, and user-facing software.
+
+In a traditional self-managed environment, your organization handles most of this stack. Cloud service models progressively transfer parts of it to the provider.
+
+### Who manages each layer?
+
+Typical responsibility allocation; exact boundaries vary by service.
+
+| Layer                | IaaS     | PaaS     | SaaS                  |
+| -------------------- | -------- | -------- | --------------------- |
+| Application          | You      | You      | Provider              |
+| Application data     | You      | You      | Shared responsibility |
+| Runtime / middleware | You      | Provider | Provider              |
+| Operating system     | You      | Provider | Provider              |
+| Servers / storage    | Provider | Provider | Provider              |
+| Physical networking  | Provider | Provider | Provider              |
+
+This is a simplified model. SaaS customers still manage users, access permissions, configuration, and how they use their data. Cloud providers also operate different services with different boundaries, so the service contract matters more than the label alone.
+
+Slide through the models to see the boundary move:
+
+<ResponsibilityStack />
+
+```python
+# responsibility matrix: which layers does each model leave to you?
+LAYERS = ["identity", "application", "data", "scaling", "runtime", "os", "virtualization", "hardware", "datacentre"]
+YOU, SHARED, PROVIDER = "you", "shared", "provider"
+MODELS = {
+    "on-premises": [YOU] * 9,
+    "IaaS":        [YOU, YOU, YOU, YOU, YOU, YOU, PROVIDER, PROVIDER, PROVIDER],
+    "PaaS":        [YOU, YOU, YOU, SHARED, PROVIDER, PROVIDER, PROVIDER, PROVIDER, PROVIDER],
+    "serverless":  [YOU, YOU, YOU, PROVIDER, PROVIDER, PROVIDER, PROVIDER, PROVIDER, PROVIDER],
+    "SaaS":        [YOU, PROVIDER, SHARED, PROVIDER, PROVIDER, PROVIDER, PROVIDER, PROVIDER, PROVIDER],
+}
+for name, who in MODELS.items():
+    mine = [l for l, w in zip(LAYERS, who) if w == YOU]
+    print(f"{name:<12} you run {len(mine)} of {len(LAYERS)} layers: {', '.join(mine)}")
+# on-premises  you run 9 of 9 layers: identity, application, data, scaling, runtime, os, virtualization, hardware, datacentre
+# IaaS         you run 6 of 9 layers: identity, application, data, scaling, runtime, os
+# PaaS         you run 3 of 9 layers: identity, application, data
+# serverless   you run 3 of 9 layers: identity, application, data
+# SaaS         you run 1 of 9 layers: identity
+```
+
+Count the layers per model: running everything is nine, IaaS leaves six, PaaS and serverless three, and even SaaS leaves one (identity) with you.
+
+## IaaS: Rent the Infrastructure, Manage the System
+
+Infrastructure as a Service provides virtual machines, storage, networking, and related computing resources. The provider operates the physical data centers, servers, and underlying virtualization infrastructure. You manage the operating system and the software running on top of it.
+
+For example, a team might rent virtual machines, install Linux, configure a web server, deploy its application, and maintain the database software.
+
+IaaS offers substantial flexibility. You can choose operating systems, install specialized software, configure network rules, and tune the environment for unusual requirements.
+
+That flexibility creates work. Your team may be responsible for OS updates, security patches, runtime configuration, backups, scaling policies, monitoring, and recovery procedures.
+
+IaaS makes sense when you need infrastructure-level control, must support legacy applications, or want to customize the environment beyond what a managed platform allows.
+
+<Callout type="example">
+Renting three virtual machines is IaaS: you install Linux, patch it, put nginx and your app on it, and wire up backups. Pushing the same app to a managed app platform is PaaS: you hand over the code and a start command. Using a hosted email or CRM product is SaaS: you only configure it.
+</Callout>
+
+## PaaS: Manage the Application, Not the Platform
+
+Platform as a Service provides a managed environment in which you deploy application code without managing the underlying servers and operating systems directly.
+
+For example, a developer might push a web application to a managed application platform. The provider manages the operating system, runtime infrastructure, and much of the deployment machinery. The developer focuses on application logic, configuration, and data.
+
+PaaS reduces operational work and can provide built-in deployment, logging, autoscaling, and service integrations. It also constrains the environment: supported runtimes, configuration options, networking features, and deployment models may be limited.
+
+The trade-off is abstraction. If you need to tune the operating system, use unusual system libraries, or control low-level networking behavior, the platform may not expose what you need.
+
+PaaS is a strong fit when a team wants to ship application features without dedicating substantial effort to maintaining infrastructure.
+
+## SaaS: Use the Finished Application
+
+Software as a Service provides a complete application over the internet, typically through a browser or API. The provider manages the application software, runtime, operating system, and infrastructure.
+
+Examples include hosted email, customer relationship management, collaboration tools, and online accounting software.
+
+Instead of deploying and maintaining an application, the customer configures settings, manages users and permissions, supplies data, and integrates the product into existing workflows.
+
+SaaS minimizes infrastructure responsibility, but it provides the least direct control over implementation. Customers depend on the provider's feature set, availability, release schedule, data-export capabilities, and contractual terms.
+
+SaaS makes sense when an existing product meets the business need and building or operating a custom solution would add little value.
+
+## The Models Form a Spectrum
+
+| Question                           | IaaS                            | PaaS                     | SaaS                                 |
+| ---------------------------------- | ------------------------------- | ------------------------ | ------------------------------------ |
+| What do you primarily obtain?      | Computing infrastructure        | An application platform  | A finished application               |
+| What do you primarily manage?      | OS, software, and application   | Application and its data | Users, configuration, and data usage |
+| How much control do you have?      | High                            | Moderate                 | Lower                                |
+| How much operational work remains? | High                            | Moderate to low          | Low                                  |
+| Typical user                       | Infrastructure or platform team | Application developer    | End user or business team            |
+
+Real products can sit between these categories. A managed database, for example, removes much of the work of installing and maintaining database software, but customers still design schemas, manage access, choose backup settings, and handle query performance. Serverless computing abstracts servers even further while leaving application logic, permissions, and data design under customer control.
+
+This is why service labels should not be treated as complete descriptions of responsibility. The exact service determines what is managed and what remains yours.
+
+## Shared Responsibility Does Not Disappear
+
+Moving to a managed service transfers operational tasks, not all accountability.
+
+Cloud providers generally secure and operate the infrastructure they supply. Customers remain responsible for aspects such as identity and access management, appropriate data handling, application permissions, and secure configuration. The division depends on the service and the contract.
+
+For example, a provider may secure the physical servers, but it cannot automatically prevent a customer from making a storage bucket public or granting excessive permissions. Similarly, a SaaS vendor may operate the application securely, but the customer still needs to control who can access sensitive information.
+
+The amount of work decreases as more of the stack is managed, but security, compliance, resilience, and cost management still require deliberate decisions.
+
+<Callout type="pitfall">
+"The provider is secure" does not mean "my data is secure". Public storage buckets, over-broad permissions and leaked access keys are customer-side configuration errors, and they cause many cloud breaches. See [Access Control](../../security/authorization/) for how to scope permissions.
+</Callout>
+
+## Choose the Boundary That Fits the Work
+
+The best model depends on what your organization needs to build and what it wants to operate.
+
+Choose IaaS when infrastructure control is valuable enough to justify the maintenance burden. Choose PaaS when the goal is to develop and deploy applications without managing most of the underlying platform. Choose SaaS when the required capability already exists as a product and customization is less important than convenience.
+
+The underlying principle is abstraction transfers responsibility by hiding implementation details. IaaS abstracts physical hardware, PaaS abstracts much of the machine and runtime management, and SaaS abstracts the application itself. The right choice is the highest level of abstraction that still meets your requirements for control, flexibility, security, and cost.

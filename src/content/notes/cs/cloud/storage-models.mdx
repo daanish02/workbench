@@ -1,0 +1,167 @@
+---
+title: "Storage Models"
+description: "Object, block, and file storage, and when to use each one."
+order: 5
+tier: core
+takeaways:
+  - "**Object storage** keeps whole immutable objects under keys in a flat namespace, reached over an HTTP API. It is the cheap, durable, effectively unlimited default for files, media, backups and data lakes."
+  - "**Block storage** is a raw disk presented to one machine. A filesystem or database engine sits on top, so it suits boot volumes and databases that need fast random reads and writes."
+  - "**File storage** is a shared filesystem with real directories, paths and permissions over NFS or SMB. It suits software that expects a mounted directory shared by many servers."
+  - "The real difference is the **access interface**: replace a whole object, overwrite a block, or write a range in a file. That decides how much data moves for a small change."
+  - "Match storage to the **access pattern**; most applications use all three, plus **storage tiers** to trade cost against retrieval speed."
+resources:
+  - title: "AWS: What is object storage?"
+    url: "https://aws.amazon.com/what-is/object-storage/"
+  - title: "Red Hat: File, block and object storage compared"
+    url: "https://www.redhat.com/en/topics/data-storage/file-block-object-storage"
+  - title: "Amazon S3 now delivers strong read-after-write consistency"
+    url: "https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/"
+    note: "Why object stores stopped being eventually consistent."
+  - title: "Object storage (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Object_storage"
+  - title: "Block (data storage) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Block_(data_storage)"
+---
+
+Cloud storage comes in three major models: object storage stores data as individually addressable objects, block storage exposes raw storage volumes that operating systems can use like disks, and file storage organizes data into files and directories accessed through a shared filesystem. The key difference is how applications organize and access data, not simply where the data lives. Object storage is well suited to large amounts of unstructured data, block storage to workloads needing low-latency disk access, and file storage to workloads that need familiar shared directories.
+
+## Object Storage Stores Whole Objects
+
+Object storage stores each item as an object containing the data itself, metadata, and a unique identifier. Objects are accessed through an API, usually using a key within a bucket or container, rather than by reading and writing disk blocks or navigating a traditional filesystem.
+
+For example, an application might store uploaded photographs in a bucket under keys such as `users/42/profile.jpg`. The object can include metadata such as its content type, creation time, or application-defined attributes.
+
+Object storage is designed to handle large amounts of data across distributed infrastructure. It commonly provides high durability, broad scalability, and relatively low cost per unit of storage. Applications can access it over a network, making it useful for data that does not need to behave like a local disk.
+
+Typical uses include:
+
+- Images, videos, audio, and user uploads
+- Backups and disaster-recovery copies
+- Data lakes, logs, and analytical datasets
+- Static website assets and software distribution
+
+The trade-off is that object storage generally does not behave like a mounted disk. Applications usually retrieve or replace objects through APIs, and modifying part of a large object may require rewriting it or using specialized capabilities. It is not normally the right place to put a live database's primary data files unless that database explicitly supports the storage interface.
+
+Object storage is ideal when data is accessed as whole objects and needs to scale independently of a particular server.
+
+Two properties explain its popularity. First, **durability**: large object stores keep several copies across failure domains and are designed for extreme durability (Amazon S3 states 99.999999999%, "eleven nines", per object per year), far beyond what a single disk or server gives. Second, **consistency**: since December 2020 S3 offers [strong read-after-write consistency](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/), so a successful write is visible to the next read, which removes a class of bugs that older eventually consistent stores had.
+
+Providers also sell **storage tiers**: a hot tier for data read often, cooler tiers for data read rarely, and archive tiers (retrieval in minutes to hours) for data kept only for compliance or recovery. Colder tiers cost less to store and more to read, so choose the tier from how often the data is accessed, not from how important it is.
+
+<Callout type="pitfall">
+Object "folders" are only key prefixes (`users/42/profile.jpg` is one flat key). Listing is paged, renaming a "folder" means copying every object under the prefix, and editing part of an object is not possible: you replace it whole.
+</Callout>
+
+## Block Storage Behaves Like a Disk
+
+Block storage presents a volume as a sequence of addressable blocks. An operating system can format the volume with a filesystem, create partitions, and read or write blocks without needing to understand the underlying storage system.
+
+Imagine a virtual machine running a relational database. The VM needs storage that behaves like a disk, supporting the database's filesystem and access patterns. A cloud block volume can provide that persistent storage independently of the VM's temporary local resources.
+
+Block storage is useful for:
+
+- Database data files and transaction logs
+- Virtual machine boot volumes
+- Applications requiring low-latency random reads and writes
+- Systems that need control over the filesystem or disk layout
+
+Its main advantage is control over how data is organized and accessed. Performance can often be selected or tuned through volume type, capacity, IOPS, and throughput settings.
+
+The trade-off is that a block volume is a relatively low-level resource. The customer or operating system generally manages the filesystem, and a volume may have attachment or concurrency constraints. Sharing a block device between multiple machines safely requires an appropriate clustered filesystem or coordination mechanism; simply attaching the same writable volume to several servers does not make concurrent access safe.
+
+Block storage is the natural choice when software expects a disk-like device and needs fine-grained control over reads and writes.
+
+## File Storage Shares a Filesystem
+
+File storage presents a shared filesystem with paths, directories, permissions, and file operations. Clients access files through a filesystem interface, often over network protocols such as NFS or SMB.
+
+For example, several application servers might need access to the same set of uploaded documents or shared working files. A managed network filesystem allows them to read and write files through familiar paths rather than implementing object-storage API calls or managing separate copies.
+
+Typical uses include:
+
+- Shared application files and user home directories
+- Content-management systems
+- Shared development environments
+- Applications requiring filesystem semantics across multiple servers
+- Legacy software that expects a mounted directory
+
+File storage provides a familiar programming model and can support shared access, permissions, and directory operations. Its performance and behavior depend on the service's protocol, metadata handling, concurrency semantics, and workload.
+
+The trade-off is that filesystem metadata and shared access can become performance constraints at scale. Directory operations, locking, and many small-file workloads may behave differently from large sequential reads. File storage is also not automatically equivalent to a local disk: network latency and service-specific consistency guarantees still matter.
+
+## Three Interfaces, Three Trade-offs
+
+| Dimension            | Object storage                        | Block storage                            | File storage                               |
+| -------------------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| Data model           | Objects with IDs and metadata         | Addressable blocks                       | Files and directories                      |
+| Access method        | API, often HTTP-based                 | Disk or volume interface                 | Filesystem protocols                       |
+| Typical use          | Media, backups, data lakes            | Databases, VM disks                      | Shared directories, legacy applications    |
+| Scaling              | Designed for large object collections | Usually provisioned as volumes           | Depends on filesystem service and capacity |
+| Filesystem required? | No                                    | Usually created by the OS or application | Built into the service                     |
+| Main advantage       | Scalability and durability            | Low-level control and disk-like access   | Familiar shared file semantics             |
+
+The distinction is about the storage interface, not a strict ranking of speed or reliability. Some object stores deliver very high throughput, some block volumes have strong latency guarantees, and managed file systems can scale to enormous datasets. The workload and service configuration determine actual performance.
+
+The interface decides what a small operation costs. Pick a job and compare:
+
+<StorageAccessDemo />
+
+```python
+import os, tempfile, time
+
+SIZE, EDIT = 64 * 1024 * 1024, 4096                 # a 64 MB file, change 4 KB in the middle
+new = b"\xff" * EDIT
+
+class ObjectStore:                                   # objects are immutable: to change one byte you PUT the whole object again
+    def __init__(self): self.objs, self.bytes_written = {}, 0
+    def put(self, key, data): self.objs[key] = data; self.bytes_written += len(data)
+    def get(self, key): return self.objs[key]
+
+store = ObjectStore()
+store.put("video.bin", bytes(SIZE))
+store.bytes_written = 0
+blob = bytearray(store.get("video.bin"))
+blob[SIZE // 2 : SIZE // 2 + EDIT] = new
+store.put("video.bin", bytes(blob))                  # read-modify-write of the whole thing
+print(f"object storage : {store.bytes_written:>12,} bytes written to change {EDIT:,}")
+
+with tempfile.NamedTemporaryFile(delete=False) as f:  # block and file storage: seek and overwrite just the changed range
+    f.write(bytes(SIZE))
+    name = f.name
+with open(name, "r+b", buffering=0) as f:
+    f.seek(SIZE // 2)
+    written = f.write(new)
+print(f"block / file   : {written:>12,} bytes written to change {EDIT:,}")
+print(f"ratio: {store.bytes_written // written:,}x more data moved by the whole-object rewrite")
+os.remove(name)
+
+# listing: object stores page keys (1,000 per request), so 10,000 keys is 10 round trips
+keys, page, calls = [f"logs/{i:05d}.txt" for i in range(10_000)], 1000, 0
+for start in range(0, len(keys), page):
+    batch = keys[start : start + page]; calls += 1
+print(f"listing {len(keys):,} keys at {page:,} per page: {calls} requests")
+# object storage :   67,108,864 bytes written to change 4,096
+# block / file   :        4,096 bytes written to change 4,096
+# ratio: 16,384x more data moved by the whole-object rewrite
+# listing 10,000 keys at 1,000 per page: 10 requests
+```
+
+Changing 4 KB inside a 64 MB file moves 4 KB on a block device or filesystem and the whole 64 MB through an object store, a factor of 16,384. That single fact explains why databases do not live on object storage, and why the same object store is perfect for a finished video you only ever read or replace whole.
+
+## Match the Access Pattern
+
+Consider a media application that stores uploaded videos, runs a relational database, and shares processing files among several workers.
+
+The original videos belong in object storage because they are independent objects that need durable, scalable storage. The database's live data files belong on storage supported by its database engine, commonly block storage. Shared files that several workers need to access through the same directory structure may belong on file storage.
+
+The application can use all three models at once because they solve different problems.
+
+A practical decision process is:
+
+- If data is accessed as whole items through an API, start by considering object storage.
+- If software expects a disk and needs low-latency random reads and writes, consider block storage.
+- If multiple clients need shared files, paths, and directory semantics, consider file storage.
+
+Also consider latency, throughput, durability, access frequency, concurrency, backup requirements, and total cost. Frequently accessed data may have different economics from archival data, and replication or backup must be designed explicitly rather than inferred from the storage model.
+
+The governing principle is that storage should match how the application accesses and organizes its data. Object storage optimizes for durable, scalable collections of objects; block storage supplies disk-like access; file storage provides shared filesystem semantics. Choosing the correct interface often matters more than choosing the service with the largest advertised capacity.

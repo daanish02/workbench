@@ -1,0 +1,159 @@
+---
+title: "Multi-Cloud"
+description: "Vendor lock-in and the trade-offs of cloud-agnostic design."
+order: 7
+tier: advanced
+takeaways:
+  - "**Vendor lock-in** is the cost and risk of leaving a provider, driven by proprietary APIs, data gravity (and egress fees), team skills and integrated managed services, not by the contract alone."
+  - "**Multi-cloud** (using several providers) and **cloud-agnostic design** (being able to move) are different things; you can have either without the other."
+  - "Portability has four separate levels: **application, infrastructure, data and operations**. A container image only gives you the first."
+  - "Abstraction layers reduce coupling but hide real differences and drag you toward the **lowest common denominator**. Abstract only the boundary that must stay stable."
+  - "Portability is **insurance**: worth buying only where the exit saving, weighted by the chance you will actually move, exceeds the yearly cost of carrying it. Distinguish **strategic** lock-in from the accidental kind."
+resources:
+  - title: "Martin Fowler: Don't get locked up into avoiding lock-in"
+    url: "https://martinfowler.com/articles/oss-lockin.html"
+    note: "The case for pricing lock-in against what avoiding it costs."
+  - title: "Multicloud (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Multicloud"
+  - title: "Vendor lock-in (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Vendor_lock-in"
+  - title: "OpenTelemetry"
+    url: "https://opentelemetry.io/"
+    note: "A vendor-neutral standard for traces, metrics and logs."
+  - title: "Cloud Native Computing Foundation: Landscape"
+    url: "https://landscape.cncf.io/"
+    note: "The ecosystem of portable, open building blocks."
+---
+
+Multi-cloud means using services from more than one cloud provider, while cloud-agnostic design aims to make an application portable across providers with minimal changes. Both approaches can reduce dependence on a single vendor, but they are not the same thing: an organization can use multiple clouds while remaining deeply dependent on each provider's proprietary services. The central trade-off is between portability and the advantages of using a provider's native capabilities. Cloud-agnostic design can improve negotiating leverage and migration options, but abstraction layers, duplicated infrastructure, and operational complexity can cost more than the flexibility they provide.
+
+## Lock-In Comes From Dependencies
+
+Vendor lock-in occurs when switching providers becomes sufficiently expensive, risky, or disruptive that an organization has little practical freedom to leave.
+
+Some dependencies are straightforward to replace. A virtual machine running a portable application may be recreated on another provider with relatively modest effort. Other dependencies are deeply embedded in the application architecture.
+
+Consider an application built around a provider's managed database, proprietary event system, identity service, serverless runtime, and monitoring platform. These services may integrate seamlessly and remove substantial operational work. But migrating the application can require rewriting code, redesigning data flows, translating access policies, and replacing operational tooling.
+
+Lock-in can arise from several sources:
+
+- **Proprietary APIs and services:** Application code depends on provider-specific interfaces or behavior.
+- **Data gravity:** Large datasets are expensive or slow to transfer, especially when applications and services are built around them.
+- **Operational knowledge:** Teams become familiar with one provider's tooling, deployment model, and debugging practices.
+- **Economic dependencies:** Discounts, committed-use agreements, and egress charges can make migration expensive.
+- **Managed-service integration:** Authentication, event processing, databases, analytics, and observability may depend on one another within the provider's ecosystem.
+
+Lock-in is not automatically harmful. A managed service may save enough engineering time and improve reliability enough to justify the dependency. The real problem is unexamined lock-in: accepting a dependency without understanding the cost of leaving or the consequences if the provider no longer meets requirements.
+
+## Portability Trades Away Specialization
+
+A cloud-agnostic system tries to minimize assumptions about the infrastructure provider. It may use portable technologies, standardized interfaces, and explicit boundaries around infrastructure-specific behavior.
+
+For example, an application might package its services in containers, define infrastructure through reusable automation, and interact with object storage through an internal interface. These choices can make some components easier to move between environments.
+
+However, portability exists at different levels:
+
+- **Application portability:** The application code can run on another provider.
+- **Infrastructure portability:** Networking, compute, storage, and deployment resources can be recreated elsewhere.
+- **Data portability:** Data can be exported, transformed, and imported with acceptable cost and downtime.
+- **Operational portability:** Monitoring, identity, security, incident response, and deployment processes work in the new environment.
+
+A container image may provide application portability without guaranteeing any of the other three. The application could still depend on a proprietary database, a cloud-specific identity mechanism, or an event service with no direct equivalent elsewhere.
+
+Cloud-agnostic design is therefore not a binary property. It is a set of portability capabilities that must be evaluated separately.
+
+## Abstraction Has Costs Too
+
+One way to reduce vendor dependence is to place a stable interface between application logic and provider-specific services.
+
+For example, an application might define an internal storage interface for uploading, retrieving, and deleting objects. A provider-specific implementation connects that interface to the chosen cloud's object-storage service.
+
+If the application later moves, the new provider requires another implementation rather than a complete rewrite of the business logic.
+
+This approach is useful when the interface represents a stable capability the application genuinely needs. It becomes counterproductive when the abstraction tries to represent every feature of every provider.
+
+Cloud services often differ in semantics, not just API names. They may offer different consistency guarantees, transaction capabilities, access-control models, event ordering, scaling behavior, or failure modes. An abstraction that hides these differences can make behavior harder to understand and force the application to support only the weakest common denominator.
+
+A practical rule is to abstract the boundary that needs to remain stable, not every infrastructure detail. Keep provider-specific functionality explicit where it creates meaningful value, and avoid building a universal cloud framework without a concrete portability requirement.
+
+## Multi-Cloud Multiplies Complexity
+
+Using two or more cloud providers can reduce dependence on a single provider and support requirements such as geographic reach, acquisition integration, or independent recovery capability.
+
+But multi-cloud is not simply a more portable version of single-cloud architecture. Each provider has its own identity system, networking model, permissions, service limits, billing structure, monitoring tools, and operational conventions.
+
+Running a service across two providers can require duplicated deployment pipelines, cross-cloud networking, data replication, security reviews, incident procedures, and staff expertise. Data transfer between clouds can also add latency and egress costs.
+
+The complexity depends on the deployment pattern:
+
+- **Separate workloads:** Different applications run on different providers. This can support organizational or procurement requirements without requiring every application to be portable.
+- **Active-active:** The same service operates across providers simultaneously. This can improve resilience, but requires careful traffic routing, data consistency, and failure handling.
+- **Disaster recovery:** A secondary provider is prepared to take over if the primary becomes unavailable. This can reduce some concentration risk, but recovery depends on tested data replication, infrastructure provisioning, and operational procedures.
+- **Portable deployment:** The same application can be deployed to different providers when needed. This emphasizes portability, but may constrain the use of provider-specific capabilities.
+
+<Callout type="pitfall">
+These are distinct goals. Using two providers does not automatically make an application resilient: if both depend on the same identity provider, control plane, or replicated data source, a shared failure can still disrupt both environments.
+</Callout>
+
+## The Cost of Leaving
+
+Cloud decisions should account for more than the hourly price of compute. A provider's managed service may cost more per unit than a self-managed alternative but require substantially less engineering effort.
+
+A useful comparison asks what portability buys and what it costs. Let $p$ be the chance you will actually have to move within your planning horizon of $H$ years, $S$ the migration effort that portability would save, and $r$ the extra effort per year of staying portable (running more yourself, maintaining abstractions). Portability is worth buying only if
+
+$$
+p \cdot S \;>\; r \cdot H
+$$
+
+In words: the expected saving on exit has to beat the yearly premium for carrying the insurance. If portability would save 20 person-weeks and costs half a week a year, a 5-year horizon pays off once the chance of moving passes about an eighth; if it costs 5 weeks a year it never does.
+
+Cloud-agnostic infrastructure can be justified when there is a credible migration scenario, meaningful concentration risk, regulatory pressure, or strong negotiating value. It is harder to justify when portability is only a hypothetical future desire and the abstraction layer adds substantial complexity today.
+
+Similarly, multi-cloud does not guarantee lower prices. Moving workloads between providers may increase egress, engineering, and support costs enough to outweigh differences in infrastructure pricing.
+
+Price your own stack. Choose native or portable for each building block and watch the two costs move; the per-row hint shows the chance of moving above which that portability pays.
+
+<LockInEstimator />
+
+```python
+# (what leaving costs in person-weeks, extra person-weeks per year to stay portable)
+PARTS = {
+    "compute":        {"native": (12, 0),  "portable": (4, 2)},
+    "database":       {"native": (26, 0),  "portable": (6, 0.5)},
+    "object storage": {"native": (6, 0),   "portable": (2, 0.2)},
+    "messaging":      {"native": (10, 0),  "portable": (4, 3)},
+    "identity":       {"native": (12, 0),  "portable": (4, 0.5)},
+    "monitoring":     {"native": (6, 0),   "portable": (2, 1.5)},
+}
+horizon = 5                                          # years you are planning for
+print(f"{'part':<15}{'saved if you leave':>20}{'extra run cost':>16}   portable pays above")
+for name, p in PARTS.items():
+    saved = p["native"][0] - p["portable"][0]
+    cost = p["portable"][1] * horizon
+    need = cost / saved                              # expected saving = chance * saved, so break-even chance = cost / saved
+    verdict = f"{need:.0%} chance of moving" if need <= 1 else "never (cost exceeds the saving)"
+    print(f"{name:<15}{saved:>14} weeks{cost:>10.1f} weeks   {verdict}")
+data_tb, egress_per_gb = 20, 0.09
+print(f"\nmoving {data_tb} TB out costs about ${data_tb * 1000 * egress_per_gb:,.0f} in egress fees, whichever services you chose")
+# part             saved if you leave  extra run cost   portable pays above
+# compute                     8 weeks      10.0 weeks   never (cost exceeds the saving)
+# database                   20 weeks       2.5 weeks   12% chance of moving
+# object storage              4 weeks       1.0 weeks   25% chance of moving
+# messaging                   6 weeks      15.0 weeks   never (cost exceeds the saving)
+# identity                    8 weeks       2.5 weeks   31% chance of moving
+# monitoring                  4 weeks       7.5 weeks   never (cost exceeds the saving)
+#
+# moving 20 TB out costs about $1,800 in egress fees, whichever services you chose
+```
+
+The pattern repeats across real systems: portability is cheap and valuable where an open standard already exists and is widely run as a managed service (SQL databases, S3-style object APIs, OIDC identity), and expensive where you would operate the open alternative yourself (messaging, container orchestration). Spend the portability budget on the first group.
+
+## Choose Lock-In Deliberately
+
+A practical cloud strategy starts by identifying which dependencies are acceptable and which must remain replaceable.
+
+Use portable components where migration would be valuable and achievable. Maintain export paths and recovery procedures for critical data. Separate business logic from infrastructure-specific code where that boundary is stable. Document provider-specific dependencies, and periodically test the parts of the system that must be portable.
+
+For some workloads, the right choice is to use a provider's managed database, event system, or serverless platform because the operational benefits are substantial. For other workloads, standardized compute and storage interfaces may be more important. A system can make different choices for different components.
+
+The key is to distinguish strategic lock-in from accidental lock-in. Strategic lock-in is a conscious decision to accept dependence in exchange for clear benefits. Accidental lock-in emerges when architecture becomes difficult to move without anyone having evaluated the trade-off.

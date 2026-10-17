@@ -1,0 +1,131 @@
+---
+title: "VMs vs. Containers"
+description: "Why cloud-native systems lean toward containers over full virtual machines."
+order: 3
+tier: core
+takeaways:
+  - "A **virtual machine** virtualizes the hardware: each VM boots its own guest operating system on a hypervisor. A **container** isolates processes on a **shared host kernel**."
+  - "Containers are **lighter and faster to start** because they skip the guest OS, so a host fits several times more of them. That suits cloud-native deploy-and-replace workflows."
+  - "A container is **not a small VM**: sharing a kernel means a weaker default isolation boundary. Use VMs, or VM-backed sandboxes, for mutually untrusted workloads."
+  - "Linux containers are built from **namespaces** (what a process can see) and **cgroups** (how much it can use). On macOS and Windows they run inside a small Linux VM."
+  - "Real platforms **combine** both: containers run inside VMs, scheduled by an orchestrator such as Kubernetes."
+resources:
+  - title: "Docker: What is a container?"
+    url: "https://www.docker.com/resources/what-container/"
+  - title: "Linux man page: namespaces(7)"
+    url: "https://man7.org/linux/man-pages/man7/namespaces.7.html"
+    note: "What each namespace type isolates."
+  - title: "Linux man page: cgroups(7)"
+    url: "https://man7.org/linux/man-pages/man7/cgroups.7.html"
+    note: "How the kernel meters and limits CPU, memory and I/O."
+  - title: "Firecracker microVMs"
+    url: "https://firecracker-microvm.github.io/"
+    note: "VM-grade isolation with near-container start-up, used under serverless platforms."
+  - title: "gVisor documentation"
+    url: "https://gvisor.dev/docs/"
+    note: "A user-space kernel that narrows the shared-kernel attack surface for containers."
+---
+
+Virtualization and containers both isolate workloads, but they do so at different levels of the computing stack. Virtual machines virtualize hardware so that each machine can run its own operating system; containers isolate applications while sharing the host operating system's kernel. Because containers are typically lighter, start faster, and package applications into portable deployment units, cloud-native platforms often favor them for running and scaling services. Virtual machines remain essential when stronger operating-system isolation, different kernels, or full-machine control is required.
+
+## Virtual Machines Virtualize the Machine
+
+A hypervisor divides physical computing resources—CPU, memory, storage, and networking—among virtual machines. Each VM behaves like an independent computer, with its own guest operating system and applications.
+
+For example, one physical server might run three VMs: one running Linux for a web application, another running Windows for a legacy service, and a third running Linux for a database. Each VM has its own operating system environment, even though all three share the same physical hardware.
+
+This isolation is valuable because workloads can have different operating systems, kernel versions, and system-level configurations. VMs also provide a useful security boundary between workloads, although the strength of that boundary still depends on the hypervisor, configuration, and surrounding infrastructure.
+
+The cost is that each VM needs resources for its guest operating system. Booting an operating system and allocating a full machine environment generally takes more time and memory than starting a container.
+
+## Containers Share the Kernel
+
+Containers use operating-system mechanisms to isolate processes and control their resource usage. On Linux, namespaces isolate views of resources such as processes and networking, while cgroups account for and limit resource consumption.
+
+A container image packages an application and much of its user-space environment: libraries, dependencies, configuration defaults, and executable files. When the image runs, the container uses the host kernel rather than booting a separate guest kernel.
+
+This makes containers comparatively lightweight. Several applications can start quickly on the same host without each carrying the overhead of a complete guest operating system.
+
+Containers are not merely small virtual machines. They rely on the host kernel, so a Linux container normally needs a compatible Linux kernel environment. On a Windows or macOS developer machine, Linux containers may run inside a lightweight VM that supplies the Linux kernel.
+
+Sharing a kernel also means that containers do not provide the same isolation boundary as separate VMs by default. Container runtimes, kernel security, capabilities, and configuration all matter. Containers can be securely isolated, but the architecture's shared-kernel property is important when evaluating risk.
+
+<Callout type="key">
+A container is an ordinary process (or group of processes) wearing two kernel features. **Namespaces** give it a private view of process IDs, network interfaces, mounts and hostnames; **cgroups** cap how much CPU, memory and I/O it can consume. There is no second operating system inside. See [Containerization](../../software-engineering/containerization/) for how the layered image filesystem completes the picture.
+</Callout>
+
+Compare what each instance has to carry:
+
+<VmContainerStack />
+
+```python
+HOST, HYP = 16 * 1024, 1024                         # MB
+GUEST, APP = 512, 150                               # a VM repeats a guest OS; both run the same app
+HOST_OS, RUNTIME, CT = 1024, 256, 10                # containers share one kernel, plus a little overhead each
+vm_fit = (HOST - HYP) // (GUEST + APP)
+ct_fit = (HOST - HOST_OS - RUNTIME) // (APP + CT)
+print(f"one 16 GB host fits {vm_fit} VMs or {ct_fit} containers ({ct_fit / vm_fit:.1f}x)")
+for n in (6, 20):
+    print(f"{n:>2} instances: VMs use {HYP + n * (GUEST + APP):>6,} MB   containers use {HOST_OS + RUNTIME + n * (APP + CT):>6,} MB")
+boot_vm, boot_ct = 30, 1                            # seconds, typical order of magnitude
+print(f"replace 20 failed instances one after another: VMs ~{20 * boot_vm // 60} min, containers ~{20 * boot_ct} s")
+# one 16 GB host fits 23 VMs or 94 containers (4.1x)
+#  6 instances: VMs use  4,996 MB   containers use  2,240 MB
+# 20 instances: VMs use 14,264 MB   containers use  4,480 MB
+# replace 20 failed instances one after another: VMs ~10 min, containers ~20 s
+```
+
+## Why Cloud-Native Favors Containers
+
+Cloud-native architecture emphasizes independently deployable services, automated operations, elastic scaling, and repeatable deployments. Containers align naturally with these goals.
+
+Consistent packaging. An application can be built into an image and deployed through development, testing, and production environments. This reduces discrepancies caused by different installed libraries or runtime versions.
+
+Fast startup and replacement. Container instances can often start in seconds or less, depending on the application and environment. That makes it easier for an orchestrator to replace failed instances, launch new capacity, and roll out updated versions.
+
+Higher workload density. Because each container does not require its own guest operating system, a host can often run more application instances within the same resource budget.
+
+Automation and orchestration. Platforms such as Kubernetes manage containerized workloads by scheduling instances, checking health, restarting failed containers, and coordinating deployments across a cluster.
+
+These advantages reinforce one another. If a service is packaged as an immutable image and its runtime state is kept outside the container, the platform can replace instances rather than repair them manually. That makes scaling and recovery more repeatable.
+
+<Callout type="pitfall">
+Containers do not make an application automatically cloud-native. A monolithic application can run in a container, and a poorly designed containerized service can still be difficult to scale or recover. The benefit comes from combining packaging with appropriate application architecture and automation.
+</Callout>
+
+## Isolation Against Efficiency
+
+| Dimension         | Virtual machines                                                     | Containers                                                      |
+| ----------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Isolation model   | Virtualized machine with its own guest OS                            | Isolated processes sharing the host kernel                      |
+| Startup           | Generally slower                                                     | Generally faster                                                |
+| Resource overhead | Higher per instance                                                  | Usually lower per instance                                      |
+| Kernel choice     | Guest OS can use its own kernel                                      | Must use a compatible host kernel                               |
+| Portability       | VM images can move between compatible hypervisors                    | Container images move between compatible container environments |
+| Typical role      | Stronger workload boundaries, OS flexibility, infrastructure hosting | Application packaging, deployment, and orchestration            |
+
+The actual performance difference depends on the workload. Containers still consume CPU, memory, storage, and network resources, and applications may be limited by their own startup routines or dependencies. Virtualization overhead is also often modest on modern hardware.
+
+Security is similarly contextual. VMs generally provide a stronger default separation between different guest kernels, while containers offer efficient isolation within a shared kernel. For mutually untrusted workloads, stronger sandboxing, dedicated VMs, or VM-backed containers may be appropriate.
+
+## Platforms Combine Both
+
+A common cloud deployment runs containers inside VMs rather than choosing one or the other.
+
+The cloud provider provisions virtual machines, which establish infrastructure-level boundaries and provide the required operating systems. A container runtime then runs many application containers on each VM. An orchestrator schedules those containers across the available machines.
+
+Each layer has a distinct responsibility:
+
+- Virtualization provides machines, infrastructure isolation, and flexible allocation of hardware resources.
+- Containers package applications and their user-space dependencies into repeatable deployment units.
+- Orchestration decides where containers run and manages their lifecycle across machines.
+
+Between the two sit **microVMs** and sandboxed runtimes. A microVM such as Firecracker is a stripped-down virtual machine that boots in a fraction of a second, which is how some serverless platforms give each customer VM-level isolation at near-container speed. A user-space kernel such as gVisor sits in front of the host kernel so a compromised container reaches a much smaller attack surface.
+
+This layered design captures the advantages of both approaches. Containers provide application-level agility, while VMs provide a convenient infrastructure boundary. Managed Kubernetes services often use this combination, though serverless container platforms may hide the underlying machine layer entirely.
+
+## Choose by What Must Be Isolated
+
+Choose containers when applications benefit from lightweight packaging, rapid deployment, dense utilization, and automated scaling. Choose VMs when you need control over the guest operating system, a distinct kernel, or a stronger default boundary between workloads. Use both when infrastructure isolation and container-based application operations solve different problems.
+
+The deeper principle is that virtualization abstracts the machine; containers abstract the application environment. Cloud-native systems lean toward containers because deployment and scaling usually operate on applications rather than whole machines. But containers do not replace virtualization: in many cloud architectures, virtualization supplies the foundation that makes container orchestration practical.

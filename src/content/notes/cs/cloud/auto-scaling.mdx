@@ -1,0 +1,193 @@
+---
+title: "Auto-Scaling"
+description: "How infrastructure responds to load automatically, and the trade-offs."
+order: 6
+tier: optional
+takeaways:
+  - "**Auto-scaling** is a feedback loop: measure load, compare it with a target, add or remove capacity, measure again. It buys peak performance without paying for peak capacity all day."
+  - "The **metric** matters more than the threshold. CPU is a poor signal if the real bottleneck is a database, a connection pool or a queue; scale on what reflects unmet demand."
+  - "Scale-out is **not instant**: detection, launch, boot and health checks all take time, so keep a **minimum**, leave **headroom**, and buffer bursts with queues."
+  - "Scale-in needs a **cooldown** or stabilization window, otherwise the controller **flaps**, launching and killing instances in a loop."
+  - "More instances help only if the **bottleneck is the thing you scaled**. Scaling a stateless tier in front of a fixed database just moves the queue."
+resources:
+  - title: "Kubernetes: Horizontal Pod Autoscaling"
+    url: "https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/"
+    note: "The scaling formula and stabilization windows in a widely used controller."
+  - title: "AWS: Target tracking scaling policies"
+    url: "https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-target-tracking.html"
+  - title: "Google SRE book: Handling overload"
+    url: "https://sre.google/sre-book/handling-overload/"
+    note: "Why capacity alone does not protect a service from overload."
+  - title: "Autoscaling (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Autoscaling"
+---
+
+Auto-scaling automatically adjusts the computing capacity available to an application as demand changes. Instead of permanently running enough servers for peak traffic, a system can add instances when workload rises and remove them when demand falls. The goal is to maintain performance and availability without paying for unnecessary capacity. Auto-scaling is not simply adding servers whenever CPU usage increases: effective systems combine measurable signals, scaling policies, capacity limits, and health checks to respond to demand without reacting too slowly or oscillating between too many and too few resources.
+
+## Auto-Scaling Connects Demand to Capacity
+
+A web application might normally handle 500 requests per second with two application instances. During a promotion, traffic could rise to 2,000 requests per second. If each instance has limited capacity, requests begin queuing, latency increases, and eventually requests may fail.
+
+Auto-scaling monitors the workload and adjusts the number of running instances. Once traffic subsides, it can reduce the fleet again.
+
+A typical system has four components:
+
+- **Metrics:** Measurements of demand or resource pressure, such as CPU utilization, request rate, latency, or queue depth.
+- **Scaling policy:** Rules that determine when and how much capacity to add or remove.
+- **Compute platform:** The infrastructure that creates or terminates instances, containers, or other execution units.
+- **Health monitoring:** Checks that new instances are ready and unhealthy instances are removed from service.
+
+These components form a feedback loop: measure the system, compare it with the desired operating range, adjust capacity, and measure again.
+
+## Policies Decide When Capacity Changes
+
+Different policies respond to demand in different ways.
+
+**Threshold-based scaling** changes capacity when a metric crosses a threshold. For example, add an instance when average CPU utilization exceeds 70% for several minutes. This is simple, but CPU is only useful when it correlates with the actual bottleneck.
+
+**Target tracking** aims to maintain a chosen metric near a target. If the goal is to keep average CPU utilization around 60%, the controller adjusts capacity as demand changes. This is common in managed cloud auto-scaling systems. The rule is a simple proportion:
+
+$$
+\text{desired} = \left\lceil \text{current} \times \frac{\text{metric}}{\text{target}} \right\rceil
+$$
+
+In words: if 4 instances run at 90% CPU and the target is 60%, you need $\lceil 4 \times 1.5 \rceil = 6$ instances to bring each back to 60%. Kubernetes' horizontal pod autoscaler uses exactly this formula.
+
+**Scheduled scaling** changes capacity in anticipation of predictable demand. A service might add instances before a regular morning traffic peak or a planned product launch. It can respond before utilization becomes high.
+
+**Predictive scaling** uses historical patterns to forecast demand and provision capacity in advance. It can help when traffic follows repeatable patterns, but forecasts may be wrong during unusual events.
+
+These policies can be combined. Scheduled or predictive scaling can prepare for expected traffic, while reactive policies handle deviations from the forecast.
+
+## The Metric Matters More Than the Threshold
+
+CPU utilization is a common scaling signal, but it does not capture every bottleneck. A service might have low CPU usage while requests wait on a database, a remote API, or a connection pool.
+
+Useful metrics depend on the workload:
+
+- **CPU or memory utilization:** Useful when each additional instance contributes more compute or memory capacity.
+- **Requests per instance:** Useful for relatively stateless services with predictable request costs.
+- **Request latency:** Useful for detecting deteriorating user experience, though latency can rise because of a bottleneck that more application instances cannot fix.
+- **Queue depth or oldest-message age:** Useful for asynchronous workers processing background jobs.
+- **Concurrent requests:** Useful when each instance can support only a bounded number of simultaneous operations.
+
+A queue-based worker fleet, for example, might scale out when the number of waiting jobs per worker becomes too high. Scaling based only on CPU could miss the problem if the workers spend most of their time waiting on external services.
+
+The key is to select a metric that reflects unmet demand and responds to capacity changes in a predictable way.
+
+## Scale-Out Is Not Instant
+
+Auto-scaling takes time. The system must detect demand, make a decision, provision resources, start the application, pass health checks, and begin routing work to the new capacity.
+
+If demand rises faster than the system can react, the application may experience a period of overload before the new instances become useful.
+
+This is why auto-scaling often works alongside:
+
+- **Baseline capacity:** Keep enough instances running to handle ordinary demand and short bursts.
+- **Headroom:** Operate below maximum capacity so there is room for unexpected increases.
+- **Load balancing:** Distribute requests across healthy instances.
+- **Queues and backpressure:** Buffer or limit work when processing capacity is temporarily insufficient.
+- **Capacity limits:** Set minimums, maximums, and concurrency limits to control cost and protect dependencies.
+
+Auto-scaling is a reactive mechanism, not a guarantee that capacity will appear before it is needed. Pre-provisioning and buffering remain important when startup times are long or demand changes abruptly.
+
+## Scaling Down Has Its Own Risks
+
+Adding capacity is only half the problem. Removing instances too quickly can cause repeated scale-up and scale-down cycles, known as oscillation or flapping.
+
+For example, high CPU triggers the creation of four new instances. CPU falls immediately, so the system removes them. The remaining instances then become overloaded again, and the cycle repeats.
+
+Controllers avoid this through stabilization windows, cooldown periods, gradual scaling, and separate scale-out and scale-in thresholds. Scale-in should also respect active requests, graceful shutdown, and stateful workloads so that capacity is not removed while it is still needed.
+
+This creates a control-system trade-off. A controller that reacts too slowly allows performance to degrade; one that reacts too aggressively can waste resources and destabilize the system. The policy must account for measurement noise, provisioning delays, and the speed at which demand changes.
+
+Run the loop yourself. The default is a sudden spike: the controller sees it a minute late, then waits out the start-up delay before the new capacity serves anything.
+
+<AutoScalerSim />
+
+```python
+import math
+
+TICKS, PER, MAXI = 120, 100, 30                      # two hours in one-minute ticks; one instance serves 100 req/s
+
+def demand(kind, t):
+    if kind == "spike": return 1500 if 30 <= t < 70 else 300
+    if kind == "wave": return 800 + 600 * math.sin(2 * math.pi * (t - 30) / 120)
+    return 400 + (t // 6 % 2) * 700                  # "flap": alternates every six minutes
+
+def autoscale(kind, target=0.6, delay=3, cooldown=5, minimum=2):
+    d = [demand(kind, t) for t in range(TICKS)]
+    ready, arriving, below = minimum, [], 0
+    cap, launched, removed, paid = [], 0, 0, 0
+    for t in range(TICKS):
+        ready += sum(1 for a in arriving if a <= t)
+        arriving = [a for a in arriving if a > t]
+        observed = d[max(0, t - 1)]                  # the metric lags by one minute
+        want = max(minimum, min(MAXI, math.ceil(observed / (PER * target))))
+        have = ready + len(arriving)
+        if want > have:                              # scale out now; new instances need `delay` minutes to be ready
+            arriving += [t + delay] * (want - have)
+            launched += want - have
+            below = 0
+            ready += sum(1 for a in arriving if a <= t)
+            arriving = [a for a in arriving if a > t]
+        elif want < have:                            # scale in only after `cooldown` consecutive minutes of surplus
+            below += 1
+            if below > cooldown:
+                drop = min(ready - minimum, have - want)
+                if drop > 0: ready -= drop; removed += drop
+                below = 0
+        else:
+            below = 0
+        cap.append(ready * PER)
+        paid += ready + len(arriving)
+    lost = sum(max(0, x - c) for x, c in zip(d, cap))
+    return lost / sum(d), launched, removed, paid
+
+for label, kw in [("spike, default", {}), ("spike, instant start-up", {"delay": 0}),
+                  ("spike, min 6", {"minimum": 6}), ("spike, target 40%", {"target": 0.4}),
+                  ("flapping, cooldown 0", {"cooldown": 0}), ("flapping, cooldown 10", {"cooldown": 10})]:
+    kind = "flap" if label.startswith("flapping") else "spike"
+    lost, up, down, paid = autoscale(kind, **kw)
+    print(f"{label:<26} unserved {lost:>5.1%}  launched {up:>3}  removed {down:>3}  instance-minutes {paid:>4}")
+# spike, default             unserved  5.1%  launched  23  removed  20  instance-minutes 1500
+# spike, instant start-up    unserved  1.2%  launched  23  removed  20  instance-minutes 1500
+# spike, min 6               unserved  4.3%  launched  19  removed  19  instance-minutes 1575
+# spike, target 40%          unserved  3.7%  launched  28  removed  22  instance-minutes 1950
+# flapping, cooldown 0       unserved 18.4%  launched 125  removed 108  instance-minutes 1548
+# flapping, cooldown 10      unserved  2.4%  launched  17  removed   0  instance-minutes 2196
+```
+
+Read the rows as experiments. Instant start-up cuts unserved traffic from 5.1% to 1.2%; the remaining 1.2% is the one-minute measurement lag. A lower target (more headroom) helps more than a higher minimum here. On the flapping load, no cooldown launches 125 instances to chase a load that swings every six minutes and drops 18.4% of traffic, while a ten-minute cooldown keeps capacity up and drops 2.4%, at the price of paying for idle instances.
+
+## More Instances Is Not More Capacity
+
+Auto-scaling is effective only when the architecture can use the extra resources.
+
+Suppose an application runs on two servers and uses a single database that can handle only 1,000 queries per second. Adding eight application servers may increase the number of concurrent database queries without increasing database capacity. The result could be more connection contention, longer query queues, and worse latency.
+
+<Callout type="pitfall">
+This is a common scaling failure: the application tier scales out while a shared dependency remains the bottleneck. Extra instances then only deepen the queue in front of the database. Find the constrained resource before scaling anything; see [Database Scaling](../../system-design/database-scaling/).
+</Callout>
+
+Before increasing capacity, identify the constrained resource and verify that additional instances will improve throughput. Database capacity, external API quotas, network limits, storage throughput, and connection pools may need separate scaling or protection strategies.
+
+Stateless application servers are especially easy to scale horizontally because requests can be distributed among interchangeable instances. Stateful systems require more care around session data, storage ownership, and coordination.
+
+## Performance Against Cost
+
+A useful policy must define not only how much capacity to add, but also the acceptable service level and cost envelope.
+
+| Policy decision           | Why it matters                                      |
+| ------------------------- | --------------------------------------------------- |
+| Minimum capacity          | Preserves baseline availability and responsiveness  |
+| Maximum capacity          | Prevents uncontrolled resource growth and cost      |
+| Scaling metric            | Connects the decision to actual workload pressure   |
+| Threshold or target       | Determines when capacity changes                    |
+| Cooldown or stabilization | Prevents rapid oscillation                          |
+| Health checks             | Ensures new capacity is usable                      |
+| Scale-in behavior         | Avoids removing capacity that is still serving work |
+
+A well-designed auto-scaling system is evaluated using both performance and cost: response latency, error rates, throughput, resource utilization, and spending. A system that maintains low latency by running far more capacity than needed may be technically effective but economically poor. A system that minimizes spending while missing its latency target is equally unsuccessful.
+
+The governing principle is that auto-scaling closes a feedback loop between observed demand and provisioned capacity. It works best when metrics accurately reflect bottlenecks, capacity can be added quickly enough, and shared dependencies can handle the resulting workload. It automates capacity decisions, but it does not replace sound architecture or capacity planning.

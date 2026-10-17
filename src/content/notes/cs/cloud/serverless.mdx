@@ -1,0 +1,216 @@
+---
+title: "Serverless Computing"
+description: "Functions-as-a-service, cold starts, and when serverless is (and isn't) the right fit."
+order: 4
+tier: core
+takeaways:
+  - "**Serverless** means you do not manage servers: the provider provisions, scales and bills by use. **FaaS** (functions as a service) runs your code per event or request."
+  - "Functions are **short, stateless, event-driven** units. Anything durable belongs in a database, queue or object store, never in the function's memory."
+  - "A **cold start** is the delay while the platform builds a fresh environment. It shows up in the **tail latency** (p95, p99), not the average."
+  - "Billing is per request and per GB-second, so serverless wins for **spiky or low-volume** traffic and loses to an always-on fleet at **steady high volume**."
+  - "It does not remove distributed-systems problems: retries, duplicates, timeouts and exhausted downstream connections are still yours to design for."
+resources:
+  - title: "Martin Fowler: Serverless Architectures"
+    url: "https://martinfowler.com/articles/serverless.html"
+    note: "The classic overview of BaaS and FaaS and their trade-offs."
+  - title: "AWS Lambda: execution environment lifecycle"
+    url: "https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html"
+    note: "The init, invoke and shutdown phases behind cold and warm starts."
+  - title: "AWS Lambda pricing"
+    url: "https://aws.amazon.com/lambda/pricing/"
+    note: "Request and GB-second billing, as used in the cost model above."
+  - title: "Firecracker: lightweight virtualization for serverless (NSDI '20)"
+    url: "https://www.usenix.org/conference/nsdi20/presentation/agache"
+    note: "How a platform isolates and starts functions fast."
+  - title: "Peeking behind the curtains of serverless platforms (USENIX ATC '18)"
+    url: "https://www.usenix.org/conference/atc18/presentation/wang-liang"
+    note: "Measured cold starts and limits across providers."
+---
+
+Serverless computing lets developers run application code without directly managing the servers that execute it. The cloud provider handles infrastructure provisioning, capacity management, and much of the runtime operation, while the application owner focuses on code, configuration, and data. In Functions-as-a-Service (FaaS), code runs in response to events or requests, and the platform allocates execution capacity as needed. Serverless is attractive because it reduces operational work and can scale automatically, but it introduces trade-offs around cold starts, execution limits, observability, vendor dependence, and unpredictable workloads. Serverless is most effective when the work is event-driven, variable in volume, and naturally divided into independent executions.
+
+## Serverless Hides Servers, Not Their Existence
+
+Despite the name, serverless applications still run on physical servers or virtual machines. The distinction is who manages those machines and how developers consume computing capacity.
+
+With a traditional deployment, a team might provision virtual machines, install runtimes, configure scaling, monitor utilization, and patch operating systems. With serverless, the provider manages most of that infrastructure and exposes a higher-level interface for running code or using managed services.
+
+For example, an application might upload an image to object storage. That event triggers a function that resizes the image, stores the result, and exits. The developer does not need to keep a server running while waiting for the next upload.
+
+Serverless is broader than FaaS. Managed databases, queues, object storage, and other services can also be consumed without directly managing their underlying servers. FaaS is the execution model most commonly associated with the term.
+
+## FaaS Runs Code in Response to Events
+
+A function is a bounded unit of code that the platform invokes when something happens: an HTTP request arrives, a file is uploaded, a queue receives a message, or a scheduled event fires.
+
+A typical FaaS execution follows this sequence:
+
+1. An event arrives through an HTTP endpoint, queue, storage service, or scheduler.
+2. The platform selects or initializes an execution environment.
+3. The function processes the event and may call other services.
+4. The execution finishes, and the platform can reuse or discard the environment.
+
+The function's code is usually packaged with its dependencies and configuration. The platform determines where it runs, how many concurrent executions are needed, and when additional capacity should be allocated.
+
+This model works particularly well for independent tasks such as processing uploads, validating incoming events, sending notifications, scheduled maintenance, and lightweight API handlers.
+
+However, functions are not automatically isolated from all other executions in every respect. Providers may reuse execution environments, and multiple invocations can interact with shared external resources. Applications should avoid relying on undocumented lifecycle behavior and should handle concurrency, retries, and shared state explicitly.
+
+## Cold Starts Cost Latency
+
+A cold start occurs when the platform must initialize an execution environment before it can run a function. That may involve provisioning or selecting compute capacity, starting a runtime, loading dependencies, and initializing application code.
+
+A warm invocation can reuse an already initialized environment and often starts faster. If a function has been idle, or traffic suddenly increases, some requests may encounter cold-start latency while the platform creates additional capacity.
+
+The size of this delay depends on the provider, runtime, package size, initialization work, networking configuration, and current capacity. There is no single cold-start time that applies to every function.
+
+A warm invocation is *request → reused environment → execute*. A cold one is *request → initialize environment → load code → execute*, and the extra setup lands on that one request. Watch it happen over thirty minutes of traffic:
+
+<ColdStartSim />
+
+```python
+import math, random
+
+# --- cold starts: an environment serves one request at a time and is discarded after `idle` seconds unused
+def simulate(rate_per_min, idle, cold, provisioned=0, span=1800, work=0.2, seed=7):
+    rng = random.Random(seed)
+    t, arrivals = 0.0, []
+    while True:
+        t += rng.expovariate(rate_per_min / 60)
+        if t >= span:
+            break
+        arrivals.append(t)
+    envs = [{"free": 0.0, "pinned": True} for _ in range(provisioned)]
+    lats = []
+    for t in arrivals:
+        envs = [e for e in envs if e["pinned"] or e["free"] + idle >= t]       # idle too long: discarded
+        env = next((e for e in envs if e["free"] <= t), None)
+        if env:
+            env["free"] = t + work
+            lats.append((work, False))
+        else:                                                                  # no free environment: start one (cold start)
+            envs.append({"free": t + cold + work, "pinned": False})
+            lats.append((cold + work, True))
+    return lats
+
+def report(label, lats):
+    s = sorted(l for l, _ in lats)
+    colds = sum(c for _, c in lats)
+    print(f"{label:<34} {len(lats):>4} requests, {colds:>3} cold ({colds / len(lats):>4.0%}), p50 {s[len(s)//2]*1000:>5.0f} ms, p99 {s[int(.99*len(s))]*1000:>5.0f} ms")
+
+report("1 req/min, keep-warm 60 s", simulate(1, 60, 0.8))
+report("1 req/min, keep-warm 15 min", simulate(1, 900, 0.8))
+report("1 req/min, 1 provisioned", simulate(1, 60, 0.8, provisioned=1))
+report("60 req/min, keep-warm 60 s", simulate(60, 60, 0.8))
+# 1 req/min, keep-warm 60 s            42 requests,   9 cold ( 21%), p50   200 ms, p99  1000 ms
+# 1 req/min, keep-warm 15 min          42 requests,   1 cold (  2%), p50   200 ms, p99  1000 ms
+# 1 req/min, 1 provisioned             42 requests,   0 cold (  0%), p50   200 ms, p99   200 ms
+# 60 req/min, keep-warm 60 s         1839 requests,  14 cold (  1%), p50   200 ms, p99   200 ms
+```
+
+Read the first two lines: with one request a minute and an environment kept for only 60 seconds, about a fifth of requests are cold; the median is still 200 ms while the 99th percentile is five times that. Keeping environments longer or provisioning one removes the tail.
+
+Cold starts matter most for latency-sensitive workloads, especially when requests arrive infrequently or the function has substantial initialization work. They matter less for asynchronous jobs where an extra delay is acceptable.
+
+Several techniques can reduce their impact:
+
+- Keep deployment packages and dependency trees small.
+- Minimize work performed during initialization.
+- Reuse database connections or clients when the platform permits safe reuse.
+- Use provisioned or pre-warmed capacity where supported and justified by the cost.
+- Measure latency distributions, especially tail latency such as the 95th and 99th percentiles, rather than relying only on averages.
+
+A function that averages 50 milliseconds may still produce occasional much slower responses. For interactive applications, those outliers can matter more than the mean.
+
+<Callout type="key">
+Cold starts are a **tail-latency** problem. Frequent traffic keeps environments warm and hides them; rare or bursty traffic exposes them. A burst of simultaneous requests needs several new environments at once, so each of those requests starts cold.
+</Callout>
+
+## Automatic Scaling Changes Cost
+
+Traditional servers often have a baseline cost: the organization pays for provisioned machines whether they are busy or idle. Serverless platforms commonly charge according to invocations, execution duration, allocated resources, and sometimes other usage dimensions.
+
+This can make serverless economical for irregular workloads. If a function runs briefly a few times per hour, the organization may avoid paying for an always-on server.
+
+The economics change for sustained, predictable workloads. A function invoked continuously at high volume may cost more than a carefully utilized long-running service, particularly when each invocation requires substantial memory or execution time. Other costs—database capacity, network transfer, logging, and downstream services—remain even when function compute is inexpensive.
+
+Automatic scaling also does not mean unlimited capacity. Providers enforce concurrency quotas, execution time limits, payload limits, and other constraints. Sudden bursts can overwhelm databases or third-party APIs even when the function platform can create more executions.
+
+<Callout type="pitfall">
+A common failure mode is scaling the application tier while leaving a fixed-capacity database unchanged. More concurrent functions can then exhaust database connections or overload the downstream service. Connection pooling, bounded concurrency, queues, and backpressure may be necessary (see [Message Queues](../../system-design/message-queues/)).
+</Callout>
+
+The cost model is simple enough to compute. Serverless bills per request and per GB-second of memory-time; a fleet bills per instance, sized for the **peak** and never fewer than two for availability:
+
+$$
+C_{\text{serverless}} = \frac{N}{10^6}\,c_{\text{req}} + N \cdot t \cdot m \cdot c_{\text{GB-s}}
+$$
+
+where $N$ is requests per month, $t$ the duration in seconds and $m$ the memory in GB. In words: you pay a little for every request plus for the memory you hold while it runs, so cost grows in a straight line with traffic and is zero when idle.
+
+<ServerlessCost />
+
+```python
+import math
+
+# --- cost: serverless bills per request and GB-second; a fleet bills per instance-month
+def serverless(req, ms, mem_mb):
+    return req / 1e6 * 0.20 + req * (ms / 1000) * (mem_mb / 1024) * 0.0000166667
+
+def fleet(req, ms, peak_factor=3, instance=60, concurrency=30, util=0.6):
+    peak_rps = req / 2_592_000 * peak_factor
+    per_instance = concurrency * (1000 / ms) * util
+    return max(2, math.ceil(peak_rps / per_instance)) * instance
+
+print()
+for req in (1e6, 1e7, 1e8, 1e9, 1e10):
+    s, f = serverless(req, 100, 512), fleet(req, 100)
+    print(f"{req:>16,.0f} req/month: serverless ${s:>10,.2f}   fleet ${f:>9,.0f}   cheaper: {'serverless' if s < f else 'fleet'}")
+#
+#        1,000,000 req/month: serverless $      1.03   fleet $      120   cheaper: serverless
+#       10,000,000 req/month: serverless $     10.33   fleet $      120   cheaper: serverless
+#      100,000,000 req/month: serverless $    103.33   fleet $      120   cheaper: serverless
+#    1,000,000,000 req/month: serverless $  1,033.34   fleet $      420   cheaper: fleet
+#   10,000,000,000 req/month: serverless $ 10,333.35   fleet $    3,900   cheaper: fleet
+```
+
+In words: below roughly a hundred million requests a month the fleet is mostly idle minimum capacity, so serverless is far cheaper; at a billion a month the fleet costs less than half. A few requests a second suit functions; thousands a second usually suit containers.
+
+## Some Workloads Fit Better
+
+| Workload                                                   | Fit                        | Reason                                                            |
+| ---------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------- |
+| Image or document processing triggered by uploads          | Strong                     | Independent event-driven tasks                                    |
+| Scheduled jobs and automation                              | Strong                     | Runs only when needed                                             |
+| APIs with variable traffic                                 | Often strong               | Managed scaling and low idle overhead                             |
+| Queue consumers and event handlers                         | Strong                     | Natural event-driven execution                                    |
+| Long-running computations beyond execution limits          | Weak for conventional FaaS | Execution limits may require another compute model                |
+| Latency-critical services with strict tail-latency targets | Depends                    | Cold starts and scaling behavior must meet the target             |
+| Continuously busy, predictable workloads                   | Depends                    | Always-on containers or VMs may be more economical                |
+| Stateful applications requiring long-lived local processes | Often weak for FaaS        | Execution environments are not a reliable place for durable state |
+
+Serverless is also less attractive when a workload requires specialized hardware or operating-system control that the platform does not expose, when debugging distributed execution becomes prohibitively difficult, or when the architecture depends heavily on provider-specific services that would be expensive to replace.
+
+These are not absolute exclusions. Some platforms support long-running tasks, streaming, GPU workloads, or provisioned capacity. The relevant question is whether the chosen service's execution model and limits match the workload.
+
+## Serverless Still Needs Architecture
+
+Because infrastructure management is abstracted away, it is easy to underestimate the work of operating a serverless application. The complexity often shifts toward event flows, permissions, data consistency, retries, observability, and cost control.
+
+A queue-triggered function may receive the same message more than once. An HTTP request may time out after a side effect has already occurred. A function may successfully write to a database but fail before acknowledging its message. These are distributed-systems problems, not problems eliminated by managed infrastructure.
+
+Functions should therefore be designed with explicit timeout and retry policies, idempotent operations where possible, appropriate access permissions, structured logs, metrics, and tracing. Durable state belongs in databases or other persistent services rather than in the assumption that a particular execution environment will survive.
+
+<Callout type="practice">
+Write every handler so that running it twice is harmless (an **idempotent** handler, for example by recording a request ID before applying a side effect). Queues and retries guarantee *at least once* delivery, not exactly once. See [Message Queues](../../system-design/message-queues/) and [Payment System](../../case-studies/payment-system/).
+</Callout>
+
+The strongest serverless designs use the platform to simplify infrastructure without hiding the application's actual reliability requirements.
+
+## Choose It When the Model Matches
+
+Serverless is a good fit when work arrives unpredictably, can be divided into bounded executions, and does not require continuous control over the underlying machine. It is less compelling when execution is continuously busy, strict latency guarantees conflict with initialization behavior, or the workload requires long-running processes and fine-grained infrastructure control.
+
+A common architecture combines models: an API or event handler runs as a serverless function, a queue absorbs bursts, a managed database stores durable state, and a container service handles long-running workloads.
+
+The central principle is that serverless trades infrastructure management for a more constrained execution model and usage-based economics. It can greatly reduce the work required to operate software, but it does not remove the need to design for capacity, failure, latency, and cost.
