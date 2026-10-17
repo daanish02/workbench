@@ -1,188 +1,178 @@
 ---
 import Figure from '../Figure.astro';
+
+const fams: [string, string][] = [
+  ['bernoulli', 'Bernoulli'], ['binomial', 'binomial'], ['geometric', 'geometric'], ['poisson', 'Poisson'],
+  ['uniform', 'uniform'], ['normal', 'normal'], ['exponential', 'exponential'], ['gamma', 'gamma'],
+  ['beta', 'beta'], ['t', 'Student t'], ['chi2', 'chi-square'],
+];
 ---
 
 <Figure
   title="Distribution explorer"
-  caption="Pick a family and move the sliders. Discrete families show bars for P(X = k); continuous families show the density. The readout gives the mean and variance, which follow from the parameters."
+  caption="Pick any family from this note and move its parameters. Discrete families show bars for P(X = k); continuous ones show the density. Turn on the normal overlay to compare each shape with the normal that has the same mean and variance: skew, bounded support and heavy tails show up as the gaps between the two."
 >
   <distribution-explorer>
     <div class="de-ctl">
-      <div class="choice-row"><span class="ctl-label">family</span>
-        <input type="hidden" data-f value="binomial" /><span class="choice"><button type="button" class="btn" data-choice="binomial" aria-pressed="true">binomial (n, p)</button><button type="button" class="btn" data-choice="poisson" aria-pressed="false">Poisson (λ)</button><button type="button" class="btn" data-choice="normal" aria-pressed="false">normal (μ, σ)</button><button type="button" class="btn" data-choice="exponential" aria-pressed="false">exponential (rate)</button></span>
+      <div class="choice-row de-fams"><span class="ctl-label">family</span>
+        <input type="hidden" data-f value="binomial" /><span class="choice">{fams.map(([v, l]) => <button type="button" class="btn" data-choice={v} aria-pressed={v === 'binomial' ? 'true' : 'false'}>{l}</button>)}</span>
       </div>
-      <label><span data-la>n</span> <input type="range" min="1" max="40" step="1" value="10" data-a /><b data-av>10</b></label>
-      <label><span data-lb>p</span> <input type="range" min="0.01" max="0.99" step="0.01" value="0.3" data-b /><b data-bv>0.30</b></label>
+      <label><span data-la>n</span> <input type="range" data-a /><b data-av></b></label>
+      <label data-bwrap><span data-lb>p</span> <input type="range" data-b /><b data-bv></b></label>
+      <span class="de-tog"><input type="checkbox" hidden data-ov /><button type="button" class="btn" data-toggle aria-pressed="false">compare with normal</button></span>
     </div>
     <svg class="de-svg" viewBox="0 0 400 220" role="img" aria-label="Probability shape of the chosen distribution">
       <line x1="30" y1="190" x2="390" y2="190" class="de-axis"></line>
       <line x1="30" y1="10" x2="30" y2="190" class="de-axis"></line>
       <g data-shape></g>
+      <path data-normal class="de-normal"></path>
+      <line data-mean y1="10" y2="190" class="de-mean"></line>
+      <text data-lo x="30" y="205" class="de-t"></text>
+      <text data-hi x="390" y="205" class="de-t de-r"></text>
     </svg>
     <p class="de-stat" data-stat></p>
   </distribution-explorer>
 </Figure>
 
 <style>
-  .de-ctl {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 16px;
-    margin-bottom: 10px;
-  }
-  .de-ctl label {
-    flex: 1 1 180px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font: 0.8125rem var(--font-mono);
-    color: var(--text-muted);
-  }
-  .de-ctl select {
-    font: inherit;
-    background: transparent;
-    color: var(--text);
-    border: 1px solid var(--border, #3c4043);
-    border-radius: 4px;
-    padding: 2px 4px;
-  }
-  .de-ctl option {
-    background: #1a1a1a;
-    color: #e8eaed;
-  }
-  .de-ctl input {
-    flex: 1;
-    min-width: 0;
-  }
-  .de-ctl b {
-    min-width: 3em;
-    text-align: right;
-    color: var(--text);
-  }
-  .de-svg {
-    display: block;
-    width: 100%;
-    max-width: 440px;
-    margin: 0 auto;
-  }
-  .de-axis {
-    stroke: #3c4043;
-    stroke-width: 1;
-  }
-  .de-svg :global(.de-bar) {
-    fill: var(--g-blue);
-    opacity: 0.85;
-  }
-  .de-svg :global(.de-curve) {
-    fill: rgba(66, 133, 244, 0.25);
-    stroke: var(--g-blue);
-    stroke-width: 2;
-  }
-  .de-stat {
-    margin: 10px 0 0;
-    font: 0.8125rem/1.6 var(--font-mono);
-    color: var(--text-muted);
-    text-align: center;
-  }
+  .de-ctl { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 10px; align-items: center; }
+  .de-fams { flex: 1 1 100%; }
+  .de-ctl label { flex: 1 1 180px; display: flex; align-items: center; gap: 8px; font: 0.8125rem var(--font-mono); color: var(--text-muted); }
+  .de-ctl label input { flex: 1; min-width: 0; }
+  .de-ctl b { min-width: 3em; text-align: right; color: var(--text); }
+  .de-tog { flex: 1 1 100%; text-align: center; }
+  .de-svg { display: block; width: 100%; max-width: 440px; margin: 0 auto; }
+  .de-axis { stroke: #3c4043; stroke-width: 1; }
+  .de-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .de-r { text-anchor: end; }
+  .de-svg :global(.de-bar) { fill: var(--g-blue); opacity: 0.85; }
+  .de-svg :global(.de-curve) { fill: rgba(66, 133, 244, 0.22); stroke: var(--g-blue); stroke-width: 2; }
+  .de-normal { fill: none; stroke: var(--g-yellow); stroke-width: 2; stroke-dasharray: 5 4; }
+  .de-mean { stroke: var(--g-green); stroke-width: 1.5; stroke-dasharray: 3 3; }
+  .de-stat { margin: 10px 0 0; font: 0.8125rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
 </style>
 
 <script>
-  // Parameter ranges per family: [labelA, minA, maxA, stepA, defaultA, labelB, minB, maxB, stepB, defaultB]
-  type Fam = { la: string; a: [number, number, number, number]; lb: string | null; b: [number, number, number, number] };
-  const families: Record<string, Fam> = {
-    binomial: { la: 'n', a: [1, 40, 1, 10], lb: 'p', b: [0.01, 0.99, 0.01, 0.3] },
-    poisson: { la: 'λ', a: [0.5, 20, 0.5, 4], lb: null, b: [0, 0, 0, 0] },
-    normal: { la: 'μ', a: [-5, 5, 0.1, 0], lb: 'σ', b: [0.2, 3, 0.1, 1] },
-    exponential: { la: 'rate', a: [0.1, 4, 0.1, 1], lb: null, b: [0, 0, 0, 0] },
-  };
+  // log-gamma (Lanczos), for the gamma, beta, t and chi-square densities
+  const LG = [676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  function lgamma(z: number): number {
+    if (z < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * z))) - lgamma(1 - z);
+    z -= 1;
+    let x = 0.99999999999980993;
+    for (let i = 0; i < 8; i++) x += LG[i] / (z + i + 1);
+    const t = z + 7.5;
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+  }
+  const lchoose = (n: number, k: number) => lgamma(n + 1) - lgamma(k + 1) - lgamma(n - k + 1);
 
-  const comb = (n: number, k: number) => {
-    let c = 1;
-    for (let i = 1; i <= k; i++) c = (c * (n - k + i)) / i;
-    return c;
+  type Fam = {
+    la: string; a: [number, number, number, number];
+    lb?: string; b?: [number, number, number, number];
+    discrete: boolean;
+    f: (x: number, a: number, b: number) => number;          // pmf or pdf
+    range: (a: number, b: number) => [number, number];       // x-window to draw
+    mean: (a: number, b: number) => number;                  // NaN when undefined
+    vari: (a: number, b: number) => number;                  // Infinity / NaN when undefined
+    name: (a: number, b: number) => string;
   };
-  const binom = (k: number, n: number, p: number) => comb(n, k) * p ** k * (1 - p) ** (n - k);
-  const pois = (k: number, lam: number) => {
-    let f = 1;
-    for (let i = 2; i <= k; i++) f *= i;
-    return (Math.exp(-lam) * lam ** k) / f;
+  const F: Record<string, Fam> = {
+    bernoulli: { la: 'p', a: [0.01, 0.99, 0.01, 0.3], discrete: true, f: (k, p) => (k === 1 ? p : k === 0 ? 1 - p : 0), range: () => [0, 1], mean: (p) => p, vari: (p) => p * (1 - p), name: (p) => `Bernoulli(p=${p.toFixed(2)})` },
+    binomial: { la: 'n', a: [1, 40, 1, 10], lb: 'p', b: [0.01, 0.99, 0.01, 0.3], discrete: true, f: (k, n, p) => (k > n ? 0 : Math.exp(lchoose(n, k) + k * Math.log(p) + (n - k) * Math.log(1 - p))), range: (n) => [0, n], mean: (n, p) => n * p, vari: (n, p) => n * p * (1 - p), name: (n, p) => `binomial(n=${n}, p=${p.toFixed(2)})` },
+    geometric: { la: 'p', a: [0.05, 0.95, 0.01, 0.3], discrete: true, f: (k, p) => (k < 1 ? 0 : (1 - p) ** (k - 1) * p), range: (p) => [1, Math.max(5, Math.ceil(Math.log(0.002) / Math.log(1 - p)))], mean: (p) => 1 / p, vari: (p) => (1 - p) / (p * p), name: (p) => `geometric(p=${p.toFixed(2)})` },
+    poisson: { la: 'λ', a: [0.5, 20, 0.5, 4], discrete: true, f: (k, l) => Math.exp(k * Math.log(l) - l - lgamma(k + 1)), range: (l) => [0, Math.ceil(l + 4 * Math.sqrt(l)) + 2], mean: (l) => l, vari: (l) => l, name: (l) => `Poisson(λ=${l.toFixed(1)})` },
+    uniform: { la: 'a', a: [-5, 4, 0.1, 0], lb: 'b', b: [-4, 5, 0.1, 2], discrete: false, f: (x, a, b) => (b > a && x >= a && x <= b ? 1 / (b - a) : 0), range: () => [-6, 6], mean: (a, b) => (a + b) / 2, vari: (a, b) => (b - a) ** 2 / 12, name: (a, b) => `uniform(${a.toFixed(1)}, ${b.toFixed(1)})` },
+    normal: { la: 'μ', a: [-5, 5, 0.1, 0], lb: 'σ', b: [0.2, 3, 0.1, 1], discrete: false, f: (x, m, s) => Math.exp(-((x - m) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI)), range: () => [-10, 10], mean: (m) => m, vari: (_, s) => s * s, name: (m, s) => `normal(μ=${m.toFixed(1)}, σ=${s.toFixed(1)})` },
+    exponential: { la: 'rate', a: [0.1, 4, 0.1, 1], discrete: false, f: (x, r) => (x < 0 ? 0 : r * Math.exp(-r * x)), range: () => [0, 10], mean: (r) => 1 / r, vari: (r) => 1 / (r * r), name: (r) => `exponential(rate=${r.toFixed(1)})` },
+    gamma: { la: 'shape k', a: [0.5, 10, 0.5, 2], lb: 'scale θ', b: [0.2, 3, 0.1, 1], discrete: false, f: (x, k, t) => (x <= 0 ? 0 : Math.exp((k - 1) * Math.log(x) - x / t - lgamma(k) - k * Math.log(t))), range: () => [0, 20], mean: (k, t) => k * t, vari: (k, t) => k * t * t, name: (k, t) => `gamma(k=${k.toFixed(1)}, θ=${t.toFixed(1)})` },
+    beta: { la: 'α', a: [0.5, 10, 0.1, 2], lb: 'β', b: [0.5, 10, 0.1, 5], discrete: false, f: (x, a, b) => (x <= 0 || x >= 1 ? 0 : Math.exp((a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x) - (lgamma(a) + lgamma(b) - lgamma(a + b)))), range: () => [0, 1], mean: (a, b) => a / (a + b), vari: (a, b) => (a * b) / ((a + b) ** 2 * (a + b + 1)), name: (a, b) => `beta(α=${a.toFixed(1)}, β=${b.toFixed(1)})` },
+    t: { la: 'ν (df)', a: [1, 30, 1, 3], discrete: false, f: (x, n) => Math.exp(lgamma((n + 1) / 2) - lgamma(n / 2) - 0.5 * Math.log(n * Math.PI) - ((n + 1) / 2) * Math.log(1 + (x * x) / n)), range: () => [-6, 6], mean: (n) => (n > 1 ? 0 : NaN), vari: (n) => (n > 2 ? n / (n - 2) : n > 1 ? Infinity : NaN), name: (n) => `Student t(ν=${n})` },
+    chi2: { la: 'k (df)', a: [1, 20, 1, 4], discrete: false, f: (x, k) => (x <= 0 ? 0 : Math.exp((k / 2 - 1) * Math.log(x) - x / 2 - lgamma(k / 2) - (k / 2) * Math.log(2))), range: () => [0, 40], mean: (k) => k, vari: (k) => 2 * k, name: (k) => `chi-square(k=${k})` },
   };
-  const normalDens = (x: number, mu: number, s: number) => Math.exp(-((x - mu) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+  const normalPdf = (x: number, m: number, s: number) => Math.exp(-((x - m) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+  const fmt = (v: number) => (Number.isNaN(v) ? 'undefined' : v === Infinity ? '∞' : v.toFixed(Math.abs(v) < 10 ? 3 : 1));
 
   class DistributionExplorer extends HTMLElement {
     connectedCallback() {
       this.querySelector('[data-f]')!.addEventListener('change', () => this.setup());
       this.querySelector('[data-a]')!.addEventListener('input', () => this.draw());
       this.querySelector('[data-b]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-ov]')!.addEventListener('input', () => this.draw());
       this.setup();
     }
-
+    fam() { return F[this.querySelector<HTMLInputElement>('[data-f]')!.value]; }
     setup() {
-      const fam = families[this.querySelector<HTMLSelectElement>('[data-f]')!.value];
-      const a = this.querySelector<HTMLInputElement>('[data-a]')!;
-      const b = this.querySelector<HTMLInputElement>('[data-b]')!;
-      a.min = String(fam.a[0]); a.max = String(fam.a[1]); a.step = String(fam.a[2]); a.value = String(fam.a[3]);
-      b.min = String(fam.b[0]); b.max = String(fam.b[1]); b.step = String(fam.b[2]); b.value = String(fam.b[3]);
+      const fam = this.fam();
+      const set = (sel: string, r?: [number, number, number, number]) => {
+        const el = this.querySelector<HTMLInputElement>(sel)!;
+        if (!r) return;
+        el.min = String(r[0]); el.max = String(r[1]); el.step = String(r[2]); el.value = String(r[3]);
+      };
+      set('[data-a]', fam.a);
+      set('[data-b]', fam.b);
       this.querySelector('[data-la]')!.textContent = fam.la;
-      this.querySelector('[data-lb]')!.textContent = fam.lb ?? '—';
-      b.disabled = fam.lb === null;
+      this.querySelector('[data-lb]')!.textContent = fam.lb ?? '';
+      this.querySelector<HTMLElement>('[data-bwrap]')!.style.visibility = fam.lb ? 'visible' : 'hidden';
       this.draw();
     }
-
     draw() {
-      const key = this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      const fam = this.fam();
       const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
-      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
-      this.querySelector('[data-av]')!.textContent = a.toFixed(a % 1 ? 1 : 0);
-      this.querySelector('[data-bv]')!.textContent = this.querySelector<HTMLInputElement>('[data-b]')!.disabled ? '—' : b.toFixed(2);
+      const b = fam.lb ? +this.querySelector<HTMLInputElement>('[data-b]')!.value : 0;
+      const overlay = this.querySelector<HTMLInputElement>('[data-ov]')!.checked;
+      this.querySelector('[data-av]')!.textContent = String(+a.toFixed(2));
+      this.querySelector('[data-bv]')!.textContent = fam.lb ? String(+b.toFixed(2)) : '';
+      const [lo, hi] = fam.range(a, b);
       const X0 = 30, X1 = 390, Y0 = 190, H = 170;
+      const sx = (x: number) => X0 + ((x - lo) / (hi - lo || 1)) * (X1 - X0);
+      const mu = fam.mean(a, b), v = fam.vari(a, b);
+      const showNormal = overlay && Number.isFinite(mu) && Number.isFinite(v) && v > 0;
       const shape = this.querySelector('[data-shape]')!;
-      let stat = '';
-      if (key === 'binomial' || key === 'poisson') {
-        const K = key === 'binomial' ? a : Math.ceil(a + 4 * Math.sqrt(a)) + 2;
-        const pm = (k: number) => (key === 'binomial' ? binom(k, a, b) : pois(k, a));
-        const ks = Array.from({ length: K + 1 }, (_, k) => k);
-        const peak = Math.max(...ks.map(pm));
-        const w = (X1 - X0) / (K + 1);
-        shape.innerHTML = ks
-          .map((k) => {
-            const h = (pm(k) / peak) * H;
-            return `<rect class="de-bar" x="${(X0 + k * w + w * 0.15).toFixed(2)}" y="${(Y0 - h).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}"></rect>`;
-          })
-          .join('');
-        stat =
-          key === 'binomial'
-            ? `binomial(n=${a}, p=${b.toFixed(2)}) · mean np = ${(a * b).toFixed(2)} · variance np(1−p) = ${(a * b * (1 - b)).toFixed(2)} · tallest bar = ${peak.toFixed(3)}`
-            : `Poisson(λ=${a.toFixed(1)}) · mean = variance = λ = ${a.toFixed(1)} · tallest bar = ${peak.toFixed(3)}`;
+      let peak = 0;
+      if (fam.discrete) {
+        const ks: number[] = [];
+        for (let k = Math.ceil(lo); k <= hi; k++) ks.push(k);
+        const ps = ks.map((k) => fam.f(k, a, b));
+        peak = Math.max(...ps);
+        if (showNormal) peak = Math.max(peak, normalPdf(mu, mu, Math.sqrt(v)));
+        const w = (X1 - X0) / ks.length;
+        const bx = (k: number) => X0 + (k - Math.ceil(lo)) * w;
+        shape.innerHTML = ks.map((k, i) => {
+          const h = (ps[i] / peak) * H;
+          return `<rect class="de-bar" x="${(bx(k) + w * 0.15).toFixed(2)}" y="${(Y0 - h).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}"></rect>`;
+        }).join('');
+        const cx = (x: number) => bx(x) + w / 2;
+        this.overlay(showNormal ? (x: number) => normalPdf(x, mu, Math.sqrt(v)) : null, lo - 0.5, hi + 0.5, cx, peak);
+        this.mark(Number.isFinite(mu) ? cx(mu) : null);
       } else {
-        // continuous: density over a window; scale to the tallest point in view
-        let lo: number, hi: number, f: (x: number) => number;
-        // fixed x-window, so moving a parameter moves the curve on the axis
-        if (key === 'normal') {
-          lo = -10; hi = 10; f = (x) => normalDens(x, a, b);
-        } else {
-          lo = 0; hi = 10; f = (x) => a * Math.exp(-a * x);
-        }
-        const N = 120;
-        const pts: string[] = [];
-        let peak = 0;
-        for (let i = 0; i <= N; i++) {
-          const x = lo + ((hi - lo) * i) / N;
-          peak = Math.max(peak, f(x));
-        }
-        for (let i = 0; i <= N; i++) {
-          const x = lo + ((hi - lo) * i) / N;
-          const px = X0 + ((X1 - X0) * i) / N;
-          const py = Y0 - (f(x) / peak) * H;
-          pts.push(`${i ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`);
-        }
-        shape.innerHTML = `<path class="de-curve" d="${pts.join(' ')} L${X1},${Y0} L${X0},${Y0} Z"></path>`;
-        stat =
-          key === 'normal'
-            ? `normal(μ=${a.toFixed(1)}, σ=${b.toFixed(1)}) · mean = ${a.toFixed(1)} · variance σ² = ${(b * b).toFixed(2)} · peak density = ${peak.toFixed(3)}`
-            : `exponential(rate=${a.toFixed(1)}) · mean 1/rate = ${(1 / a).toFixed(2)} · variance 1/rate² = ${(1 / (a * a)).toFixed(2)} · peak density = ${peak.toFixed(3)}`;
+        const N = 240;
+        const xs = Array.from({ length: N + 1 }, (_, i) => lo + ((hi - lo) * i) / N);
+        const ys = xs.map((x) => fam.f(x, a, b));
+        peak = Math.max(...ys.filter(Number.isFinite));
+        if (showNormal) peak = Math.max(peak, normalPdf(mu, mu, Math.sqrt(v)));
+        const cap = (y: number) => Math.min(y, peak) / peak;
+        shape.innerHTML = `<path class="de-curve" d="${xs.map((x, i) => `${i ? 'L' : 'M'}${sx(x).toFixed(2)},${(Y0 - cap(ys[i]) * H).toFixed(2)}`).join(' ')} L${X1},${Y0} L${X0},${Y0} Z"></path>`;
+        this.overlay(showNormal ? (x: number) => normalPdf(x, mu, Math.sqrt(v)) : null, lo, hi, sx, peak);
+        this.mark(Number.isFinite(mu) && mu >= lo && mu <= hi ? sx(mu) : null);
       }
-      this.querySelector('[data-stat]')!.textContent = stat;
+      this.querySelector('[data-lo]')!.textContent = String(+lo.toFixed(2));
+      this.querySelector('[data-hi]')!.textContent = String(+hi.toFixed(2));
+      const note = overlay && !showNormal ? ' · no normal to compare: the variance is not finite' : '';
+      this.querySelector('[data-stat]')!.textContent = `${fam.name(a, b)} · mean ${fmt(mu)} (green line) · variance ${fmt(v)}${note}`;
+    }
+    overlay(g: ((x: number) => number) | null, lo: number, hi: number, sx: (x: number) => number, peak: number) {
+      const el = this.querySelector('[data-normal]')!;
+      if (!g) return el.setAttribute('d', '');
+      let d = '';
+      for (let i = 0; i <= 240; i++) {
+        const x = lo + ((hi - lo) * i) / 240;
+        d += `${i ? 'L' : 'M'}${sx(x).toFixed(2)},${(190 - (Math.min(g(x), peak) / peak) * 170).toFixed(2)}`;
+      }
+      el.setAttribute('d', d);
+    }
+    mark(x: number | null) {
+      const el = this.querySelector('[data-mean]')!;
+      el.setAttribute('x1', String(x ?? -10));
+      el.setAttribute('x2', String(x ?? -10));
     }
   }
   customElements.define('distribution-explorer', DistributionExplorer);

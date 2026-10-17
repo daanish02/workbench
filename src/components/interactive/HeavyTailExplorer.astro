@@ -1,0 +1,180 @@
+---
+import Figure from '../Figure.astro';
+
+const fams: [string, string][] = [['pareto', 'Pareto'], ['zipf', 'Zipf'], ['lognormal', 'lognormal'], ['cauchy', 'Cauchy']];
+---
+
+<Figure
+  title="Heavy-tail explorer"
+  caption="Pick a heavy-tailed family and move its parameters. The yellow dashed curve is a normal with the same centre and spread for comparison (for the Cauchy, which has no variance, a normal with the same width at half height). Switch to log scale to see the tails: the heavy-tailed curve stays high long after the normal has vanished. The readout says which moments exist."
+>
+  <heavy-tail-explorer>
+    <div class="ht-ctl">
+      <div class="choice-row ht-fams"><span class="ctl-label">family</span>
+        <input type="hidden" data-f value="pareto" /><span class="choice">{fams.map(([v, l]) => <button type="button" class="btn" data-choice={v} aria-pressed={v === 'pareto' ? 'true' : 'false'}>{l}</button>)}</span>
+      </div>
+      <label><span data-la>α</span> <input type="range" data-a /><b data-av></b></label>
+      <label data-bwrap><span data-lb></span> <input type="range" data-b /><b data-bv></b></label>
+      <span class="ht-tog">
+        <span><input type="checkbox" hidden data-ov checked /><button type="button" class="btn" data-toggle aria-pressed="true">compare with normal</button></span>
+        <span><input type="checkbox" hidden data-log /><button type="button" class="btn" data-toggle aria-pressed="false">log scale</button></span>
+      </span>
+    </div>
+    <svg class="ht-svg" viewBox="0 0 400 220" role="img" aria-label="Density or probability of a heavy-tailed distribution with a normal for comparison">
+      <line x1="30" y1="190" x2="390" y2="190" class="ht-axis"></line>
+      <line x1="30" y1="10" x2="30" y2="190" class="ht-axis"></line>
+      <g data-shape></g>
+      <path data-normal class="ht-normal"></path>
+      <text data-lo x="30" y="205" class="ht-t"></text>
+      <text data-hi x="390" y="205" class="ht-t ht-r"></text>
+      <text data-ylab x="34" y="18" class="ht-t"></text>
+    </svg>
+    <p class="ht-stat" data-stat></p>
+  </heavy-tail-explorer>
+</Figure>
+
+<style>
+  .ht-ctl { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 10px; align-items: center; }
+  .ht-fams { flex: 1 1 100%; }
+  .ht-ctl label { flex: 1 1 180px; display: flex; align-items: center; gap: 8px; font: 0.8125rem var(--font-mono); color: var(--text-muted); }
+  .ht-ctl label input { flex: 1; min-width: 0; }
+  .ht-ctl b { min-width: 3em; text-align: right; color: var(--text); }
+  .ht-tog { flex: 1 1 100%; display: flex; gap: 8px; justify-content: center; }
+  .ht-svg { display: block; width: 100%; max-width: 440px; margin: 0 auto; }
+  .ht-axis { stroke: #3c4043; stroke-width: 1; }
+  .ht-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .ht-r { text-anchor: end; }
+  .ht-svg :global(.ht-bar) { fill: var(--g-blue); opacity: 0.85; }
+  .ht-svg :global(.ht-curve) { fill: rgba(66, 133, 244, 0.22); stroke: var(--g-blue); stroke-width: 2; }
+  .ht-normal { fill: none; stroke: var(--g-yellow); stroke-width: 2; stroke-dasharray: 5 4; }
+  .ht-stat { margin: 10px 0 0; font: 0.8125rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const normalPdf = (x: number, m: number, s: number) => Math.exp(-((x - m) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+  const zeta = (s: number) => { let z = 0; for (let k = 1; k <= 20000; k++) z += k ** -s; return z + (20000 ** (1 - s)) / (s - 1); };
+
+  type Fam = {
+    la: string; a: [number, number, number, number]; lb?: string; b?: [number, number, number, number];
+    discrete: boolean; range: (a: number, b: number) => [number, number];
+    f: (x: number, a: number, b: number) => number;
+    normal: (a: number, b: number) => [number, number] | null;   // [mean, sd] of the comparison normal
+    moments: (a: number, b: number) => string;
+    name: (a: number, b: number) => string;
+  };
+  const F: Record<string, Fam> = {
+    pareto: {
+      la: 'α', a: [0.5, 4, 0.1, 1.5], lb: 'x_m', b: [0.5, 3, 0.1, 1], discrete: false,
+      range: (_, xm) => [0, xm * 15],
+      f: (x, a, xm) => (x < xm ? 0 : (a * xm ** a) / x ** (a + 1)),
+      normal: (a, xm) => (a > 2 ? [(a * xm) / (a - 1), Math.sqrt((a * xm * xm) / ((a - 1) ** 2 * (a - 2)))] : null),
+      moments: (a, xm) => (a > 2 ? `mean ${((a * xm) / (a - 1)).toFixed(2)}, variance ${((a * xm * xm) / ((a - 1) ** 2 * (a - 2))).toFixed(2)}` : a > 1 ? `mean ${((a * xm) / (a - 1)).toFixed(2)}, variance infinite (α ≤ 2)` : 'mean and variance infinite (α ≤ 1)'),
+      name: (a, xm) => `Pareto(α=${a.toFixed(1)}, x_m=${xm.toFixed(1)}) · P(X > 10x_m) = ${(10 ** -a).toExponential(1)}`,
+    },
+    zipf: {
+      la: 's', a: [1.1, 4, 0.1, 2], discrete: true,
+      range: () => [1, 20],
+      f: (k, s) => (k < 1 ? 0 : k ** -s / zeta(s)),
+      normal: (s) => {
+        if (s <= 3) return null;
+        const z = zeta(s), m = zeta(s - 1) / z, v = zeta(s - 2) / z - m * m;
+        return [m, Math.sqrt(v)];
+      },
+      moments: (s) => (s > 3 ? 'mean and variance finite' : s > 2 ? 'mean finite, variance infinite (s ≤ 3)' : 'mean infinite (s ≤ 2)'),
+      name: (s) => `Zipf(s=${s.toFixed(1)}) · rank 1 is ${(2 ** s).toFixed(1)}× as common as rank 2`,
+    },
+    lognormal: {
+      la: 'μ', a: [-1, 2, 0.1, 0], lb: 'σ', b: [0.2, 1.5, 0.05, 0.8], discrete: false,
+      range: (m, s) => [0, Math.exp(m + 3 * s)],
+      f: (x, m, s) => (x <= 0 ? 0 : Math.exp(-((Math.log(x) - m) ** 2) / (2 * s * s)) / (x * s * Math.sqrt(2 * Math.PI))),
+      normal: (m, s) => [Math.exp(m + (s * s) / 2), Math.sqrt((Math.exp(s * s) - 1) * Math.exp(2 * m + s * s))],
+      moments: (m, s) => `mean ${Math.exp(m + (s * s) / 2).toFixed(2)}, variance ${((Math.exp(s * s) - 1) * Math.exp(2 * m + s * s)).toFixed(2)} (all moments finite)`,
+      name: (m, s) => `lognormal(μ=${m.toFixed(1)}, σ=${s.toFixed(2)}) · median ${Math.exp(m).toFixed(2)}`,
+    },
+    cauchy: {
+      la: 'location', a: [-3, 3, 0.1, 0], lb: 'scale γ', b: [0.2, 3, 0.1, 1], discrete: false,
+      range: () => [-12, 12],
+      f: (x, x0, g) => 1 / (Math.PI * g * (1 + ((x - x0) / g) ** 2)),
+      // no variance, so compare with the normal that has the same width at half its height
+      normal: (x0, g) => [x0, g / Math.sqrt(2 * Math.log(2))],
+      moments: () => 'no mean and no variance: sample averages never settle',
+      name: (x0, g) => `Cauchy(location=${x0.toFixed(1)}, γ=${g.toFixed(1)}) · P(|X − x0| > 10γ) = ${(1 - (2 / Math.PI) * Math.atan(10)).toFixed(3)}`,
+    },
+  };
+
+  class HeavyTailExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('change', () => this.setup());
+      ['[data-a]', '[data-b]', '[data-ov]', '[data-log]'].forEach((s) => this.querySelector(s)!.addEventListener('input', () => this.draw()));
+      this.setup();
+    }
+    fam() { return F[this.querySelector<HTMLInputElement>('[data-f]')!.value]; }
+    setup() {
+      const fam = this.fam();
+      const set = (sel: string, r?: [number, number, number, number]) => {
+        if (!r) return;
+        const el = this.querySelector<HTMLInputElement>(sel)!;
+        el.min = String(r[0]); el.max = String(r[1]); el.step = String(r[2]); el.value = String(r[3]);
+      };
+      set('[data-a]', fam.a); set('[data-b]', fam.b);
+      this.querySelector('[data-la]')!.textContent = fam.la;
+      this.querySelector('[data-lb]')!.textContent = fam.lb ?? '';
+      this.querySelector<HTMLElement>('[data-bwrap]')!.style.visibility = fam.lb ? 'visible' : 'hidden';
+      this.draw();
+    }
+    draw() {
+      const fam = this.fam();
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = fam.lb ? +this.querySelector<HTMLInputElement>('[data-b]')!.value : 0;
+      const ov = this.querySelector<HTMLInputElement>('[data-ov]')!.checked;
+      const log = this.querySelector<HTMLInputElement>('[data-log]')!.checked;
+      this.querySelector('[data-av]')!.textContent = String(+a.toFixed(2));
+      this.querySelector('[data-bv]')!.textContent = fam.lb ? String(+b.toFixed(2)) : '';
+      const [lo, hi] = fam.range(a, b);
+      const X0 = 30, X1 = 390, Y0 = 190, H = 170;
+      const nm = ov ? fam.normal(a, b) : null;
+      const g = nm ? (x: number) => normalPdf(x, nm[0], nm[1]) : null;
+      // y scale: linear from 0 to the peak, or log10 over 8 decades below the peak
+      const xs: number[] = [];
+      if (fam.discrete) for (let k = lo; k <= hi; k++) xs.push(k);
+      else for (let i = 0; i <= 300; i++) xs.push(lo + ((hi - lo) * i) / 300);
+      const ys = xs.map((x) => fam.f(x, a, b));
+      let peak = Math.max(...ys.filter(Number.isFinite));
+      if (g && nm) peak = Math.max(peak, g(nm[0]));
+      const yOf = (y: number) => {
+        if (!(y > 0)) return Y0;
+        if (!log) return Y0 - (Math.min(y, peak) / peak) * H;
+        const d = Math.log10(Math.min(y, peak) / peak); // 0 at the peak, negative below
+        return Y0 - Math.max(0, 1 + d / 8) * H;
+      };
+      const shape = this.querySelector('[data-shape]')!;
+      let sx: (x: number) => number;
+      if (fam.discrete) {
+        const w = (X1 - X0) / xs.length;
+        sx = (x) => X0 + (x - lo) * w + w / 2;
+        shape.innerHTML = xs.map((x, i) => {
+          const y = yOf(ys[i]);
+          return `<rect class="ht-bar" x="${(sx(x) - w * 0.35).toFixed(2)}" y="${y.toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${(Y0 - y).toFixed(2)}"></rect>`;
+        }).join('');
+      } else {
+        sx = (x) => X0 + ((x - lo) / (hi - lo)) * (X1 - X0);
+        shape.innerHTML = `<path class="ht-curve" d="${xs.map((x, i) => `${i ? 'L' : 'M'}${sx(x).toFixed(2)},${yOf(ys[i]).toFixed(2)}`).join(' ')} L${X1},${Y0} L${X0},${Y0} Z"></path>`;
+      }
+      const nEl = this.querySelector('[data-normal]')!;
+      if (g) {
+        let d = '';
+        for (let i = 0; i <= 300; i++) {
+          const x = lo + ((hi - lo) * i) / 300;
+          d += `${i ? 'L' : 'M'}${sx(x).toFixed(2)},${yOf(g(x)).toFixed(2)}`;
+        }
+        nEl.setAttribute('d', d);
+      } else nEl.setAttribute('d', '');
+      this.querySelector('[data-lo]')!.textContent = String(+lo.toFixed(1));
+      this.querySelector('[data-hi]')!.textContent = String(+hi.toFixed(1));
+      this.querySelector('[data-ylab]')!.textContent = log ? 'log scale: 8 decades' : '';
+      const missing = ov && !nm ? ' · no comparison normal: the variance is infinite' : '';
+      this.querySelector('[data-stat]')!.textContent = `${fam.name(a, b)} · ${fam.moments(a, b)}${missing}`;
+    }
+  }
+  customElements.define('heavy-tail-explorer', HeavyTailExplorer);
+</script>
