@@ -1,0 +1,201 @@
+---
+title: "Ports & HTTP Codes"
+description: "The port numbers of common services and the HTTP status codes you will meet in logs, browsers and APIs."
+order: 6
+tier: core
+takeaways:
+  - "A **port** is a 16-bit number (0 to 65535) that tells the operating system which program gets a TCP or UDP packet. The pair `IP:port` identifies one service."
+  - "Ports below **1024** are the well-known ports (for example `22` SSH, `443` HTTPS). Clients usually connect to them from a random **ephemeral** port."
+  - "HTTP status codes group by first digit: `1xx` informational, `2xx` success, `3xx` redirect, `4xx` the client erred, `5xx` the server erred."
+  - "The useful split is `4xx` versus `5xx`. A `4xx` means fix the request; a `5xx` means the server failed and a retry may succeed."
+  - "`401` means the client is not authenticated; `403` means it is authenticated but not allowed. Mixing these up is a common source of confusion."
+resources:
+  - title: "IANA: Service Name and Transport Protocol Port Number Registry"
+    url: "https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml"
+    note: "The official list of assigned ports."
+  - title: "RFC 9110: HTTP Semantics, section 15 (status codes)"
+    url: "https://www.rfc-editor.org/rfc/rfc9110.html"
+    note: "The standard that defines HTTP status codes and their meanings."
+  - title: "MDN: HTTP response status codes"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status"
+    note: "Plain-language descriptions with examples for each code."
+  - title: "RFC 6335: Internet Assigned Numbers Authority Procedures for Port Numbers"
+    url: "https://www.rfc-editor.org/rfc/rfc6335.html"
+    note: "How port ranges are assigned and why the ranges exist."
+---
+
+Two numbers show up in almost every networking problem: the **port** a service listens on and the **status code** a server returns. A port tells the operating system where a packet goes; a status code tells the client what happened to its request. This page lists the ones you will meet most often. For how the transport layer uses ports, see [TCP vs UDP](../../networks/tcp-vs-udp/).
+
+## Port Ranges
+
+| Range | Name | Who uses it |
+| --- | --- | --- |
+| 0 to 1023 | Well-known | Standard services; binding needs administrator rights on most systems |
+| 1024 to 49151 | Registered | Vendor and application services, registered with IANA |
+| 49152 to 65535 | Dynamic / ephemeral | Source ports that clients pick for outgoing connections |
+
+Linux uses a narrower default ephemeral range (32768 to 60999). Check it with `cat /proc/sys/net/ipv4/ip_local_port_range`.
+
+## Ports
+
+Use the filter to find a service by name or number. Ports are conventions, not rules: a server can listen on any port, and a web app on `8080` is common in development.
+
+<FilterTable placeholder="Filter, e.g. ssh, database, mail, 443">
+
+### Web
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 80 | TCP | HTTP |
+| 443 | TCP | HTTPS (HTTP over TLS) |
+| 8080 | TCP | HTTP alternate, common in development and proxies |
+| 8443 | TCP | HTTPS alternate |
+
+### Remote Access and Administration
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 22 | TCP | SSH; also SFTP and SCP |
+| 23 | TCP | Telnet (unencrypted, avoid) |
+| 3389 | TCP | Remote Desktop (RDP) |
+| 5900 | TCP | VNC |
+| 161 | UDP | SNMP |
+
+### Name, Address and Time
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 53 | UDP and TCP | DNS (TCP for large answers and zone transfers) |
+| 853 | TCP | DNS over TLS |
+| 67 / 68 | UDP | DHCP server / client |
+| 123 | UDP | NTP |
+| 389 | TCP | LDAP |
+| 636 | TCP | LDAP over TLS |
+
+### Mail
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 25 | TCP | SMTP between mail servers |
+| 587 | TCP | SMTP submission (clients sending mail, with login) |
+| 465 | TCP | SMTP over TLS |
+| 110 | TCP | POP3 |
+| 995 | TCP | POP3 over TLS |
+| 143 | TCP | IMAP |
+| 993 | TCP | IMAP over TLS |
+
+### File Transfer and Shares
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 20 / 21 | TCP | FTP data / control |
+| 69 | UDP | TFTP |
+| 445 | TCP | SMB (Windows file sharing) |
+| 2049 | TCP and UDP | NFS |
+
+### Databases and Data Stores
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 5432 | TCP | PostgreSQL |
+| 3306 | TCP | MySQL and MariaDB |
+| 1433 | TCP | Microsoft SQL Server |
+| 1521 | TCP | Oracle Database |
+| 27017 | TCP | MongoDB |
+| 6379 | TCP | Redis |
+| 11211 | TCP and UDP | Memcached |
+| 9200 | TCP | Elasticsearch (HTTP API) |
+
+### Messaging and Coordination
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 5672 | TCP | AMQP (RabbitMQ) |
+| 9092 | TCP | Kafka broker |
+| 2181 | TCP | ZooKeeper client |
+
+### Infrastructure and Networking
+
+| Port | Protocol | Service |
+| --- | --- | --- |
+| 6443 | TCP | Kubernetes API server |
+| 500 / 4500 | UDP | IPsec (IKE and NAT traversal) |
+| 1194 | UDP | OpenVPN (default) |
+| 51820 | UDP | WireGuard (default) |
+| 514 | UDP | Syslog |
+| 179 | TCP | BGP |
+
+</FilterTable>
+
+<Callout type="pitfall">
+A port being open does not mean the service behind it is safe. Expose databases (`5432`, `3306`, `6379`, `27017`) only to the networks that need them; do not put them on the public internet. Default ports are also the first ones scanners try.
+</Callout>
+
+## HTTP Status Codes
+
+The first digit gives the class. Within a class, the code says more. Names follow [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
+
+<FilterTable placeholder="Filter, e.g. redirect, auth, timeout, not found">
+
+### 1xx Informational
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 100 | Continue | The client may send the request body |
+| 101 | Switching Protocols | Server agrees to change protocol, for example to WebSocket |
+
+### 2xx Success
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 200 | OK | Request succeeded; the body holds the result |
+| 201 | Created | A new resource was created; often returned from `POST` |
+| 202 | Accepted | Received and will be processed later |
+| 204 | No Content | Succeeded and there is nothing to return, often after `DELETE` |
+| 206 | Partial Content | Part of a file, for a range request |
+
+### 3xx Redirection
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 301 | Moved Permanently | The resource has a new permanent address; clients and search engines update |
+| 302 | Found | Temporary redirect; the method may change to `GET` |
+| 303 | See Other | Fetch the result from another URL with `GET` |
+| 304 | Not Modified | Cached copy is still valid; no body is sent |
+| 307 | Temporary Redirect | Temporary redirect; the method must not change |
+| 308 | Permanent Redirect | Permanent redirect; the method must not change |
+
+### 4xx Client Error
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 400 | Bad Request | Malformed request, for example invalid JSON |
+| 401 | Unauthorized | Not authenticated; send valid credentials |
+| 403 | Forbidden | Authenticated, but not allowed to do this |
+| 404 | Not Found | No resource at this address |
+| 405 | Method Not Allowed | The resource exists but not for this method; check the `Allow` header |
+| 408 | Request Timeout | The client was too slow to send the request |
+| 409 | Conflict | The request conflicts with current state, such as a duplicate key |
+| 410 | Gone | Deliberately removed and not coming back |
+| 413 | Content Too Large | The request body exceeds the server's limit |
+| 415 | Unsupported Media Type | Wrong `Content-Type` for this endpoint |
+| 422 | Unprocessable Content | Well-formed request with invalid values, for example a bad email |
+| 429 | Too Many Requests | Rate limit hit; wait and retry (`Retry-After` may say how long) |
+
+### 5xx Server Error
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| 500 | Internal Server Error | Unhandled failure on the server; check its logs |
+| 501 | Not Implemented | The server does not support this request |
+| 502 | Bad Gateway | A proxy got an invalid response from the upstream server |
+| 503 | Service Unavailable | Overloaded or down for maintenance; retry later |
+| 504 | Gateway Timeout | A proxy did not get a timely response from the upstream server |
+
+</FilterTable>
+
+## Reading a Status Code in Practice
+
+Start with the class. A `404` on a URL you typed usually means a typo or a moved page. A `401` on an API call means the token is missing or expired. A `403` after login means the account lacks permission. A `502` or `504` in front of an application means the proxy is healthy but the app behind it is not answering. Retrying makes sense for `429` and `5xx`; retrying a `4xx` without changing the request will fail the same way.
+
+Check the port too. `connection refused` means nothing is listening on that port; `connection timed out` usually means a firewall is dropping packets. `curl -v https://example.com` and `nc -zv example.com 443` show which case you are in.

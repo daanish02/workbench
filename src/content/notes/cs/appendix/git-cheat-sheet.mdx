@@ -1,0 +1,163 @@
+---
+title: "Git Cheat Sheet"
+description: "A searchable reference for the Git commands you reach for every day, grouped by what you are trying to do."
+order: 3
+tier: core
+takeaways:
+  - "Git commands read and change the same few things: the **working tree**, the **staging area** and the **commit graph**. Know which one a command touches."
+  - "`git status` and `git log --oneline --graph` are the two commands to run when you are unsure what state you are in."
+  - "Commands that rewrite history (`reset --hard`, `rebase`, `commit --amend`, `push --force`) can lose work. Prefer `revert` on shared branches and `--force-with-lease` over `--force`."
+  - "Almost nothing is truly lost: `git reflog` lists where `HEAD` has been, so a bad reset can usually be undone."
+  - "You are not expected to memorize the table. Know the **groups** of tasks, search the sheet, and use `git <command> --help` for the details."
+resources:
+  - title: "Git documentation: command reference"
+    url: "https://git-scm.com/docs"
+    note: "The authoritative page for every command and option."
+  - title: "Oh Shit, Git!?!"
+    url: "https://ohshitgit.com/"
+    note: "Plain recipes for getting out of common mistakes."
+  - title: "git-reset"
+    url: "https://git-scm.com/docs/git-reset"
+  - title: "git-reflog"
+    url: "https://git-scm.com/docs/git-reflog"
+  - title: "git-bisect"
+    url: "https://git-scm.com/docs/git-bisect"
+---
+
+Git stores history as a graph of commits, and every command moves something in that picture: a file in your **working tree**, a file in the **staging area** (the index), or a pointer such as a branch. The [Git](../../software-engineering/git-internals/) note explains that model and the workflow around it. This page is the lookup table for when you know the goal and need the command.
+
+## Cheat Sheet
+
+Type to filter by command or purpose (for example "undo", "remote" or "branch"), or choose a group. Options shown are the ones you will use most; the manual lists the rest.
+
+<FilterTable placeholder="Filter commands, e.g. undo, remote, branch, stash">
+
+### Setup and Config
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git config --global user.name` | Set the author name on your commits | `git config --global user.name "Ada Lovelace"` |
+| `git config --global user.email` | Set the author email on your commits | `git config --global user.email "ada@example.com"` |
+| `git config --global init.defaultBranch` | Name the first branch of new repositories | `git config --global init.defaultBranch main` |
+| `git config --list --show-origin` | Show every setting and the file it came from | `git config --list --show-origin` |
+
+### Starting a Repository
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git init` | Turn the current folder into a repository | `git init` |
+| `git clone` | Copy a remote repository, with its history | `git clone https://github.com/user/repo.git` |
+
+### Looking at State
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git status` | Show changed, staged and untracked files and the current branch | `git status` |
+| `git status -s` | Short form of status, one line per file | `git status -s` |
+| `git diff` | Show unstaged changes | `git diff` |
+| `git diff --staged` | Show changes that are staged for the next commit | `git diff --staged` |
+| `git log` | Show commit history (`--oneline` compact, `--graph` draws branches, `--all` every branch) | `git log --oneline --graph --all` |
+| `git show` | Show one commit: its message and changes | `git show a1b2c3d` |
+| `git blame` | Show who last changed each line of a file | `git blame src/app.py` |
+
+### Saving Changes
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git add` | Stage a file for the next commit | `git add app.py` |
+| `git add -p` | Stage part of a file, hunk by hunk | `git add -p` |
+| `git commit` | Record the staged changes as a commit | `git commit -m "fix: handle empty input"` |
+| `git commit --amend` | Change the last commit's message or contents (rewrites it) | `git commit --amend --no-edit` |
+| `git restore --staged` | Unstage a file, keeping its changes | `git restore --staged app.py` |
+| `git restore` | Discard unstaged edits to a file (permanent) | `git restore app.py` |
+
+### Branches
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git branch` | List local branches (`-a` includes remote ones) | `git branch -a` |
+| `git switch -c` | Create a branch and move to it | `git switch -c feature/login` |
+| `git switch` | Move to an existing branch | `git switch main` |
+| `git branch -d` | Delete a branch that is already merged | `git branch -d feature/login` |
+| `git branch -D` | Delete a branch even if unmerged (permanent for its commits) | `git branch -D old-idea` |
+| `git branch -m` | Rename a branch | `git branch -m oldname newname` |
+
+### Merging, Rebasing and Cherry-Picking
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git merge` | Join another branch's history into the current branch | `git merge feature/login` |
+| `git rebase` | Replay the current branch's commits on top of another (rewrites them) | `git rebase main` |
+| `git rebase -i` | Edit, squash, reorder or drop recent commits | `git rebase -i HEAD~3` |
+| `git rebase --continue` / `--abort` | Resume or cancel a rebase after resolving a conflict | `git rebase --continue` |
+| `git merge --abort` | Cancel a merge that hit conflicts | `git merge --abort` |
+| `git cherry-pick` | Copy one commit onto the current branch | `git cherry-pick a1b2c3d` |
+
+### Remotes
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git remote -v` | List remote names and URLs | `git remote -v` |
+| `git fetch` | Download remote commits without changing your branches | `git fetch origin` |
+| `git pull` | Fetch and merge the remote branch (`--rebase` to rebase instead) | `git pull --rebase` |
+| `git push -u` | Push a branch and set it to track the remote one | `git push -u origin feature/login` |
+| `git push --force-with-lease` | Force-push only if the remote is where you last saw it | `git push --force-with-lease` |
+| `git push --delete` | Delete a branch on the remote | `git push origin --delete old-idea` |
+| `git push --tags` | Push tags to the remote | `git push --tags` |
+
+### Stash
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git stash` | Shelve uncommitted changes and return to a clean tree | `git stash push -m "wip login"` |
+| `git stash pop` | Reapply the latest stash and remove it from the list | `git stash pop` |
+| `git stash list` | Show saved stashes | `git stash list` |
+| `git stash apply` | Reapply a stash and keep it in the list | `git stash apply stash@{1}` |
+
+### Undoing
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git reset --soft HEAD~1` | Undo the last commit, keeping its changes staged | `git reset --soft HEAD~1` |
+| `git reset HEAD~1` | Undo the last commit, keeping its changes unstaged | `git reset HEAD~1` |
+| `git reset --hard` | Move the branch and discard working changes (permanent) | `git reset --hard origin/main` |
+| `git revert` | Add a new commit that undoes an earlier one; safe on shared branches | `git revert a1b2c3d` |
+| `git reflog` | List where `HEAD` has pointed, to recover lost commits | `git reflog` |
+| `git clean -n` | Preview untracked files that would be deleted | `git clean -n` |
+| `git clean -fd` | Delete untracked files and directories (permanent) | `git clean -fd` |
+
+### Searching History
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git grep` | Search tracked files for text | `git grep "TODO"` |
+| `git log -S` | Find commits that added or removed a string | `git log -S "retry_limit"` |
+| `git log --author` | Filter commits by author | `git log --author="Ada" --oneline` |
+| `git bisect` | Binary-search history for the commit that broke something | `git bisect start` then `git bisect bad` / `git bisect good <commit>` |
+
+### Tags
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git tag -a` | Create an annotated tag with a message | `git tag -a v1.2.0 -m "Release 1.2.0"` |
+| `git tag` | List tags | `git tag -l "v1.*"` |
+
+</FilterTable>
+
+## Recipes for Common Mistakes
+
+<Callout type="pitfall">
+`git reset --hard` and `git restore` discard uncommitted changes with no undo. Run `git status` and `git diff` first, and stash instead if you are not sure.
+</Callout>
+
+**Committed to the wrong branch.** Create a branch at the current commit, then move the original branch back. `git branch fix-branch` then `git reset --hard HEAD~1` on the original branch, and switch to `fix-branch`.
+
+**Pushed a bad commit to a shared branch.** Do not rewrite it. Use `git revert <commit>` to add a commit that undoes it, so teammates' history still lines up.
+
+**Lost a commit after a reset.** Run `git reflog`, find the entry from before the reset, and `git reset --hard <that commit>` (or `git branch recovered <that commit>` to keep your current state too).
+
+**Force-pushing after a rebase.** Use `git push --force-with-lease`. It refuses the push if someone else has pushed to the branch since you last fetched.
+
+## Reading the Sheet
+
+Most commands follow one shape: `git <command> [options] [arguments]`. Options such as `--soft`, `--hard` or `-p` change how far the command reaches, so check them before running anything that rewrites history. When a command is unfamiliar, `git <command> --help` gives a summary and [the reference pages](https://git-scm.com/docs) give every option.

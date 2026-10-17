@@ -1,0 +1,109 @@
+---
+title: "Latency Numbers"
+description: "How long common operations take, from a CPU cache hit to a packet crossing the Atlantic, with the capacity constants you need for back-of-envelope estimates."
+order: 5
+tier: core
+takeaways:
+  - "Each step down the memory hierarchy costs roughly **10×** to **100×** more: cache, RAM, SSD, disk, network."
+  - "A **round trip** inside one datacenter (about 0.5 ms) is about **1,000,000×** slower than an L1 cache hit. Batch calls and avoid chatty protocols."
+  - "Sequential reads beat random reads. Reading 1 MB sequentially from SSD takes about 1 ms; 4 KB at a random location takes about 150 µs."
+  - "These numbers are order-of-magnitude guides, not benchmarks. Hardware changes, so the ratios matter more than the exact values."
+  - "Use the capacity constants to turn a traffic estimate into requests per second and storage per year before you design anything."
+resources:
+  - title: "Latency numbers every programmer should know (gist)"
+    url: "https://gist.github.com/jboner/2841832"
+    note: "The list this note follows, originally from Jeff Dean and Peter Norvig, updated over time."
+  - title: "Designing Data-Intensive Applications"
+    url: "https://dataintensive.net/"
+    note: "How latency, throughput and load shape the design of data systems."
+---
+
+When you design a system you decide where data lives and how often you move it. Those decisions are cheap or expensive depending on a few orders of magnitude, and this page is the table that tells you which. For the layers these numbers describe, see [Cache Basics](../../../infra/memory-hierarchy/cache-basics/) and [Bandwidth, Latency and Throughput](../../../infra/networking-hardware/bandwidth-latency-and-throughput/).
+
+## Latency
+
+The **1 ns** unit is one billionth of a second. Read the **Times slower than L1** column to compare steps; it is the quickest way to see what a cache miss or network hop costs.
+
+<FilterTable placeholder="Filter, e.g. cache, disk, network, LLM">
+
+### CPU and Memory
+
+| Operation | Time | Times slower than L1 |
+| --- | --- | --- |
+| L1 cache reference | 0.5 ns | 1× |
+| Branch mispredict | 5 ns | 10× |
+| L2 cache reference | 7 ns | 14× |
+| Mutex lock / unlock | 25 ns | 50× |
+| Main memory reference | 100 ns | 200× |
+
+### Compression and Memory Scans
+
+| Operation | Time |
+| --- | --- |
+| Compress 1 KB with Zippy | 3 µs |
+| Read 1 MB sequentially from memory | 250 µs |
+
+### Storage
+
+| Operation | Time |
+| --- | --- |
+| Read 4 KB randomly from SSD | 150 µs |
+| Read 1 MB sequentially from SSD | 1 ms |
+| Disk seek | 10 ms |
+| Read 1 MB sequentially from disk | 20 ms |
+
+### Network
+
+| Operation | Time |
+| --- | --- |
+| Send 1 KB over 1 Gbps network | 10 µs |
+| Round trip within the same datacenter | 500 µs |
+| Send a packet California → Netherlands → California | 150 ms |
+
+### Language Models (2026)
+
+These rows come from the same list, updated for current hardware. They change quickly and depend on the model and setup, so treat them as rough values.
+
+| Operation | Time |
+| --- | --- |
+| Local LLM (CPU), generate 1 token | 100 ms |
+| Local LLM, generate 1 token (consumer GPU) | 15 ms |
+| Local LLM, time to first token | 75 ms |
+| Fast LLM (specialized hardware), time to first token | 250 ms |
+| Frontier LLM, generate 1 token | 20 ms |
+| Frontier LLM, time to first token | 1,000 ms |
+| Frontier LLM, short response (about 100 output tokens) | 3,000 ms |
+| Frontier LLM, long-context prefill (about 100K input tokens, no cache) | 10,000 ms |
+| Frontier LLM, reasoning response | 30,000 ms |
+
+</FilterTable>
+
+In words: a memory reference is about 200 times an L1 hit, but a disk seek is about 100,000 times a memory reference. That gap is why systems keep hot data in memory, batch disk writes, and read files in large sequential chunks.
+
+## Capacity Constants
+
+Estimates need only a few constants. Round them freely; the goal is the right order of magnitude.
+
+<FilterTable placeholder="Filter, e.g. seconds, bytes, requests">
+
+| Quantity | Value | Use it for |
+| --- | --- | --- |
+| Seconds per day | 86,400 (about 10⁵) | Turning requests per day into requests per second |
+| Seconds per month | about 2.6 million | Monthly traffic and storage |
+| Requests per day → per second | 1 million/day ≈ 12/s; 1 billion/day ≈ 11,600/s | Sizing servers |
+| Powers of two | 2¹⁰ ≈ 10³, 2²⁰ ≈ 10⁶, 2³⁰ ≈ 10⁹, 2⁴⁰ ≈ 10¹² | Converting bytes to KB, MB, GB, TB |
+| ASCII character | 1 byte | Text storage estimates |
+| IPv4 address | 4 bytes | Address tables |
+| UUID | 16 bytes | Primary keys |
+| Typical small record | 1 KB | Row size estimates |
+| Typical photo | about 200 KB | Media storage |
+
+</FilterTable>
+
+## Working an Estimate
+
+Suppose a service gets 10 million requests a day, each returning a 2 KB response. Requests per second: 10⁷ ÷ 86,400 ≈ 116, with peaks often two to three times higher. Daily egress: 10⁷ × 2 KB ≈ 20 GB. With a 10 ms average database call, one server handling requests one at a time manages about 100 per second, so you need several servers before you add caching.
+
+<Callout type="pitfall">
+Latency is not throughput. A system that takes 1 ms per request can still serve 1,000 requests a second on one thread, or 10,000 on several. Estimate both, and say which one your design is limited by.
+</Callout>
