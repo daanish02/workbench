@@ -1,8 +1,70 @@
 ---
 title: "Lagrange multipliers"
-description: "The geometric intuition (gradients aligning at the optimum), worked examples."
+description: "Equality-constrained optimisation through the geometry of gradients: at a constrained optimum the gradient of the objective is parallel to the gradient of the constraint."
 order: 5
 tier: core
+takeaways:
+  - "The **Lagrangian** of $\\min f(x)$ subject to $g(x) = 0$ is $L(x, \\lambda) = f(x) - \\lambda g(x)$. Its stationary points are the candidates for constrained optima."
+  - "At a constrained optimum $\\nabla f = \\lambda \\nabla g$: the gradient of the objective points along the normal of the constraint. Moving along the constraint cannot improve the objective."
+  - "The **multiplier** $\\lambda$ measures how much the optimal value changes when the constraint is relaxed by a small amount. It is the price of the constraint."
+  - "The method finds candidates, not answers. Check each candidate for feasibility and compare values, since a stationary point can be a maximum or a saddle."
+resources:
+  - title: "Lagrange multiplier (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Lagrange_multiplier"
+    note: "The method, its geometry, and examples with two and three variables."
+  - title: "Method of Lagrange multipliers (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Lagrange_multiplier#Interpretation_of_the_Lagrange_multipliers"
+    note: "The sensitivity interpretation of the multiplier."
+  - title: "Gradient (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gradient"
+    note: "Gradients as normal vectors to level curves, the geometry the method uses."
 ---
 
-_Placeholder. Content not written yet._
+Suppose you want the largest rectangle with a fixed perimeter, or the point on a curve nearest a target. The objective and the constraint are both smooth, and at the best point they must be aligned in a particular way. Lagrange multipliers turn that alignment into equations you can solve. The idea is geometric, and the algebra is short. This note states the condition, works two examples, and explains what the multiplier means.
+
+## The geometric condition
+
+Level curves of $f$ are the sets where $f$ is constant, and the gradient $\nabla f$ is perpendicular to them. The constraint $g(x) = 0$ is itself a level set of $g$. Moving along the constraint cannot change $f$ at a constrained optimum, so the gradient of $f$ must be perpendicular to the constraint curve. That makes it parallel to $\nabla g$:
+
+$$
+\nabla f(x) = \lambda\,\nabla g(x), \qquad g(x) = 0.
+$$
+
+The scalar $\lambda$ is the Lagrange multiplier. Equivalently, the point is a stationary point of the Lagrangian $L(x, \lambda) = f(x) - \lambda g(x)$.
+
+## Example: maximise a product on a line
+
+Maximise $xy$ subject to $x + y = 10$. The gradients are $\nabla f = (y, x)$ and $\nabla g = (1, 1)$. Parallel means $y = \lambda$ and $x = \lambda$, so $x = y$, and the constraint then gives $x = y = 5$ with $\lambda = 5$. The check below searches the line for the largest product.
+
+```python
+best = max(((x / 100, 10 - x / 100) for x in range(0, 1001)), key=lambda p: p[0] * p[1])
+print("best point on x + y = 10:", best, " product:", round(best[0] * best[1], 4))  # prints: best point on x + y = 10: (5.0, 5.0) product: 25.0
+```
+
+In words: the search confirms $(5, 5)$ with product $25$. The multiplier $\lambda = 5$ says that enlarging the constraint total by one unit would raise the best product by about $5$. That is what $\lambda$ measures.
+
+## Example: nearest point on a circle
+
+Find the point on the circle $x^2 + y^2 = 1$ nearest to $(3, 1)$. Minimising the squared distance $(x - 3)^2 + (y - 1)^2$ with the constraint $g = x^2 + y^2 - 1 = 0$, the condition gives $2(x - 3) = 2\lambda x$ and $2(y - 1) = 2\lambda y$. Solving these with the circle equation gives the nearest point along the ray from the origin through $(3, 1)$.
+
+```python
+import math
+
+target = (3.0, 1.0)
+pts = [(math.cos(t / 10000 * 2 * math.pi), math.sin(t / 10000 * 2 * math.pi)) for t in range(10000)]
+best = min(pts, key=lambda p: (p[0] - target[0]) ** 2 + (p[1] - target[1]) ** 2)
+ray = (target[0] / math.hypot(*target), target[1] / math.hypot(*target))
+print("grid nearest point:", tuple(round(c, 3) for c in best), " ray direction:", tuple(round(c, 3) for c in ray))  # prints: grid nearest point: (0.949, 0.316) ray direction: (0.949, 0.316)
+```
+
+In words: the nearest point on the circle lies on the line from the origin to the target, which the gradient condition predicts. The grid search and the ray direction agree to three decimals.
+
+<Callout type="pitfall">
+The Lagrange conditions are necessary, not sufficient. Solving them gives stationary points that may be maxima, minima or saddles, and some constraint surfaces have points where the constraint gradient vanishes, which the method does not handle. Evaluate every candidate and check the constraint gradient is nonzero at it.
+</Callout>
+
+<LagrangeCurve />
+
+## Several constraints
+
+With several equality constraints $g_i(x) = 0$, each gets its own multiplier and the condition becomes $\nabla f = \sum_i \lambda_i \nabla g_i$. Inequality constraints need the extra conditions of the KKT theorem, which the duality note builds toward.

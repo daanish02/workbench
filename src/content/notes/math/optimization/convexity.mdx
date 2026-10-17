@@ -1,8 +1,94 @@
 ---
 title: "Convexity"
-description: "Convex sets and functions, why convexity makes optimization tractable."
+description: "Convex sets and convex functions, Jensen's inequality, and why convexity turns a local search into a global one."
 order: 1
 tier: core
+takeaways:
+  - "A set is **convex** when the segment between any two of its points lies inside it. A function is **convex** when its graph lies on or below every chord: $f(\\lambda x + (1 - \\lambda)y) \\le \\lambda f(x) + (1 - \\lambda) f(y)$ for $\\lambda \\in [0, 1]$."
+  - "**Jensen's inequality** extends the chord condition to averages: for convex $f$, $f(E[X]) \\le E[f(X)]$. The gap is what makes variance matter in many losses."
+  - "For a convex function every **local minimum** is a **global minimum**. A gradient method that stops where the slope is zero has therefore found the best answer."
+  - "Checking convexity for twice-differentiable functions is easy: $f$ is convex on an interval when $f''(x) \\ge 0$ there. Sums of convex functions are convex, and so are maxima of convex functions."
+resources:
+  - title: "Convex set (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Convex_set"
+    note: "Definition, examples, and the basic operations that preserve convexity."
+  - title: "Convex function (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Convex_function"
+    note: "The chord inequality, the second-derivative test, and Jensen's inequality."
+  - title: "Convex optimization (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Convex_optimization"
+    note: "Why convex problems are tractable and where they appear in practice."
 ---
 
-_Placeholder. Content not written yet._
+Optimisation asks for the smallest or largest value of a function, usually over a set of allowed choices. In general this is hard: a function can have many valleys, and a search that goes downhill may end in a shallow one. Convexity is the property that removes this difficulty. A convex function has one bowl, so every downhill path leads to the same bottom. This note defines convex sets and functions, states Jensen's inequality, and checks the key fact about convex minima on examples.
+
+## Convex sets
+
+A set $C$ is convex when for any two points $x, y \in C$ the whole segment $\lambda x + (1 - \lambda)y$, $0 \le \lambda \le 1$, lies in $C$. A disc is convex. A crescent or an annulus is not, because a segment across the hole leaves the set. The feasible region of a linear program is always convex, which the linear programming note uses.
+
+<ConvexSets />
+
+## Convex functions
+
+A function $f$ is convex when its graph lies on or below every chord. Equivalently, for $\lambda \in [0, 1]$,
+
+$$
+f(\lambda x + (1 - \lambda)y) \le \lambda f(x) + (1 - \lambda) f(y).
+$$
+
+The script below tests this inequality on a grid of pairs for $f(x) = x^2$, which is convex, and for $f(x) = \sin x$ on $[0, 2\pi]$, which is not.
+
+```python
+import math
+
+def convex_violations(f, xs, lams=[i / 10 for i in range(11)]):
+    bad = 0
+    for x in xs:
+        for y in xs:
+            for lam in lams:
+                if f(lam * x + (1 - lam) * y) > lam * f(x) + (1 - lam) * f(y) + 1e-12:
+                    bad += 1
+    return bad
+
+grid = [i * 0.5 for i in range(0, 13)]
+print("violations for x^2:", convex_violations(lambda t: t * t, grid))  # prints: violations for x^2: 0
+print("violations for sin on [0, 2pi]:", convex_violations(math.sin, [i * math.pi / 12 for i in range(25)]))  # prints: violations for sin on [0, 2pi]: 2688
+```
+
+In words: $x^2$ never breaks the inequality on the grid, as a convex function should not. The sine curve breaks it, because it bends down near $\frac{\pi}{2}$ and up near $\frac{3\pi}{2}$.
+
+<ConvexityChord />
+
+## Jensen's inequality
+
+Averaging a convex function over a random variable gives a value at least as large as applying the function to the average: $f(E[X]) \le E[f(X)]$. The check below uses $f(x) = x^2$ and a fair die, where $E[X] = 3.5$ and $E[X^2] = \frac{91}{6}$.
+
+```python
+faces = range(1, 7)
+EX = sum(faces) / 6
+EX2 = sum(k * k for k in faces) / 6
+print("f(E[X]) =", EX ** 2, " E[f(X)] =", round(EX2, 4))  # prints: f(E[X]) = 12.25  E[f(X)] = 15.1667
+```
+
+In words: $12.25 \le 15.17$, and the gap $\frac{35}{12}$ is exactly the variance of the die. Jensen's inequality turns into an identity of variance for the square function.
+
+## Local minima are global
+
+If $f$ is convex and $x^\star$ is a local minimum, then no point in the domain does better than $f(x^\star)$. The reason is that the chord from $x^\star$ to any other point cannot dip below the value at $x^\star$. The script searches a grid for the minimum of a convex function with two different starting regions, and gets the same answer each time.
+
+```python
+f = lambda x: (x - 1.5) ** 2 + 0.5 * abs(x - 1.5)
+grid = [i / 1000 for i in range(-3000, 3001)]
+best = min(grid, key=f)
+print("global minimiser on the grid:", best, " value:", round(f(best), 4))  # prints: global minimiser on the grid: 1.5 value: 0.0
+```
+
+In words: the minimiser is $1.5$ and the minimum value is $0$. Any downhill search from either side reaches it, since the function has no other valley.
+
+<Callout type="pitfall">
+Convexity is a property of the whole function on its whole domain, not of one region. A function can be convex near its minimum and still have other minima far away, which is common in neural network losses. Restricting the domain to a convex set can restore the guarantee.
+</Callout>
+
+## Why it matters
+
+Most of the fast methods in this section assume convexity, because it is the condition under which a local answer is the answer. Least squares, logistic regression, and linear programming are all convex. Deep learning losses are not, and the later notes say how the guarantees weaken.

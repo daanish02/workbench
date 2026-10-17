@@ -1,8 +1,112 @@
 ---
 title: "Gradient descent variants"
-description: "Momentum, RMSProp, Adam — what problem each one solves."
+description: "Momentum, RMSProp and Adam: what each one changes about the basic update, which problem it targets, and a comparison on an ill-conditioned function."
 order: 3
 tier: core
+takeaways:
+  - "**Momentum** keeps a running velocity $v_{k+1} = \\beta v_k + \\nabla f(x_k)$ and steps $x_{k+1} = x_k - \\eta v_{k+1}$. It builds speed in directions where the gradient keeps the same sign and damps oscillation where it flips."
+  - "**RMSProp** divides each coordinate's step by a running root-mean-square of its past gradients. Steep coordinates get smaller steps and flat ones larger steps, which tackles ill-conditioning coordinate by coordinate."
+  - "**Adam** combines momentum for the mean of the gradient with RMSProp scaling for its size, and corrects both averages for their start-up bias. It is the default choice for many deep learning problems."
+  - "No variant beats the others on every problem. Each one is a bet on the shape of the loss, and the step size still needs tuning."
+resources:
+  - title: "Momentum (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gradient_descent#Momentum"
+    note: "The heavy-ball update and why it accelerates along consistent directions."
+  - title: "Adam: a method for stochastic optimization (arXiv)"
+    url: "https://arxiv.org/abs/1412.6980"
+    note: "The original Adam paper, with the update rules and bias correction."
+  - title: "RMSprop (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Stochastic_gradient_descent#RMSProp"
+    note: "The adaptive scaling idea and its relation to Adam."
 ---
 
-_Placeholder. Content not written yet._
+The basic update from the gradient descent note moves the same way at every step, and it treats every coordinate the same. Both choices cause trouble on hard problems. A steep valley makes it zigzag, and a flat valley makes it crawl. The variants in this note change the update to fix one or both problems. This note states the three main updates, then compares them on the ill-conditioned function from the previous note.
+
+## Momentum
+
+Momentum adds a velocity term that carries the iterate forward. With $\beta$ close to $1$, consistent gradients add up over many steps, while components that alternate in sign cancel:
+
+$$
+v_{k+1} = \beta v_k + \nabla f(x_k), \qquad x_{k+1} = x_k - \eta\,v_{k+1}.
+$$
+
+## RMSProp
+
+RMSProp keeps a running average of squared gradients for each coordinate, $s_{k+1} = \rho s_k + (1 - \rho)(\nabla f)^2$, and scales the step by its square root:
+
+$$
+x_{k+1} = x_k - \frac{\eta}{\sqrt{s_{k+1}} + \epsilon}\,\nabla f(x_k).
+$$
+
+A coordinate with large gradients gets a small effective step, and one with small gradients gets a large one. This addresses the scaling problem directly.
+
+## Adam
+
+Adam keeps both averages, a first moment $m$ (like momentum) and a second moment $s$ (like RMSProp), and corrects them for starting at zero. The update is
+
+$$
+x_{k+1} = x_k - \eta\,\frac{\hat m_{k+1}}{\sqrt{\hat s_{k+1}} + \epsilon}, \qquad \hat m = \frac{m}{1 - \beta_1^{k}}, \quad \hat s = \frac{s}{1 - \beta_2^{k}}.
+$$
+
+## Comparison on an ill-conditioned function
+
+The script below runs plain gradient descent, momentum and Adam on $f(x, y) = x^2 + 10y^2$ from $(1, 1)$, and counts the steps until the distance to the minimum is below $10^{-3}$. Each method uses a step size chosen for stability on its own terms.
+
+```python
+import math
+
+grad = lambda x, y: (2 * x, 20 * y)
+
+def steps_until(init, update, limit=100000):
+    x, y = 1.0, 1.0
+    state = init()
+    for k in range(1, limit):
+        x, y, state = update(x, y, state)
+        if math.hypot(x, y) < 1e-3:
+            return k
+    return None
+
+def gd_init():
+    return None
+
+def gd_step(x, y, s):
+        gx, gy = grad(x, y)
+        return x - 0.05 * gx, y - 0.05 * gy, s
+
+def mom_init():
+    return (0.0, 0.0)
+
+def mom_step(x, y, s):
+        gx, gy = grad(x, y)
+        vx, vy = 0.9 * s[0] + gx, 0.9 * s[1] + gy
+        return x - 0.01 * vx, y - 0.01 * vy, (vx, vy)
+
+def adam_init():
+    return (0.0, 0.0, 0.0, 0.0, 0)
+
+def adam_step(x, y, s):
+        mx, my, sx, sy, t = s
+        t += 1
+        gx, gy = grad(x, y)
+        mx, my = 0.9 * mx + 0.1 * gx, 0.9 * my + 0.1 * gy
+        sx, sy = 0.999 * sx + 0.001 * gx * gx, 0.999 * sy + 0.001 * gy * gy
+        mhx, mhy = mx / (1 - 0.9 ** t), my / (1 - 0.9 ** t)
+        shx, shy = sx / (1 - 0.999 ** t), sy / (1 - 0.999 ** t)
+        return x - 0.01 * mhx / (math.sqrt(shx) + 1e-8), y - 0.01 * mhy / (math.sqrt(shy) + 1e-8), (mx, my, sx, sy, t)
+
+print("plain gradient descent, steps:", steps_until(gd_init, gd_step))  # prints: plain gradient descent, steps: 66
+print("momentum, steps:", steps_until(mom_init, mom_step))  # prints: momentum, steps: 106
+print("Adam, steps:", steps_until(adam_init, adam_step))  # prints: Adam, steps: 276
+```
+
+In words: plain descent wins here, with $66$ steps against $106$ for momentum and $276$ for Adam. That is not a general ranking. The step $0.05$ was chosen by hand for this exact quadratic, the largest that keeps the steep direction stable. Momentum and Adam were given small step sizes, typical of their defaults, and they pay for that on a simple valley. Their advantage shows when a single step size cannot suit every direction, or when the gradients are noisy.
+
+<Callout type="pitfall">
+Adam is not a free upgrade. Its adaptive scaling can settle on a worse solution than plain gradient descent for some problems, and its default settings are tuned for deep networks. Compare variants on your own problem, with the same tuning effort for each.
+</Callout>
+
+<OptimizerRace />
+
+## When each one helps
+
+Use momentum when the valley is long and the gradient direction is consistent. Use RMSProp or Adam when different coordinates have very different scales, which is common in neural networks. Plain gradient descent remains a good baseline, because its behaviour is simplest to understand.

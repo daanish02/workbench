@@ -1,8 +1,110 @@
 ---
 title: "Non-convex and integer optimization"
-description: "Local minima and combinatorial optimization, where the easy guarantees disappear."
+description: "Local minima and their dependence on the starting point, and integer problems such as the knapsack, where the greedy answer can be far from optimal."
 order: 9
 tier: advanced
+takeaways:
+  - "A **non-convex** function can have several local minima. Gradient descent finds one of them, and which one depends on the starting point."
+  - "A **global** minimum is the smallest value over the whole domain. Finding it in general is hard, so practical methods search from many starts, use randomness, or exploit structure."
+  - "**Integer** optimisation restricts variables to whole numbers. The feasible set is no longer convex, and linear programming relaxations give only bounds, not the answer."
+  - "The **0/1 knapsack** is a classic integer problem. Greedy selection by value per weight can miss the best choice, while exhaustive search over subsets is exact but grows exponentially."
+resources:
+  - title: "Local optimum (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Local_optimum"
+    note: "Local and global minima and why descent methods can get stuck."
+  - title: "Integer programming (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Integer_programming"
+    note: "Integer and mixed-integer models, relaxations, and branch and bound."
+  - title: "Knapsack problem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Knapsack_problem"
+    note: "The 0/1 knapsack, its variants, and the greedy heuristic."
 ---
 
-_Placeholder. Content not written yet._
+The earlier notes in this section depended on convexity: a local answer was the global answer, so a downhill search was enough. Many real problems lack that property. Neural network losses have countless valleys, and planning problems often require yes-or-no decisions. This note shows the two ways the easy guarantees disappear: a function with several local minima, and a problem whose variables must be whole numbers. For each one it gives a small example where a natural method fails.
+
+## Several local minima
+
+Take $f(x) = x^4 - 3x^2 + x$. It has two valleys, one near $x = -1.3$ and one near $x = 1.1$, with the left valley the deeper of the two. Gradient descent from a start at $x = 2$ settles into the right valley, and from $x = -2$ into the left.
+
+```python
+f = lambda x: x ** 4 - 3 * x ** 2 + x
+df = lambda x: 4 * x ** 3 - 6 * x + 1
+
+def descend(x, eta=0.01, steps=5000):
+    for _ in range(steps):
+        x -= eta * df(x)
+    return x
+
+for start in (2.0, -2.0):
+    x = descend(start)
+    print(f"start {start:+.1f}: ends at x = {x:.4f}, f = {f(x):.4f}")  # prints: start +2.0: ends at x = 1.1309, f = -1.0702 start -2.0: ends at x = -1.3008, f = -3.5139
+```
+
+In words: the two starts end in different places with different values. The start at $+2$ lands in the shallow valley, and the start at $-2$ finds the deeper one. The search cannot tell from the local slope which valley is better.
+
+<DoubleWell />
+
+## Global search
+
+Since a descent method cannot escape, practical approaches try many starts and keep the best. The script below does this on a grid of starting points, which is exhaustive for one variable.
+
+```python
+starts = [i / 10 for i in range(-30, 31)]
+results = [(descend(s), s) for s in starts]
+best_x, best_s = min(results, key=lambda r: f(r[0]))
+print("best minimum found:", round(best_x, 4), " from start", best_s, " f =", round(f(best_x), 4))  # prints: best minimum found: -1.3008 from start -3.0 f = -3.5139
+```
+
+In words: many starts recover the deeper valley near $x = -1.3$, and the best value found is about $-3.51$. This works for one or two variables, but the number of starts needed grows rapidly with dimension.
+
+## Integer problems: the knapsack
+
+A hiker chooses items to carry with a weight limit of $10$. Each item has a value and a weight, and each can be taken once or not at all. This is the 0/1 knapsack. A natural heuristic takes items in order of value per weight until the next one does not fit. The script compares this greedy rule with exhaustive search over all $2^n$ subsets.
+
+```python
+from itertools import combinations
+
+items = [(6, 4), (5, 3), (5, 3), (4, 2)]  # (value, weight)
+cap = 10
+
+def greedy():
+    order = sorted(items, key=lambda it: it[0] / it[1], reverse=True)
+    value, weight = 0, 0
+    for v, w in order:
+        if weight + w <= cap:
+            value += v
+            weight += w
+    return value
+
+def exhaustive():
+    best = 0
+    for r in range(len(items) + 1):
+        for combo in combinations(items, r):
+            if sum(w for _, w in combo) <= cap:
+                best = max(best, sum(v for v, _ in combo))
+    return best
+
+print("greedy value:", greedy(), " exact value:", exhaustive())  # prints: greedy value: 14 exact value: 16
+```
+
+In words: greedy takes the light, high-ratio items first and gets $14$. The best choice is the $6/4$ item with both $5/3$ items, value $16$, which fills the capacity exactly. Greedy is fast, but it can miss the best combination.
+
+The next check shows the other failure: one large item that greedy skips for two smaller ones.
+
+```python
+items = [(60, 10), (50, 6), (50, 6)]  # (value, weight), capacity 10
+cap = 10
+print("greedy value:", greedy(), " exact value:", exhaustive())  # prints: greedy value: 50 exact value: 60
+```
+
+In words: greedy takes a $50$ item of weight $6$, and the remaining capacity of $4$ fits nothing else. The single $60$ item, which has a lower ratio, is the best choice. Greedy carries no guarantee for integer problems.
+
+<Callout type="pitfall">
+A linear programming relaxation of an integer problem gives an upper bound, but its solution can be fractional and wrong. Rounding it does not give the best integer answer in general. Branch and bound, which the next topics build on, solves integer problems exactly by splitting the search space.
+</Callout>
+
+<KnapsackBars />
+
+## Where it leads
+
+Non-convex problems are the reason deep learning relies on empirical tricks, and integer problems are why scheduling and routing are hard. The methods here are exhaustive or heuristic, and they show the trade-off: exact answers cost exponential time, and fast answers may be wrong.

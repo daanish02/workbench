@@ -1,8 +1,81 @@
 ---
 title: "Duality"
-description: "Primal/dual problems, weak and strong duality, why duality is useful."
+description: "Primal and dual problems for linear programs, weak duality as a bound, strong duality as equality, and why the dual is often easier to solve."
 order: 6
 tier: core
+takeaways:
+  - "Every minimisation (the **primal**) has an associated maximisation (the **dual**). For a linear program $\\min c^\\top x$ subject to $Ax \\ge b$, $x \\ge 0$, the dual is $\\max b^\\top y$ subject to $A^\\top y \\le c$, $y \\ge 0$."
+  - "**Weak duality** says any dual value is a lower bound on any primal value: $b^\\top y \\le c^\\top x$ for feasible $x$ and $y$. So a good dual feasible point certifies how good the primal can be."
+  - "**Strong duality** says the two optimal values are equal when the problem is feasible and bounded. Solving the dual then solves the primal, and the gap is zero."
+  - "Each dual variable is the price of its primal constraint. It tells you how much the optimum improves per unit of relaxing that constraint."
+resources:
+  - title: "Duality (optimization) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Duality_(optimization)"
+    note: "The primal and dual problems and the general duality theorems."
+  - title: "Linear programming duality (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Dual_linear_program"
+    note: "The dual of a linear program, with the weak and strong duality statements."
+  - title: "Lagrange duality (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Lagrange_duality"
+    note: "The Lagrangian dual for problems with constraints."
 ---
 
-_Placeholder. Content not written yet._
+Every optimisation problem can be viewed from a second angle. The primal asks for the smallest cost under the constraints. The dual asks for the largest guaranteed lower bound on that cost, built from weights on the constraints. The two problems are linked by a simple inequality, and when the problem is nice they have the same optimal value. Duality gives certificates of optimality, a source of prices for constraints, and often an easier problem to solve. This note states the linear case, proves weak duality, and checks strong duality on an example.
+
+## A primal and its dual
+
+Consider the primal
+
+$$
+\min\; x_1 + 2x_2 \quad \text{subject to}\quad x_1 + x_2 \ge 3,\; x_1 \ge 0,\; x_2 \ge 0.
+$$
+
+Attach a weight $y \ge 0$ to the constraint $x_1 + x_2 \ge 3$. The dual is to choose the weight to get the best bound. Since $x_1 + 2x_2 \ge x_1 + x_2$ for $x_2 \ge 0$, the weight must satisfy $y \le 1$ for $x_1$ and $y \le 2$ for $x_2$. The dual is
+
+$$
+\max\; 3y \quad \text{subject to}\quad y \le 1,\; y \le 2,\; y \ge 0.
+$$
+
+## Weak duality
+
+If $x$ is primal feasible and $y$ is dual feasible, then $3y \le x_1 + 2x_2$. The chain is $3y \le y(x_1 + x_2) \le x_1 + 2x_2$, where the first step uses $x_1 + x_2 \ge 3$ and $y \ge 0$, and the second uses $y \le 1$ and $x_2 \ge 0$. The script below samples feasible pairs and checks the inequality.
+
+```python
+import random
+
+random.seed(31)
+ok = True
+for _ in range(10000):
+    x1, x2 = random.uniform(0, 8), random.uniform(0, 8)
+    if x1 + x2 < 3:
+        continue
+    y = random.uniform(0, 1)
+    if 3 * y > x1 + 2 * x2 + 1e-12:
+        ok = False
+print("weak duality holds on random feasible pairs:", ok)  # prints: weak duality holds on random feasible pairs: True
+```
+
+In words: no feasible dual value ever exceeds a feasible primal value. A dual point is therefore a certificate: if you find $y$ with $3y = 3$ and a primal point with cost $3$, you have proved both optimal.
+
+## Strong duality
+
+For this problem both optimal values are $3$. The primal optimum is $x = (3, 0)$ with cost $3$, and the dual optimum is $y = 1$ with value $3$. The script below verifies both by enumerating the corner points of each feasible region.
+
+```python
+primal_vertices = [(3.0, 0.0), (0.0, 3.0)]
+primal_best = min(x1 + 2 * x2 for x1, x2 in primal_vertices)
+dual_best = max(3 * y for y in [0.0, 1.0])
+print("primal optimum:", primal_best, " dual optimum:", dual_best)  # prints: primal optimum: 3.0 dual optimum: 3.0
+```
+
+In words: the two values agree, so there is no gap, and the dual's weight $y = 1$ is the price of the constraint. Relaxing $x_1 + x_2 \ge 3$ to $\ge 3 + \delta$ raises the optimal cost by $\delta$.
+
+<Callout type="pitfall">
+Strong duality needs a feasible and bounded problem. If the primal is infeasible, the dual is unbounded, and if the primal is unbounded, the dual is infeasible. Check feasibility of both sides before reading a zero gap as a result.
+</Callout>
+
+<DualityGap />
+
+## Why duality is useful
+
+The dual can be smaller than the primal, or have structure that makes it easier, such as a few variables instead of many constraints. Dual variables give the sensitivity of the optimum, which economists call shadow prices. Duality also underlies support vector machines and many regularised learning problems, where the dual is the easier one to solve.

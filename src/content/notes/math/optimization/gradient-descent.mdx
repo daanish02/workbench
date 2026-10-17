@@ -1,8 +1,84 @@
 ---
 title: "Gradient descent"
-description: "The core algorithm, with step size and convergence intuition."
+description: "Repeatedly step against the gradient. Step size controls whether the method converges, oscillates or diverges, and ill-conditioned problems converge slowly."
 order: 2
 tier: core
+takeaways:
+  - "**Gradient descent** updates $x_{k+1} = x_k - \\eta\\,\\nabla f(x_k)$. The gradient points uphill, so stepping against it reduces $f$ when $\\eta$ is small enough."
+  - "For $f(x) = \\frac{1}{2}a x^2$ the update multiplies $x$ by $1 - \\eta a$ each step. The method converges when $|1 - \\eta a| < 1$, so the step size must be small compared with the curvature $a$."
+  - "The **condition number** $\\kappa = L/m$, the ratio of largest to smallest curvature, controls the speed. Elongated valleys with large $\\kappa$ take many steps, and a step size safe for the steep direction crawls along the flat one."
+  - "For a convex function with a $L$-Lipschitz gradient, a step size $\\eta \\le 1/L$ gives a guaranteed decrease in the objective at every step."
+resources:
+  - title: "Gradient descent (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gradient_descent"
+    note: "The algorithm, step-size choices, and convergence statements."
+  - title: "Condition number (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Condition_number"
+    note: "Why the ratio of curvatures governs how fast descent converges."
+  - title: "Stochastic gradient descent (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Stochastic_gradient_descent"
+    note: "The same method with noisy gradients from minibatches."
 ---
 
-_Placeholder. Content not written yet._
+To minimise a function that you can differentiate, start somewhere and move a little in the direction where it decreases fastest. That direction is the negative gradient. Repeating the move gives gradient descent, the workhorse of machine learning. Its behaviour depends almost entirely on one number, the step size, and on the shape of the function. This note shows how the step size decides between convergence, oscillation and divergence, and why some problems converge slowly.
+
+## The update
+
+Given $f$ and a starting point $x_0$, gradient descent repeats
+
+$$
+x_{k+1} = x_k - \eta\,\nabla f(x_k),
+$$
+
+where $\eta > 0$ is the step size. For a one-dimensional quadratic $f(x) = (x - 3)^2 + 1$ the gradient is $2(x - 3)$, so each step moves $x$ toward $3$ by a fraction $2\eta$ of the remaining distance.
+
+```python
+def gd(grad, x0, eta, steps):
+    x = x0
+    path = [x]
+    for _ in range(steps):
+        x = x - eta * grad(x)
+        path.append(x)
+    return path
+
+grad = lambda x: 2 * (x - 3)
+for eta in [0.1, 0.5, 1.1]:
+    p = gd(grad, 0.0, eta, 6)
+    print(f"eta = {eta}: x after 6 steps = {p[-1]:.4f}")  # prints: eta = 0.1: x after 6 steps = 2.2136
+```
+
+In words: with $\eta = 0.1$ the distance to $3$ shrinks by a factor of $0.8$ per step. With $\eta = 0.5$ one step reaches $3$ exactly. With $\eta = 1.1$ the iterates overshoot and grow, so the method diverges.
+
+<StepSizeExplorer />
+
+## Step size and stability
+
+For $f(x) = \frac{1}{2}a x^2$ the update is $x_{k+1} = (1 - \eta a)\,x_k$. The iterates converge when $|1 - \eta a| < 1$, which means $0 < \eta < \frac{2}{a}$. Too small a step is slow, and too large a step diverges. The best step for this function is $\eta = \frac{1}{a}$, which reaches the minimum in one move.
+
+## Ill-conditioned problems
+
+Suppose the function is steep in one direction and flat in another, $f(x, y) = x^2 + 10y^2$. The curvature in $y$ is $20$ and in $x$ is $2$. A step size that is stable for $y$ must be below $\frac{2}{20} = 0.1$, and at that step the $x$ direction moves only a little. The script below uses $\eta = 0.05$, which keeps $y$ stable, and shows the slow progress in $x$.
+
+```python
+def step(p, eta):
+    x, y = p
+    return (x - eta * 2 * x, y - eta * 20 * y)
+
+p = (1.0, 1.0)
+for k in range(1, 21):
+    p = step(p, 0.05)
+    if k in (1, 10, 20):
+        print(f"step {k:>2}: x = {p[0]:.5f}, y = {p[1]:.5f}")  # prints: step  1: x = 0.90000, y = 0.00000
+```
+
+In words: the $y$ coordinate is zeroed in one step, but $x$ only decays by $0.9$ per step. After $20$ steps $x$ is still about $0.12$. The condition number $\kappa = 10$ costs about ten times more steps than a round bowl would need.
+
+<Callout type="pitfall">
+A step size that looks safe for the steepest direction can still make the slow direction crawl. Scaling the variables so the curvatures are similar, or using a better method, fixes this. Tuning the step size alone usually cannot.
+</Callout>
+
+<ZigzagContour />
+
+## Convergence intuition
+
+For a convex function with a Lipschitz gradient, a step size $\eta \le \frac{1}{L}$ makes the objective decrease at every step, and the gap to the minimum shrinks at a rate set by $\kappa$. The next note shows momentum methods that speed up the flat directions, and the one after shows how the step size is chosen in practice.

@@ -1,8 +1,71 @@
 ---
 title: "Constrained optimization"
-description: "Optimizing subject to constraints, and the feasible region."
+description: "Minimising a function over a feasible region defined by equality and inequality constraints, with worked examples checked by grid search."
 order: 4
 tier: core
+takeaways:
+  - "A **constrained problem** minimises $f(x)$ subject to equality constraints $g_i(x) = 0$ and inequality constraints $h_j(x) \\le 0$. The **feasible region** is the set of points that satisfy all of them."
+  - "The minimum may sit on the boundary of the feasible region, where a constraint is **active**, or in its interior, where the constraints do not matter. The unconstrained minimum is feasible only in the second case."
+  - "Projecting a point onto a feasible set gives the nearest feasible point. For a simple set such as a half-plane this projection has a closed form."
+  - "Every constrained problem can be attacked by a penalty, a barrier, or the Lagrangian of the next note. The choice affects how the solution is found, not what it is."
+resources:
+  - title: "Constrained optimization (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Constrained_optimization"
+    note: "Problem forms, feasible regions, and the standard solution approaches."
+  - title: "Feasible region (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Feasible_region"
+    note: "The set of points that satisfy every constraint."
+  - title: "Karush-Kuhn-Tucker conditions (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Karush%E2%80%93Kuhn%E2%80%93Tucker_conditions"
+    note: "The optimality conditions for inequality-constrained problems."
 ---
 
-_Placeholder. Content not written yet._
+Real problems rarely let every variable take any value. A budget caps total spending, a probability must lie between $0$ and $1$, a physical length cannot be negative. Constrained optimisation keeps the objective and adds the rules the answer must obey. The task becomes finding the best point inside a region, and the best point is often on the edge of that region rather than at a smooth bottom. This note sets up the problem, works two examples, and checks them by brute-force search.
+
+## The problem
+
+We minimise $f(x)$ subject to constraints. Write them as equalities $g(x) = 0$ and inequalities $h(x) \le 0$. The feasible region is
+
+$$
+\mathcal{F} = \{x : g(x) = 0,\; h(x) \le 0\}.
+$$
+
+A point is a solution if it is in $\mathcal{F}$ and no other point in $\mathcal{F}$ has a smaller value of $f$.
+
+## An equality constraint
+
+Find the point on the line $x + y = 2$ closest to the origin, which means minimising $x^2 + y^2$. The feasible region is the line itself. Substituting $y = 2 - x$ turns the problem into a one-variable minimisation, and the script below confirms the answer by searching the line.
+
+```python
+best = min(((x / 1000, 2 - x / 1000) for x in range(-3000, 3001)), key=lambda p: p[0] ** 2 + p[1] ** 2)
+print("closest point on x + y = 2:", best, " squared distance:", round(best[0] ** 2 + best[1] ** 2, 4))  # prints: closest point on x + y = 2: (1.0, 1.0) squared distance: 2.0
+```
+
+In words: the closest point is $(1, 1)$, and the squared distance is $2$. The line is the feasible region, and the minimum sits where the circle of radius $\sqrt 2$ just touches it.
+
+## An inequality constraint
+
+Now allow any point with $x + y \le 2$, and minimise $(x - 2)^2 + (y - 2)^2$, the squared distance to $(2, 2)$. The point $(2, 2)$ itself violates the constraint, so the solution must lie on the boundary $x + y = 2$, and it is the projection of $(2, 2)$ onto that line.
+
+```python
+feasible = [(x / 100, y / 100) for x in range(-400, 401, 4) for y in range(-400, 401, 4) if x / 100 + y / 100 <= 2]
+best = min(feasible, key=lambda p: (p[0] - 2) ** 2 + (p[1] - 2) ** 2)
+print("best feasible point:", best, " value:", round((best[0] - 2) ** 2 + (best[1] - 2) ** 2, 4))  # prints: best feasible point: (1.0, 1.0) value: 2.0
+print("unconstrained point (2, 2) feasible?", 2 + 2 <= 2)  # prints: unconstrained point (2, 2) feasible? False
+```
+
+In words: the search lands on $(1, 1)$, the constraint is active there, and the value is $2$. The unconstrained minimum $(2, 2)$ is not allowed, so the constraint decides the answer.
+
+<Callout type="pitfall">
+Checking that a point satisfies the constraints is part of the answer. Grid search only finds the best grid point, so a boundary solution like $(1, 1)$ is found only if the grid contains it. Continuous methods, or a known closed form, avoid that dependence.
+</Callout>
+
+<FeasibleProjection />
+
+## Active and inactive constraints
+
+At the solution, each inequality is either active ($h(x) = 0$) or inactive ($h(x) < 0$). Inactive constraints can be dropped locally, since small moves do not reach them, so the problem reduces to an equality-constrained one. Identifying the active set is most of the work in small problems, and the Lagrange multipliers note shows how the active constraints determine the solution.
+
+## Where it leads
+
+Constrained problems appear in resource allocation, portfolio choice and fitting models with physical limits. The next notes develop the tools for them: Lagrange multipliers for equalities, duality for inequalities, and linear programming when both the objective and the constraints are linear.
