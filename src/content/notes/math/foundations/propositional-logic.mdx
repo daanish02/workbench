@@ -1,8 +1,91 @@
 ---
 title: "Propositional logic"
-description: "Statements, truth tables, AND/OR/NOT, implication, biconditional."
+description: "Statements that are true or false, the connectives that combine them, and the truth tables that define what each one means."
 order: 1
 tier: core
+takeaways:
+  - "A **proposition** is a statement that is either true or false. \"2 + 2 = 4\" is one; \"close the door\" is not."
+  - "**AND**, **OR**, **NOT** and **implication** ($p \\to  q$) combine propositions. Implication is false in exactly one row: true premise, false conclusion."
+  - "A **truth table** lists every combination of truth values. With $n$ propositions there are $2^{n}$ rows, so you can check any formula by brute force."
+  - "**De Morgan's laws** and the **contrapositive** are equivalences: $\\lnot (p \\land  q)$ equals $\\lnot p \\lor  \\lnot q$, and $p \\to  q$ equals $\\lnot q \\to  \\lnot p$."
+  - "Logic is the language of proofs and of `if` statements. The [Boolean Logic](../../../cs/foundations/boolean-logic/) note in Computer Science uses the same connectives for circuits."
+resources:
+  - title: "Stanford Encyclopedia: Classical Logic"
+    url: "https://plato.stanford.edu/entries/logic-classical/"
+    note: "A careful survey of propositional and predicate logic."
+  - title: "Mathematics for Computer Science (MIT OpenCourseWare)"
+    url: "https://ocw.mit.edu/courses/6-042j-mathematics-for-computer-science-fall-2010/"
+    note: "Free course notes on logic, proofs and counting, written for programmers."
+  - title: "Python itertools.product"
+    url: "https://docs.python.org/3/library/itertools.html#itertools.product"
+    note: "The function used below to enumerate every row of a truth table."
 ---
 
-_Placeholder. Content not written yet._
+Mathematics is built from statements that are either true or false, and from rules for combining them. That is propositional logic. It is the smallest piece of formal reasoning, and every later note relies on it: a proof is a chain of propositions, a definition is a proposition, and a program's `if` is a proposition about the current state. This note covers the connectives, how truth tables define them, and the two equivalences that do most of the work in proofs.
+
+## Propositions
+
+A **proposition** is a declarative statement with a definite truth value. "Every even number greater than 2 is the sum of two primes" is a proposition, even though nobody yet knows whether it is true. "Let x be large" is not, because it has no truth value until you say what x is.
+
+We write propositions as letters: $p$, $q$, $r$. A letter stands for any proposition, so a result about $p$ and $q$ holds for every pair of statements.
+
+## Connectives
+
+A **connective** builds a new proposition from old ones. The standard five are below. The first four match the Boolean operators in the [Boolean Logic](../../../cs/foundations/boolean-logic/) note.
+
+| Symbol | Name | Reads as | True when |
+| --- | --- | --- | --- |
+| $\lnot p$ | negation | not p | $p$ is false |
+| $p \land  q$ | conjunction | p and q | both are true |
+| $p \lor  q$ | disjunction | p or q | at least one is true |
+| $p \to  q$ | implication | if p then q | $p$ is false, or $q$ is true |
+| $p \leftrightarrow  q$ | biconditional | p if and only if q | $p$ and $q$ match |
+
+Implication is the one people get wrong. $p \to  q$ says nothing about $p$ when $q$ is true, and it is true whenever $p$ is false. "If it rains, the ground is wet" is still true on a dry day, because the claim was about rain.
+
+## Truth tables
+
+A truth table lists every assignment of truth values and the result of each connective. The script below builds the table for the five connectives and then checks two laws over every row.
+
+```python
+from itertools import product
+
+def implies(p, q):
+    return (not p) or q
+
+print(f"{'p':>5} {'q':>5} {'p and q':>8} {'p or q':>7} {'p -> q':>7} {'p <-> q':>8}")
+for p, q in product([True, False], repeat=2):
+    print(f"{str(p):>5} {str(q):>5} {str(p and q):>8} {str(p or q):>7} {str(implies(p, q)):>7} {str(p == q):>8}")
+
+# De Morgan's laws checked over every row
+ok = all((not (p and q)) == ((not p) or (not q)) and (not (p or q)) == ((not p) and (not q))
+         for p, q in product([True, False], repeat=2))
+print("De Morgan holds on all rows:", ok)
+
+# Contrapositive: (p -> q) is equivalent to (not q -> not p)
+same = all(implies(p, q) == implies(not q, not p) for p, q in product([True, False], repeat=2))
+print("contrapositive equivalent:", same)
+```
+
+In words: the $p \to  q$ column is false in only one row, the one where $p$ is true and $q$ is false. The last two lines do not prove the laws for all propositions; they show that the laws hold on every assignment of two variables, which is a complete proof for two letters. For $n$ letters, the same method takes $2^{n}$ rows.
+
+<Callout type="pitfall">
+"Or" in everyday speech often means "one or the other, not both". The logical $\lor $ includes the case where both are true. When a rule says "you may have soup or salad", a logician reads that as allowing both unless told otherwise.
+</Callout>
+
+## Equivalences
+
+Two formulas are **logically equivalent** when they have the same truth value on every row. Equivalences let you rewrite a statement into a form that is easier to prove. The two that appear most are:
+
+- **De Morgan's laws:** $\lnot (p \land  q)$ is equivalent to $\lnot p \lor  \lnot q$, and $\lnot (p \lor  q)$ is equivalent to $\lnot p \land  \lnot q$. Negation swaps AND and OR.
+- **Contrapositive:** $p \to  q$ is equivalent to $\lnot q \to  \lnot p$. To prove "if $p$ then $q$", you may instead prove "if not $q$ then not $p$".
+
+The contrapositive is the basis of many proofs, covered in the [Proof Techniques](../proof-techniques/) note.
+
+## Tautologies and contradictions
+
+A formula that is true on every row is a **tautology**, such as $p \lor  \lnot p$. One that is false on every row is a **contradiction**, such as $p \land  \lnot p$. A tautology needs no assumption, and a contradiction can never hold. Proof by contradiction assumes the statement is false and derives a contradiction, which is how the next note proves many results.
+
+## Predicates are the next step
+
+Propositional logic cannot say "every number is even or odd", because that statement is about all numbers, not one fixed proposition. That needs quantifiers ($\forall $, $\exists $) and predicates, which extend propositional logic. Quantifiers are introduced in the [Sets](../sets/) and [Functions](../functions/) notes, where they are used to define the objects that mathematics works with.

@@ -1,8 +1,101 @@
 ---
 title: "Functions"
-description: "Domain/range, injective/surjective/bijective, composition, inverse functions."
+description: "A function as a rule that assigns exactly one output to each input, and the properties of injective, surjective and bijective functions that decide when an inverse exists."
 order: 4
 tier: core
+takeaways:
+  - "A **function** $f : A \\to  B$ assigns to every element of $A$ exactly one element of $B$. Each input has one output; an output may have many inputs."
+  - "The **domain** is the set of allowed inputs, the **codomain** is where outputs live, and the **image** (or range) is the set of outputs actually reached."
+  - "**Injective** means no two inputs share an output. **Surjective** means every element of the codomain is hit. **Bijective** means both, and only then does an inverse function exist."
+  - "**Composition** $g \\circ  f$ applies $f$ first, then $g$. The inverse $f^{-1}$ undoes $f$: $f^{-1}(f(x)) = x$."
+  - "The same ideas describe programs: a hash function is not injective, a database key lookup is injective, and a serializer is only useful if it is a bijection on its valid inputs."
+resources:
+  - title: "Functions (Khan Academy)"
+    url: "https://www.khanacademy.org/math/algebra2/x2ec2f6f830c9fb89:functions"
+    note: "Gentle introduction to function notation, domain and range."
+  - title: "Injective, surjective and bijective (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bijection,_injection_and_surjection"
+    note: "Definitions with diagrams and the counting arguments built on them."
+  - title: "Mathematics for Computer Science (MIT OpenCourseWare)"
+    url: "https://ocw.mit.edu/courses/6-042j-mathematics-for-computer-science-fall-2010/"
+    note: "Relations and functions, with the programmer's view of mappings."
 ---
 
-_Placeholder. Content not written yet._
+A function is a precise promise: give it an input from the domain and it returns exactly one output. Most programs are built from functions in this sense, and most bugs come from a function being applied to an input it does not expect, or from two inputs silently sharing an output. This note defines a function, names the three properties that describe how it maps one set to another, and shows what each property buys you. The [Sets](../sets/) note supplies the vocabulary.
+
+## Definition
+
+A **function** $f : A \to  B$ is a rule with three parts: a **domain** $A$, a **codomain** $B$, and an assignment that sends each $a \in  A$ to exactly one $f(a) \in  B$.
+
+Two things are easy to confuse:
+
+- The **codomain** is the set we declare the outputs to lie in.
+- The **image** $f(A)$ is the set of outputs the function actually produces.
+
+For $f(x) = x^{2}$ from the integers to the integers, the codomain is $\mathbb{Z}$ but the image is only the squares $\{0, 1, 4, 9, ...\}$. The square root function $\sqrt{x}$ on the reals is undefined for negative inputs, so its domain must exclude them.
+
+## Injective, surjective, bijective
+
+These three properties describe how the function spreads inputs over outputs.
+
+| Property | Meaning | Test |
+| --- | --- | --- |
+| Injective (one-to-one) | Different inputs give different outputs | $f(a) = f(b)$ implies $a = b$ |
+| Surjective (onto) | Every element of the codomain is an output | For each $y \in  B$ there is an $x$ with $f(x) = y$ |
+| Bijective | Both at once | Pairs inputs and outputs one-to-one |
+
+Only a bijection has an **inverse** $f^{-1} : B \to  A$ that undoes it. If $f$ is not injective, two inputs share an output, so no inverse can tell which one to return. If $f$ is not surjective, some outputs have no input, and the inverse is undefined there.
+
+The script below tests injectivity by brute force on a small domain. It finds the clash for squaring, since $(-1)^{2} = 1^{2}$, and confirms that shifting is injective.
+
+```python
+def is_injective(f, domain):
+    seen = {}
+    for x in domain:
+        y = f(x)
+        if y in seen:
+            return False, (seen[y], x)
+        seen[y] = x
+    return True, None
+
+D = range(-4, 5)
+square = lambda x: x * x
+shift = lambda x: x + 3
+
+print("square injective on -4..4?", is_injective(square, D))
+print("shift injective?", is_injective(shift, D)[0])
+```
+
+In words: the search stops at the first pair of inputs with the same output. $-1$ and $1$ both square to $1$, so squaring cannot be undone on that domain. Restricting the domain to nonnegative numbers, as in the definition of $\sqrt{x}$, makes squaring injective and therefore invertible there.
+
+<Callout type="pitfall">
+A property depends on the domain and codomain, not just the rule. $x^{2}$ is not injective on $\mathbb{R}$ but is injective on $[0, \infty )$. When someone says a function "has an inverse", ask on which domain.
+</Callout>
+
+<FunctionMapping />
+
+## Composition and inverses
+
+Given $f : A \to  B$ and $g : B \to  C$, the **composition** $g \circ  f : A \to  C$ sends $x$ to $g(f(x))$. It is defined only when the codomain of $f$ fits the domain of $g$. Composition is associative, so long chains of transformations need no brackets.
+
+An inverse exists exactly when the function is bijective, and then $f^{-1}(f(x)) = x$ for every $x \in  A$ and $f(f^{-1}(y)) = y$ for every $y \in  B$. Taking the inverse of a composition reverses the order: $(g \circ  f)^{-1} = f^{-1} \circ  g^{-1}$, which is the same rule as undoing your socks and shoes.
+
+```python
+g = lambda x: 2 * x + 1
+g_inv = lambda y: (y - 1) / 2
+print("g(g_inv(7)) =", g(g_inv(7)), " g_inv(g(3)) =", g_inv(g(3)))
+```
+
+In words: $g$ doubles and adds one, so `g_inv` must subtract one and halve. Applying either one and then the other returns the starting value, which is the defining property of an inverse.
+
+## Functions as relations of sets
+
+A function can be drawn as a set of ordered pairs, the **graph** of the function: $\{(x, f(x)) : x \in  A\}$. This is the bridge to [Sets](../sets/): a function is a particular kind of subset of $A \times  B$, one in which each $x$ appears exactly once in the first coordinate. This is how mathematics defines functions formally, and why "one output per input" is the rule that matters.
+
+## Quantifiers in definitions
+
+The properties above are statements with quantifiers from the [Sets](../sets/) note. Injective means $\forall a, b \in  A, f(a) = f(b) \Rightarrow  a = b$. Surjective means $\forall y \in  B, \exists x \in  A, f(x) = y$. Negating these tells you how to disprove them: one clashing pair shows a function is not injective, and one unreachable $y$ shows it is not surjective.
+
+## Functions in programming
+
+A Python function is only a mathematical function if it is **pure**: the same input always gives the same output and nothing else changes. A function that reads the clock, a file or a global variable is a relation, not a function, and it cannot be inverted reliably. Keeping functions pure is the programming version of keeping them well defined.

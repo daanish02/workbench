@@ -1,8 +1,85 @@
 ---
 title: "Number systems"
-description: "Naturals, integers, rationals, reals, irrationals, why each extension was needed."
+description: "Naturals, integers, rationals, reals and complex numbers: why each set was extended from the one before, and what each extension costs."
 order: 5
 tier: core
+takeaways:
+  - "Each number system exists because a problem could not be solved in the last one: subtraction needs **integers**, division needs **rationals**, $\\sqrt 2$ needs **irrationals**, and $x^{2} = -1$ needs **complex numbers**."
+  - "**Rationals** are fractions $p/q$. Their decimals either terminate or repeat. **Irrationals** never repeat, and $\\sqrt 2$ is the classic example."
+  - "The **reals** fill the gaps in the rationals: every point on the number line has a real value, including the irrationals."
+  - "Computers store **floating-point** approximations, not reals. $0.1 + 0.2$ is not exactly $0.3$ in binary, so compare floats with a tolerance."
+  - "Choose the smallest system that contains your problem. Exact arithmetic on fractions costs more than floats, but it cannot drift."
+resources:
+  - title: "Number system (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Number"
+    note: "The history of each extension, from counting to complex numbers."
+  - title: "What Every Computer Scientist Should Know About Floating-Point Arithmetic"
+    url: "https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html"
+    note: "Goldberg's classic paper on why binary floats behave the way they do."
+  - title: "Python fractions module"
+    url: "https://docs.python.org/3/library/fractions.html"
+    note: "Exact rational arithmetic, used below to compare with floats."
 ---
 
-_Placeholder. Content not written yet._
+Mathematics did not start with the reals. It started with counting, and each new kind of number arrived because a question had no answer in the old system. Knowing where each one comes from explains which operations are always allowed and which need care. This note walks through the sets $\mathbb{N}$, $\mathbb{Z}$, $\mathbb{Q}$, $\mathbb{R}$ and $\mathbb{C}$, and ends with the way computers approximate them, which causes most surprises in numerical code.
+
+## The chain of extensions
+
+| Set | Symbol | Contains | Needed because |
+| --- | --- | --- | --- |
+| Naturals | $\mathbb{N}$ | $0, 1, 2, ...$ | counting |
+| Integers | $\mathbb{Z}$ | $..., -1, 0, 1, ...$ | $3 - 5$ has no natural answer |
+| Rationals | $\mathbb{Q}$ | $p/q$ with $q \ne  0$ | $3 \div  5$ has no integer answer |
+| Reals | $\mathbb{R}$ | all points on the line | $\sqrt 2$ and $\pi $ are not fractions |
+| Complex | $\mathbb{C}$ | $a + bi$ with $i^{2} = -1$ | $x^{2} = -1$ has no real solution |
+
+Each set contains the one before it: $\mathbb{N} \subset  \mathbb{Z} \subset  \mathbb{Q} \subset  \mathbb{R} \subset  \mathbb{C}$. Each step keeps the old operations and adds the ones that used to fail. Closure is the key idea: a set is **closed** under an operation when applying it to members always gives a member. The naturals are closed under addition but not subtraction; the rationals are closed under all four arithmetic operations (except division by zero).
+
+## Rationals and irrationals
+
+A **rational** number is a ratio of integers, $p/q$ with $q \ne  0$. Its decimal expansion always terminates or eventually repeats: $1/4 = 0.25$, $1/3 = 0.333...$. The period can be long: $1/7$ repeats six digits.
+
+An **irrational** number has a decimal expansion that never repeats. $\sqrt 2$ is irrational (the proof by contradiction is in [Proof Techniques](../proof-techniques/)), and so are $\pi $ and $e$.
+
+The script below shows both kinds of number in exact and floating-point form. The `Fraction` type keeps the exact ratio, so the sum of two tenths is exactly $3/10$.
+
+```python
+from fractions import Fraction
+
+print("exact rational 1/10 + 2/10 =", Fraction(1, 10) + Fraction(2, 10))
+print("1/3 =", Fraction(1, 3), "as float:", 1 / 3)
+print("1/7 decimal, 20 places:", f"{1 / 7:.20f}")
+```
+
+In words: $1/3$ is exact as a fraction but a float only holds 16 or so significant digits, so the printed value stops there. $1/7$ shows the float's error at the twentieth decimal place: the digits after the first 16 or so are not the true expansion.
+
+## Reals
+
+The reals are the completion of the rationals: every bounded set of reals with a supremum has one, and the rationals have gaps at every irrational. A real number is a point on the line, with a decimal expansion that may be infinite and non-repeating. You cannot write most reals down exactly, which is why every calculation with them is an approximation until a formula is used.
+
+## Complex numbers
+
+The imaginary unit $i$ is defined by $i^{2} = -1$. A complex number is $a + bi$ with real $a$ and $b$. Adding and multiplying follow the usual algebra with $i^{2} = -1$ substituted whenever it appears. The [Complex Numbers](../complex-numbers/) note develops them as points in the plane.
+
+## Floating point in computers
+
+A computer cannot store the reals. It stores a **floating-point** number: a fixed number of significant bits, scaled by a power of two. Most decimals that look simple, such as $0.1$, have no finite binary expansion, so they are rounded on storage.
+
+```python
+import math
+import sys
+
+print("0.1 + 0.2 =", 0.1 + 0.2)
+print("sqrt(2) squared in float:", math.sqrt(2) ** 2)
+print("float epsilon:", sys.float_info.epsilon)
+```
+
+In words: $0.1 + 0.2$ should be $0.3$, but each operand was rounded on storage, and the rounding errors do not cancel. $sqrt(2)$ squared should be exactly 2; the float result is off by one unit in the last place. Machine epsilon, about $2.2 \times  10^{-16}$, is the gap between $1$ and the next float, and it bounds the relative error of a single operation.
+
+<Callout type="pitfall">
+Never test floats for equality. Use a tolerance: `math.isclose(a, b)` or $abs(a - b) < \varepsilon $ with an $\varepsilon $ that fits the scale of the numbers. Money is the usual exception: store cents as integers, or use `decimal`.
+</Callout>
+
+## Which system to use
+
+Pick the smallest system that contains the problem. Counting items is natural-number work. Money and exact ratios belong in integers or `Fraction`. Measurements and most scientific computation use floats, and accept their rounding. Complex numbers appear whenever a problem has oscillation or rotation, which is why signal processing and the Signals and Fourier section use them so much.

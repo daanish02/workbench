@@ -1,8 +1,96 @@
 ---
 title: "Trigonometry"
-description: "Unit circle, radians vs. degrees, sine/cosine/tangent, identities, graphs of trig functions."
+description: "Angles on the unit circle, radians, sine, cosine and tangent, the identities that link them, and the waves they trace."
 order: 7
 tier: core
+takeaways:
+  - "On the **unit circle**, a point at angle $\\theta $ has coordinates $(\\cos \\theta , \\sin \\theta )$. This definition works for every angle, not only the acute ones of a right triangle."
+  - "Use **radians** in formulas: $\\pi $ radians is 180°, and the arc length on a circle of radius $r$ is $r\\theta $. Degrees are for people, radians are for calculus."
+  - "$\\sin^{2} \\theta  + \\cos^{2} \\theta  = 1$ follows from Pythagoras on the unit circle. The **angle addition** formulas follow from rotating points, and every other identity can be derived from these."
+  - "$\\sin$ and $\\cos$ are periodic with period $2\\pi $, and $\\sin$ is a wave with amplitude 1. Frequency, phase and amplitude are the three knobs of a sinusoid."
+  - "$\\tan \\theta  = \\sin \\theta  / \\cos \\theta $ is undefined where $\\cos \\theta  = 0$, which is why you should never divide by a trig value without checking it."
+resources:
+  - title: "Trigonometry (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Trigonometry"
+    note: "The unit circle definition, identities, and history back to Hipparchus."
+  - title: "Unit circle (Khan Academy)"
+    url: "https://www.khanacademy.org/math/trigonometry/trig-equations-and-identities"
+    note: "Practice with the unit circle and the identities built from it."
+  - title: "Python math module: trigonometric functions"
+    url: "https://docs.python.org/3/library/math.html#trigonometric-functions"
+    note: "sin, cos, tan take radians; radians() converts from degrees."
 ---
 
-_Placeholder. Content not written yet._
+Trigonometry began with triangles and the question of how sides relate to angles. Its real power comes from the unit circle, where the same ratios describe rotation, oscillation and every periodic signal. A sound wave, the alternating current in a wall socket and the phase of a Wi-Fi signal are all sinusoids. This note defines the functions on the unit circle, moves to radians, and states the identities that the later notes on complex numbers and Fourier analysis rely on.
+
+## The unit circle
+
+Take the circle of radius 1 centred at the origin. Start at $(1, 0)$ and rotate counterclockwise by an angle $\theta $. The point you land on has coordinates:
+
+- $\cos \theta $ (the horizontal coordinate)
+- $\sin \theta $ (the vertical coordinate)
+
+Tangent is the ratio $\tan \theta  = \sin \theta  / \cos \theta $, which is the slope of the line through the origin at angle $\theta $. This definition covers every angle, including negative ones and angles beyond one full turn.
+
+The unit circle gives the values for the common angles without a calculator. At 30°, 45° and 60° the coordinates are $(\sqrt 3/2, 1/2)$, $(\sqrt 2/2, \sqrt 2/2)$ and $(1/2, \sqrt 3/2)$. At 90° the point is $(0, 1)$, so $\cos 90^\circ  = 0$ and $\tan 90^\circ $ is undefined.
+
+<UnitCircle />
+
+## Radians
+
+An angle is measured by the arc length it cuts out on a circle of radius 1. A full turn is the circumference $2\pi $, so $2\pi $ radians is 360°, and $\pi $ radians is 180°. The conversion is $radians = degrees \times  \pi  / 180$.
+
+Radians matter because they make formulas simple. The arc length of a circle of radius $r$ with angle $\theta $ is $r\theta $, and the derivative of $\sin \theta $ is $\cos \theta $ only when $\theta $ is in radians. Calculus and physics use radians throughout.
+
+The script below prints sine, cosine and tangent at the usual angles, converting from degrees with `math.radians`. The `math` functions take radians.
+
+```python
+import math
+
+print(f"{'deg':>5} {'rad':>8} {'sin':>9} {'cos':>9} {'tan':>10}")
+for deg in [0, 30, 45, 60, 90, 180, 270, 360]:
+    t = math.radians(deg)
+    tan_s = "undefined" if abs(math.cos(t)) < 1e-12 else f"{math.tan(t):10.4f}"
+    print(f"{deg:>5} {t:8.4f} {math.sin(t):9.4f} {math.cos(t):9.4f} {tan_s:>10}")
+```
+
+In words: the sine of 30° is one half, and the cosine of 90° is zero, which is the point $(0, 1)$ on the circle. The tiny negative zeros ($-0.0000$) are floating-point noise: $\sin \pi $ is not exactly zero in binary, so it prints as a very small number. Tangent is undefined at 90° and 270°, where the cosine vanishes and the code guards against the division.
+
+<Callout type="pitfall">
+Check your calculator's mode. $\sin(30)$ in radians is $-0.988$, not $0.5$. If a result looks wrong, the most likely cause is that the angle was given in degrees to a function that expects radians.
+</Callout>
+
+## Identities
+
+Identities are equations that hold for every angle. Almost all of them come from two facts: the Pythagorean theorem applied to the unit circle, and the rule for rotating a point.
+
+- **Pythagorean:** $\sin^{2} \theta  + \cos^{2} \theta  = 1$. The point $(\cos \theta , \sin \theta )$ lies on the unit circle, so its squared distance from the origin is 1.
+- **Angle addition:** $\sin(a + b) = \sin a \cos b + \cos a \sin b$. Rotating by $a$ and then $b$ is the same as rotating by $a + b$, and the coordinates combine accordingly.
+- **Double angle:** $\sin 2\theta  = 2 \sin \theta  \cos \theta $, obtained from addition with $a = b = \theta $.
+
+The script checks the first two identities at several angles. Floating-point comparison uses `math.isclose` rather than $==$, as explained in [Number Systems](../number-systems/).
+
+```python
+import math
+
+for x in [0.3, 1.1, 2.7]:
+    print(f"sin^2+cos^2 at {x}: {math.sin(x) ** 2 + math.cos(x) ** 2:.12f}")
+
+a, b = 0.4, 0.9
+print("sin(a+b) == sin a cos b + cos a sin b:",
+      math.isclose(math.sin(a + b), math.sin(a) * math.cos(b) + math.cos(a) * math.sin(b)))
+```
+
+In words: the sum of squares is 1 at every angle tested, which is the unit circle at work. The angle addition check passes for an arbitrary pair $a$, $b$, so the identity is not a coincidence of particular values.
+
+## Waves
+
+As $\theta $ increases, the point $(\cos \theta , \sin \theta )$ goes around the circle forever, and $\sin \theta $ traces a wave. The general sinusoid is
+
+$y(t) = A \sin(\omega t + \varphi )$
+
+with **amplitude** $A$ (height), **angular frequency** $\omega $ (how fast it cycles, in radians per unit time) and **phase** $\varphi $ (where it starts). The period is $2\pi  / \omega $. Changing $A$, $\omega $ and $\varphi $ produces every sine wave you will meet, and the Signals and Fourier section builds on this to decompose any signal into sinusoids.
+
+## Trigonometry in programming
+
+Trigonometry appears in graphics (rotating a sprite is multiplying by a matrix of $\cos$ and $\sin$), in audio (generating a tone is evaluating a sinusoid at each sample), and in physics engines (projectile motion splits velocity into horizontal and vertical parts with $\cos$ and $\sin$). In each case the same unit circle definition applies, which is why it is worth learning once.

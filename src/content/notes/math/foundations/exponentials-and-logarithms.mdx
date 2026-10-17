@@ -1,8 +1,94 @@
 ---
 title: "Exponentials and logarithms"
-description: "Laws of exponents, log as inverse of exponential, change of base, natural log."
+description: "Repeated multiplication as an exponent, the logarithm as its inverse, the laws that make them work, and what they mean for growth."
 order: 6
 tier: core
+takeaways:
+  - "$b^{x}$ multiplies $b$ by itself $x$ times. The **exponential** $e^{x}$ grows by the same fraction of its current value at every step, which is why it models continuous growth."
+  - "The **logarithm** $\\log_b(y)$ answers 'what power of $b$ gives $y$?'. It is the inverse of $b^{x}$: $\\log_b(b^{x}) = x$ and $b^(\\log_b y) = y$."
+  - "Laws: $\\log(ab) = \\log a + \\log b$, $\\log(a^{p}) = p \\log a$, and **change of base** $\\log_b(y) = \\log y / \\log b$ lets you compute any base from the natural log."
+  - "Logs turn multiplication into addition and exponential growth into straight lines. That is why they appear in algorithm analysis, information theory and any plot with a wide range."
+  - "Doubling time is $\\ln 2 / r$ for continuous growth at rate $r$. The **rule of 72** is a quick approximation of the same thing."
+resources:
+  - title: "Exponential function (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Exponential_function"
+    note: "Definitions, the series for eˣ, and the derivation of growth from limits."
+  - title: "Logarithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Logarithm"
+    note: "History of logarithms from Napier's tables, and the laws in full."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "Functions used below: exp, log, log2 and log10."
 ---
 
-_Placeholder. Content not written yet._
+Exponentials and logarithms describe change that compounds. Savings accounts, populations, radioactive decay, and the number of steps in a binary search all follow them. This note defines both functions, shows that they are inverses of each other, and lists the laws you need to rearrange formulas. Every later section that talks about growth, from probability to deep learning's loss curves, assumes these laws.
+
+## Exponentials
+
+For a base $b > 0$, $b^{x}$ is defined first for whole numbers as repeated multiplication, then extended to fractions and reals. Three behaviours matter:
+
+- $b^{0} = 1$ for any nonzero $b$, because $b^(x) / b^(x) = b^(x-x) = b^{0}$ and anything divided by itself is 1.
+- $b^{x+y} = b^{x} \cdot  b^{y}$: adding exponents multiplies powers.
+- $b > 1$ gives growth; $0 < b < 1$ gives decay.
+
+The special base is $e \approx  2.71828$, the number whose exponential is its own derivative. $e^{x}$ grows at a rate equal to its current value, which is why it describes continuous compounding. Any other base can be written as $b^{x} = e^(x \ln b)$.
+
+<LogExpPlot />
+
+## Logarithms
+
+The logarithm is the inverse of the exponential. $\log_b(y) = x$ means $b^{x} = y$. Read it as "the power of $b$ that gives $y$". Two identities hold for all valid inputs:
+
+- $\log_b(b^{x}) = x$
+- $b^(\log_b y) = y$
+
+The natural logarithm $\ln x = \log_e x$ is the one used in calculus. The base 2 logarithm $\log_{2}$ counts doublings, and base 10 counts digits.
+
+## Laws
+
+These rules follow from the exponent laws and let you rearrange any formula:
+
+| Law | Statement | Why |
+| --- | --- | --- |
+| Product | $\log(ab) = \log a + \log b$ | $b^{x} b^{y} = b^{x+y}$ |
+| Power | $\log(a^{p}) = p \log a$ | $(b^{x})^{p} = b^{xp}$ |
+| Quotient | $\log(a/b) = \log a - \log b$ | division is multiplication by the reciprocal |
+| Change of base | $\log_b y = (\log y) / (\log b)$ | writes any base in terms of one fixed base |
+
+The script below checks that exponential and logarithm undo each other, verifies the product and power laws, and uses change of base to compute $\log_{2}$.
+
+```python
+import math
+
+for x in [0.5, 1, 10, 1000]:
+    print(f"x={x:>6}: exp(log(x)) = {math.exp(math.log(x)):.6f}")
+
+a, b = 8.0, 32.0
+print("log(ab) == log a + log b:", math.isclose(math.log(a * b), math.log(a) + math.log(b)))
+print("log(a^3) == 3 log a:", math.isclose(math.log(a ** 3), 3 * math.log(a)))
+print("log2(32) =", math.log2(32), " via natural log:", math.log(32) / math.log(2))
+```
+
+In words: $\exp$ followed by $\log$ returns the input, so the two are inverses on positive numbers. The product law says the log of a product is a sum, which is the reason slide rules work. Change of base gives $\log_{2}(32) = \ln 32 / \ln 2 = 5$, the same answer `math.log2` returns directly.
+
+<Callout type="pitfall">
+$\log(x)$ is undefined for $x \le  0$, and $\log(a + b)$ does not equal $\log a + \log b$. The product law applies only to products inside the log. Dropping the parentheses is the most common algebra error with logs.
+</Callout>
+
+## Growth and doubling
+
+Continuous growth at rate $r$ gives $A(t) = A_{0} e^(rt)$. The doubling time $T$ satisfies $e^(rT) = 2$, so $T = \ln 2 / r$. The number $\ln 2$ is about $0.693$, so at 7% the doubling time is about 9.9 years. The **rule of 72** says $72 / (rate in percent)$ gives roughly the same answer for annual compounding, and it is accurate enough to be useful.
+
+```python
+import math
+
+r = 0.07
+print("years to double at 7% continuous growth:", round(math.log(2) / r, 2))
+print("rule of 72 estimate:", round(72 / 7, 2))
+```
+
+In words: the exact answer is 9.9 years, and the rule of 72 gives 10.3. The estimate is slightly high because the rule is tuned for annual compounding, and the difference matters less than the order of magnitude.
+
+## Logs in computing
+
+A binary search halves the remaining range each step, so it needs $\log_{2} n$ steps for $n$ items. A balanced tree of $n$ nodes has height about $\log_{2} n$. Information is measured in bits, which is $\log_{2}$ of the number of equally likely outcomes. When you see $O(\log n)$ in a complexity analysis, it is the inverse of the exponential growth of doubling, and the [Big-O Cheat Sheet](../../../cs/appendix/big-o-cheat-sheet/) lists the cases.

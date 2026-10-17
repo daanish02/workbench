@@ -1,8 +1,99 @@
 ---
 title: "Complex numbers"
-description: "Imaginary unit, the complex plane, polar form, Euler's formula."
+description: "The imaginary unit, the complex plane, polar form, and Euler's formula, which joins exponentials to rotation."
 order: 8
 tier: core
+takeaways:
+  - "The imaginary unit $i$ satisfies $i^{2} = -1$. A **complex number** $a + bi$ has a real part $a$ and an imaginary part $b$, and it is a point in the plane."
+  - "**Multiplying** complex numbers multiplies their lengths and adds their angles. That is why they describe rotation so naturally."
+  - "**Polar form** $r(\\cos \\theta  + i \\sin \\theta )$ gives the modulus $r$ and argument $\\theta $ of a number. The **modulus** is the distance from the origin."
+  - "**Euler's formula** $e^(i\\theta ) = \\cos \\theta  + i \\sin \\theta $ connects exponentials to trigonometry. At $\\theta  = \\pi $ it gives $e^(i\\pi ) + 1 = 0$."
+  - "The complex numbers are **algebraically closed**: every polynomial has as many complex roots as its degree. That is why they are the natural setting for eigenvalues and Fourier analysis."
+resources:
+  - title: "Complex number (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Complex_number"
+    note: "Definitions, the complex plane, and the history of imaginary numbers."
+  - title: "Euler's formula (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Euler%27s_formula"
+    note: "Derivation from power series and the special cases."
+  - title: "Python cmath module"
+    url: "https://docs.python.org/3/library/cmath.html"
+    note: "Complex versions of the math functions, with polar and rectangular conversion."
 ---
 
-_Placeholder. Content not written yet._
+Real numbers cannot solve $x^{2} = -1$. Rather than declare the problem impossible, mathematicians introduced a new number $i$ with $i^{2} = -1$ and found that the resulting system is more powerful than the reals. Every polynomial has a complex root, and rotation and oscillation become simple multiplication. This note introduces the arithmetic, the plane picture, polar form and Euler's formula. The [Number Systems](../number-systems/) note shows where $\mathbb{C}$ sits in the chain of extensions.
+
+## Arithmetic
+
+A complex number is written $z = a + bi$, with real $a$ (the real part, $\operatorname{Re} z$) and real $b$ (the imaginary part, $\operatorname{Im} z$). Arithmetic follows the usual rules, with $i^{2} = -1$ applied whenever it appears:
+
+- $(a + bi) + (c + di) = (a + c) + (b + d)i$
+- $(a + bi)(c + di) = (ac - bd) + (ad + bc)i$, since $i \cdot  i = -1$
+- The **conjugate** of $a + bi$ is $a - bi$, and $z \cdot  \bar{z} = a^{2} + b^{2}$, a real number.
+
+Division uses the conjugate: $1 / z = \bar{z} / (z \bar{z})$. This is how you divide by a complex number in practice.
+
+## The complex plane
+
+Identify $a + bi$ with the point $(a, b)$. The horizontal axis is the real line, the vertical axis is the imaginary line, and the plane is the **complex plane**. Addition is vector addition. The **modulus** $\lvert z\rvert  = \sqrt (a^{2} + b^{2})$ is the distance from the origin.
+
+The **argument** $\arg z$ is the angle from the positive real axis to the point. Together, the modulus and the argument give the **polar form**:
+
+$z = r(\cos \theta  + i \sin \theta )$ with $r = \rvert z\rvert $ and $\theta  = \arg z$.
+
+Polar form explains multiplication. If $z = r(\cos \theta  + i \sin \theta )$ and $w = s(\cos \varphi  + i \sin \varphi )$, then $zw = rs(\cos(\theta  + \varphi ) + i \sin(\theta  + \varphi ))$. The lengths multiply and the angles add. Multiplying by $i$ rotates by 90°, since $i = 1(\cos 90^\circ  + i \sin 90^\circ )$.
+
+The script below converts $3 + 4i$ to polar form and checks that the modulus of a product is the product of the moduli.
+
+```python
+import cmath
+import math
+
+z = 3 + 4j
+print("modulus of 3+4i:", abs(z))
+r, theta = cmath.polar(z)
+print(f"polar: r={r:.4f}, theta={theta:.4f} rad = {math.degrees(theta):.2f} deg")
+print("back to rectangular:", cmath.rect(r, theta))
+
+w = 1 + 1j
+print("|z*w| == |z||w|:", math.isclose(abs(z * w), abs(z) * abs(w)))
+```
+
+In words: $3 + 4i$ has modulus 5 (the 3-4-5 triangle) and argument about 53°. Converting back gives $3 + 4i$ up to rounding in the last digit. The product test shows the modulus is multiplicative, which is the length half of the polar multiplication rule.
+
+<Callout type="pitfall">
+Python writes the imaginary unit as $j$, not $i$, and `1j` is a complex number while $1$ is an integer. A bare $i$ in code is a variable name, not the imaginary unit.
+</Callout>
+
+<ComplexPlane />
+
+## Euler's formula
+
+Euler showed that for every real $\theta $:
+
+$e^(i\theta ) = \cos \theta  + i \sin \theta $
+
+The left side is an exponential, defined by its power series. The right side is a point on the unit circle at angle $\theta $. So multiplying by $e^(i\theta )$ rotates the plane by $\theta $, and $e^(i\theta )$ is the unit circle. At $\theta  = \pi $ the formula gives $e^(i\pi ) = -1$, and rearranging gives $e^(i\pi ) + 1 = 0$, a relation among five famous constants.
+
+The script evaluates Euler's formula at $\pi $ and checks the cube roots of unity, the three points $e^(2\pi ik/3)$ that sit at 120° intervals on the unit circle.
+
+```python
+import cmath
+import math
+
+print("e^(i*pi) + 1 =", cmath.exp(1j * math.pi) + 1)
+
+roots = [cmath.exp(2j * math.pi * k / 3) for k in range(3)]
+print("cube roots of 1:", [(round(c.real, 3), round(c.imag, 3)) for c in roots])
+print("each cubed is 1:", all(math.isclose(abs(c ** 3 - 1), 0, abs_tol=1e-9) for c in roots))
+```
+
+In words: the sum is not exactly zero, because floating point cannot represent $\pi $ exactly, so the result is about $10^{-16}$ times $i$. That value is zero to machine precision and the identity holds. The three cube roots of 1 are the points at 0°, 120° and 240° on the circle, and each cubed returns 1.
+
+## Roots of polynomials
+
+The **fundamental theorem of algebra** says every non-constant polynomial with complex coefficients has a complex root, and a degree-$n$ polynomial has exactly $n$ roots counted with multiplicity. Over the reals this fails: $x^{2} + 1$ has no real root. Working in $\mathbb{C}$ removes the exception, and it is why eigenvalues of real matrices are often complex, a point the Linear Algebra section returns to.
+
+## Complex numbers in engineering
+
+Alternating current, radio, and image processing all use complex numbers. A sinusoid $A \cos(\omega t + \varphi )$ is the real part of $A e^(i(\omega t + \varphi ))$, so a single complex number carries amplitude and phase together, and multiplying by $e^(i\varphi )$ shifts the phase. The Signals and Fourier section uses this to decompose signals into frequencies.

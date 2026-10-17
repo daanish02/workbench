@@ -1,8 +1,90 @@
 ---
 title: "Sets"
-description: "Set notation, operations (union, intersection, complement), subsets, power sets, Venn diagrams."
+description: "Collections of objects, the operations that combine them, subsets and power sets, and the quantifiers that make statements about all of them."
 order: 3
 tier: core
+takeaways:
+  - "A **set** is a collection of distinct objects, with no order and no repeats. $\\{1, 2, 2, 3\\}$ is the set $\\{1, 2, 3\\}$."
+  - "**Union** ($A \\cup  B$) keeps what is in either set; **intersection** ($A \\cap  B$) keeps what is in both; **complement** ($A^{c}$) is what is outside $A$ in a fixed universe."
+  - "A set with $n$ elements has **2ⁿ subsets**, and its power set is the set of all of them. The power set is always larger than the set, even for infinite sets."
+  - "**De Morgan's laws** hold for sets too: the complement of a union is the intersection of the complements, and the reverse."
+  - "The quantifiers **for all** ($\\forall $) and **there exists** ($\\exists $) turn predicates into statements about sets, such as $\\forall x \\in  A, x > 0$."
+resources:
+  - title: "Naive Set Theory (Halmos)"
+    url: "https://www.springer.com/gp/book/9780387900926"
+    note: "A short, readable introduction to sets, written for working mathematicians."
+  - title: "Set theory (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Set_theory"
+    note: "Overview, with the history of Cantor's work and its paradoxes."
+  - title: "Python set type"
+    url: "https://docs.python.org/3/library/stdtypes.html#set-types-set-frozenset"
+    note: "Python sets implement union, intersection and difference with operators."
 ---
 
-_Placeholder. Content not written yet._
+Almost every object in mathematics is a set or can be built from one. A function is a set of input–output pairs. A graph is a set of vertices and a set of edges. A probability space is a set of outcomes. This note sets up the language: how to name a set, how to combine sets, and how to say what is true of all their members. The [Functions](../functions/) note and the Probability section both depend on it heavily.
+
+## Membership and notation
+
+We write $x \in  A$ for "$x$ is an element of $A$", and $x \notin  A$ for its negation. A set is defined either by listing its elements, $A = \{1, 2, 3\}$, or by a rule, $A = \{x : x is a whole number and 1 \le  x \le  3\}$. The rule form is more useful when the set is large or infinite: the even numbers are $\{2k : k \in  \mathbb{Z}\}$.
+
+Two sets are **equal** when they have the same elements. Order and repetition do not matter. The empty set $\varnothing $ has no elements.
+
+**Subset:** $A \subseteq  B$ means every element of $A$ is in $B$. Every set is a subset of itself, and $\varnothing $ is a subset of every set. $A$ is a **proper** subset when $A \subseteq  B$ and $A \ne  B$.
+
+## Operations
+
+For sets $A$ and $B$ inside a fixed **universe** $U$:
+
+| Operation | Notation | Keeps elements that are |
+| --- | --- | --- |
+| Union | $A \cup  B$ | in $A$, or in $B$, or in both |
+| Intersection | $A \cap  B$ | in both $A$ and $B$ |
+| Difference | $A \setminus B$ | in $A$ but not in $B$ |
+| Complement | $A^{c}$ | in $U$ but not in $A$ |
+
+The script below applies each operation and checks De Morgan's law for sets, which says that the complement of a union is the intersection of the complements.
+
+```python
+A = {1, 2, 3, 4, 5}
+B = {4, 5, 6, 7}
+U = set(range(1, 11))
+
+print("union        :", sorted(A | B))
+print("intersection :", sorted(A & B))
+print("difference   :", sorted(A - B))
+print("complement of A in U:", sorted(U - A))
+print("De Morgan holds:", (U - (A | B)) == ((U - A) & (U - B)))
+```
+
+In words: the union has everything either set contains, the intersection keeps only the shared elements, and the complement is whatever $A$ leaves out of the universe. De Morgan holds because an element is outside $A \cup  B$ exactly when it is outside $A$ and outside $B$.
+
+<Callout type="pitfall">
+The complement depends on the universe. "The complement of the even numbers" is the odd numbers if the universe is the integers, but something different if the universe is the reals. Always name $U$ before you take a complement.
+</Callout>
+
+<SetsVenn />
+
+## Power sets
+
+The **power set** $\mathcal{P}(A)$ is the set of all subsets of $A$. For a set with $n$ elements it has $2^{n}$ members: each element is either in a given subset or out, and there are $n$ independent choices. The empty set is always a member of its power set, and $A$ itself is too.
+
+Power sets are why the number of possible things grows so quickly. A password of 8 bits has $2^{8} = 256$ values, and the subsets of a set of 30 items number over a billion.
+
+## Quantifiers
+
+Sets make it possible to say things about every member at once. Two quantifiers do this:
+
+- **Universal** $\forall x \in  A, P(x)$: for every $x$ in $A$, the statement $P(x)$ holds.
+- **Existential** $\exists x \in  A, P(x)$: for at least one $x$ in $A$, $P(x)$ holds.
+
+Negating a quantifier flips it: $\lnot (\forall x, P(x))$ is equivalent to $\exists x, \lnot P(x)$. To deny that every student passed, you need only find one who did not. This rule is the logical counterpart of De Morgan's law, and it is how counterexamples work.
+
+The quantifier is the step beyond [Propositional Logic](../propositional-logic/): a predicate like $P(x)$ is a statement with a free variable, and a quantifier binds that variable.
+
+## Sets in computing
+
+A Python `set` is a hash table with no values, so membership tests are fast on average (see the [Hash Tables](../../../cs/data-structures/hash-tables/) note). A database `SELECT ... WHERE x IN (...)` asks whether each row's value is in a set. Deduplication, access control lists and graph adjacency are all set operations underneath.
+
+## Cardinality
+
+The **cardinality** $\lvert A\rvert $ is the number of elements. For finite sets, $\rvert A \cup  B\rvert  = \rvert A\rvert  + \rvert B\rvert  - \rvert A \cap  B\rvert $: the intersection is counted twice in the sum, so we subtract it once. This is the inclusion–exclusion principle, used again in the [Combinatorics](../combinatorics/) note.

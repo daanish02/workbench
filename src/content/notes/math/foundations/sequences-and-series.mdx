@@ -1,8 +1,90 @@
 ---
 title: "Sequences and series"
-description: "Arithmetic/geometric sequences, convergence, sigma notation, common series."
+description: "Arithmetic and geometric sequences, sigma notation, partial sums, and when an infinite sum converges to a finite value."
 order: 10
 tier: core
+takeaways:
+  - "A **sequence** is an ordered list $a_{1}, a_{2}, a_{3}, ...$. An **arithmetic** sequence adds a fixed difference each step; a **geometric** sequence multiplies by a fixed ratio."
+  - "A **series** is the sum of a sequence. The sum of the first $n$ terms is a **partial sum**, and the **infinite series** is the limit of partial sums as $n$ grows."
+  - "A geometric series $a + ar + ar^{2} + ...$ converges to $a / (1 - r)$ when $\\lvert r\\rvert  < 1$, and diverges otherwise. The arithmetic series $1 + 2 + 3 + ...$ diverges."
+  - "**Sigma notation** $\\sum $ writes sums compactly, and the index is a dummy variable: $\\sum _{k} k$ and $\\sum ⱼ j$ are the same sum."
+  - "Convergence is subtle. The **harmonic series** $1 + 1/2 + 1/3 + ...$ diverges even though its terms shrink to zero. Terms going to zero is necessary for convergence, not sufficient."
+resources:
+  - title: "Series (mathematics) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Series_(mathematics)"
+    note: "Definitions of partial sums, convergence and the standard tests."
+  - title: "Harmonic series (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Harmonic_series_(mathematics)"
+    note: "The divergence proof and the growth rate of partial sums."
+  - title: "Python fractions module"
+    url: "https://docs.python.org/3/library/fractions.html"
+    note: "Exact arithmetic for partial sums, used below to avoid rounding."
 ---
 
-_Placeholder. Content not written yet._
+A sequence is a list of numbers with a rule, and a series is what you get when you add them up. Compound interest, loan repayments, the running time of a recursive algorithm and the error of an approximation are all sums of this kind. The hard question is whether an infinite sum has a finite value, and the answer depends on how the terms shrink. This note covers the two families of sequences that appear everywhere, sigma notation, and the basic test for convergence. The Calculus section makes the convergence argument precise through limits.
+
+## Sequences
+
+A sequence $a_{n}$ assigns a value to each natural number $n$. Two families come up constantly:
+
+- **Arithmetic:** $a_{n} = a + (n - 1)d$, with a fixed difference $d$. Example: $3, 7, 11, 15, ...$ has $a = 3$ and $d = 4$.
+- **Geometric:** $a_{n} = a r^{n-1}$, with a fixed ratio $r$. Example: $1, 1/2, 1/4, 1/8, ...$ has $a = 1$ and $r = 1/2$.
+
+Recognising which family a sequence belongs to is the first step in any calculation. Check whether the differences are constant, or the ratios.
+
+## Sigma notation
+
+$\sum _{k=1}^{n} a_{k}$ means $a_{1} + a_{2} + ... + a_{n}$. The letter $k$ is a dummy index: it can be renamed without changing the sum. Sigma notation makes general formulas readable. The sum of the first $n$ integers is $\sum _{k=1}^{n} k = n(n + 1) / 2$, and the sum of the first $n$ terms of an arithmetic sequence is $n(2a + (n - 1)d) / 2$, which is the average of the first and last term times $n$.
+
+## Geometric series
+
+For $r \ne  1$, the partial sum of a geometric series has a closed form:
+
+$a + ar + ... + ar^{n-1} = a (1 - r^{n}) / (1 - r)$.
+
+Multiply the sum by $r$, subtract from the original, and everything cancels except the first term and the last. If $\lvert r\rvert  < 1$, the term $r^{n}$ goes to zero as $n$ grows, so the partial sums approach $a / (1 - r)$. That is the sum of the infinite series. If $\lvert r\rvert  \ge  1$, the terms do not shrink to zero, and the series diverges.
+
+The script below checks the arithmetic formula, then watches the geometric partial sums approach $a / (1 - r)$ with $r = 1/2$. It uses `Fraction` so the partial sums are exact before the final conversion to float.
+
+```python
+from fractions import Fraction
+
+a, d = 3, 4
+print("arithmetic terms:", [a + (n - 1) * d for n in range(1, 6)])
+print("sum of first 10, formula:", 10 * (2 * a + 9 * d) // 2,
+      " brute:", sum(a + k * d for k in range(10)))
+
+a, r = Fraction(1), Fraction(1, 2)
+for n in [1, 5, 10, 20]:
+    s = a * (1 - r**n) / (1 - r)
+    print(f"partial sum n={n:>2}: {float(s):.9f}")
+print("limit a/(1-r) =", float(a / (1 - r)))
+```
+
+In words: the arithmetic formula agrees with the brute-force sum, 210 for the first ten terms. The geometric partial sums climb towards 2, and the $n$th one differs from 2 by $2^(1-n)$, which is why the twentieth partial sum is already within $2 \times  10^{-6}$ of the limit.
+
+<Callout type="pitfall">
+Terms going to zero does not make a series converge. $1 + 1/2 + 1/3 + ...$ has terms that shrink to zero, yet its partial sums grow without bound. Convergence needs the partial sums themselves to settle, and that is a different test.
+</Callout>
+
+<GeometricSums />
+
+## The harmonic series
+
+The harmonic series $\sum  1/k$ diverges, but so slowly that it looks like it might converge. Its partial sums $H_N$ grow like $\ln N$ plus a constant, about $0.5772$ (the Euler–Mascheroni constant). Doubling $N$ adds only about $\ln 2$ to the sum, which is why a million terms reach only about 14.
+
+The script compares the partial sum with the approximation $\ln N + 0.5772$. The gap between them shrinks as $N$ grows, which is what it means for a sum to behave like the logarithm.
+
+```python
+import math
+
+for N in [10, 1000, 100000]:
+    H = sum(1 / k for k in range(1, N + 1))
+    print(f"H_{N} = {H:.4f}  vs ln N + 0.5772 = {math.log(N) + 0.5772:.4f}")
+```
+
+In words: the approximation is off by about 0.05 at $N = 10$ and by less than 0.001 at $N = 1000$. The partial sum keeps rising, so the series diverges, but it rises so slowly that the logarithm is the only way to describe it compactly.
+
+## Why this matters for algorithms
+
+Many running-time recurrences are sums. A loop that does $n$ work, then $n/2$, then $n/4$, is a geometric series, and its total is at most $2n$, which is why halving loops are linear overall. Harmonic sums appear when a structure is visited with probability $1/k$, such as the expected number of comparisons in randomized quicksort. The [Big-O Cheat Sheet](../../../cs/appendix/big-o-cheat-sheet/) lists the complexities these sums produce.
