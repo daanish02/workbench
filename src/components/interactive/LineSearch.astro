@@ -1,0 +1,82 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Backtracking line search"
+  caption="Along the descent direction from the current point, the curve is f(x − η∇f) as a function of η. The dashed line is the Armijo bound f(x) − cη‖∇f‖². Starting from η = 1, the step is shrunk by the factor until the curve drops below the bound; the accepted step is marked."
+>
+  <line-search>
+    <div class="ls-ctl">
+      <label class="ls-lbl">start x <input type="range" min="-2" max="2.5" step="0.1" value="-1.5" data-x /> <b data-xv>-1.5</b></label>
+      <label class="ls-lbl">c <input type="range" min="0.01" max="0.9" step="0.01" value="0.3" data-c /> <b data-cv>0.30</b></label>
+      <label class="ls-lbl">shrink factor <input type="range" min="0.2" max="0.9" step="0.1" value="0.5" data-r /> <b data-rv>0.5</b></label>
+    </div>
+    <svg class="ls-svg" viewBox="0 0 340 200" role="img" aria-label="Objective along the search direction with the Armijo line">
+      <line x1="30" y1="180" x2="330" y2="180" class="ls-ax"></line>
+      <path data-curve class="ls-curve"></path>
+      <path data-bound class="ls-bound"></path>
+      <g data-trials></g>
+    </svg>
+    <p class="ls-stat" data-stat></p>
+  </line-search>
+</Figure>
+
+<style>
+  .ls-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ls-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ls-lbl input { flex: 1; }
+  .ls-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .ls-ax { stroke: #3c4043; }
+  .ls-curve { fill: none; stroke: var(--g-blue); stroke-width: 2; }
+  .ls-bound { fill: none; stroke: var(--g-red); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .ls-svg :global(.ls-try) { fill: var(--text-faint); }
+  .ls-svg :global(.ls-ok) { fill: var(--g-yellow); }
+  .ls-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // a non-quadratic 1-D objective so the best step is not obvious
+  const f = (x: number) => x ** 4 / 4 - x + 2;
+  const df = (x: number) => x ** 3 - 1;
+  class LineSearch extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const x = +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      this.querySelector('[data-xv]')!.textContent = x.toFixed(1);
+      this.querySelector('[data-cv]')!.textContent = c.toFixed(2);
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(1);
+      const g = df(x);
+      const phi = (eta: number) => f(x - eta * g);
+      const bound = (eta: number) => f(x) - c * eta * g * g;
+      const vals: number[] = [];
+      for (let i = 0; i <= 100; i++) vals.push(phi(i / 100), bound(i / 100));
+      const lo = Math.min(...vals), hi = Math.min(Math.max(...vals), f(x) + 3 * Math.abs(f(x) - lo) + 1);
+      const sx = (eta: number) => 30 + eta * 300;
+      const sy = (v: number) => 180 - ((Math.min(v, hi) - lo) / (hi - lo || 1)) * 165;
+      let dc = '', db = '';
+      for (let i = 0; i <= 100; i++) {
+        const e = i / 100;
+        dc += `${i ? 'L' : 'M'}${sx(e).toFixed(1)},${sy(phi(e)).toFixed(1)}`;
+        db += `${i ? 'L' : 'M'}${sx(e).toFixed(1)},${sy(bound(e)).toFixed(1)}`;
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', dc);
+      this.querySelector('[data-bound]')!.setAttribute('d', db);
+      let eta = 1, trials = '', n = 0;
+      while (phi(eta) > bound(eta) && n < 30) {
+        trials += `<circle class="ls-try" r="3" cx="${sx(eta).toFixed(1)}" cy="${sy(phi(eta)).toFixed(1)}"></circle>`;
+        eta *= r; n++;
+      }
+      trials += `<circle class="ls-ok" r="4" cx="${sx(eta).toFixed(1)}" cy="${sy(phi(eta)).toFixed(1)}"></circle>`;
+      this.querySelector('[data-trials]')!.innerHTML = trials;
+      this.querySelector('[data-stat]')!.textContent =
+        `gradient ${g.toFixed(2)} · ${n} rejected trial${n === 1 ? '' : 's'} · accepted η = ${eta.toPrecision(3)} · f drops from ${f(x).toFixed(3)} to ${phi(eta).toFixed(3)}`;
+    }
+  }
+  customElements.define('line-search', LineSearch);
+</script>

@@ -1,0 +1,61 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where Newton's method ends up"
+  caption="Newton's method on f(x) = x³ − 2x + 2, which has one real root near −1.77. Each starting point on the strip is coloured by its fate: blue converges to the root, red ends in a cycle or wanders. Starts near 0 and 1 fall into the cycle 0 → 1 → 0, because the tangent at each sends the next iterate to the other."
+>
+  <newton-basins>
+    <label class="nb-lbl">start x₀ <input type="range" min="-3" max="3" step="0.01" value="0.5" data-x /> <b data-xv>0.50</b></label>
+    <canvas width="600" height="24" data-strip class="nb-strip"></canvas>
+    <p class="nb-iter" data-iter></p>
+  </newton-basins>
+</Figure>
+
+<style>
+  .nb-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .nb-lbl input { flex: 1; }
+  .nb-strip { display: block; width: 100%; height: 24px; border-radius: 4px; }
+  .nb-iter { margin: 10px 0 0; font: 0.8rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; word-break: break-word; }
+</style>
+
+<script>
+  const f = (x: number) => x ** 3 - 2 * x + 2;
+  const df = (x: number) => 3 * x * x - 2;
+  const ROOT = -1.7692923542386314;
+  const run = (x: number, n = 60) => {
+    const path = [x];
+    for (let i = 0; i < n; i++) {
+      const d = df(x);
+      if (Math.abs(d) < 1e-12) break;
+      x = x - f(x) / d;
+      path.push(x);
+      if (Math.abs(x - ROOT) < 1e-10 || !isFinite(x)) break;
+    }
+    return path;
+  };
+  class NewtonBasins extends HTMLElement {
+    connectedCallback() {
+      const cv = this.querySelector<HTMLCanvasElement>('[data-strip]')!;
+      const ctx = cv.getContext('2d')!;
+      for (let i = 0; i < cv.width; i++) {
+        const x0 = -3 + (6 * i) / cv.width;
+        const p = run(x0);
+        ctx.fillStyle = Math.abs(p[p.length - 1] - ROOT) < 1e-6 ? '#4285f4' : '#ea4335';
+        ctx.fillRect(i, 0, 1, cv.height);
+      }
+      this.querySelector('[data-x]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const x0 = +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+      this.querySelector('[data-xv]')!.textContent = x0.toFixed(2);
+      const p = run(x0, 12);
+      const ok = Math.abs(run(x0)[run(x0).length - 1] - ROOT) < 1e-6;
+      this.querySelector('[data-iter]')!.textContent =
+        `${ok ? 'converges' : 'does not converge'} · first iterates: ${p.slice(0, 9).map((v) => v.toFixed(3)).join(' → ')}`;
+    }
+  }
+  customElements.define('newton-basins', NewtonBasins);
+</script>

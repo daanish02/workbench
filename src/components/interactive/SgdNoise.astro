@@ -1,0 +1,76 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Batch size sets the noise"
+  caption="SGD on the bowl f(x, y) = x² + 4y², with each gradient corrupted by noise whose spread is σ/√B for batch size B. The full-gradient path (green) runs straight to the minimum; the SGD path (blue) wanders. Larger batches or a smaller step shrink the cloud around the minimum where a constant-step SGD settles."
+>
+  <sgd-noise>
+    <div class="sg-ctl">
+      <label class="sg-lbl">batch B <input type="range" min="0" max="8" step="1" value="2" data-b /> <b data-bv>4</b></label>
+      <label class="sg-lbl">step η <input type="range" min="0.01" max="0.2" step="0.01" value="0.08" data-e /> <b data-ev>0.08</b></label>
+      <span class="sg-tog"><input type="checkbox" hidden data-decay /><button type="button" class="btn" data-toggle aria-pressed="false">decay the step as η / (1 + k/20)</button></span>
+    </div>
+    <svg class="sg-svg" viewBox="-2.2 -1.4 4.4 2.8" role="img" aria-label="Contours with a full-gradient path and a noisy SGD path">
+      <g transform="scale(1,-1)">
+        <g data-cont></g>
+        <path data-full class="sg-full"></path>
+        <path data-sgd class="sg-path"></path>
+      </g>
+    </svg>
+    <p class="sg-stat" data-stat></p>
+  </sgd-noise>
+</Figure>
+
+<style>
+  .sg-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .sg-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .sg-lbl input { flex: 1; }
+  .sg-tog { font-size: 0.875rem; color: var(--text-muted); text-align: center; }
+  .sg-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .sg-svg :global(.sg-c) { fill: none; stroke: rgba(251, 188, 5, 0.35); stroke-width: 0.012; }
+  .sg-full { fill: none; stroke: var(--g-green); stroke-width: 0.025; }
+  .sg-path { fill: none; stroke: var(--g-blue); stroke-width: 0.015; }
+  .sg-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const SIGMA = 4;
+  const STEPS = 200;
+  class SgdNoise extends HTMLElement {
+    connectedCallback() {
+      let c = '';
+      for (const lv of [0.1, 0.4, 0.9, 1.6, 2.5, 3.6]) c += `<ellipse class="sg-c" rx="${Math.sqrt(lv)}" ry="${Math.sqrt(lv / 4)}"></ellipse>`;
+      this.querySelector('[data-cont]')!.innerHTML = c;
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const B = 2 ** +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      const eta = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      const decay = this.querySelector<HTMLInputElement>('[data-decay]')!.checked;
+      this.querySelector('[data-bv]')!.textContent = String(B);
+      this.querySelector('[data-ev]')!.textContent = eta.toFixed(2);
+      let seed = 99;
+      const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
+      let p = [-2, 1.1], q = [-2, 1.1];
+      let dS = `M${p[0]},${p[1]}`, dF = dS, tail = 0;
+      for (let k = 0; k < STEPS; k++) {
+        const e = decay ? eta / (1 + k / 20) : eta;
+        const g = [2 * p[0] + (SIGMA / Math.sqrt(B)) * gauss(), 8 * p[1] + (SIGMA / Math.sqrt(B)) * gauss()];
+        p = [p[0] - e * g[0], p[1] - e * g[1]];
+        q = [q[0] - e * 2 * q[0], q[1] - e * 8 * q[1]];
+        dS += `L${p[0].toFixed(3)},${p[1].toFixed(3)}`;
+        dF += `L${q[0].toFixed(3)},${q[1].toFixed(3)}`;
+        if (k >= STEPS - 50) tail += Math.hypot(p[0], p[1]) / 50;
+      }
+      this.querySelector('[data-sgd]')!.setAttribute('d', dS);
+      this.querySelector('[data-full]')!.setAttribute('d', dF);
+      this.querySelector('[data-stat]')!.textContent =
+        `gradient noise sd = ${(SIGMA / Math.sqrt(B)).toFixed(2)} · average distance from the minimum over the last 50 steps: ${tail.toFixed(3)}`;
+    }
+  }
+  customElements.define('sgd-noise', SgdNoise);
+</script>
