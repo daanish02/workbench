@@ -1,0 +1,65 @@
+---
+import Figure from '../Figure.astro';
+
+// log10 of the error after k steps. Newton errors are from the √2 run in the note; bisection error is 2^(−k).
+const newton = [0.414214, 0.085786, 0.002451, 0.000002, 1.6e-12, 2.2e-16];
+const newtonLog = newton.map((e) => Math.log10(e));
+const bisectLog = [0, 1, 2, 3, 4, 5].map((k) => -k * Math.log10(2));
+const xOf = (k: number) => 40 + k * 60;
+const yOf = (l: number) => 20 + ((0 - l) / 16) * 170;
+const pathOf = (vals: number[]) => vals.map((v, k) => `${k ? 'L' : 'M'}${xOf(k).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+---
+
+<Figure
+  kind="Diagram"
+  title="Error against steps: Newton against bisection"
+  caption="Log₁₀ of the error after each step, for √2. Newton's error drops from 10⁻¹ to 10⁻¹⁶ in five steps, because the digits roughly double each time. Bisection drops by a factor of two per step, which is a straight line on this scale."
+>
+  <svg class="ve-svg" viewBox="0 0 400 232" role="img" aria-label="Log error against step for Newton's method, which falls steeply, and for bisection, which falls in a straight line">
+    <line x1="40" y1="190" x2="390" y2="190" class="ve-axis"></line>
+    <line x1="40" y1="20" x2="40" y2="190" class="ve-axis"></line>
+    <path d={pathOf(bisectLog)} class="ve-bisect"></path>
+    <path d={pathOf(newtonLog)} class="ve-newton"></path>
+    {[0, 1, 2, 3, 4, 5].map((k) => (
+      <text x={xOf(k)} y="206" class="ve-t">{k}</text>
+    ))}
+    <text x="20" y="30" class="ve-t">0</text>
+    <text x="8" y={yOf(-15)} class="ve-t">−15</text>
+    <text x="210" y="226" class="ve-t">steps</text>
+    <text x={xOf(3) + 6} y={yOf(bisectLog[3]) - 8} class="ve-t ve-b">bisection</text>
+    <text x="160" y="112" class="ve-t ve-n">Newton</text>
+  </svg>
+</Figure>
+
+<style>
+  .ve-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ve-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ve-newton {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .ve-bisect {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .ve-t {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+  .ve-n {
+    fill: var(--g-red);
+  }
+  .ve-b {
+    fill: var(--g-blue);
+  }
+</style>

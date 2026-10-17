@@ -1,0 +1,190 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Gradient descent variants on one valley"
+  caption="Three optimisers start at (1, 1) on f(x, y) = x² + 10y², whose contours are the ellipses. Plain descent (η = 0.05), momentum (η = 0.01, β = 0.9) and Adam (learning rate 0.01) each draw a path. Play the steps to watch them move. The readout counts the steps each needs to get within 0.001 of the minimum."
+>
+  <optimizer-race>
+    <div class="or-ctl">
+      <label>steps <input type="range" min="0" max="300" step="1" value="0" data-k /><b data-kv>0</b></label>
+      <button type="button" data-play>play</button>
+    </div>
+    <svg class="or-svg" viewBox="-1.2 -1.2 2.4 2.4" role="img" aria-label="Contours of x squared plus ten y squared, with three optimiser paths converging to the origin">
+      <ellipse cx="0" cy="0" rx="0.5" ry="0.158" class="or-c"></ellipse>
+      <ellipse cx="0" cy="0" rx="0.707" ry="0.224" class="or-c"></ellipse>
+      <ellipse cx="0" cy="0" rx="1" ry="0.316" class="or-c"></ellipse>
+      <path data-gd class="or-gd"></path>
+      <path data-mom class="or-mom"></path>
+      <path data-adam class="or-adam"></path>
+      <circle cx="1" cy="1" r="0.05" class="or-start"></circle>
+    </svg>
+    <p class="or-stat" data-stat></p>
+  </optimizer-race>
+</Figure>
+
+<style>
+  .or-ctl {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .or-ctl label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .or-ctl input {
+    flex: 1;
+  }
+  .or-ctl b {
+    min-width: 2.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .or-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .or-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    /* y-axis flipped so the picture matches the maths */
+    transform: scaleY(-1);
+  }
+  .or-c {
+    fill: none;
+    stroke: #3c4043;
+    stroke-width: 0.01;
+  }
+  .or-gd,
+  .or-mom,
+  .or-adam {
+    fill: none;
+    stroke-width: 0.02;
+  }
+  .or-gd {
+    stroke: var(--g-blue);
+  }
+  .or-mom {
+    stroke: var(--g-yellow);
+  }
+  .or-adam {
+    stroke: var(--g-red);
+  }
+  .or-start {
+    fill: #e8eaed;
+  }
+  .or-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const grad = (x: number, y: number): [number, number] => [2 * x, 20 * y];
+
+  // each optimiser returns its path of points
+  function runGD(steps: number) {
+    const p: [number, number][] = [[1, 1]];
+    let x = 1, y = 1;
+    for (let k = 0; k < steps; k++) {
+      const [gx, gy] = grad(x, y);
+      x -= 0.05 * gx;
+      y -= 0.05 * gy;
+      p.push([x, y]);
+    }
+    return p;
+  }
+  function runMom(steps: number) {
+    const p: [number, number][] = [[1, 1]];
+    let x = 1, y = 1, vx = 0, vy = 0;
+    for (let k = 0; k < steps; k++) {
+      const [gx, gy] = grad(x, y);
+      vx = 0.9 * vx + gx;
+      vy = 0.9 * vy + gy;
+      x -= 0.01 * vx;
+      y -= 0.01 * vy;
+      p.push([x, y]);
+    }
+    return p;
+  }
+  function runAdam(steps: number) {
+    const p: [number, number][] = [[1, 1]];
+    let x = 1, y = 1, mx = 0, my = 0, sx = 0, sy = 0;
+    for (let t = 1; t <= steps; t++) {
+      const [gx, gy] = grad(x, y);
+      mx = 0.9 * mx + 0.1 * gx;
+      my = 0.9 * my + 0.1 * gy;
+      sx = 0.999 * sx + 0.001 * gx * gx;
+      sy = 0.999 * sy + 0.001 * gy * gy;
+      const mhx = mx / (1 - 0.9 ** t), mhy = my / (1 - 0.9 ** t);
+      const shx = sx / (1 - 0.999 ** t), shy = sy / (1 - 0.999 ** t);
+      x -= (0.01 * mhx) / (Math.sqrt(shx) + 1e-8);
+      y -= (0.01 * mhy) / (Math.sqrt(shy) + 1e-8);
+      p.push([x, y]);
+    }
+    return p;
+  }
+  const toPath = (p: [number, number][]) => p.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(5)},${y.toFixed(5)}`).join(' ');
+
+  // steps needed to get within 0.001 of the origin (same rules as the note)
+  function stepsTo(run: (n: number) => [number, number][]) {
+    const p = run(2000);
+    for (let i = 1; i < p.length; i++) {
+      if (Math.hypot(p[i][0], p[i][1]) < 1e-3) return i;
+    }
+    return null;
+  }
+
+  class OptimizerRace extends HTMLElement {
+    timer: number | null = null;
+    connectedCallback() {
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-play]')!.addEventListener('click', () => this.play());
+      this.draw();
+    }
+
+    play() {
+      const k = this.querySelector<HTMLInputElement>('[data-k]')!;
+      if (this.timer) window.clearInterval(this.timer);
+      k.value = '0';
+      this.draw();
+      this.timer = window.setInterval(() => {
+        if (+k.value >= 300) {
+          window.clearInterval(this.timer!);
+          this.timer = null;
+          return;
+        }
+        k.value = String(+k.value + 3);
+        this.draw();
+      }, 40);
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-kv]')!.textContent = String(n);
+      this.querySelector('[data-gd]')!.setAttribute('d', toPath(runGD(n)));
+      this.querySelector('[data-mom]')!.setAttribute('d', toPath(runMom(n)));
+      this.querySelector('[data-adam]')!.setAttribute('d', toPath(runAdam(n)));
+      const g = stepsTo(runGD), m = stepsTo(runMom), a = stepsTo(runAdam);
+      this.querySelector('[data-stat]')!.textContent =
+        `steps to within 0.001: plain ${g ?? '>2000'} · momentum ${m ?? '>2000'} · Adam ${a ?? '>2000'}`;
+    }
+  }
+  customElements.define('optimizer-race', OptimizerRace);
+</script>

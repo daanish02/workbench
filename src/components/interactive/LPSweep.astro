@@ -1,0 +1,111 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Sweeping the objective over the feasible region"
+  caption="Maximise 3x + 2y over the polygon with corners (0, 0), (4, 0), (3, 1) and (0, 2). The dashed line is the set of points with objective value t. Raise t until the line only just touches the polygon: the last touching point is a vertex, here (4, 0) with value 12."
+>
+  <lp-sweep>
+    <div class="lp-ctl">
+      <label>objective t <input type="range" min="0" max="14" step="0.1" value="6" data-t /><b data-tv>6.0</b></label>
+    </div>
+    <svg class="lp-svg" viewBox="0 0 400 260" role="img" aria-label="Feasible quadrilateral with corners at the origin, (4,0), (3,1) and (0,2), and a level line of the objective">
+      <polygon class="lp-region" points="30,250 310,250 240,200 30,150"></polygon>
+      <line data-level class="lp-level"></line>
+      <g class="lp-vertices">
+        <circle cx="30" cy="250" r="4"></circle><text x="36" y="268">(0,0) → 0</text>
+        <circle cx="310" cy="250" r="4"></circle><text x="300" y="268">(4,0) → 12</text>
+        <circle cx="240" cy="200" r="4"></circle><text x="246" y="196">(3,1) → 11</text>
+        <circle cx="30" cy="150" r="4"></circle><text x="36" y="146">(0,2) → 4</text>
+      </g>
+    </svg>
+    <p class="lp-stat" data-stat></p>
+  </lp-sweep>
+</Figure>
+
+<style>
+  .lp-ctl {
+    margin-bottom: 10px;
+  }
+  .lp-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .lp-ctl input {
+    flex: 1;
+  }
+  .lp-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .lp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .lp-region {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .lp-level {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+  }
+  .lp-vertices circle {
+    fill: var(--text);
+  }
+  .lp-vertices text {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+  .lp-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // world to screen: x in [0, 5] over 30..380, y in [0, 4.5] over 250..10 (scale 70 and 53)
+  const px = (x: number) => 30 + x * 70;
+  const py = (y: number) => 250 - y * 53;
+
+  class LPSweep extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = t.toFixed(1);
+      // the line 3x + 2y = t, drawn across the view: x from -1 to 6
+      const x0 = -1, x1 = 6;
+      const y0 = (t - 3 * x0) / 2, y1 = (t - 3 * x1) / 2;
+      const lv = this.querySelector<SVGLineElement>('[data-level]')!;
+      lv.setAttribute('x1', px(x0).toFixed(2));
+      lv.setAttribute('y1', py(y0).toFixed(2));
+      lv.setAttribute('x2', px(x1).toFixed(2));
+      lv.setAttribute('y2', py(y1).toFixed(2));
+
+      const vertices: [number, number][] = [[0, 0], [4, 0], [3, 1], [0, 2]];
+      const vals = vertices.map(([x, y]) => 3 * x + 2 * y);
+      const best = Math.max(...vals);
+      const low = Math.min(...vals);
+      const touches = t >= low - 1e-9 && t <= best + 1e-9;
+      this.querySelector('[data-stat]')!.textContent = touches
+        ? `t = ${t.toFixed(1)}: the line meets the region · maximum over the region = ${best} at (4, 0)`
+        : `t = ${t.toFixed(1)}: the line misses the region · feasible values lie between ${low} and ${best}`;
+    }
+  }
+  customElements.define('lp-sweep', LPSweep);
+</script>

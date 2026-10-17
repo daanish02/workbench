@@ -1,0 +1,149 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Newton's method for √2"
+  caption="Each step replaces x² − 2 by its tangent at the current guess and moves to where the tangent crosses zero. Press step to watch the guess close in on √2 ≈ 1.41421. Change the starting point to see how far it can start from the root."
+>
+  <newton-stepper>
+    <div class="nw-ctl">
+      <label>start x₀ <input type="range" min="0.5" max="3" step="0.1" value="2.5" data-x0 /><b data-x0v>2.5</b></label>
+      <button type="button" data-step>step</button>
+      <button type="button" data-reset>reset</button>
+    </div>
+    <svg class="nw-svg" viewBox="0 0 400 220" role="img" aria-label="Parabola x squared minus two with the tangent at the current guess and the root marked">
+      <line x1="20" y1="180" x2="390" y2="180" class="nw-axis"></line>
+      <line x1="20" y1="10" x2="20" y2="180" class="nw-axis"></line>
+      <path data-curve class="nw-curve"></path>
+      <line data-tan class="nw-tan"></line>
+      <circle data-pt r="5" class="nw-pt"></circle>
+      <circle data-root cx="0" cy="0" r="4" class="nw-root"></circle>
+    </svg>
+    <p class="nw-stat" data-stat></p>
+  </newton-stepper>
+</Figure>
+
+<style>
+  .nw-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 10px;
+  }
+  .nw-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .nw-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .nw-ctl b {
+    min-width: 2.2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .nw-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .nw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .nw-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .nw-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .nw-tan {
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+  .nw-pt {
+    fill: var(--g-red);
+  }
+  .nw-root {
+    fill: #e8eaed;
+  }
+  .nw-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // screen: X in [0, 3.2] over 20..390, Y in [-2.5, 7] over 180..10
+  const px = (X: number) => 20 + (X / 3.2) * 370;
+  const py = (Y: number) => 180 - ((Y + 2.5) / 9.5) * 170;
+  const f = (x: number) => x * x - 2;
+  const df = (x: number) => 2 * x;
+
+  class NewtonStepper extends HTMLElement {
+    x = 2.5;
+    k = 0;
+    connectedCallback() {
+      this.querySelector('[data-x0]')!.addEventListener('input', () => this.reset());
+      this.querySelector('[data-step]')!.addEventListener('click', () => {
+        this.x = this.x - f(this.x) / df(this.x);
+        this.k++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+
+    reset() {
+      this.x = +this.querySelector<HTMLInputElement>('[data-x0]')!.value;
+      this.k = 0;
+      this.querySelector('[data-x0v]')!.textContent = this.x.toFixed(1);
+      this.draw();
+    }
+
+    draw() {
+      const pts: string[] = [];
+      for (let i = 0; i <= 200; i++) {
+        const X = (3.2 * i) / 200;
+        pts.push(`${i ? 'L' : 'M'}${px(X).toFixed(2)},${py(f(X)).toFixed(2)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+      const x = this.x;
+      const Y0 = f(x);
+      // tangent line across the view
+      const left = 0, right = 3.2;
+      const tl = this.querySelector<SVGLineElement>('[data-tan]')!;
+      tl.setAttribute('x1', px(left).toFixed(2));
+      tl.setAttribute('y1', py(Y0 + df(x) * (left - x)).toFixed(2));
+      tl.setAttribute('x2', px(right).toFixed(2));
+      tl.setAttribute('y2', py(Y0 + df(x) * (right - x)).toFixed(2));
+      const pt = this.querySelector<SVGCircleElement>('[data-pt]')!;
+      pt.setAttribute('cx', px(x).toFixed(2));
+      pt.setAttribute('cy', py(Y0).toFixed(2));
+      const root = this.querySelector<SVGCircleElement>('[data-root]')!;
+      root.setAttribute('cx', px(Math.SQRT2).toFixed(2));
+      root.setAttribute('cy', py(0).toFixed(2));
+      this.querySelector('[data-stat]')!.textContent =
+        `step ${this.k} · x = ${x.toFixed(6)} · error = ${Math.abs(x - Math.SQRT2).toExponential(2)}`;
+    }
+  }
+  customElements.define('newton-stepper', NewtonStepper);
+</script>

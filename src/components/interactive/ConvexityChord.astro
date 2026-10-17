@@ -1,0 +1,157 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Chords and convexity"
+  caption="The orange segment joins two points on the curve. A convex function lies on or below every such chord. Switch the function to see where the chord dips below the curve."
+>
+  <convexity-chord>
+    <div class="cc-ctl">
+      <label>function
+        <select data-f>
+          <option value="sq">x² (convex)</option>
+          <option value="sin">sin x on [0, 2π] (not convex)</option>
+        </select>
+      </label>
+      <label>x₁ <input type="range" min="0" max="6.28" step="0.02" value="0.4" data-a /><b data-av>0.40</b></label>
+      <label>x₂ <input type="range" min="0" max="6.28" step="0.02" value="5.5" data-b /><b data-bv>5.50</b></label>
+    </div>
+    <svg class="cc-svg" viewBox="0 0 400 240" role="img" aria-label="Curve with a chord between two chosen points; the chord is compared with the curve at the midpoint">
+      <line x1="20" y1="200" x2="390" y2="200" class="cc-axis"></line>
+      <path data-curve class="cc-curve"></path>
+      <line data-chord class="cc-chord"></line>
+      <circle data-p1 r="5" class="cc-dot"></circle>
+      <circle data-p2 r="5" class="cc-dot"></circle>
+      <circle data-mid r="4" class="cc-mid"></circle>
+    </svg>
+    <p class="cc-stat" data-stat></p>
+  </convexity-chord>
+</Figure>
+
+<style>
+  .cc-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .cc-ctl label {
+    flex: 1 1 180px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cc-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .cc-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .cc-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .cc-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .cc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .cc-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .cc-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .cc-chord {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .cc-dot {
+    fill: var(--g-yellow);
+  }
+  .cc-mid {
+    fill: var(--g-red);
+  }
+  .cc-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class ConvexityChord extends HTMLElement {
+    connectedCallback() {
+      for (const sel of ['[data-f]', '[data-a]', '[data-b]']) {
+        this.querySelector(sel)!.addEventListener('input', () => this.draw());
+        this.querySelector(sel)!.addEventListener('change', () => this.draw());
+      }
+      this.draw();
+    }
+
+    draw() {
+      const kind = this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      const f = kind === 'sq' ? (x: number) => x * x : (x: number) => Math.sin(x);
+      // x-range: sq uses [-0.5, 6.5] mapped to the same viewBox as sin on [0, 2π] for clarity
+      const lo = kind === 'sq' ? -0.5 : -0.3, hi = kind === 'sq' ? 6.5 : 6.6;
+      const yLo = kind === 'sq' ? -0.2 : -1.2, yHi = kind === 'sq' ? 42 : 1.2;
+      const px = (x: number) => 20 + ((x - lo) / (hi - lo)) * 370;
+      const py = (y: number) => 200 - ((y - yLo) / (yHi - yLo)) * 180;
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(2);
+      this.querySelector('[data-bv]')!.textContent = b.toFixed(2);
+
+      const pts: string[] = [];
+      for (let i = 0; i <= 200; i++) {
+        const x = lo + ((hi - lo) * i) / 200;
+        pts.push(`${i ? 'L' : 'M'}${px(x).toFixed(2)},${py(f(x)).toFixed(2)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+
+      const x1 = Math.min(a, b), x2 = Math.max(a, b);
+      const fx1 = f(x1), fx2 = f(x2);
+      const setLine = (sel: string, x: number, y: number) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('cx', px(x).toFixed(2));
+        el.setAttribute('cy', py(y).toFixed(2));
+      };
+      setLine('[data-p1]', x1, fx1);
+      setLine('[data-p2]', x2, fx2);
+      setLine('[data-mid]', (x1 + x2) / 2, f((x1 + x2) / 2));
+      const chord = this.querySelector<SVGLineElement>('[data-chord]')!;
+      chord.setAttribute('x1', px(x1).toFixed(2));
+      chord.setAttribute('y1', py(fx1).toFixed(2));
+      chord.setAttribute('x2', px(x2).toFixed(2));
+      chord.setAttribute('y2', py(fx2).toFixed(2));
+
+      // compare the chord and the curve at the midpoint (lambda = 1/2)
+      const mid = (x1 + x2) / 2;
+      const chordMid = (fx1 + fx2) / 2;
+      const curveMid = f(mid);
+      const ok = curveMid <= chordMid + 1e-9;
+      this.querySelector('[data-stat]')!.textContent =
+        `midpoint: curve ${curveMid.toFixed(3)} · chord ${chordMid.toFixed(3)} · ${ok ? 'curve on or below chord' : 'curve above chord: not convex here'}`;
+    }
+  }
+  customElements.define('convexity-chord', ConvexityChord);
+</script>

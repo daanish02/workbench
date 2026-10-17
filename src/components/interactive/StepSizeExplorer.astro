@@ -1,0 +1,136 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Step size: converge, oscillate or diverge"
+  caption="Gradient descent on f(x) = (x − 3)² + 1. Each dot is one iterate, the first at the start point and the last after 12 steps. The factor |1 − 2η| sets the behaviour: below 1 it converges, between −1 and 0 it oscillates, and beyond 1 in size it diverges."
+>
+  <step-size-explorer>
+    <div class="ss-ctl">
+      <label>η <input type="range" min="0.05" max="1.2" step="0.01" value="0.1" data-eta /><b data-ev>0.10</b></label>
+      <label>start x₀ <input type="range" min="-2" max="7" step="0.5" value="0" data-x0 /><b data-xv>0.0</b></label>
+    </div>
+    <svg class="ss-svg" viewBox="0 0 400 160" role="img" aria-label="Iterates of gradient descent on a number line with the minimum at 3">
+      <line x1="20" y1="100" x2="390" y2="100" class="ss-axis"></line>
+      <line data-min x1="0" y1="30" x2="0" y2="110" class="ss-min"></line>
+      <path data-path class="ss-path"></path>
+      <g data-dots></g>
+      <text x="20" y="126" class="ss-t">−2</text>
+      <text x="390" y="126" class="ss-t ss-end">7</text>
+      <text data-minlab x="0" y="146" class="ss-t">minimum 3</text>
+    </svg>
+    <p class="ss-stat" data-stat></p>
+  </step-size-explorer>
+</Figure>
+
+<style>
+  .ss-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .ss-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ss-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .ss-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ss-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ss-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ss-min {
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 4 3;
+  }
+  .ss-path {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 1;
+    opacity: 0.6;
+  }
+  .ss-svg :global(.ss-dot) {
+    fill: var(--g-blue);
+  }
+  .ss-svg :global(.ss-dot.first) {
+    fill: var(--g-red);
+  }
+  .ss-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .ss-end {
+    text-anchor: end;
+  }
+  .ss-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class StepSizeExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-eta]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-x0]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const eta = +this.querySelector<HTMLInputElement>('[data-eta]')!.value;
+      const x0 = +this.querySelector<HTMLInputElement>('[data-x0]')!.value;
+      this.querySelector('[data-ev]')!.textContent = eta.toFixed(2);
+      this.querySelector('[data-xv]')!.textContent = x0.toFixed(1);
+      // number line: x in [-2, 7] mapped to [20, 390]; clamp iterates for drawing
+      const px = (x: number) => 20 + ((x + 2) / 9) * 370;
+      const clamp = (x: number) => Math.max(-2, Math.min(7, x));
+      const xs = [x0];
+      let x = x0;
+      for (let k = 0; k < 12; k++) {
+        x = x - eta * 2 * (x - 3);
+        xs.push(x);
+      }
+      const minLine = this.querySelector<SVGLineElement>('[data-min]')!;
+      minLine.setAttribute('x1', px(3).toFixed(2));
+      minLine.setAttribute('x2', px(3).toFixed(2));
+      this.querySelector<SVGTextElement>('[data-minlab]')!.setAttribute('x', px(3).toFixed(2));
+
+      // draw each iterate above the line, with the path joining them in order
+      const ys = xs.map((_, i) => 100 - 10 - (i % 2) * 14);
+      const path = xs.map((v, i) => `${i ? 'L' : 'M'}${px(clamp(v)).toFixed(2)},${ys[i].toFixed(2)}`).join(' ');
+      this.querySelector('[data-path]')!.setAttribute('d', path);
+      this.querySelector('[data-dots]')!.innerHTML = xs
+        .map((v, i) => `<circle class="ss-dot${i === 0 ? ' first' : ''}" cx="${px(clamp(v)).toFixed(2)}" cy="${ys[i].toFixed(2)}" r="4"></circle>`)
+        .join('');
+
+      const factor = 1 - 2 * eta;
+      const verdict =
+        Math.abs(factor) < 1 ? (factor >= 0 ? 'converges' : 'oscillates, shrinking') : 'diverges';
+      this.querySelector('[data-stat]')!.textContent =
+        `factor 1 − 2η = ${factor.toFixed(2)} · ${verdict} · x after 12 steps = ${xs[xs.length - 1].toFixed(3)}`;
+    }
+  }
+  customElements.define('step-size-explorer', StepSizeExplorer);
+</script>

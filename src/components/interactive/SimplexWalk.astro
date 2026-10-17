@@ -1,0 +1,68 @@
+---
+import Figure from '../Figure.astro';
+
+// Feasible polygon of: maximise 3x + 2y, x + y ≤ 4, x + 3y ≤ 6, x, y ≥ 0.
+// Simplex starts at the origin and walks along edges to the best neighbouring vertex.
+const px = (x: number) => 40 + x * 70;
+const py = (y: number) => 220 - y * 60;
+const verts = [
+  { x: 0, y: 0, v: 0, label: '(0, 0)' },
+  { x: 4, y: 0, v: 12, label: '(4, 0)' },
+  { x: 3, y: 1, v: 11, label: '(3, 1)' },
+  { x: 0, y: 2, v: 4, label: '(0, 2)' },
+];
+const poly = verts.map((p) => `${px(p.x)},${py(p.y)}`).join(' ');
+---
+
+<Figure
+  kind="Diagram"
+  title="Simplex walks from vertex to vertex"
+  caption="The feasible polygon has four corners, each labelled with its objective value 3x + 2y. Simplex starts at the origin (value 0), moves along the edge to (4, 0) (value 12), and stops, because the other neighbour (3, 1) is worse."
+>
+  <svg class="sw-svg" viewBox="0 0 400 260" role="img" aria-label="Feasible quadrilateral with the simplex path from the origin to the vertex at four comma zero">
+    <polygon points={poly} class="sw-region"></polygon>
+    <line x1={px(0)} y1={py(0)} x2={px(4)} y2={py(0)} class="sw-path" marker-end="url(#sw-arrow)"></line>
+    <defs>
+      <marker id="sw-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" class="sw-head"></path>
+      </marker>
+    </defs>
+    {verts.map((p) => (
+      <g>
+        <circle cx={px(p.x)} cy={py(p.y)} r="4" class={p.v === 12 ? 'sw-best' : 'sw-v'}></circle>
+        <text x={px(p.x) + 8} y={py(p.y) + (p.y === 0 ? 16 : -8)} class="sw-t">{p.label} → {p.v}</text>
+      </g>
+    ))}
+  </svg>
+</Figure>
+
+<style>
+  .sw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .sw-region {
+    fill: rgba(66, 133, 244, 0.15);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .sw-path {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .sw-head {
+    fill: var(--g-yellow);
+  }
+  .sw-v {
+    fill: var(--text);
+  }
+  .sw-best {
+    fill: var(--g-red);
+  }
+  .sw-t {
+    fill: var(--text-muted);
+    font: 10.5px var(--font-mono);
+  }
+</style>

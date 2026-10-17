@@ -1,0 +1,49 @@
+---
+import Figure from '../Figure.astro';
+
+// Contours of f(x, y) = x² + 10y² and gradient descent with step 0.09.
+// The y-step factor 1 − 20·0.09 = −0.8 flips sign each step, so the path zigzags across the valley.
+const eta = 0.09;
+const path: [number, number][] = [[1, 1]];
+let x = 1, y = 1;
+for (let k = 0; k < 30; k++) {
+  x -= eta * 2 * x;
+  y -= eta * 20 * y;
+  path.push([x, y]);
+}
+const toD = path
+  .map(([px, py], i) => `${i ? 'L' : 'M'}${(px * 170 + 200).toFixed(2)},${(150 - py * 170).toFixed(2)}`)
+  .join(' ');
+---
+
+<Figure
+  kind="Diagram"
+  title="A zigzag path into a narrow valley"
+  caption="Contours of x² + 10y² are narrow ellipses. Gradient descent with step 0.09 bounces across the valley in y while creeping along it in x. The steps are too large for the steep direction and too small for the flat one."
+>
+  <svg class="zz-svg" viewBox="0 0 400 300" role="img" aria-label="Narrow elliptical contours with a gradient descent path zigzagging toward the centre">
+    <ellipse cx="200" cy="150" rx="170" ry="54" class="zz-c"></ellipse>
+    <ellipse cx="200" cy="150" rx="120" ry="38" class="zz-c"></ellipse>
+    <ellipse cx="200" cy="150" rx="70" ry="22" class="zz-c"></ellipse>
+    <path d={toD} class="zz-path"></path>
+  </svg>
+</Figure>
+
+<style>
+  .zz-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .zz-c {
+    fill: none;
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .zz-path {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+</style>

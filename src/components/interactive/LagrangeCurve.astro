@@ -1,0 +1,157 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Gradients align at the constrained optimum"
+  caption="Minimise x + y on the curve xy = c. The curve is the constraint; the red arrow is ∇f = (1, 1), and the blue arrow is ∇g = (y, x), the normal of the curve. Move the point along the curve. The angle between the arrows closes to zero at the optimum x = y = √c."
+>
+  <lagrange-curve>
+    <div class="lc-ctl">
+      <label>c <input type="range" min="1" max="4" step="0.1" value="2" data-c /><b data-cv>2.0</b></label>
+      <label>position x <input type="range" min="0.3" max="5" step="0.05" value="0.8" data-t /><b data-tv>0.80</b></label>
+    </div>
+    <svg class="lc-svg" viewBox="0 0 400 300" role="img" aria-label="Hyperbola xy equals c with gradient arrows of the objective and the constraint at a chosen point">
+      <line x1="30" y1="270" x2="390" y2="270" class="lc-axis"></line>
+      <line x1="30" y1="10" x2="30" y2="270" class="lc-axis"></line>
+      <path data-curve class="lc-curve"></path>
+      <line data-level class="lc-level"></line>
+      <line data-gf class="lc-gf"></line>
+      <line data-gg class="lc-gg"></line>
+      <circle data-pt r="5" class="lc-pt"></circle>
+    </svg>
+    <p class="lc-stat" data-stat></p>
+  </lagrange-curve>
+</Figure>
+
+<style>
+  .lc-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .lc-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .lc-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .lc-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .lc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .lc-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .lc-curve {
+    fill: none;
+    stroke: #9aa0a6;
+    stroke-width: 2;
+  }
+  .lc-level {
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 5 4;
+  }
+  .lc-gf {
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .lc-gg {
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .lc-pt {
+    fill: var(--text);
+  }
+  .lc-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // screen mapping: x in [0, 6] over 30..390, y in [0, 5] over 270..10
+  const px = (x: number) => 30 + x * 60;
+  const py = (y: number) => 270 - y * 52;
+
+  class LagrangeCurve extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-c]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-cv]')!.textContent = c.toFixed(1);
+      this.querySelector('[data-tv]')!.textContent = t.toFixed(2);
+
+      // the curve y = c / x, drawn where y stays on screen
+      const pts: string[] = [];
+      let first = true;
+      for (let i = 0; i <= 300; i++) {
+        const x = 0.2 + (6 * i) / 300;
+        const y = c / x;
+        if (y > 5.2) {
+          first = true;
+          continue;
+        }
+        pts.push(`${first ? 'M' : 'L'}${px(x).toFixed(2)},${py(y).toFixed(2)}`);
+        first = false;
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+
+      // the level line x + y = 2√c through the optimum (tangent to the curve)
+      const opt = 2 * Math.sqrt(c);
+      const lv = this.querySelector<SVGLineElement>('[data-level]')!;
+      lv.setAttribute('x1', px(0).toFixed(2));
+      lv.setAttribute('y1', py(opt).toFixed(2));
+      lv.setAttribute('x2', px(opt).toFixed(2));
+      lv.setAttribute('y2', py(0).toFixed(2));
+
+      // the point on the curve and the two gradients, each drawn with length 45
+      const x = t, y = c / t;
+      const gfx = 1, gfy = 1, gnorm = Math.hypot(gfx, gfy);
+      const ggx = y, ggy = x, ggnorm = Math.hypot(ggx, ggy);
+      const L = 45;
+      const arrow = (sel: string, dx: number, dy: number) => {
+        const el = this.querySelector<SVGLineElement>(sel)!;
+        el.setAttribute('x1', px(x).toFixed(2));
+        el.setAttribute('y1', py(y).toFixed(2));
+        el.setAttribute('x2', (px(x) + (dx / 1) * L).toFixed(2));
+        el.setAttribute('y2', (py(y) - (dy / 1) * L).toFixed(2));
+      };
+      arrow('[data-gf]', gfx / gnorm, gfy / gnorm);
+      arrow('[data-gg]', ggx / ggnorm, ggy / ggnorm);
+      const pt = this.querySelector<SVGCircleElement>('[data-pt]')!;
+      pt.setAttribute('cx', px(x).toFixed(2));
+      pt.setAttribute('cy', py(y).toFixed(2));
+
+      // angle between the two gradients
+      const cosA = (gfx * ggx + gfy * ggy) / (gnorm * ggnorm);
+      const angle = (Math.acos(Math.max(-1, Math.min(1, cosA))) * 180) / Math.PI;
+      this.querySelector('[data-stat]')!.textContent =
+        `angle between gradients = ${angle.toFixed(1)}° · f = x + y = ${(x + y).toFixed(2)} · optimum f = 2√c = ${opt.toFixed(2)} at x = y = ${Math.sqrt(c).toFixed(2)}`;
+    }
+  }
+  customElements.define('lagrange-curve', LagrangeCurve);
+</script>

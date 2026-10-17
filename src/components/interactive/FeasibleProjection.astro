@@ -1,0 +1,135 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Projection onto the feasible region"
+  caption="The feasible region is x + y ≤ 2, the shaded half-plane. Drag the point. If it lies outside the region, the nearest feasible point is its projection onto the boundary line, shown joined by the dashed segment."
+>
+  <feasible-projection>
+    <svg class="fp-svg" viewBox="0 0 400 300" role="img" aria-label="Half-plane x plus y at most two, with a draggable point and its projection onto the boundary">
+      <defs>
+        <clipPath id="fp-clip"><rect x="0" y="0" width="400" height="300"></rect></clipPath>
+      </defs>
+      <polygon data-region class="fp-region"></polygon>
+      <line x1="0" y1="150" x2="400" y2="150" class="fp-axis"></line>
+      <line x1="200" y1="0" x2="200" y2="300" class="fp-axis"></line>
+      <line data-bound class="fp-bound"></line>
+      <line data-seg class="fp-seg"></line>
+      <circle data-proj r="5" class="fp-proj"></circle>
+      <circle data-pt r="7" class="fp-pt"></circle>
+    </svg>
+    <p class="fp-stat" data-stat></p>
+  </feasible-projection>
+</Figure>
+
+<style>
+  .fp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    touch-action: none;
+    user-select: none;
+  }
+  .fp-region {
+    fill: rgba(66, 133, 244, 0.15);
+  }
+  .fp-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .fp-bound {
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .fp-seg {
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .fp-pt {
+    fill: var(--g-red);
+    stroke: #1a1a1a;
+    stroke-width: 1;
+    cursor: grab;
+  }
+  .fp-proj {
+    fill: var(--g-yellow);
+  }
+  .fp-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // world coordinates: x and y in [-8, 8] with scale 25 px per unit, origin at (200, 150)
+  const S = 25;
+  const toPx = (x: number) => 200 + x * S;
+  const toPy = (y: number) => 150 - y * S;
+
+  class FeasibleProjection extends HTMLElement {
+    p = { x: 3.5, y: 3 };
+    dragging = false;
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('svg')!;
+      const pt = this.querySelector<SVGCircleElement>('[data-pt]')!;
+      pt.addEventListener('pointerdown', (e) => {
+        this.dragging = true;
+        svg.setPointerCapture(e.pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.dragging) return;
+        const m = svg.getScreenCTM();
+        if (!m) return;
+        const q = Object.assign(svg.createSVGPoint(), { x: e.clientX, y: e.clientY }).matrixTransform(m.inverse());
+        this.p = { x: Math.max(-7.5, Math.min(7.5, (q.x - 200) / S)), y: Math.max(-5.5, Math.min(5.5, (150 - q.y) / S)) };
+        this.draw();
+      });
+      const stop = () => (this.dragging = false);
+      svg.addEventListener('pointerup', stop);
+      svg.addEventListener('pointercancel', stop);
+      this.draw();
+    }
+
+    draw() {
+      // feasible region x + y <= 2 clipped to the view: corners on the line x + y = 2 and at the far edges
+      const far = (x: number, y: number) => `${toPx(x).toFixed(1)},${toPy(y).toFixed(1)}`;
+      this.querySelector('[data-region]')!.setAttribute(
+        'points',
+        [far(-8, 10), far(-8, -8), far(8, -8), far(8, -6)].join(' ')
+      );
+      const bound = this.querySelector<SVGLineElement>('[data-bound]')!;
+      bound.setAttribute('x1', String(toPx(-8)));
+      bound.setAttribute('y1', String(toPy(10)));
+      bound.setAttribute('x2', String(toPx(10)));
+      bound.setAttribute('y2', String(toPy(-8)));
+
+      const { x, y } = this.p;
+      const s = x + y - 2;
+      const inside = s <= 0;
+      const proj = inside ? { x, y } : { x: x - (s / 2), y: y - (s / 2) };
+      const seg = this.querySelector<SVGLineElement>('[data-seg]')!;
+      seg.setAttribute('x1', String(toPx(x)));
+      seg.setAttribute('y1', String(toPy(y)));
+      seg.setAttribute('x2', String(toPx(proj.x)));
+      seg.setAttribute('y2', String(toPy(proj.y)));
+      seg.style.display = inside ? 'none' : '';
+      const pr = this.querySelector<SVGCircleElement>('[data-proj]')!;
+      pr.setAttribute('cx', String(toPx(proj.x)));
+      pr.setAttribute('cy', String(toPy(proj.y)));
+      pr.style.display = inside ? 'none' : '';
+      const pt = this.querySelector<SVGCircleElement>('[data-pt]')!;
+      pt.setAttribute('cx', String(toPx(x)));
+      pt.setAttribute('cy', String(toPy(y)));
+      const dist = Math.hypot(x - proj.x, y - proj.y);
+      this.querySelector('[data-stat]')!.textContent = inside
+        ? `point (${x.toFixed(2)}, ${y.toFixed(2)}) is feasible · x + y = ${(x + y).toFixed(2)} ≤ 2`
+        : `point (${x.toFixed(2)}, ${y.toFixed(2)}) is outside · projection (${proj.x.toFixed(2)}, ${proj.y.toFixed(2)}) · distance ${dist.toFixed(2)}`;
+    }
+  }
+  customElements.define('feasible-projection', FeasibleProjection);
+</script>

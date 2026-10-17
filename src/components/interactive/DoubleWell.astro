@@ -1,0 +1,116 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two valleys: where descent ends"
+  caption="f(x) = x⁴ − 3x² + x has a shallow valley on the right and a deeper one on the left. Gradient descent follows the slope from the starting point, so the start decides the valley. Drag the start and see where the path ends."
+>
+  <double-well>
+    <div class="dw-ctl">
+      <label>start x₀ <input type="range" min="-2" max="2" step="0.05" value="2" data-x0 /><b data-x0v>2.00</b></label>
+    </div>
+    <svg class="dw-svg" viewBox="0 0 400 220" role="img" aria-label="Double-well curve with the descent path from the start point ending in one of two valleys">
+      <path data-curve class="dw-curve"></path>
+      <path data-path class="dw-path"></path>
+      <circle data-start r="5" class="dw-start"></circle>
+      <circle data-end r="6" class="dw-end"></circle>
+    </svg>
+    <p class="dw-stat" data-stat></p>
+  </double-well>
+</Figure>
+
+<style>
+  .dw-ctl {
+    margin-bottom: 10px;
+  }
+  .dw-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .dw-ctl input {
+    flex: 1;
+  }
+  .dw-ctl b {
+    min-width: 3.2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .dw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .dw-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .dw-path {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 3;
+  }
+  .dw-start {
+    fill: #e8eaed;
+  }
+  .dw-end {
+    fill: var(--g-red);
+  }
+  .dw-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // screen: x in [-2, 2] over 20..390, y in [-4, 6] over 200..20
+  const px = (x: number) => 20 + ((x + 2) / 4) * 370;
+  const py = (y: number) => 200 - ((y + 4) / 10) * 180;
+  const f = (x: number) => x ** 4 - 3 * x * x + x;
+  const df = (x: number) => 4 * x ** 3 - 6 * x + 1;
+
+  class DoubleWell extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-x0]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const x0 = +this.querySelector<HTMLInputElement>('[data-x0]')!.value;
+      this.querySelector('[data-x0v]')!.textContent = x0.toFixed(2);
+      const curve: string[] = [];
+      for (let i = 0; i <= 200; i++) {
+        const x = -2 + (4 * i) / 200;
+        curve.push(`${i ? 'L' : 'M'}${px(x).toFixed(2)},${py(f(x)).toFixed(2)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', curve.join(' '));
+
+      // run descent with a small step and record every 20th point
+      let x = x0;
+      const path: string[] = [`M${px(x).toFixed(2)},${py(f(x)).toFixed(2)}`];
+      for (let k = 1; k <= 3000; k++) {
+        x -= 0.01 * df(x);
+        if (k % 20 === 0) path.push(`L${px(x).toFixed(2)},${py(f(x)).toFixed(2)}`);
+      }
+      this.querySelector('[data-path]')!.setAttribute('d', path.join(' '));
+      const s = this.querySelector<SVGCircleElement>('[data-start]')!;
+      s.setAttribute('cx', px(x0).toFixed(2));
+      s.setAttribute('cy', py(f(x0)).toFixed(2));
+      const e = this.querySelector<SVGCircleElement>('[data-end]')!;
+      e.setAttribute('cx', px(x).toFixed(2));
+      e.setAttribute('cy', py(f(x)).toFixed(2));
+      const valley = x < 0 ? 'deeper left valley' : 'shallower right valley';
+      this.querySelector('[data-stat]')!.textContent =
+        `ends at x = ${x.toFixed(4)}, f = ${f(x).toFixed(4)} · ${valley} · global minimum is at x ≈ −1.3008, f ≈ −3.5139`;
+    }
+  }
+  customElements.define('double-well', DoubleWell);
+</script>
