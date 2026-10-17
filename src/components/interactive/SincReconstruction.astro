@@ -1,0 +1,69 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Rebuilding a signal from its samples"
+  caption="A tone of frequency f is sampled at fs = 10 per second (dots). The blue curve is the sinc interpolation through the samples. Below the Nyquist frequency of 5 it lies on the true tone (grey). Above 5 the same formula still passes through every sample, but rebuilds the alias, a lower tone, because that is the only band-limited curve the samples allow."
+>
+  <sinc-reconstruction>
+    <label class="sr-lbl">tone f <input type="range" min="0.5" max="9.5" step="0.1" value="3" data-f /> <b data-fv>3.0</b></label>
+    <svg class="sr-svg" viewBox="0 0 340 180" role="img" aria-label="True tone, samples and sinc reconstruction">
+      <line x1="10" y1="90" x2="330" y2="90" class="sr-ax"></line>
+      <path data-true class="sr-true"></path>
+      <path data-rec class="sr-rec"></path>
+      <g data-dots></g>
+    </svg>
+    <p class="sr-stat" data-stat></p>
+  </sinc-reconstruction>
+</Figure>
+
+<style>
+  .sr-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .sr-lbl input { flex: 1; }
+  .sr-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .sr-ax { stroke: #3c4043; }
+  .sr-true { fill: none; stroke: var(--text-faint); stroke-width: 1.5; }
+  .sr-rec { fill: none; stroke: var(--g-blue); stroke-width: 2; }
+  .sr-svg :global(.sr-dot) { fill: var(--g-yellow); }
+  .sr-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const FS = 10;
+  const T = 1.2; // seconds shown
+  const sinc = (u: number) => (Math.abs(u) < 1e-9 ? 1 : Math.sin(Math.PI * u) / (Math.PI * u));
+  const sx = (t: number) => 10 + (t / T) * 320;
+  const sy = (y: number) => 90 - y * 70;
+  class SincReconstruction extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const f = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      this.querySelector('[data-fv]')!.textContent = f.toFixed(1);
+      const tone = (t: number) => Math.sin(2 * Math.PI * f * t + 0.3);
+      // samples over a wide range so the shown stretch is well interpolated
+      const ns = Array.from({ length: 141 }, (_, i) => i - 58);
+      const xs = ns.map((n) => tone(n / FS));
+      let dt = '', dr = '';
+      for (let i = 0; i <= 400; i++) {
+        const t = (T * i) / 400;
+        const rec = ns.reduce((s, n, j) => s + xs[j] * sinc(FS * t - n), 0);
+        dt += `${i ? 'L' : 'M'}${sx(t).toFixed(1)},${sy(tone(t)).toFixed(1)}`;
+        dr += `${i ? 'L' : 'M'}${sx(t).toFixed(1)},${sy(rec).toFixed(1)}`;
+      }
+      this.querySelector('[data-true]')!.setAttribute('d', dt);
+      this.querySelector('[data-rec]')!.setAttribute('d', dr);
+      let dots = '';
+      for (let n = 0; n <= T * FS; n++) dots += `<circle class="sr-dot" r="3" cx="${sx(n / FS).toFixed(1)}" cy="${sy(tone(n / FS)).toFixed(1)}"></circle>`;
+      this.querySelector('[data-dots]')!.innerHTML = dots;
+      const alias = Math.abs(f - FS * Math.round(f / FS));
+      this.querySelector('[data-stat]')!.textContent = f < FS / 2
+        ? `f = ${f.toFixed(1)} is below the Nyquist frequency 5: the reconstruction is the true tone`
+        : `f = ${f.toFixed(1)} is above 5: the samples rebuild a ${alias.toFixed(1)} Hz alias`;
+    }
+  }
+  customElements.define('sinc-reconstruction', SincReconstruction);
+</script>

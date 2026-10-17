@@ -1,0 +1,63 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Frequency response of a moving average"
+  caption="The gain |H(f)| of an M-point moving average for frequencies from 0 to the Nyquist limit of 0.5 cycles per sample. It passes slow signals with gain near 1 and has zeros at every multiple of 1/M, where M samples hold a whole number of cycles. The marker shows the gain at the chosen test frequency; the 5-point filter of this note removes 0.4 completely."
+>
+  <filter-response>
+    <div class="fp-ctl">
+      <label class="fp-lbl">taps M <input type="range" min="2" max="15" step="1" value="5" data-m /> <b data-mv>5</b></label>
+      <label class="fp-lbl">test frequency <input type="range" min="0" max="0.5" step="0.005" value="0.4" data-f /> <b data-fv>0.400</b></label>
+    </div>
+    <svg class="fp-svg" viewBox="0 0 340 200" role="img" aria-label="Gain against frequency for a moving average">
+      <line x1="30" y1="180" x2="330" y2="180" class="fp-ax"></line>
+      <line x1="30" y1="10" x2="30" y2="180" class="fp-ax"></line>
+      <text x="4" y="16" class="fp-t">1</text><text x="4" y="182" class="fp-t">0</text><text x="305" y="196" class="fp-t">0.5</text>
+      <path data-curve class="fp-curve"></path>
+      <circle data-pt r="4" class="fp-pt"></circle>
+    </svg>
+    <p class="fp-stat" data-stat></p>
+  </filter-response>
+</Figure>
+
+<style>
+  .fp-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .fp-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .fp-lbl input { flex: 1; }
+  .fp-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .fp-ax { stroke: #3c4043; }
+  .fp-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .fp-curve { fill: none; stroke: var(--g-blue); stroke-width: 2; }
+  .fp-pt { fill: var(--g-yellow); }
+  .fp-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // |H(f)| = |sin(pi M f) / (M sin(pi f))| for the M-point average
+  const gain = (M: number, f: number) => (f === 0 ? 1 : Math.abs(Math.sin(Math.PI * M * f) / (M * Math.sin(Math.PI * f))));
+  const sx = (f: number) => 30 + (f / 0.5) * 300;
+  const sy = (g: number) => 180 - g * 170;
+  class FilterResponse extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const M = +this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const f = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      this.querySelector('[data-mv]')!.textContent = String(M);
+      this.querySelector('[data-fv]')!.textContent = f.toFixed(3);
+      let d = '';
+      for (let i = 0; i <= 300; i++) { const ff = (0.5 * i) / 300; d += `${i ? 'L' : 'M'}${sx(ff).toFixed(1)},${sy(gain(M, ff)).toFixed(1)}`; }
+      this.querySelector('[data-curve]')!.setAttribute('d', d);
+      const g = gain(M, f);
+      const pt = this.querySelector('[data-pt]')!;
+      pt.setAttribute('cx', String(sx(f))); pt.setAttribute('cy', String(sy(g)));
+      const zeros = Array.from({ length: Math.floor(M / 2) }, (_, j) => ((j + 1) / M).toFixed(3)).join(', ');
+      this.querySelector('[data-stat]')!.textContent = `gain at ${f.toFixed(3)} = ${g.toFixed(3)} · zeros at ${zeros || 'none below 0.5'}`;
+    }
+  }
+  customElements.define('filter-response', FilterResponse);
+</script>
