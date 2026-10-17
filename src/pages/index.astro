@@ -2,7 +2,7 @@
 import Base from '../layouts/Base.astro';
 import { areas } from '../data/areas';
 import AreaIcon from '../components/AreaIcon.astro';
-import { areaNav, url } from '../lib/nav';
+import { areaNav, isAppendix, url } from '../lib/nav';
 
 const PLACEHOLDER = 'Placeholder. Content not written yet.';
 const cards = await Promise.all(
@@ -11,7 +11,8 @@ const cards = await Promise.all(
     const all = nav.flatMap((s) => s.notes);
     // an area is ready once any of its notes has real content
     const ready = all.some((n) => !n.body?.includes(PLACEHOLDER));
-    return { area, sections: nav.length, notes: all.length, nav, ready };
+    const sections = nav.filter((s) => !isAppendix(s));
+    return { area, sections: sections.length, notes: all.length, nav: sections, ready };
   }),
 );
 ---

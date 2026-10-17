@@ -25,12 +25,6 @@ const idx = flat.findIndex((n) => n.id === note.id);
 const prev = flat[idx - 1];
 const next = flat[idx + 1];
 const { Content, headings } = await render(note);
-
-// "Copy page" gives the note as plain Markdown (interactive components removed)
-const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.body ?? '')
-  .replace(/^<[A-Z][\s\S]*?\/>\s*$/gm, '')
-  .replace(/\n{3,}/g, '\n\n')
-  .trim()}\n`;
 ---
 
 <Base title={note.data.title} description={note.data.description} active={areaId} hasSidebar>
@@ -48,17 +42,8 @@ const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.bo
               {readingMinutes(note)} min read
             </span>
           </p>
-          <div class="title-row">
-            <h1>{note.data.title}</h1>
-            <button class="copy-page" type="button" data-copy-page data-pagefind-ignore>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                <rect x="5" y="5" width="9" height="9" rx="2"></rect><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"></path>
-              </svg>
-              <span>Copy page</span>
-            </button>
-          </div>
+          <h1>{note.data.title}</h1>
           <p class="lead">{note.data.description}</p>
-          <template data-markdown>{markdown}</template>
         </header>
 
         {
@@ -161,37 +146,12 @@ const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.bo
     color: var(--text-faint);
     font-weight: 500;
   }
-  .title-row {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-  }
   h1 {
     margin: 0;
     font-size: clamp(1.9rem, 4vw, 2.4rem);
     line-height: 1.15;
     letter-spacing: -0.03em;
     font-weight: 700;
-  }
-  .copy-page {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-    padding: 7px 12px;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--text-muted);
-    background: var(--bg-elev);
-    border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    cursor: pointer;
-  }
-  .copy-page:hover {
-    color: var(--text);
-    background: var(--bg-hover);
   }
   .lead {
     margin: 14px 0 36px;
@@ -294,9 +254,6 @@ const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.bo
     }
   }
   @media (max-width: 640px) {
-    .copy-page span {
-      display: none;
-    }
     .lead {
       font-size: 1.0625rem;
     }
@@ -308,17 +265,3 @@ const markdown = `# ${note.data.title}\n\n${note.data.description}\n\n${(note.bo
     }
   }
 </style>
-
-<script>
-  document.querySelectorAll<HTMLButtonElement>('[data-copy-page]').forEach((btn) => {
-    const md = document.querySelector<HTMLTemplateElement>('template[data-markdown]')!.innerHTML;
-    const label = btn.querySelector('span')!;
-    btn.addEventListener('click', async () => {
-      // template content is HTML-escaped; decode it back to plain text
-      const txt = new DOMParser().parseFromString(md, 'text/html').documentElement.textContent ?? '';
-      await navigator.clipboard.writeText(txt);
-      label.textContent = 'Copied';
-      setTimeout(() => (label.textContent = 'Copy page'), 1600);
-    });
-  });
-</script>

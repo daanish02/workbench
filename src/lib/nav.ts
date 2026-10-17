@@ -43,6 +43,9 @@ export interface NavSection {
   notes: Note[];
 }
 
+/** Every area ends with an appendix: shown as a section, but not counted as one. */
+export const isAppendix = (s: NavSection) => s.id === 'appendix';
+
 /** Sections of an area in curriculum order, each with its notes sorted by `order`. */
 export async function areaNav(areaId: string): Promise<NavSection[]> {
   const area = areas.find((a) => a.id === areaId);

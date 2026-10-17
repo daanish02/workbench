@@ -2,7 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import Sidebar from '../../components/Sidebar.astro';
 import { areas, type Area } from '../../data/areas';
-import { areaNav, noteUrl, readingMinutes } from '../../lib/nav';
+import { areaNav, isAppendix, noteUrl, readingMinutes } from '../../lib/nav';
 
 export function getStaticPaths() {
   return areas.map((area) => ({ params: { area: area.id }, props: { area } }));
@@ -19,9 +19,9 @@ const swatches = ['var(--g-blue)', 'var(--g-red)', 'var(--g-yellow)', 'var(--g-g
     <Sidebar areaId={area.id} areaTitle={area.title} nav={nav} />
     <main class="main">
       <header>
-        <p class="eyebrow">{nav.length} sections · {total} notes</p>
+        <p class="eyebrow">{nav.filter((s) => !isAppendix(s)).length} sections · {total} notes</p>
         <h1>{area.title}</h1>
-        <p class="lead">{area.blurb} Sections are ordered as a learning path: each one leans on the ones before it.</p>
+        <p class="lead">{area.blurb}</p>
       </header>
 
       <div class="sections">
@@ -39,7 +39,6 @@ const swatches = ['var(--g-blue)', 'var(--g-red)', 'var(--g-yellow)', 'var(--g-g
                     <a href={noteUrl(n)}>
                       <span class="n-title">
                         {n.data.title}
-                        <span class="mins">{readingMinutes(n)} min</span>
                       </span>
                       <span class="n-desc">{n.data.description}</span>
                     </a>
