@@ -1,0 +1,225 @@
+---
+title: "Search & Autocomplete"
+description: "Inverted indexes, ranking, sharded scatter-gather and precomputed suggestions."
+order: 7
+tier: core
+takeaways:
+  - "Search is fast because of an **inverted index**: for each word, a sorted list of the documents that contain it, so a query reads a few short lists instead of every document."
+  - "**Ranking** matters as much as matching: **BM25** scores rare terms higher and normalises for document length; real engines add popularity, freshness and personalization."
+  - "To scale, **shard by document** and **scatter-gather**: every shard answers from its slice, a coordinator merges the top results. Tail latency (the slowest shard) is the main cost."
+  - "Indexes are built from **immutable segments** that are merged in the background, trading freshness against indexing cost."
+  - "**Autocomplete** is a different problem: precompute the top suggestions for every prefix offline, and serve each keystroke from memory."
+resources:
+  - title: "Introduction to Information Retrieval (Manning, Raghavan, Schütze)"
+    url: "https://nlp.stanford.edu/IR-book/"
+    note: "The standard free textbook: inverted indexes, scoring, evaluation."
+  - title: "Okapi BM25 (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Okapi_BM25"
+  - title: "Brin and Page: The Anatomy of a Large-Scale Hypertextual Web Search Engine"
+    url: "http://infolab.stanford.edu/~backrub/google.html"
+    note: "The original Google paper: crawling, indexing and ranking at web scale."
+  - title: "Elasticsearch: Index basics"
+    url: "https://www.elastic.co/guide/en/elasticsearch/reference/current/documents-indices.html"
+---
+
+Search looks like a database query, but it is a different kind of problem. A user types a few words and expects **relevant** results from billions of documents in a fraction of a second, ranked, tolerant of typos, and updated as new content appears. In a relational database "find the rows containing these words" is a full scan, and "which of them best answer this question" is not even a query it can express. Search engines solve both with a different data structure, and a second, smaller system handles the suggestions that appear as you type.
+
+## Requirements
+
+**Functional:** full-text search over a large collection (documents, products, pages); ranked results; filters (category, price, date); typo tolerance; **autocomplete** as the user types; new items searchable quickly.
+
+**Non-functional:**
+
+- **Latency:** search under about 100 ms; autocomplete under about 50 ms *per keystroke*, or it feels broken.
+- **Relevance:** the right result near the top matters more than returning all results.
+- **Freshness:** new or changed items become searchable in seconds to minutes (not days).
+- **Scale and availability:** huge corpus, high read traffic, tolerates node failures.
+
+## Estimate the Load
+
+```python
+docs_n, doc_kb, qps = 1_000_000_000, 2, 50_000
+print(f"{docs_n:,} documents x {doc_kb} KB = {docs_n * doc_kb / 1e9:,.0f} TB of text; {qps:,} searches/s; autocomplete ~{qps * 10:,} lookups/s (one per keystroke)")
+# 1,000,000,000 documents x 2 KB = 2 TB of text; 50,000 searches/s; autocomplete ~500,000 lookups/s (one per keystroke)
+```
+
+Two terabytes of text does not fit on one machine's memory, and 50,000 searches per second does not fit on one machine's CPU, so the index must be **partitioned and replicated**. Autocomplete is the surprise: one lookup *per keystroke* means about ten times the query rate of search itself, with a far tighter latency budget. (Illustrative figures.)
+
+## The Simplest Design, and Where It Breaks
+
+`SELECT * FROM docs WHERE body LIKE '%waterproof%'`. A leading wildcard cannot use a B-tree index, so the database reads every row; it returns matches in no useful order; it has no notion of "closer to what I meant"; and each additional word makes it worse. It is acceptable for thousands of rows and unusable for millions.
+
+## Decision 1: The Inverted Index
+
+The key idea is to precompute the answer in the opposite direction. A normal ("forward") index maps document to words. An **inverted index** maps each **term** to its **postings list**: the sorted list of IDs of documents containing it (plus, usually, how often and where the term appears).
+
+```python
+import re
+from collections import Counter, defaultdict
+
+corpus = {
+    1: "red running shoes for men",
+    2: "blue running jacket waterproof",
+    3: "waterproof hiking boots for men",
+    4: "red leather boots",
+    5: "running shoes red and blue",
+    6: "kids red rain jacket waterproof",
+}
+tokenize = lambda text: re.findall(r"[a-z]+", text.lower())
+index = defaultdict(dict)                                        # term -> {doc id: term frequency}
+for doc_id, text in corpus.items():
+    for term, tf in Counter(tokenize(text)).items():
+        index[term][doc_id] = tf
+print("postings for 'red':", sorted(index["red"]), "| 'boots':", sorted(index["boots"]), "| 'waterproof':", sorted(index["waterproof"]))
+print("AND query 'red boots':", sorted(set(index["red"]) & set(index["boots"])))
+# postings for 'red': [1, 4, 5, 6] | 'boots': [3, 4] | 'waterproof': [2, 3, 6]
+# AND query 'red boots': [4]
+```
+
+A query becomes: tokenize it, fetch each term's postings list, and **combine** them: intersect for AND (documents containing all terms), union for OR. Because the lists are sorted, intersection is a linear **merge** of two lists (with skip pointers to jump over long runs in real engines), costing roughly the length of the *shorter* list, not the size of the corpus. Before indexing, text goes through **analysis**: lowercasing, splitting into tokens, removing very common stop words, and **stemming** (so "running" and "run" match), and the same analysis is applied to queries.
+
+Run a query against the same small corpus and watch the lists being used:
+
+<InvertedIndexDemo />
+
+On 50,000 synthetic documents, the same two-word query (real run; timings vary):
+
+```python
+import random
+import time
+from collections import defaultdict
+
+rnd = random.Random(1)
+vocab = [f"w{i}" for i in range(3000)]
+weights = [1 / (i + 1) for i in range(3000)]                     # a few very common words, a long tail of rare ones
+big = [rnd.choices(vocab, weights, k=40) for _ in range(50_000)]
+big_index = defaultdict(list)
+for doc_id, words in enumerate(big):
+    for w in set(words):
+        big_index[w].append(doc_id)                              # ids are appended in order, so each list is sorted
+def and_query(a, b):
+    la, lb, i, j, out = big_index[a], big_index[b], 0, 0, []
+    while i < len(la) and j < len(lb):                           # merge two sorted lists
+        if la[i] == lb[j]:
+            out.append(la[i]); i += 1; j += 1
+        elif la[i] < lb[j]:
+            i += 1
+        else:
+            j += 1
+    return out
+t = time.perf_counter(); hits = and_query("w40", "w700"); t_idx = time.perf_counter() - t
+t = time.perf_counter(); scan = [d for d, ws in enumerate(big) if "w40" in ws and "w700" in ws]; t_scan = time.perf_counter() - t
+print(f"'w40 AND w700': {len(hits)} hits; scan {t_scan * 1000:.1f} ms, index {t_idx * 1000:.2f} ms; same result: {hits == scan}")
+# 'w40 AND w700': 29 hits; scan 68.5 ms, index 2.41 ms; same result: True
+```
+
+Same 29 results, about 30× faster, and the gap widens with the corpus because the index cost tracks the postings lists, not the number of documents.
+
+## Decision 2: Ranking
+
+Matching returns a set; users need an order. The classic text-relevance score is **BM25**, a refinement of TF-IDF. For a term $t$ in document $d$:
+
+$$
+\text{score}(d,q) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f(t,d)\,(k_1+1)}{f(t,d) + k_1\left(1 - b + b\,\frac{|d|}{\text{avgdl}}\right)}
+$$
+
+In words: add up, for each query term, how **rare** the term is across the collection (IDF: "red" in every document is worth little, "waterproof" in two is worth more), multiplied by how often it appears in this document, with **diminishing returns** for repeats and a **penalty for long documents** (a mention in a short title counts more than one in a long page). Typical values are $k_1 \approx 1.2$ and $b \approx 0.75$.
+
+```python
+import math
+from collections import defaultdict
+
+N = len(corpus)
+avg_len = sum(len(tokenize(t)) for t in corpus.values()) / N
+def bm25(query, k1=1.2, b=0.75):
+    scores = defaultdict(float)
+    for term in tokenize(query):
+        df = len(index.get(term, {}))
+        if not df:
+            continue
+        idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+        for doc_id, tf in index[term].items():
+            length = len(tokenize(corpus[doc_id]))
+            scores[doc_id] += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * length / avg_len))
+    return sorted(scores.items(), key=lambda kv: -kv[1])
+for doc_id, s in bm25("red waterproof jacket")[:3]:
+    print(f"score {s:.2f}  doc {doc_id}: {corpus[doc_id]}")
+# score 2.07  doc 6: kids red rain jacket waterproof
+# score 1.80  doc 2: blue running jacket waterproof
+# score 0.66  doc 3: waterproof hiking boots for men
+```
+
+Document 6 contains all three terms and wins; document 2 matches two. Real engines go far beyond text scoring: **popularity, freshness, location, personalization and learned ranking models** are blended in, usually in two stages. A cheap first pass (the index plus BM25) retrieves a few hundred or thousand candidates, then a more expensive model **re-ranks** only those.
+
+## Decision 3: Scaling Out, with Scatter-Gather
+
+One machine cannot hold a billion-document index. The standard approach is to **shard by document**: each shard holds a full index for its own slice of the documents. A query is sent to **every shard** (scatter), each returns its local top results, and a coordinator merges them into the global top-k (gather). Each shard is also **replicated** for availability and read throughput (see [Replication](../../distributed-systems/replication/)).
+
+Sharding by *document* (not by term) is the usual choice: every shard can evaluate a whole query locally, and adding documents spreads evenly. Sharding by *term* would put a very common word's enormous postings list on one machine, and multi-word queries would need network joins.
+
+Scatter-gather has a signature problem: **tail latency**. The response is only as fast as the **slowest shard**, so one slow shard in a hundred slows nearly every query. The standard defenses are **timeouts with partial results** (return what you have, flagged as incomplete), **hedged requests** (after a short delay, send the same request to a second replica and use whichever answers first), and keeping per-shard work small and predictable. See the percentile discussion in [Systems Thinking](../../system-design/systems-thinking/).
+
+## Decision 4: Building and Updating the Index
+
+Rewriting a giant index for every new document would be hopeless. The common design (the one used by Lucene-based engines) writes the index as **immutable segments**:
+
+- New documents go into an in-memory buffer, periodically **flushed** into a small new segment, which becomes searchable at the next **refresh**. A shorter refresh interval gives fresher search at higher cost.
+- A query searches **all segments** and merges results.
+- In the background, small segments are **merged** into larger ones, which reclaims space and keeps the segment count (and so query cost) bounded.
+- **Updates and deletes** never modify a segment: a delete marks the document with a tombstone (filtered at query time and physically removed at merge), and an update is a delete plus a re-add.
+
+Immutability makes segments safe to cache, trivially consistent for readers, and easy to replicate (copy files). The same idea of immutable runs merged in the background appears in LSM-tree databases (see [Skip Lists & B-Trees](../../data-structures/skip-lists-and-b-trees/) and [NoSQL](../../databases/nosql/)). For very large web-scale indexes, the whole index is also rebuilt periodically in batch, with a smaller real-time layer on top for fresh content.
+
+## Decision 5: Autocomplete Is a Separate System
+
+Suggestions as you type have different requirements from search: a **tiny** latency budget (tens of milliseconds, called on every keystroke), results that are **popular queries** rather than documents, and tolerance for being a little stale. Running the full search engine per keystroke would be wasteful and slow.
+
+The standard design is a **trie** (prefix tree) of known queries where **each node stores its top few completions**, precomputed offline from **query logs** (how often each query was searched, perhaps weighted by recency). A lookup walks the typed prefix and returns the stored list: its cost is the length of the prefix, independent of how many queries exist.
+
+```python
+import heapq
+from collections import Counter, defaultdict
+
+queries = Counter({"iphone": 900, "iphone 15 case": 700, "iphone charger": 650, "ipad": 500, "ikea desk": 300, "ice cream maker": 120, "iron": 90})
+top_k = defaultdict(list)
+for q, n in queries.items():
+    for i in range(1, len(q) + 1):
+        top_k[q[:i]].append((n, q))
+for p in top_k:
+    top_k[p] = [q for n, q in heapq.nlargest(3, top_k[p])]
+for prefix in ("i", "ip", "iph", "ik"):
+    print(f"{prefix!r:7} -> {top_k[prefix]}")
+# 'i'     -> ['iphone', 'iphone 15 case', 'iphone charger']
+# 'ip'    -> ['iphone', 'iphone 15 case', 'iphone charger']
+# 'iph'   -> ['iphone', 'iphone 15 case', 'iphone charger']
+# 'ik'    -> ['ikea desk']
+```
+
+Try it, and watch what a trending query does and when it takes effect:
+
+<AutocompleteTopK />
+
+Practical details: a **batch job** (hourly or daily) rebuilds the lists from logs, with a faster path to boost **trending** queries; the trie is small enough to **hold in memory** on each serving node, replicated, with hot prefixes cached; the **client waits a short pause** after typing (debouncing) and caches results, so most keystrokes cost no request at all; suggestions are **filtered** for offensive or unwanted content; and results can be personalized or localized by keeping separate lists per segment.
+
+## Typos and Fuzzy Matching
+
+People mistype. Two common techniques: **edit distance** (match terms within one or two single-character edits; see [String Algorithms](../../algorithms/string-algorithms/)), and **character n-gram indexes** (index every 3-letter slice of each term, so "waterproff" still shares most n-grams with "waterproof"). These widen matching, so they are applied carefully: first try the exact query, and only fall back to fuzzy matching or offer a "did you mean" suggestion when results are poor.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A shard is slow | Every query waits (tail latency) | Timeouts with partial results, hedged requests, replicas |
+| A shard replica dies | Reduced capacity for that slice | Replicas on other nodes; automatic re-routing |
+| A bad index build or deployment | Broken or empty results | Build into a new index, verify, then **swap** an alias; keep the old one |
+| Indexing falls behind | New items not searchable | Monitor lag, scale indexers, prioritize recent items |
+| A traffic spike on a viral query | Hot shards or cache stampede | Cache popular results; limit expensive query shapes |
+| Autocomplete data is stale | Missing trending queries | Faster incremental updates for trends |
+
+## What to Take Away
+
+Search teaches that the **right data structure beats brute force**: an inverted index turns text search into list merging. **Ranking is half the product**, so retrieve cheaply and re-rank selectively. Distribute by **document with scatter-gather**, and accept that **tail latency** is the price. Build with **immutable segments** merged in the background. And recognise when a feature (autocomplete) deserves its own system with **precomputation** instead of reusing the heavy one. The next case, the [Web Crawler](../web-crawler/), builds the thing search sits on: how the documents get collected in the first place.
+
+<Callout type="practice">
+Engines differ (Lucene, Elasticsearch, Solr, proprietary web engines) in segment management, ranking models and sharding, and public detail varies. The inverted index, document sharding with scatter-gather, immutable segments and precomputed top-k suggestions are the widely documented core; the Elasticsearch docs and the Stanford IR book are good primary sources.
+</Callout>

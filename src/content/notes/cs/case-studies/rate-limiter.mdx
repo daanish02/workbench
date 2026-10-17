@@ -1,0 +1,189 @@
+---
+title: "Rate Limiter"
+description: "Enforcing one limit across many servers: shared state, atomicity and failure policy."
+order: 6
+tier: core
+takeaways:
+  - "The algorithm (token bucket, sliding window) is the easy part; the hard part is **one limit across many servers**."
+  - "Per-server counters let **N times** the limit through; splitting the limit rejects legitimate traffic when load is uneven; a **shared counter** is exact only if check-and-increment is **atomic**."
+  - "**Race conditions** are real: a read-then-write check lets concurrent requests exceed the limit. Use atomic operations (an increment, or a server-side script) and the store's own clock."
+  - "Routing each key to a **single gateway** (consistent hashing on the API key) makes a fast, exact local counter possible."
+  - "Decide the **failure policy** up front: fail open (accept traffic if the limiter is down) or fail closed, and add a local fallback so a limiter outage is not a total outage."
+resources:
+  - title: "Stripe: Scaling your API with rate limiters"
+    url: "https://stripe.com/blog/rate-limiters"
+    note: "Four kinds of limiters and how they are layered in production."
+  - title: "Cloudflare: Counting things, a lot of different things"
+    url: "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/"
+    note: "A public account of approximate counting at very large scale."
+  - title: "Redis: rate limiting"
+    url: "https://redis.io/glossary/rate-limiting/"
+  - title: "RFC 6585: 429 Too Many Requests"
+    url: "https://www.rfc-editor.org/rfc/rfc6585"
+---
+
+A rate limiter is a tiny component with an outsized lesson. The [Rate Limiting](../../system-design/rate-limiting/) note covered the *algorithms* (token bucket, leaky bucket) running in one process. Here is the harder question: your API runs on dozens of gateway servers behind a load balancer, and a client may send only 100 requests per minute **in total**. Every server sees only part of the traffic, yet the limit is global. This case study is about that gap, and it exposes nearly every distributed-state problem in one small feature.
+
+## Requirements
+
+**Functional:** limit requests per API key (and sometimes per user, IP or endpoint); reject excess requests with `429 Too Many Requests` and tell the client when to retry; support different limits for different customers or plans.
+
+**Non-functional:**
+
+- **Fast:** the check sits on the path of *every* request, so it must add well under a millisecond or two.
+- **Accurate enough:** exact where the limit protects a paid quota or a fragile backend, approximate where it only needs to stop abuse.
+- **Highly available:** the limiter must not become the thing that takes the API down.
+- **Scales with traffic**, and handles hot keys (one client sending far more than the rest).
+
+## Estimate the Load
+
+```python
+peak_rps, keys = 1_000_000, 10_000_000
+print(f"{peak_rps:,} checks/s at peak; state for {keys:,} keys at 32 bytes each = {keys * 32 / 1e6:,.0f} MB")
+# 1,000,000 checks/s at peak; state for 10,000,000 keys at 32 bytes each = 320 MB
+```
+
+The state is **tiny**: a counter or token count and a timestamp per key, so even ten million keys fit in a few hundred megabytes of memory. The pressure is the **rate of checks**, a million per second, and the fact that each one must read and update that small state consistently. So this is a problem of contention and latency, not storage. (Illustrative figures.)
+
+## The Simplest Design, and Where It Breaks
+
+Each gateway keeps a counter in memory and rejects when it passes 100. It is fast and has no dependencies. But the load balancer spreads one client's requests across all the gateways, so each sees a fraction and **none sees the total**. With four gateways, a client can send up to 400 requests per minute and never hit a local limit. The alternatives all pay a different price:
+
+## Decision 1: Where the Count Lives
+
+Compare the strategies on a single client sending a burst across several gateways:
+
+<RateLimiterCluster />
+
+The same experiment as plain code (real output; the routing is random but seeded):
+
+```python
+import random
+
+LIMIT = 100                                                      # requests per minute per API key
+
+def accepted(strategy, requests, gateways=4, seed=5):
+    rnd = random.Random(seed)
+    route = [rnd.randrange(gateways) for _ in range(requests)]   # which gateway each request lands on
+    if strategy == "local":                                      # each gateway enforces the full limit on what it sees
+        caps, seen = [LIMIT] * gateways, [0] * gateways
+    elif strategy == "split":                                    # each gateway enforces limit / gateways
+        caps, seen = [LIMIT // gateways] * gateways, [0] * gateways
+    else:                                                        # one shared atomic counter
+        caps, seen = [LIMIT] * gateways, [0]
+    ok = 0
+    for g in route:
+        i = g if strategy != "shared" else 0
+        if seen[i] < caps[i]:
+            seen[i] += 1
+            ok += 1
+    return ok
+for requests in (150, 90):
+    print(f"{requests} requests, limit {LIMIT}:", {s: accepted(s, requests) for s in ("local", "split", "shared")})
+# 150 requests, limit 100: {'local': 150, 'split': 100, 'shared': 100}
+# 90 requests, limit 100: {'local': 90, 'split': 89, 'shared': 90}
+```
+
+| Strategy | Accuracy | Latency | Weakness |
+| --- | --- | --- | --- |
+| **Per-gateway counters** | Lets through up to N × the limit (150 of 150 above) | Fastest, no network | Limit is effectively multiplied by the number of gateways |
+| **Split the limit** (limit ÷ N each) | Right in total, but wrong per request | Fast, no network | Rejects traffic **under** the limit when load is uneven (89 of 90 above), and breaks when gateways are added or removed |
+| **Shared counter in a fast store** | Exact if atomic | One network round trip per request | The store is a dependency and a possible hot spot |
+| **Route each key to one gateway** | Exact | Fast, local counter | Needs sticky routing; a gateway failure moves its keys |
+| **Local counters synced periodically** | Approximate, bounded error | Fast | Briefly overshoots between syncs |
+
+The fourth row is worth dwelling on, because it dissolves the problem. If the load balancer sends all of a given key's requests to the *same* gateway (by hashing the API key, using [consistent hashing](../../system-design/consistent-hashing/)), then that gateway sees the key's entire traffic and a plain in-memory counter is **exact**, with no network call at all. The cost is the usual one for affinity routing: a hot key loads one gateway, and when a gateway dies its keys move and their counters restart (a brief window of leniency, usually acceptable).
+
+Most large deployments combine them: **local fast-path counters** for the common case, a **shared store** for exact quotas, and **periodic synchronization** (each gateway claims a small batch of "tokens" from the shared bucket and spends them locally) to avoid a network call on every request. The trade-off is explicit: the larger the batch, the fewer round trips and the larger the possible overshoot.
+
+## Decision 2: Atomicity, or the Race That Lets Extra Requests Through
+
+A shared counter is only correct if "check the count, then increment it" happens as **one indivisible step**. If instead each request reads the counter, decides, and writes back, concurrent requests all read the same stale value:
+
+```python
+LIMIT = 100
+count, ok, in_flight = 0, 0, 8
+for _ in range(15):                                              # 15 waves of 8 simultaneous requests
+    seen = count                                                 # everyone in the wave reads the same count...
+    for _ in range(in_flight):
+        if seen < LIMIT:                                         # ...decides on the stale value...
+            ok += 1
+            count += 1                                           # ...then increments
+print(f"read-then-increment, {in_flight} concurrent: {ok} accepted of 120 (limit {LIMIT})")
+# read-then-increment, 8 concurrent: 104 accepted of 120 (limit 100)
+```
+
+Four extra requests slipped through, and the overshoot grows with concurrency. (This is the same lost-update race as in [Transactions & ACID](../../databases/transactions-and-acid/).) The fix is to make the check-and-update atomic, using whatever the store offers: a single atomic **increment** (the returned value is the new count, so the decision is based on it, not on a prior read), a **conditional update**, or a **server-side script** that runs the whole algorithm without interleaving. A token-bucket check as a Redis script, shown for illustration:
+
+```lua
+-- KEYS[1] = bucket key; ARGV = capacity, refill_per_sec, cost
+local t = redis.call('TIME')                         -- use the STORE's clock, never the caller's
+local now = tonumber(t[1]) + tonumber(t[2]) / 1e6
+local cap, rate, cost = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
+local s = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(s[1]) or cap
+local ts = tonumber(s[2]) or now
+tokens = math.min(cap, tokens + (now - ts) * rate)  -- lazy refill from elapsed time
+local ok = 0
+if tokens >= cost then tokens = tokens - cost; ok = 1 end
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)
+redis.call('EXPIRE', KEYS[1], math.ceil(cap / rate) * 2)   -- idle keys clean themselves up
+return ok
+```
+
+The script executes as one unit on the store, so no two checks interleave. Note the **store's clock** is used: gateway clocks drift apart (see [Clocks & Time](../../distributed-systems/clocks/)), and mixing them would let a client with a "slow" gateway enjoy extra tokens.
+
+## Decision 3: Which Algorithm at This Scale
+
+The [algorithms note](../../system-design/rate-limiting/) compared them; here the question is cost per check:
+
+| Algorithm | State per key | Behaviour | Fit |
+| --- | --- | --- | --- |
+| **Fixed window counter** | One counter | Cheapest; allows a burst of up to 2× the limit around a window boundary | Abuse prevention where precision is not critical |
+| **Sliding window counter** | Two counters | Weights the previous window to approximate a true sliding window | Good accuracy at low cost |
+| **Sliding window log** | Every request timestamp | Exact, but memory grows with the limit | Small limits that must be exact |
+| **Token bucket** | Tokens + timestamp | Allows controlled bursts, cheap and smooth | The usual default for API quotas |
+
+The **sliding window counter** is a neat trick: estimate the number of requests in the last full minute as `previous_count × (portion of the previous window still overlapping) + current_count`. A client that sent 100 at the end of one minute and sends 100 more right after the boundary is estimated at 190, so the second burst is rejected:
+
+```python
+def sliding(prev_count, cur_count, elapsed_fraction):
+    return prev_count * (1 - elapsed_fraction) + cur_count     # weight the previous window by how much of it still overlaps
+print("100 requests at the end of one minute, 100 at the start of the next: sliding estimate =",
+      sliding(100, 100, 0.1), "(over 100, so the second burst is rejected)")
+# 100 requests at the end of one minute, 100 at the start of the next: sliding estimate = 190.0 (over 100, so the second burst is rejected)
+```
+
+Two integers per key and one arithmetic step, versus storing a timestamp for every request.
+
+## Decision 4: Failure, Hot Keys and Policy
+
+**What if the limiter is down?** This is a business decision to make *before* the outage. **Fail open** (accept requests when the limiter cannot answer) keeps the API available but removes protection exactly when something is wrong; **fail closed** protects the backend but turns a limiter outage into a total outage. A common compromise is a **local fallback**: if the shared store is unreachable, each gateway falls back to its own coarse per-gateway limit (the "split" strategy), so you degrade to approximate limiting instead of none or all.
+
+**Hot keys.** One abusive client sending a huge number of requests makes a single key's counter the hot spot on its shard. Mitigations: handle most of it locally before touching the store (reject at the gateway once a client is far over the limit), and let each gateway batch increments.
+
+**Slow store.** The check is on the critical path, so give it a **tight timeout** (a few milliseconds) and treat a timeout as a limiter failure under the policy above, rather than letting a slow limiter slow every API call.
+
+**Multiple regions.** A single global counter means cross-region latency on every request. Usual practice: enforce **per-region** limits (each region gets its share) and reconcile asynchronously for the global quota, accepting a bounded overshoot.
+
+## Telling the Client
+
+A good limiter explains itself. Respond with `429 Too Many Requests` and a `Retry-After` header, and include the remaining allowance and reset time in response headers so clients can pace themselves (the `RateLimit` headers are being standardized). Clients should back off with jitter instead of retrying immediately (see [Distributed Basics](../../distributed-systems/distributed-basics/)). Different **layers** often combine: a coarse per-IP limit at the edge, a per-key quota at the gateway, and a concurrency limit protecting each backend.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| Shared store unreachable | No central decision possible | Local fallback limits; explicit fail-open or fail-closed choice |
+| A gateway dies (sticky routing) | Its keys move; counters reset | Accept brief leniency, or replicate counters for strict quotas |
+| Clock skew between gateways | Refill computed wrongly | Use the store's clock |
+| A hot abusive key | One shard overloaded | Local rejection and batching of increments |
+| Configuration error (limit set to 0) | Everyone blocked | Gradual rollout, limit changes via config with validation and defaults |
+
+## What to Take Away
+
+Distributed state forces a choice among **accuracy, latency and availability**, and the right answer depends on what the limit protects. Use **atomic operations** (never read-then-write) and the **store's clock**. Use **routing** to turn a distributed problem into a local one where you can. And define the **failure policy** before you need it. The next case, [Search & Autocomplete](../search-autocomplete/), is an index-building problem: how to answer text queries fast over a huge collection.
+
+<Callout type="practice">
+Production limiters vary widely (some are purely local with sticky routing, some centralized, many hybrid), and public detail is thin; the Stripe and Cloudflare posts above are good primary sources for two real approaches. The Lua script is illustrative of the pattern, not a drop-in implementation.
+</Callout>

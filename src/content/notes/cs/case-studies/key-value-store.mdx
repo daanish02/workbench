@@ -1,0 +1,235 @@
+---
+title: "Key-Value Store"
+description: "Capstone: a Dynamo-style distributed store built from rings, quorums, vector clocks and gossip."
+order: 11
+tier: advanced
+takeaways:
+  - "A Dynamo-style store is the **capstone** of the Distributed Systems section: partitioning, replication, quorums, versioning, failure detection and repair, combined in one **always-writable** design."
+  - "Data is spread on a **consistent-hash ring**, and each key is stored on its **N** successive nodes (the preference list). There is **no leader**: any node can coordinate a request."
+  - "**Tunable consistency**: a write waits for **W** acknowledgements and a read asks **R** replicas; **W + R > N** makes reads overlap writes."
+  - "To stay available, **sloppy quorums and hinted handoff** accept writes via stand-in nodes during failures; **vector clocks** detect concurrent updates, which become **siblings** the application merges."
+  - "Replicas converge through **read repair**, **Merkle-tree anti-entropy** and **gossip**; each node stores data in an **LSM tree** tuned for fast writes."
+resources:
+  - title: "Dynamo: Amazon's Highly Available Key-value Store"
+    url: "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+    note: "The paper this case study is modelled on. Read sections 4 and 6."
+  - title: "Apache Cassandra: Architecture overview"
+    url: "https://cassandra.apache.org/doc/latest/cassandra/architecture/overview.html"
+    note: "A widely used open-source system built on the Dynamo design."
+  - title: "Bigtable: A Distributed Storage System for Structured Data"
+    url: "https://research.google/pubs/bigtable-a-distributed-storage-system-for-structured-data/"
+    note: "The source of the SSTable and LSM storage design used on each node."
+  - title: "Designing Data-Intensive Applications, ch. 3, 5 and 6"
+    url: "https://dataintensive.net/"
+---
+
+This case study is a synthesis. Every earlier note in [Distributed Systems](../../distributed-systems/distributed-basics/) taught one ingredient (partitions, replicas, quorums, clocks, gossip), and here they are assembled into a working design: a **distributed key-value store** that keeps accepting reads and writes while machines fail and the network misbehaves. The best-known description is Amazon's **Dynamo** paper, which inspired Cassandra, Riak and others, and it makes a bold choice: it is **always writable**, accepts **eventual consistency**, and pushes conflicts up to the application rather than refusing writes. Whether that is the right choice depends on the data, which is exactly the lesson of the [CAP theorem](../../distributed-systems/cap-theorem/).
+
+## Requirements
+
+**Functional:** `put(key, value)` and `get(key)`, nothing more (no joins or secondary queries). Values are opaque blobs, typically small.
+
+**Non-functional:**
+
+- **Availability:** writes must succeed even during node failures and partitions; an unavailable shopping cart loses sales. (An AP design.)
+- **Horizontal scalability:** add nodes to add capacity, with little data movement.
+- **Low, predictable latency:** single-digit milliseconds at the 99th percentile, not just the average.
+- **No single point of failure:** no leader, no master, all nodes symmetric.
+- **Tunable consistency:** let each use case choose between speed and freshness.
+
+## Estimate the Load
+
+```python
+ops_per_s, per_node, target_util = 10_000_000, 50_000, 0.5
+nodes = ops_per_s / (per_node * target_util)
+data_tb, replicas = 100, 3
+print(f"{ops_per_s:,} ops/s / ({per_node:,} per node x {target_util:.0%} utilisation) = {nodes:,.0f} nodes")
+print(f"{data_tb} TB x {replicas} replicas = {data_tb * replicas} TB, about {data_tb * replicas * 1000 / nodes:,.0f} GB per node")
+# 10,000,000 ops/s / (50,000 per node x 50% utilisation) = 400 nodes
+# 100 TB x 3 replicas = 300 TB, about 750 GB per node
+```
+
+Running nodes at 50% utilisation (see the queueing curve in [Systems Thinking](../../system-design/systems-thinking/)) gives **400 nodes**, each holding about 750 GB. With that many machines, **failures are routine**, not exceptional: at any moment some nodes are down, so the design must treat failure as the normal case. (Illustrative figures.)
+
+## The Ingredients, Mapped to Earlier Notes
+
+| Problem | Technique | Where it was covered |
+| --- | --- | --- |
+| Which node owns a key? | Consistent hashing with virtual nodes | [Consistent Hashing](../../system-design/consistent-hashing/) |
+| Survive node loss | Replicate each key on N nodes | [Replication](../../distributed-systems/replication/) |
+| Read-your-write vs speed | Quorums, W + R > N | [Consensus in Practice](../../distributed-systems/consensus-in-practice/) |
+| Which write is newer? | Vector clocks | [Clocks & Time](../../distributed-systems/clocks/) |
+| Who is down? | Gossip and failure detection | [Gossip Protocols](../../distributed-systems/gossip/), [Fault Tolerance](../../distributed-systems/fault-tolerance/) |
+| Fast writes on disk | LSM trees | [Skip Lists & B-Trees](../../data-structures/skip-lists-and-b-trees/) |
+
+Notice what is **absent**: no consensus protocol and no leader election. Dynamo deliberately avoids them, because they sacrifice availability during partitions (see [Consensus](../../distributed-systems/consensus/)). Instead it resolves disagreements **after the fact**, which is cheaper but weaker.
+
+## Decision 1: Partitioning on a Ring
+
+Keys and nodes are hashed onto a **ring**; a key belongs to the first node clockwise from its position, and each physical node owns many **virtual nodes** so load spreads evenly and a node joining or leaving moves only a small fraction of the keys. Compare the resulting movement with plain modulo hashing in the [Consistent Hashing](../../system-design/consistent-hashing/) note. Because every node knows the ring, **any node can route any request**: a client (or load balancer) contacts any node, and that node, acting as **coordinator**, forwards to the owners. There is no lookup service to fail.
+
+## Decision 2: Replication on the Ring
+
+Each key is stored not on one node but on **N** (typically 3) successive distinct nodes clockwise on the ring: its **preference list**. These may be spread across racks or availability zones so a single failure domain cannot hold all copies. The coordinator for a key is normally the first node on the list, and it sends writes to **all N replicas** in parallel.
+
+## Decision 3: Tunable Consistency with Quorums
+
+The coordinator does not wait for all N replicas. A write is acknowledged after **W** replicas confirm; a read asks **R** replicas and returns the newest answer. If
+
+$$
+W + R > N
+$$
+
+then every read set and every write set share at least one replica, so a read sees the latest acknowledged write (as shown in [Consensus in Practice](../../distributed-systems/consensus-in-practice/)). The knobs set the trade-off per application:
+
+| Setting (N = 3) | Behaviour |
+| --- | --- |
+| W = 2, R = 2 | Balanced and the usual default: overlapping quorums, tolerates one node down for both operations |
+| W = 1, R = 3 | Fast, always-available writes; slow reads that must find the newest |
+| W = 3, R = 1 | Fast reads; a single failed replica blocks writes |
+| W = 1, R = 1 | Fastest and most available; reads may be stale (eventual consistency) |
+
+Experiment: choose W and R, fail nodes, write, then read. The read deliberately uses the worst-case replicas, so a stale answer is visible exactly when W + R ≤ N:
+
+<DynamoQuorumSim />
+
+## Decision 4: Staying Writable Under Failure
+
+With a strict quorum, if two of a key's three replicas are down, writes with W = 2 fail. Dynamo prefers availability, so it uses a **sloppy quorum**: if a replica in the preference list is unreachable, the write goes to the **next healthy node on the ring** instead, tagged with a **hint** naming the intended owner. When the owner recovers, the stand-in delivers the hinted write back (**hinted handoff**). This keeps writes succeeding through failures and brief partitions, at a cost: the stand-in is not one of the "real" replicas, so the W + R overlap guarantee **no longer holds** until the handoff completes. It is the AP choice made concrete.
+
+## Decision 5: Conflicts and Vector Clocks
+
+If two clients write the same key concurrently through different coordinators (or during a partition), the replicas can end up with **different values that are both legitimate**. Timestamps cannot settle this safely (clocks drift; see [Clocks & Time](../../distributed-systems/clocks/)), so Dynamo attaches a **vector clock** to every version: one counter per coordinator that has touched it. Comparing two vectors tells whether one version **descends from** the other (the older can be discarded) or whether they are **concurrent** (neither descends from the other).
+
+For concurrent versions the store keeps **both**, as **siblings**, and returns them on the next read; the **application** decides how to merge them (a shopping cart can take the union, so an added item is never lost) and writes the merged value back. The alternative, **last-write-wins** by timestamp, is simpler but silently discards one of the writes.
+
+Here is a miniature version of the whole design, with a ring, preference lists, quorum parameters, sloppy writes, hinted handoff and vector clocks, run end to end:
+
+```python
+import bisect
+import hashlib
+
+def h(x): return int(hashlib.md5(x.encode()).hexdigest(), 16)
+
+def dominates(a, b):                                             # vector clock a is at least as new as b everywhere
+    return all(a.get(k, 0) >= v for k, v in b.items())
+
+class Cluster:
+    def __init__(self, names, n=3, r=2, w=2, vnodes=50):
+        self.n, self.r, self.w = n, r, w
+        self.ring = sorted((h(f"{name}#{i}"), name) for name in names for i in range(vnodes))
+        self.keys = [p for p, _ in self.ring]
+        self.store = {name: {} for name in names}                # node -> key -> list of (clock, value)
+        self.hints = {name: [] for name in names}                # node -> [(intended node, key, version)]
+        self.down = set()
+    def preference_list(self, key, count=None):
+        i, out = bisect.bisect(self.keys, h(key)), []
+        while len(out) < (count or self.n):                      # walk clockwise, skipping repeats of the same physical node
+            name = self.ring[i % len(self.ring)][1]
+            if name not in out:
+                out.append(name)
+            i += 1
+        return out
+    def put(self, key, value, clock):
+        pref = self.preference_list(key, self.n)
+        spare = [x for x in self.preference_list(key, len(self.store)) if x not in pref]
+        coordinator = next(x for x in pref if x not in self.down)
+        clock = dict(clock); clock[coordinator] = clock.get(coordinator, 0) + 1
+        acks = 0
+        for node in pref:
+            target, hint = node, None
+            if node in self.down:                                # sloppy quorum: a stand-in node takes the write, with a hint
+                target = next((s for s in spare if s not in self.down), None)
+                hint = node
+                spare = [s for s in spare if s != target]
+            if target is None:
+                continue
+            version = (clock, value)
+            if hint:
+                self.hints[target].append((hint, key, version))
+            else:
+                versions = [v for v in self.store[target].get(key, []) if not dominates(clock, v[0])]
+                self.store[target][key] = versions + [version]
+            acks += 1
+        return acks >= self.w, clock
+    def get(self, key):
+        pref = [x for x in self.preference_list(key) if x not in self.down][:self.r]
+        found = [v for node in pref for v in self.store[node].get(key, [])]
+        keep = []
+        for clock, val in found:
+            if any(c2 != clock and dominates(c2, clock) for c2, _ in found):     # an older version: some other copy supersedes it
+                continue
+            if (clock, val) not in keep:
+                keep.append((clock, val))
+        return keep                                              # more than one result means concurrent writes (siblings)
+    def recover(self, node):
+        self.down.discard(node)
+        for holder, hints in self.hints.items():                 # stand-ins hand the writes back
+            for hint in [x for x in hints if x[0] == node]:
+                self.store[node].setdefault(hint[1], []).append(hint[2])
+                hints.remove(hint)
+
+c = Cluster(["A", "B", "C", "D", "E"])
+print("preference list for 'cart:42':", c.preference_list("cart:42"))
+down = c.preference_list("cart:42")[1]
+c.down.add(down)
+ok, clock1 = c.put("cart:42", ["book"], {})
+print(f"node {down} is down; write with W=2 succeeded: {ok} (a stand-in node holds a hint for {down})")
+print("read with R=2:", c.get("cart:42"))
+c.recover(down)
+print(f"node {down} back; hints delivered; it now holds:", c.store[down].get("cart:42"))
+
+# Concurrent writes from two coordinators become siblings; the application merges them
+base = ({"A": 1}, ["book"])
+for node in c.preference_list("cart:42")[:3]:
+    c.store[node]["cart:42"] = [base]
+c.down = {c.preference_list("cart:42")[2]}                       # force the two writes through different coordinators
+ok1, _ = c.put("cart:42", ["book", "pen"], {"A": 1})
+c.down = {c.preference_list("cart:42")[0]}
+ok2, _ = c.put("cart:42", ["book", "mug"], {"A": 1})
+c.down = set()
+versions = c.get("cart:42")
+print("concurrent writes -> siblings:", sorted(v[1] for v in versions))
+merged = sorted(set().union(*[set(v[1]) for v in versions]))      # a shopping cart can safely be merged by union
+print("client merges and writes back:", merged)
+# preference list for 'cart:42': ['C', 'A', 'E']
+# node A is down; write with W=2 succeeded: True (a stand-in node holds a hint for A)
+# read with R=2: [({'C': 1}, ['book'])]
+# node A back; hints delivered; it now holds: [({'C': 1}, ['book'])]
+# concurrent writes -> siblings: [['book', 'mug'], ['book', 'pen']]
+# client merges and writes back: ['book', 'mug', 'pen']
+```
+
+Read the output as a story. A write succeeded while node A was down, thanks to the hint. After recovery A received the data. Two concurrent updates produced **two siblings** instead of one silently overwriting the other, and the client merged them without losing the pen **or** the mug. (This miniature omits many real concerns: timeouts, vector clock pruning, read repair and disk persistence.)
+
+## Decision 6: Failure Detection and Repair
+
+Nodes must learn who is down without a central monitor. They use **gossip**: each periodically exchanges its view of membership and liveness with a few random peers, so news spreads in about log n rounds (see [Gossip Protocols](../../distributed-systems/gossip/)), with a failure detector deciding when to suspect a silent node (see [Fault Tolerance](../../distributed-systems/fault-tolerance/)). Replicas that drift apart are repaired in three layers:
+
+- **Read repair:** when a read finds a stale replica among the ones it asked, the coordinator writes the newest version back to it. (The simulation above does this.)
+- **Hinted handoff:** covers the short outages described earlier.
+- **Anti-entropy with Merkle trees:** for long outages and silent divergence, two replicas compare **hash trees** of their key ranges: matching root hashes mean identical data; otherwise they descend only into subtrees whose hashes differ and copy just the differing keys. This avoids comparing every key.
+
+## Decision 7: The Storage Engine on Each Node
+
+Each node needs a local engine that makes **writes cheap**. The standard choice is a **log-structured merge (LSM) tree**: a write is appended to a **commit log** (for durability) and inserted into an in-memory sorted **memtable**; when the memtable fills, it is flushed to disk as an immutable sorted file (an **SSTable**). Reads check the memtable and then the SSTables, newest first, using a **Bloom filter** per file to skip files that cannot contain the key (see [Bloom Filters](../../data-structures/bloom-filters/)); background **compaction** merges SSTables and drops overwritten or deleted entries. All disk writes are sequential, which is why it sustains very high write rates. Deletes are written as **tombstones** (a marker, removed later at compaction), the same idea as in the [Collaborative Editor](../collaborative-editor/) case and the segment merging in [Search & Autocomplete](../search-autocomplete/).
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A node fails | Its replicas are unavailable | Other N − 1 replicas serve; sloppy quorum plus hints keep writes flowing |
+| A network partition splits the cluster | Both sides may accept writes | Sloppy quorums; vector clocks reveal the conflicts afterwards; application merge |
+| Replicas silently diverge | Stale or inconsistent data | Read repair plus Merkle-tree anti-entropy |
+| A node is slow, not dead | Tail latency rises | Quorums need only W or R of N, so one slow node is ignored |
+| Hot key | One replica set overloaded | Cache, split the key, or add replicas |
+| Vector clocks grow | Metadata bloat | Prune old entries (with the risk of false conflicts) |
+| Permanently lost node | Under-replicated data | Re-replicate from the surviving copies onto a new node; ring change moves only a small share of keys |
+
+## What to Take Away
+
+This case shows how **distributed-systems theory becomes engineering choices**. Every decision above is a trade-off made explicit: **availability over strict consistency** (sloppy quorums, no leader), **per-request tunability** (W and R), **detection over prevention** of conflicts (vector clocks and application merge), and **repair in layers** (read repair, hints, Merkle trees). It also shows what the design **gives up**: no transactions, no queries beyond the key, and conflicts that the application must understand. Systems that need those guarantees (like the [Payment System](../payment-system/)'s ledger) choose the opposite corner: a leader, consensus and strong consistency. Knowing which corner your data needs, and why, is the real skill the whole section builds.
+
+<Callout type="practice">
+Real descendants differ from this sketch: Cassandra adds a leader-free design with tunable consistency but often resolves conflicts by last-write-wins; some systems later added consensus-based transactions on top. The Dynamo paper and Cassandra's architecture guide are the primary sources. This note's code is a teaching model of the ideas, not a storage engine.
+</Callout>

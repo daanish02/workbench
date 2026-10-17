@@ -1,0 +1,174 @@
+---
+title: "Chat Application"
+description: "Persistent connections, ordering, delivery receipts and offline users."
+order: 2
+tier: core
+takeaways:
+  - "Chat is a **push** problem: polling would send millions of mostly empty requests, so each client keeps a **persistent connection** (WebSocket) to a gateway."
+  - "Scale comes from **partitioning**: connections spread over gateway servers, and each conversation is owned by one partition so it has a single, ordered log."
+  - "Reliability is **at-least-once delivery plus idempotency**: clients retry with a client-generated message id, and the server de-duplicates."
+  - "Offline users are handled with a stored **inbox**, a push notification, and **sync from the last sequence number** seen."
+  - "Group size drives cost: delivering one message to *n* members is *n* writes, so very large groups need different treatment than small ones."
+resources:
+  - title: "RFC 6455: The WebSocket Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc6455"
+  - title: "Discord: How Discord stores trillions of messages"
+    url: "https://discord.com/blog/how-discord-stores-trillions-of-messages"
+    note: "A real account of a chat history store, its hot partitions and a database migration."
+  - title: "Signal: Documentation of the Double Ratchet and X3DH"
+    url: "https://signal.org/docs/"
+    note: "How end-to-end encryption for chat is designed."
+  - title: "MDN: WebSockets API"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API"
+---
+
+A chat application is the standard example of a system that is **mostly waiting**. Millions of phones sit with a connection open, silent, until a message arrives and must reach one specific phone within a fraction of a second. It differs from the [URL shortener](../url-shortener/) in three ways that drive the whole design: the load is **push**, not request/response; **order and delivery guarantees** matter to users in a way a redirect never does; and the recipient may be **offline** when the message is sent.
+
+## Requirements
+
+**Functional:** one-to-one and group messages; delivery and read receipts (the ticks); history that follows you across devices; messages delivered even if the recipient was offline; typing and online indicators; media (stored separately and referenced by link).
+
+**Non-functional:**
+
+- **Low latency:** a message to an online user should arrive in well under a second.
+- **Ordering:** two people must see a conversation in the same order.
+- **No lost messages, no duplicates:** an acknowledged message must never vanish, and a retry must never show up twice.
+- **Availability:** chat is a utility; users notice minutes of downtime.
+- **Privacy:** many products add **end-to-end encryption**, so the server carries messages it cannot read.
+
+## Estimate the Load
+
+```python
+dau, msgs_per_user = 500_000_000, 40
+per_day = dau * msgs_per_user
+avg, peak = per_day / 86_400, per_day / 86_400 * 3
+print(f"{per_day / 1e9:.0f} billion messages/day = {avg:,.0f}/s average, {peak:,.0f}/s peak")
+print(f"text storage at ~100 bytes: {per_day * 100 / 1e12:.1f} TB/day")
+concurrent, per_gateway = 100_000_000, 100_000
+print(f"{concurrent:,} open connections / {per_gateway:,} per gateway = {concurrent // per_gateway:,} gateway servers")
+# 20 billion messages/day = 231,481/s average, 694,444/s peak
+# text storage at ~100 bytes: 2.0 TB/day
+# 100,000,000 open connections / 100,000 per gateway = 1,000 gateway servers
+```
+
+(These are illustrative figures for a very large service; a startup's numbers are many orders of magnitude smaller, and the same design holds at a fraction of the size.) Two numbers matter. **Hundreds of thousands of messages per second** need partitioned processing and storage. And **100 million simultaneous connections** is the dominant cost: connection count, not message rate, decides how many gateway servers you need.
+
+## The Simplest Design, and Why It Fails
+
+Clients ask the server "any new messages?" every few seconds (polling). It is easy to build, and the numbers show why it cannot work:
+
+```python
+poll_every = 5                                                   # seconds between polls
+polls = concurrent / poll_every
+useful = peak                                                    # real messages per second
+print(f"polling every {poll_every}s: {polls:,.0f} requests/s, of which only {useful / polls:.1%} deliver a message")
+# polling every 5s: 20,000,000 requests/s, of which only 3.5% deliver a message
+```
+
+Twenty million requests per second, **96% of them empty**, and still up to five seconds of latency. Polling spends effort to learn that nothing happened. The fix is to reverse the direction: keep a connection open and let the server **push** when there is something to say.
+
+## Decision 1: Persistent Connections and Gateways
+
+Each client opens a **WebSocket** (a long-lived, two-way connection over TCP; see [Other Protocols](../../networks/other-protocols/)) to a **gateway** server. The gateways do very little: terminate the connection (often TLS), authenticate it, and pass messages inward. Keeping them thin lets one machine hold on the order of a hundred thousand mostly idle connections, because each costs little memory and almost no CPU while idle.
+
+Since the sender and recipient are usually on **different gateways**, the system needs a **connection registry**, a fast lookup from user to "which gateway holds this user's connection right now". It lives in an in-memory store (a cache or key-value cluster) with a short expiry that clients refresh via heartbeats, so entries for crashed gateways disappear on their own.
+
+## Decision 2: The Message Path
+
+Follow one message (the demo below walks through it):
+
+1. The sender's app creates the message with a **client-generated unique id** and sends it over its WebSocket.
+2. The gateway forwards it to the **chat service** that owns this conversation.
+3. That service **assigns the next sequence number** for the conversation and **persists the message durably**, then acknowledges the sender (one tick).
+4. It looks up each recipient in the connection registry. If a recipient is online, the message is **pushed** to their gateway and down their connection; their app acknowledges and the sender sees two ticks.
+5. If a recipient is **offline**, the message stays in their inbox and the system sends a **push notification** (via the phone platform's push service); when the app next connects, it **syncs everything after its last seen sequence number**.
+
+<ChatDeliverySim />
+
+Persisting *before* acknowledging is the key reliability rule: an acknowledged message is never lost, even if every server crashes the next instant.
+
+## Decision 3: Order, Duplicates and Retries
+
+Users trust a conversation only if everyone sees it in the same order. The simplest dependable approach is to give **each conversation a single owner**: all messages for conversation C are routed (by hashing the conversation id) to one partition, which assigns monotonically increasing **sequence numbers**. Clients display by sequence number, not by their own timestamps (phone clocks disagree; see [Clocks & Time](../../distributed-systems/clocks/)). Ordering is only needed *within* a conversation, which is exactly what makes the partitioning possible.
+
+Networks drop acknowledgements, so the sender will retry (the same ambiguity as in [Distributed Basics](../../distributed-systems/distributed-basics/)). Safe retries come from the client-generated id: the owner remembers ids it has seen and ignores repeats.
+
+```python
+import itertools
+
+class Conversation:
+    def __init__(self):
+        self.seq = itertools.count(1)
+        self.by_client_id = {}                                   # idempotency: client message id -> assigned sequence number
+        self.log = []
+    def append(self, client_id, sender, text):
+        if client_id in self.by_client_id:                       # a retry after a lost ack: do not store twice
+            return self.by_client_id[client_id], "duplicate ignored"
+        n = next(self.seq)
+        self.by_client_id[client_id] = n
+        self.log.append((n, sender, text))
+        return n, "stored"
+c = Conversation()
+print(c.append("a-1", "alice", "hi"))
+print(c.append("b-1", "bob", "hello"))
+print(c.append("a-1", "alice", "hi"))                            # Alice's app retried because the ack was lost
+print("log:", c.log)
+
+# Sync a device after it was offline: ask for everything after the last sequence number it saw
+last_seen = 1
+print("device syncs after seq", last_seen, "->", [m for m in c.log if m[0] > last_seen])
+# (1, 'stored')
+# (2, 'stored')
+# (1, 'duplicate ignored')
+# log: [(1, 'alice', 'hi'), (2, 'bob', 'hello')]
+# device syncs after seq 1 -> [(2, 'bob', 'hello')]
+```
+
+This pairing, **at-least-once delivery with idempotent handling**, is how real systems get the *effect* of exactly-once without the impossible guarantee of it (see [Message Queues](../../system-design/message-queues/)). The same sequence-number mechanism powers **multi-device sync**: each device remembers its own cursor and asks for what it is missing.
+
+## Decision 4: Storing Messages
+
+The access pattern is narrow: append to a conversation, and read **the latest N messages of one conversation** (and scroll backwards). There are no joins and no cross-conversation queries. That suits a **partitioned, append-oriented store** keyed by `(conversation_id, sequence/time)` (see [NoSQL](../../databases/nosql/) and [Database Scaling](../../system-design/database-scaling/)). Data for one conversation sits together and ordered, so reading recent history touches one partition.
+
+Two cautions. **Hot partitions:** a very busy conversation (a huge group) concentrates load on one partition, so such cases are bucketed (for example by time window) or handled differently. And **retention is a product choice**: some services keep history forever, others store a message only until delivered, then discard it, which shrinks storage and the privacy surface.
+
+## Decision 5: Group Chat and Fan-Out
+
+One message to a group of *n* people becomes *n − 1* deliveries:
+
+```python
+for members in (2, 10, 256, 100_000):
+    print(f"group of {members:>7,}: 1 message -> {members - 1:>7,} deliveries; at 1 msg/s that is {members - 1:,} writes/s for this one group")
+# group of       2: 1 message ->       1 deliveries; at 1 msg/s that is 1 writes/s for this one group
+# group of      10: 1 message ->       9 deliveries; at 1 msg/s that is 9 writes/s for this one group
+# group of     256: 1 message ->     255 deliveries; at 1 msg/s that is 255 writes/s for this one group
+# group of 100,000: 1 message ->  99,999 deliveries; at 1 msg/s that is 99,999 writes/s for this one group
+```
+
+For ordinary groups (tens to a few hundred people) the service **fans out on write**: store the message once in the conversation log, then push a small pointer to each member's connection or inbox. For very large groups or broadcast channels, per-member work is too heavy: either cap the group size, or let members **pull** the log when they open the chat, so the work is proportional to who actually looks. This is the same fan-out trade-off explored in depth in the [News Feed](../news-feed/) case.
+
+## Presence, Typing and Other Cheap Signals
+
+"Online", "typing…" and read receipts feel important but are low-value, high-volume traffic. Treat them as **best-effort**: they are sent over the same connections but never persisted, can be dropped under load, and presence is determined from heartbeats with an expiry (no heartbeat for 30 seconds means offline). Do **not** broadcast presence to every contact; send it only to people with that conversation open, or users would multiply every status change by their contact list.
+
+## End-to-End Encryption
+
+Many chat products encrypt so that only the two endpoints can read messages (see [Cryptography](../../security/cryptography/)). The servers still route, order, store and acknowledge, but they hold **ciphertext**. This has real design consequences: the server cannot search message text or build server-side previews, key distribution and device verification become part of the protocol, and group messaging needs a scheme for sharing keys among changing members. It is a good example of a security requirement reshaping the architecture.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A gateway crashes | Its connections drop at once | Clients reconnect to another gateway with **exponential backoff and jitter** so they do not all return together |
+| The connection registry loses data | Server cannot find where users are | Entries rebuild as clients reconnect; fall back to inbox plus push notification |
+| An ack is lost | Duplicate send attempt | Client-generated id plus server de-duplication |
+| A conversation partition fails | That conversation pauses | Replicated partitions with automatic leader election (see [Leader Election](../../distributed-systems/leader-election/)) |
+| A reconnect storm (every phone returns after an outage) | Gateways and auth are overwhelmed | Jittered backoff, rate limits on connection setup, load shedding |
+
+## What to Take Away
+
+Chat teaches that the **shape of the traffic decides the architecture**: long-lived connections change the cost model from requests per second to connections per machine. It shows how to buy **ordering cheaply by partitioning on the unit that needs it** (the conversation), how to combine **retries with idempotency**, and how **offline users** are handled with durable storage and cursor-based sync. The next case, the [News Feed](../news-feed/), takes the fan-out question from the group-chat section and makes it the entire problem.
+
+<Callout type="practice">
+Details differ across real products (some store messages only until delivery, some run on very different stacks, protocols vary), and exact numbers are rarely published. This note derives a coherent design from requirements and cites public write-ups where they exist; do not read the figures above as any company's real metrics.
+</Callout>

@@ -1,0 +1,205 @@
+---
+title: "Payment System"
+description: "Correctness over speed: idempotency, a double-entry ledger, state machines and reconciliation."
+order: 10
+tier: core
+takeaways:
+  - "Payments are a **low-traffic, zero-error** problem: a dozen requests per second, but a lost or duplicated charge is a real-world harm, so correctness beats throughput and availability."
+  - "A call to an external provider can time out **after** the money moved. Treat a timeout as **unknown**, never as failure, and resolve it from the provider's records."
+  - "**Idempotency keys** make retries safe end to end, and a **guarded state machine** (with compare-and-set transitions) stops illegal or repeated moves."
+  - "Record money in an **append-only, double-entry ledger**: each transaction's entries sum to zero, nothing is edited, and a mistake is fixed with a **new** compensating entry."
+  - "**Reconciliation** (comparing your books with the provider's settlement data) is the safety net that finds what every other mechanism missed."
+resources:
+  - title: "Stripe: Idempotent requests"
+    url: "https://docs.stripe.com/api/idempotent_requests"
+    note: "A real, production description of idempotency keys for payments."
+  - title: "Square: Books, an immutable double-entry accounting database service"
+    url: "https://developer.squareup.com/blog/books-an-immutable-double-entry-accounting-database-service/"
+    note: "A public account of building a ledger as an append-only service."
+  - title: "Modern Treasury: Accounting for developers"
+    url: "https://www.moderntreasury.com/journal/accounting-for-developers-part-i"
+    note: "A clear introduction to double-entry bookkeeping for engineers."
+  - title: "PCI Security Standards Council"
+    url: "https://www.pcisecuritystandards.org/"
+    note: "The standard governing how card data must be handled."
+---
+
+Most of the systems in this section are about handling **more**: more users, more messages, more bytes. A payment system is about handling **exactly**. It may process only a hundred requests per second, yet it must never charge a customer twice, never lose a payment, and always be able to prove where every cent went. That inversion of priorities is why it is such a useful case study: nearly every technique here exists to make a system **correct despite unreliable parts**, building on [Transactions & ACID](../../databases/transactions-and-acid/), [Distributed Transactions](../../distributed-systems/distributed-transactions/) and [Distributed Basics](../../distributed-systems/distributed-basics/).
+
+## Requirements
+
+**Functional:** a customer pays a merchant by card or bank transfer; the payment can be authorized, captured, refunded or disputed; the merchant sees accurate balances and payouts; every movement of money is recorded.
+
+**Non-functional (in priority order):**
+
+1. **Correctness:** no double charges, no lost payments, no money created or destroyed.
+2. **Auditability:** every change is traceable and permanent; regulators and accountants must be able to reconstruct history.
+3. **Security and compliance:** card data is tightly regulated (PCI DSS); minimize how much of it you touch.
+4. **Availability:** important, but if forced to choose, **refuse a payment rather than risk a wrong one** (the CP side of [CAP](../../distributed-systems/cap-theorem/)).
+5. **Latency:** a payment should complete in seconds; throughput is a minor concern.
+
+A little vocabulary: a card payment is usually **authorized** first (the bank checks and *holds* the funds), then **captured** (the merchant claims them), and **settled** days later when money actually moves between banks. A **refund** returns funds; a **chargeback** is a dispute initiated by the cardholder's bank.
+
+## Estimate the Load
+
+```python
+per_day = 1_000_000
+print(f"{per_day:,} payments/day = {per_day / 86_400:,.0f}/s average, ~{per_day / 86_400 * 10:,.0f}/s at a busy peak")
+# 1,000,000 payments/day = 12/s average, ~116/s at a busy peak
+```
+
+A million payments a day is **twelve per second**. A single well-run database can carry that, so none of this case is about scale. The pressure comes from the other direction: **every one of those twelve per second must be right**, and each depends on external systems (card networks, banks) that you do not control and that fail in ways you cannot see. (Illustrative figures.)
+
+## The Simplest Design, and Where It Breaks
+
+The checkout service calls the payment provider's API, and if it returns success, writes `paid = true` on the order. Count the ways it goes wrong:
+
+- The call **times out**, but the provider did charge the card. Mark it failed and the customer paid for nothing; retry blindly and they pay twice.
+- The service **crashes** between the provider's success and the database write, so the charge exists but our records say nothing.
+- A **retry** (by the client, a load balancer or an impatient user clicking twice) submits the same payment again.
+- Money is stored as a **float**, and the cents drift.
+- A balance is a number someone can overwrite, with **no history** of how it got there.
+
+Each failure maps to a technique below.
+
+## Decision 1: Represent Money Exactly
+
+Binary floating point cannot represent most decimal fractions, and the errors accumulate. Store amounts as **integers in the smallest currency unit** (cents), together with a **currency code**; convert only for display:
+
+```python
+from decimal import Decimal
+
+print("0.1 + 0.2 =", 0.1 + 0.2, "| 3 x 1.1 =", 3 * 1.1)
+print("integers in minor units:", 3 * 110, "cents ->", f"{3 * 110 // 100}.{3 * 110 % 100:02d}", "| Decimal:", Decimal("1.10") * 3)
+# 0.1 + 0.2 = 0.30000000000000004 | 3 x 1.1 = 3.3000000000000003
+# integers in minor units: 330 cents -> 3.30 | Decimal: 3.30
+```
+
+(Beware that currencies differ in minor units: the yen has none, some currencies have three decimals, which is why a currency code travels with every amount.)
+
+## Decision 2: Idempotency Keys, End to End
+
+The answer to "I do not know if my request arrived" is to make repeating it harmless. Every payment request carries a unique **idempotency key** generated by the *client* when the user starts the payment. The server stores the key with the request and result **in the same transaction** as its first effect, enforced by a **unique constraint** so that two concurrent retries cannot both proceed; a repeat returns the stored outcome instead of acting again. The key is also passed **on to the payment provider**, so a retry from our service to theirs is de-duplicated too. The chain of keys, from browser through our API to the provider, is what makes the whole path safe to retry.
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("CREATE TABLE payments (idem_key TEXT PRIMARY KEY, amount INTEGER, state TEXT);")
+def create_payment(key, amount):
+    try:
+        with db:
+            db.execute("INSERT INTO payments VALUES (?, ?, 'created')", (key, amount))
+        return "new payment"
+    except sqlite3.IntegrityError:
+        return "duplicate request: return the stored payment"
+print(create_payment("k-9", 4999), "|", create_payment("k-9", 4999))
+# new payment | duplicate request: return the stored payment
+```
+
+## Decision 3: A Guarded State Machine, and the "Unknown" State
+
+A payment moves through defined states: `created → authorized → captured → refunded`, with side exits such as `failed` and `voided`. Model that explicitly, and make each transition a **compare-and-set** on the current state, so a repeated or out-of-order event cannot move it twice or skip a step:
+
+```python
+ALLOWED = {("created", "authorized"), ("authorized", "captured"), ("authorized", "voided"), ("captured", "refunded")}
+def transition(key, frm, to):
+    if (frm, to) not in ALLOWED:                                 # the state machine defines which moves exist at all
+        return False
+    cur = db.execute("UPDATE payments SET state = ? WHERE idem_key = ? AND state = ?", (to, key, frm))   # compare-and-set
+    return cur.rowcount == 1
+print("created -> authorized:", transition("k-9", "created", "authorized"), "| again (already moved):", transition("k-9", "created", "authorized"))
+print("authorized -> captured:", transition("k-9", "authorized", "captured"), "| captured -> created (illegal jump):", transition("k-9", "captured", "created"))
+# created -> authorized: True | again (already moved): False
+# authorized -> captured: True | captured -> created (illegal jump): False
+```
+
+The most important state is the one many designs omit: **unknown** (or "pending"). When the call to the provider times out, the honest answer is *we do not know whether it charged*. Never convert that into "failed" or "succeeded" by guessing. Park the payment as unknown, and **resolve it from the provider's records**: query the payment's status by our reference, or wait for the provider's **webhook** (an asynchronous callback announcing the outcome). Step through the failure that matters, and change how the system handles it:
+
+<PaymentFlowSim />
+
+The lesson is visible in the combinations: a retry **with** the key is safe; a retry **without** it charges twice; a timeout treated as failure takes the customer's money and delivers nothing; marking it unknown and checking status is safe even with no retry.
+
+Webhooks are themselves untrusted input and arrive **at least once**, possibly out of order: **verify the signature**, process idempotently (key on the event id), and treat them as hints to re-fetch the true state rather than as the state itself.
+
+## Decision 4: The Ledger
+
+Money is not a number you update; it is a **history you add to**. A **double-entry ledger** records every movement as a transaction made of entries on different accounts that **sum to zero**: money always comes from somewhere and goes somewhere. A $50 payment with a $1.50 fee debits the customer's funds and credits the merchant's payable and the platform's fees account, and the entries must balance:
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE entries (id INTEGER PRIMARY KEY, txn TEXT NOT NULL, account TEXT NOT NULL, amount INTEGER NOT NULL);   -- amount in cents
+""")
+def post(txn, lines):
+    if sum(a for _, a in lines) != 0:
+        raise ValueError(f"unbalanced transaction {txn}: entries sum to {sum(a for _, a in lines)}")
+    with db:                                                     # all lines commit together or not at all
+        db.executemany("INSERT INTO entries (txn, account, amount) VALUES (?, ?, ?)", [(txn, acc, amt) for acc, amt in lines])
+post("pay-1", [("customer_funds", -5000), ("merchant_payable", +4850), ("platform_fees", +150)])   # $50.00 payment, $1.50 fee
+try:
+    post("bad-1", [("customer_funds", -100), ("merchant_payable", +90)])                         # 10 cents would vanish
+except ValueError as e:
+    print("rejected:", e)
+balance = lambda: dict(db.execute("SELECT account, SUM(amount) FROM entries GROUP BY account ORDER BY account"))
+print("after payment:", balance(), "| total:", sum(balance().values()))
+post("refund-1", [("merchant_payable", -4850), ("platform_fees", -150), ("customer_funds", +5000)])   # a refund is a NEW transaction, not an edit
+print("after refund :", balance(), "| entries kept:", db.execute("SELECT COUNT(*) FROM entries").fetchone()[0])
+# rejected: unbalanced transaction bad-1: entries sum to -10
+# after payment: {'customer_funds': -5000, 'merchant_payable': 4850, 'platform_fees': 150} | total: 0
+# after refund : {'customer_funds': 0, 'merchant_payable': 0, 'platform_fees': 0} | entries kept: 6
+```
+
+Four properties make this the standard approach:
+
+- **Invariant:** the books always sum to zero, so a bug that creates or destroys money is detectable immediately (the unbalanced posting was rejected).
+- **Atomic:** all entries of a transaction commit in **one database transaction**, or none do.
+- **Append-only:** entries are never updated or deleted. A refund is a **new** transaction that reverses the old one, so history is permanent and auditable (note six entries kept after the refund).
+- **Derived balances:** a balance is the *sum of entries*; any stored balance is a cache that can be rebuilt and checked.
+
+The ledger is the **source of truth for money** and deserves a strongly consistent, transactional store with synchronous replication, not an eventually consistent one.
+
+## Decision 5: Reconciliation, the Safety Net
+
+Even with all of this, systems disagree: a webhook is lost, a provider reports a fee differently, a bug slips through. **Reconciliation** is a scheduled job that compares **your records with the provider's** settlement reports and flags every mismatch, so errors are found in hours instead of at audit time:
+
+```python
+ours = {"p1": 5000, "p2": 1299, "p3": 7500}
+theirs = {"p1": 5000, "p2": 1299, "p4": 2500, "p3": 7000}
+for ref in sorted(set(ours) | set(theirs)):
+    if ref not in theirs:
+        print(f"{ref}: in our books, missing at the provider")
+    elif ref not in ours:
+        print(f"{ref}: charged at the provider, missing from our books")
+    elif ours[ref] != theirs[ref]:
+        print(f"{ref}: amount differs (ours {ours[ref]}, provider {theirs[ref]})")
+# p3: amount differs (ours 7500, provider 7000)
+# p4: charged at the provider, missing from our books
+```
+
+Each category has a fix: record the missing payment, refund the duplicate, investigate the amount. Reconciliation is **detection, not prevention**; it exists because prevention is never perfect, and the design assumes it will be needed.
+
+## Security and Compliance
+
+Card numbers are among the most regulated data in existence (see [Compliance & Privacy](../../security/compliance-and-privacy/) for the general principles). The practical architecture is to **never touch them**: the customer enters the card in a field hosted by the provider (or an iframe or SDK), the provider returns a **token** representing it, and your systems store and pass only the token. That shrinks your compliance scope dramatically. Everything else follows ordinary discipline: TLS everywhere, encryption at rest, least privilege (see [Authorization](../../security/authorization/)), and **audit logs** of every access and change. Fraud screening sits alongside as a scoring step before authorization, a good place for rules plus models.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| Timeout after the provider charged | Outcome unknown | Unknown state; idempotent retry; status query or webhook; reconciliation |
+| Our service crashes mid-payment | State partly updated | Single transaction for state plus ledger plus outbox event; resume from persisted state |
+| Duplicate request (user double-click, retry) | Double charge | Idempotency key with a unique constraint |
+| Webhook lost, duplicated or reordered | Stale or inconsistent state | Signature check, idempotent handling, re-fetch the true state |
+| Provider outage | Payments cannot complete | Fail clearly, queue where safe, optionally fail over to a second provider (with care for duplicates) |
+| Bug creates or destroys money | Books wrong | Zero-sum invariant checks, reconciliation, append-only corrections |
+
+## What to Take Away
+
+When correctness dominates, the techniques change: **model the uncertainty** (the unknown state) instead of hiding it, make every operation **idempotent** with end-to-end keys, **constrain state changes** with a machine and compare-and-set, record money in an **append-only double-entry ledger** whose invariants catch bugs, and **reconcile** against the outside world because prevention is never perfect. The same toolkit appears wherever an action cannot be undone. The final case, the [Distributed Key-Value Store](../key-value-store/), pulls together the distributed-systems theory behind these systems, building the kind of storage engine that holds data like this.
+
+<Callout type="practice">
+Never build card handling, ledgers or payment routing casually: use an established provider for card data and be explicit about what you own. Real systems add many layers (fraud, 3-D Secure, multi-currency, payouts, tax, dispute handling) and vary by country and card network. This note derives the core correctness techniques; the Stripe and Square articles above are good public primary sources.
+</Callout>

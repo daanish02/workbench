@@ -1,0 +1,174 @@
+---
+title: "Video Streaming"
+description: "Transcoding pipelines, CDNs and adaptive bitrate: the data path is the system."
+order: 4
+tier: core
+takeaways:
+  - "Video is **bandwidth-bound**: at this scale the data transfer, not the database, is the system, and no single origin can serve it."
+  - "Uploads go through an **asynchronous pipeline**: store the original, **transcode** it in parallel into a **ladder** of resolutions, and package it as short **segments** plus a manifest."
+  - "A **CDN** serves nearly all bytes from edge caches near viewers; popular titles can be **pre-positioned**, the long tail is fetched on demand."
+  - "**Adaptive bitrate (ABR)** lets the player pick a quality for every few-second segment from its measured throughput and buffer, trading resolution for smooth playback."
+  - "Metadata, search, recommendations and comments are **separate, ordinary services**; the heavy path is the media path."
+resources:
+  - title: "Netflix Open Connect"
+    url: "https://openconnect.netflix.com/en/"
+    note: "A public description of a purpose-built CDN placed inside ISP networks."
+  - title: "RFC 8216: HTTP Live Streaming"
+    url: "https://www.rfc-editor.org/rfc/rfc8216"
+    note: "The manifest-plus-segments format behind most adaptive streaming."
+  - title: "Adaptive bitrate streaming (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Adaptive_bitrate_streaming"
+    note: "Bitrate ladders, segment switching and the main player algorithms."
+  - title: "MDN: Setting up adaptive streaming media sources"
+    url: "https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Audio_and_video_delivery/Setting_up_adaptive_streaming_media_sources"
+---
+
+Video streaming is the opposite of the [news feed](../news-feed/): instead of many tiny items, a small number of **very large** files, delivered for long periods to viewers on wildly different networks. That changes what matters. The metadata database that dominated earlier cases becomes a minor component, and the decisive questions are about **bytes**: how a raw upload becomes something every device can play, where those bytes are stored, how they reach a viewer without crossing the planet, and what the player does when the network misbehaves.
+
+## Requirements
+
+**Functional:** upload a video; play it on any device at a quality that suits the connection; seek anywhere; plus the surrounding product (titles, search, recommendations, comments, view counts).
+
+**Non-functional:**
+
+- **Fast start and smooth playback:** the video should begin within a second or two and not freeze. **Rebuffering** is the metric viewers feel most.
+- **Global reach:** viewers are everywhere, on fibre, Wi-Fi and congested mobile networks.
+- **Cost:** delivery bandwidth is the largest bill, so efficiency (fewer bits for the same quality) pays directly.
+- **Durability:** an uploaded video must never be lost.
+- **Scale in the extreme:** the amount of data in motion is far beyond any other case here.
+
+## Estimate the Load
+
+```python
+viewers, hours, mbps = 100_000_000, 1, 3
+egress_pb = viewers * hours * 3600 * mbps / 8 / 1e9
+print(f"{viewers:,} viewers x {hours} h x {mbps} Mbit/s = {egress_pb:,.0f} PB per day = {egress_pb * 8e9 * 1e6 / 86_400 / 1e12:,.1f} Tbit/s on average")
+uploaded_hours, gb_per_hour_all_renditions = 100_000, 3
+print(f"new storage: {uploaded_hours * gb_per_hour_all_renditions / 1000:,.0f} TB per day for {uploaded_hours:,} uploaded hours")
+# 100,000,000 viewers x 1 h x 3 Mbit/s = 135 PB per day = 12.5 Tbit/s on average
+# new storage: 300 TB per day for 100,000 uploaded hours
+```
+
+An average of **12.5 terabits per second** (and peaks well above that) cannot come from one data centre, and could not cross the long-haul links if it tried. This single number forces the architecture: the bytes must be **cached close to viewers**, and the core data centres must serve only a small fraction. The stored volume (hundreds of terabytes per day) is large but is an ordinary object-storage workload. (Illustrative figures; real services do not publish exact ones.)
+
+## The Simplest Design, and Where It Breaks
+
+Store the uploaded file on a server and let players download it over HTTP. It works for a few viewers. It fails on three fronts: the **format** (one file in one codec and resolution suits almost nobody's device and connection), **delivery** (every viewer pulls from the same far-away machine), and **network variation** (a single high-quality file freezes whenever the connection dips). The rest of the design answers those three.
+
+## Decision 1: An Asynchronous Processing Pipeline
+
+An upload is not playable yet. The path is a pipeline, driven by queues (see [Message Queues](../../system-design/message-queues/)):
+
+1. **Upload:** the client sends the original in chunks (resumable, so a dropped connection does not restart a multi-gigabyte upload) straight to **object storage**.
+2. **Event:** a message announces "video X uploaded" and returns control to the user; processing happens later.
+3. **Transcode:** the original is converted into a **ladder** of renditions: for example 240p, 360p, 480p, 720p, 1080p and higher, each with its own bitrate, possibly in several codecs. Transcoding is the most expensive compute in the system, so the video is **split into independent chunks** that many workers transcode in parallel, then reassembled. A failed chunk is retried alone.
+4. **Package:** each rendition is cut into **segments** a few seconds long, and a **manifest** (a small text file) lists the available renditions and their segment URLs. This is the structure of HLS and MPEG-DASH.
+5. **Publish:** segments and manifest go to object storage; metadata is marked "ready"; CDNs can now serve it.
+
+The asynchrony is deliberate: transcoding takes minutes to hours, it fails and retries independently, and it can be scaled with the upload rate. Because it is **idempotent per chunk**, a retry is harmless. Different videos benefit from different ladders (a static lecture needs far fewer bits than a sports match for the same quality), which is why some services analyse each title and choose its ladder individually.
+
+## Decision 2: Segments and a Manifest
+
+Why cut video into short segments served over plain HTTP? Because it makes the video **just files**: any web server or CDN can cache and serve them, with no special streaming server and no per-viewer state. Seeking is a matter of fetching the segment that contains the target time. And because every rendition is segmented at the same points, the player can **switch quality between segments** without a visible seam. That is the foundation of adaptive streaming.
+
+## Decision 3: The CDN Does the Work
+
+The CDN (see [Load Balancing & CDNs](../../networks/load-balancing-and-cdns/)) is a geographically distributed set of caches. A player requests a segment from a nearby **edge**; on a hit it is served locally, and on a miss the edge fetches it from a mid-tier cache or the **origin** (the object store), and keeps a copy. Because video popularity is extremely skewed (a few titles take most of the views, as in the [URL shortener](../url-shortener/)'s cache analysis), edge hit ratios are very high.
+
+Two refinements matter at this scale:
+
+- **Pre-positioning popular content.** Instead of waiting for the first viewer to trigger a miss, the service can predict what will be popular (a new release, a trending title) and **push** it to edge caches during off-peak hours. This is how some providers keep the origin nearly idle at peak. The long tail is pulled on demand.
+- **Protecting the origin from stampedes.** When a video suddenly goes viral, thousands of edges miss at once. A mid-tier "origin shield" and **request coalescing** (many waiting requests for the same segment share one fetch) stop the origin from being flattened.
+
+Viewers are routed to a nearby edge using DNS or anycast, with health checks to skip failed nodes (see [DNS](../../networks/dns/)).
+
+## Decision 4: Adaptive Bitrate
+
+A viewer's bandwidth is not constant, especially on mobile. A player that always requests 1080p will freeze the moment the network drops below its bitrate. **Adaptive bitrate (ABR)** puts the decision in the player: before each segment it estimates throughput from recent downloads, looks at how many seconds of video it has buffered, and picks the **best rendition it can sustain**. Run the same network through both players:
+
+<AdaptiveBitrate />
+
+The same algorithm in code, on three networks (real output):
+
+```python
+LADDER = [0.4, 0.8, 1.4, 2.8, 5.0]                               # Mbit/s for 240p, 360p, 480p, 720p, 1080p
+SEG = 4                                                          # seconds of video per segment
+
+def stable(t): return 6.0
+def dips(t): return 1.0 if 40 <= t < 70 else 6.0                # a 30 second congestion dip
+def cellular(t): return [4.0, 1.5, 0.9, 3.0, 0.6, 2.5][int(t // 15) % 6]
+
+def play(bw, policy, duration=120):
+    t, buffer, rendition, stalls, stall_time, est = 0.0, 0.0, 0, 0, 0.0, bw(0)
+    played, startup = 0.0, None
+    chosen = []
+    while played < duration:
+        if policy == "fixed 1080p":
+            rendition = 4
+        else:                                                    # adaptive: highest rendition below 85% of recent throughput
+            rendition = max([i for i, r in enumerate(LADDER) if r <= 0.85 * est] or [0])
+            if buffer < 6:                                       # buffer nearly empty: play safe
+                rendition = 0
+        chosen.append(LADDER[rendition])
+        download = LADDER[rendition] * SEG / bw(t)               # seconds to fetch this segment
+        est = 0.5 * est + 0.5 * bw(t)                            # smoothed throughput estimate
+        if startup is None:                                      # the first segment is start-up delay, not a stall
+            startup = download
+        elif download > buffer:                                  # the buffer ran dry while downloading: a stall
+            stalls += 1
+            stall_time += download - buffer
+            buffer = 0.0
+        else:
+            buffer -= download
+        buffer += SEG
+        t += download
+        played += SEG
+        if buffer > 20:                                          # the player pauses downloading when 20 s are buffered
+            t += buffer - 20                                     # ...so wall-clock time passes while playback drains it
+            buffer = 20
+    return stalls, stall_time, sum(chosen) / len(chosen), startup
+
+for name, bw in (("stable 6 Mbit/s", stable), ("congestion dip", dips), ("cellular", cellular)):
+    for policy in ("fixed 1080p", "adaptive"):
+        stalls, stall_time, avg, startup = play(bw, policy)
+        print(f"{name:<16} {policy:<12} start-up {startup:>3.1f}s, stalls {stalls:>2} ({stall_time:>5.1f}s frozen), average quality {avg:.1f} Mbit/s")
+# stable 6 Mbit/s  fixed 1080p  start-up 3.3s, stalls  0 (  0.0s frozen), average quality 5.0 Mbit/s
+# stable 6 Mbit/s  adaptive     start-up 0.3s, stalls  0 (  0.0s frozen), average quality 4.7 Mbit/s
+# congestion dip   fixed 1080p  start-up 3.3s, stalls  2 ( 24.7s frozen), average quality 5.0 Mbit/s
+# congestion dip   adaptive     start-up 0.3s, stalls  1 (  4.3s frozen), average quality 3.6 Mbit/s
+# cellular         fixed 1080p  start-up 5.0s, stalls 29 (291.8s frozen), average quality 5.0 Mbit/s
+# cellular         adaptive     start-up 0.4s, stalls  0 (  0.0s frozen), average quality 1.6 Mbit/s
+```
+
+On a bad network the fixed player freezes for nearly five minutes of a two-minute video (it keeps stalling), while the adaptive one never stalls and settles at lower quality. Note also the **start-up**: the adaptive player begins at the lowest quality so the first frame appears in a fraction of a second, then climbs. Viewers forgive lower resolution far more readily than a frozen frame.
+
+<Callout type="key">
+ABR moves the quality decision to the **edge of the system, the player**, which is the only component that actually sees the viewer's network. The server just offers choices and stays stateless, which is also what lets plain HTTP caches serve it.
+</Callout>
+
+## Everything Else Is Ordinary Services
+
+Titles, descriptions, owners, comments, likes, search and recommendations are small-data services built from earlier notes: a partitioned store for metadata, a cache in front of it, queues for events (a "view" event must not slow playback), and a search index (see the [Search & Autocomplete](../search-autocomplete/) case). **View counts** deserve a note: counting millions of concurrent viewers exactly is expensive, so counters are batched and approximate in the short term and reconciled later (see [Message Queues](../../system-design/message-queues/)). Keep the media path and the metadata path separate so a metadata problem never stops playback of already-cached video.
+
+## Live Streaming Changes One Thing
+
+For live video the segments do not exist in advance: the encoder produces them continuously, and the manifest grows. The pipeline shortens to ingest, quick transcode, package and distribute, and the CDN cannot pre-position anything. Latency becomes a trade-off: shorter segments reduce delay but add overhead and risk more rebuffering. Everything else (ladders, CDN, ABR) stays the same.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| An edge server dies | Its viewers' requests fail | Health-checked routing sends them to another edge; players retry the segment |
+| A new video goes viral | Many edges miss at once | Origin shield, request coalescing, proactive pre-positioning |
+| A transcode worker fails | One chunk is missing | Retry just that chunk; the pipeline is idempotent |
+| The network degrades | Buffer drains | ABR drops to a lower rendition |
+| Origin storage is slow or down | Misses fail | Replicated object storage; edges keep serving cached content |
+| Upload connection drops | Large upload would restart | Resumable chunked uploads |
+
+## What to Take Away
+
+When the data is large, **the data path is the system**: put the bytes near the viewer (CDN), keep the origin for misses, and process uploads **asynchronously and in parallel**. Turning a stream into **cacheable files with a manifest** makes it plain HTTP, and **adaptive bitrate** handles the one thing you cannot control, the viewer's network, by deciding at the player. The next case, [Ride Hailing](../ride-hailing/), is the other extreme: tiny messages, but data that changes every few seconds and must be matched in real time.
+
+<Callout type="practice">
+Real platforms differ in codecs, ladders, CDN strategy (some build their own, some rent) and live-latency targets, and they publish little exact data. The structure here (asynchronous parallel transcoding, segments plus manifest, CDN-first delivery, client-side ABR) is the widely documented core.
+</Callout>

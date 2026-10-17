@@ -1,0 +1,129 @@
+---
+title: "News Feed"
+description: "Fan-out on write versus read, and the celebrity problem."
+order: 3
+tier: core
+takeaways:
+  - "A feed is a **read-heavy aggregation**: for each reader, collect recent posts from everyone they follow, newest first."
+  - "**Fan-out on read** (pull) is cheap to write but costs one lookup per followee on every load; **fan-out on write** (push) precomputes each timeline so a read is one lookup, but a post costs one write per follower."
+  - "The **celebrity problem**: one account with tens of millions of followers makes push explode. Production systems use a **hybrid**: push for ordinary users, pull celebrities at read time and merge."
+  - "A timeline stores **post ids**, not post bodies, so edits and deletes take effect when the ids are hydrated."
+  - "Skip work nobody sees: materialize timelines only for **active** users, and keep each list **bounded**."
+resources:
+  - title: "Raffi Krikorian: Timelines at Scale (InfoQ)"
+    url: "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/"
+    note: "A public talk on the fan-out trade-off, from an engineer who ran it."
+  - title: "Designing Data-Intensive Applications, ch. 1"
+    url: "https://dataintensive.net/"
+    note: "Uses exactly this timeline example to introduce describing load and performance."
+  - title: "Redis lists"
+    url: "https://redis.io/docs/latest/develop/data-types/lists/"
+    note: "The natural structure for a bounded per-user timeline of ids."
+---
+
+The news feed (a home timeline on Twitter or X, a feed on Instagram or Facebook) looks like a simple query: *show me the latest posts from the people I follow*. It is a famous case study because that one sentence hides a real dilemma, and the best answer is a compromise. Where the [chat application](../chat-application/) made *delivery* the problem, here the problem is **aggregation at read time versus work at write time**, and which one you pay for.
+
+## Requirements
+
+**Functional:** publish a post; follow and unfollow; open a **home feed** of recent posts from people you follow, newest first (optionally ranked); scroll back through older posts.
+
+**Non-functional:**
+
+- **Fast reads:** the feed is the first screen. Open it in a few hundred milliseconds.
+- **Freshness:** a post should reach followers within seconds, not hours (though a few seconds of delay is acceptable).
+- **Availability over perfect consistency:** a post appearing a moment late, or a count being slightly off, matters far less than the feed failing to load. (This is the AP side of [CAP](../../distributed-systems/cap-theorem/).)
+- **Skewed load:** most users have a few hundred followers; a few have tens of millions.
+
+## Estimate the Load
+
+```python
+dau, feed_loads, posts_per_user, followers, followees = 200_000_000, 5, 0.5, 200, 200
+reads = dau * feed_loads / 86_400
+posts = dau * posts_per_user / 86_400
+print(f"feed loads {reads:,.0f}/s, new posts {posts:,.0f}/s")
+print(f"fan-out on read : {reads * followees:,.0f} follow-lookups/s (each load queries {followees} people)")
+print(f"fan-out on write: {posts * followers:,.0f} timeline inserts/s (each post is copied to {followers} followers)")
+print(f"one celebrity with 50 million followers posts once: {50_000_000:,} inserts for a single post")
+# feed loads 11,574/s, new posts 1,157/s
+# fan-out on read : 2,314,815 follow-lookups/s (each load queries 200 people)
+# fan-out on write: 231,481 timeline inserts/s (each post is copied to 200 followers)
+# one celebrity with 50 million followers posts once: 50,000,000 inserts for a single post
+```
+
+Ten times more feed loads than posts, so the read path matters most. The two obvious designs differ by a factor of ten in work (about 2.3 million lookups per second versus 231 thousand inserts per second). And the last line is the trap: for one account, the cheaper design explodes.
+
+## Design A: Fan-Out on Read (Pull)
+
+Store each post once, under its author. When a reader opens the app, look up everyone they follow, fetch each person's recent posts, merge them by time, and return the newest page.
+
+- **Cheap writes:** posting is one insert.
+- **Always fresh:** the feed is computed from the latest data.
+- **Expensive reads:** every load is a scatter-gather over hundreds of accounts, and reads are the dominant traffic. Latency is bounded by the slowest of those lookups, and the work is repeated for the same reader every time they refresh.
+
+## Design B: Fan-Out on Write (Push)
+
+When someone posts, immediately copy the post's **id** into the **timeline** of every follower: a precomputed, bounded list per user, kept in a fast in-memory store. Reading the feed becomes one lookup.
+
+- **Cheap, fast reads:** one list read, then fetching the post bodies in a batch.
+- **Expensive writes:** a post costs one insert per follower, done asynchronously by workers from a queue (see [Message Queues](../../system-design/message-queues/)).
+- **Wasted work:** many followers never open the app today.
+- **The celebrity problem:** 50 million followers means 50 million inserts for one post, and the last followers see it long after the first.
+
+Compare the three strategies for different accounts. Slide the poster's follower count up, and watch where push falls apart:
+
+<FanoutCompare />
+
+## The Hybrid
+
+Neither pure design survives contact with reality, so production systems combine them:
+
+1. For **ordinary accounts**, fan out on write: followers' timelines are precomputed.
+2. For **celebrity accounts** (a threshold such as hundreds of thousands of followers), **do not** push. Store the post once.
+3. When a reader loads their feed, read their precomputed timeline **and** fetch recent posts from the *few* celebrities they follow, then **merge by time**. Most people follow only a handful of celebrities, so the extra work is small and bounded.
+
+```python
+import heapq
+
+# 'a' is a celebrity: its posts were stored once, NOT pushed into followers' timelines
+posts_by_user = {"a": [(1, "a1"), (3, "a3")], "e": [(2, "e2"), (5, "e5")], "f": [(4, "f4")]}
+pushed_timeline_b = [(5, "e5"), (4, "f4"), (2, "e2")]                  # b's precomputed list: ordinary accounts only
+pulled = sorted(posts_by_user["a"], reverse=True)                      # read-time fetch of the celebrity b follows
+merged = [p for _, p in heapq.merge(pushed_timeline_b, pulled, reverse=True)]
+print("hybrid read for b:", [p for _, p in pushed_timeline_b], "+ pulled", [p for _, p in pulled], "->", merged)
+# hybrid read for b: ['e5', 'f4', 'e2'] + pulled ['a3', 'a1'] -> ['e5', 'f4', 'a3', 'e2', 'a1']
+```
+
+The merge is a standard merge of sorted lists, so the read stays cheap however many celebrities exist. Two more savings come from not working for people who are not looking: only materialize timelines for **recently active** users (a returning user's timeline is rebuilt on demand by pull), and cap each timeline at a few hundred ids.
+
+## What Gets Stored Where
+
+| Data | Shape | Store | Why |
+| --- | --- | --- | --- |
+| **Posts** | post id → author, text, media link, time | Partitioned key-value or wide-column store | Lookup by id; write once, read many |
+| **Social graph** | user → followees, user → followers | Partitioned store keyed by user (both directions) | Fan-out needs "followers of X"; pull needs "followees of Y" |
+| **Timelines** | user → bounded list of post ids | In-memory store (for example Redis lists) | One fast read per feed load; losing it is recoverable |
+| **Media** | image/video bytes | Object storage plus CDN | Large, cacheable (see [Video Streaming](../video-streaming/)) |
+
+A timeline stores **ids, not post bodies**. That keeps it small, and it means edits and deletions need no fan-out at all: the id resolves to the current post (or to "deleted") when the feed is **hydrated**, with a batch lookup that should hit a post cache almost every time (see [Caching Strategies](../../system-design/caching-strategies/)). Paging uses a **cursor** (the last post id seen), never an offset, because new posts keep arriving (see [API Design](../../system-design/api-design/)).
+
+## Ranking, Briefly
+
+Many feeds are not purely chronological. The common shape is a pipeline: **candidate generation** (the hybrid above produces a few hundred candidate posts), **scoring** by a model that predicts engagement, then **filtering and mixing** (remove duplicates and blocked accounts, insert ads). The infrastructure above does not change; ranking is a layer over the candidates, which also makes it a good place to cache and precompute.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| Fan-out workers fall behind | Posts reach followers late | Autoscale workers, prioritize active users, watch queue depth and age |
+| A timeline cache node dies | Some timelines vanish | Rebuild by pull on next read; replicate hot data |
+| A celebrity posts | Read spike on one author | Cache that author's recent posts at the edge; they are read by millions |
+| A user follows a celebrity | Their reads now include the pull path | Merge is cheap; cap celebrity follows in the pull set if needed |
+| Unfollow or delete | A stale id remains in timelines | Filter at hydration time using current follow and delete state |
+
+## What to Take Away
+
+The feed teaches the central trade-off of read-heavy systems: **do the work once at write time, or repeatedly at read time**. Push moves cost to writes (good when reads dominate), pull moves it to reads (good for skewed or rarely read data), and the winning design **splits by the shape of the data** instead of picking one. It also shows **bounded precomputation** (limited lists for active users), **ids instead of copies**, and **cursors instead of offsets**. The next case, [Video Streaming](../video-streaming/), moves from small posts to very large files, where the data path through a CDN matters more than any database.
+
+<Callout type="practice">
+Do not read the thresholds and figures here as any company's real configuration; they are illustrative. The structure (push for the many, pull for the few, merge at read) is the part that is widely documented. For one public account, see the Twitter timeline talk linked above.
+</Callout>

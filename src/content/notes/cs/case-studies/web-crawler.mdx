@@ -1,0 +1,202 @@
+---
+title: "Web Crawler"
+description: "The URL frontier, politeness, de-duplication and traps."
+order: 8
+tier: core
+takeaways:
+  - "A crawler is a **graph traversal at internet scale**: fetch a page, extract its links, queue the unseen ones, repeat, forever."
+  - "The heart of it is the **URL frontier**: a prioritized queue that is also **per host**, so every site is fetched politely (rate-limited, honouring `robots.txt`)."
+  - "Remembering billions of seen URLs is a memory problem: a **Bloom filter** (a few bits per URL, no false negatives) fits in RAM; **URL normalization** makes different spellings of one page collapse."
+  - "The web fights back: **spider traps**, duplicate and near-duplicate content, slow or hostile servers. Defend with depth and size limits, content hashing and timeouts."
+  - "Freshness is a **scheduling** problem: recrawl pages in proportion to how often they change and how much they matter."
+resources:
+  - title: "RFC 9309: Robots Exclusion Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc9309"
+  - title: "Common Crawl"
+    url: "https://commoncrawl.org/"
+    note: "An open, regularly published web crawl you can inspect and analyse."
+  - title: "Sitemaps protocol"
+    url: "https://www.sitemaps.org/protocol.html"
+    note: "How sites tell crawlers what exists and when it changed."
+  - title: "Heydon and Najork: Mercator, a scalable, extensible web crawler"
+    url: "https://www.cs.cornell.edu/courses/cs685/2002fa/mercator.pdf"
+    note: "The classic paper behind the frontier design used here."
+---
+
+A web crawler is the part of a search engine nobody sees: the machine that discovers and downloads the pages the [search index](../search-autocomplete/) is built from. It is a textbook graph traversal (see [Graph Algorithms](../../algorithms/graph-algorithms/)) with one twist: the graph is the entire web, it changes while you walk it, and every node you visit belongs to someone who can be harmed by a careless visitor. That is what makes the case instructive: the algorithm is trivial, and everything interesting is **scheduling, politeness, memory and defence**.
+
+## Requirements
+
+**Functional:** starting from seed URLs, fetch pages, extract links, discover new pages, store the content for later processing, and **recrawl** pages to keep the copy fresh.
+
+**Non-functional:**
+
+- **Politeness:** never overload a website. Honour `robots.txt` and limit request rate per host.
+- **Scale:** billions of pages per month, so many fetchers in parallel.
+- **Robustness:** survive malformed HTML, endless pages, slow or lying servers, and its own crashes.
+- **Extensibility:** the same crawler should feed different downstream consumers (search, archive, analytics).
+- **Freshness and priority:** important, fast-changing pages are revisited sooner than static, obscure ones.
+
+## Estimate the Load
+
+```python
+import math
+
+pages_per_month, page_kb = 1_000_000_000, 100
+per_sec = pages_per_month / (30 * 86_400)
+print(f"{per_sec:,.0f} pages/s, {per_sec * page_kb / 1000:,.1f} MB/s download ({per_sec * page_kb * 8 / 1e6:.2f} Gbit/s), {pages_per_month * page_kb / 1e9:,.0f} TB raw per month")
+urls_seen = 10_000_000_000
+print(f"remembering {urls_seen:,} URLs at ~100 bytes each: {urls_seen * 100 / 1e12:.0f} TB as a set")
+for p in (0.01, 0.001):
+    bits = -urls_seen * math.log(p) / math.log(2) ** 2
+    print(f"Bloom filter, {p:.1%} false positives: {bits / 8 / 1e9:,.1f} GB ({bits / urls_seen:.1f} bits per URL)")
+# 386 pages/s, 38.6 MB/s download (0.31 Gbit/s), 100 TB raw per month
+# remembering 10,000,000,000 URLs at ~100 bytes each: 1 TB as a set
+# Bloom filter, 1.0% false positives: 12.0 GB (9.6 bits per URL)
+# Bloom filter, 0.1% false positives: 18.0 GB (14.4 bits per URL)
+```
+
+The download rate is modest (386 pages per second is about a third of a gigabit), so **bandwidth is not the hard part**. Two things are: storing **100 TB a month** of raw pages (compressed and kept in object storage), and **remembering which URLs have been seen**. An exact set of ten billion URLs is a terabyte of RAM, but a Bloom filter does the job in about 12 GB. (Illustrative figures.)
+
+## The Architecture in One Loop
+
+1. A **URL frontier** hands the next URL to a fetcher.
+2. A **fetcher** resolves the host's DNS (heavily cached), checks its cached `robots.txt`, and downloads the page.
+3. A **parser** extracts text and outbound links.
+4. A **content dedupe** step discards pages already seen (identical or near-identical).
+5. A **URL filter** normalizes each link, drops disallowed or already-seen ones, and sends the survivors back to the frontier.
+6. The page is written to **storage** for the indexer and other consumers.
+
+Every stage is a stateless worker pool except the frontier and the "seen" sets, which are where the design effort goes. Stages communicate through queues (see [Message Queues](../../system-design/message-queues/)), so a slow parser or storage hiccup never stalls fetching.
+
+## Decision 1: The URL Frontier
+
+The frontier answers "what should we fetch next?", and it must answer two competing questions at once: **importance** (good pages first) and **politeness** (never hit one host too often). The classic design (from the Mercator crawler) uses two layers of queues:
+
+- **Priority (front) queues:** URLs are scored by importance (link popularity, site quality, expected change rate) and placed in queues from high to low priority. The next URL is drawn mostly from the higher queues.
+- **Per-host (back) queues:** each website has **its own queue**, and a scheduler keeps, for each host, the earliest time it may be contacted again. A worker takes the host that is **ready now**, fetches one URL, and the host goes into a "cooling down" state for the polite interval.
+
+The reason for the per-host structure shows up in a simulation. Watch what happens when workers simply take the next discovered URL, versus when they respect a one-second gap per site:
+
+<CrawlerFrontier />
+
+```python
+# tick = 0.25 s, a fetch takes 2 ticks, and one site may be started at most once per 4 ticks
+FEW = [("a", i) for i in range(6)] + [("b", i) for i in range(3)] + [("c", i) for i in range(2)] + [("d", 0)]       # 12 URLs on 4 hosts
+MANY = [(f"h{h}", i) for h in range(24) for i in range(3)]                                                          # 72 URLs on 24 hosts, found site by site
+def crawl(urls, polite, workers=3, gap=4, dur=2):
+    queue, free_at, last_start, tick, violations, idle = list(urls), [0] * workers, {}, 0, 0, 0
+    while queue or max(free_at) > tick:
+        for w in range(workers):
+            if free_at[w] > tick:
+                continue
+            pick = None
+            for u in queue:
+                if not polite or tick - last_start.get(u[0], -gap) >= gap:   # polite: skip hosts that are not ready yet
+                    pick = u
+                    break
+            if pick is None:
+                idle += 1
+                continue
+            queue.remove(pick)
+            if tick - last_start.get(pick[0], -gap) < gap:
+                violations += 1                                  # hit the same host again too soon
+            last_start[pick[0]] = tick
+            free_at[w] = tick + dur
+        tick += 1
+    return tick, violations, idle
+for name, urls in (("4 hosts ", FEW), ("24 hosts", MANY)):
+    for polite in (False, True):
+        ticks, v, idle = crawl(urls, polite)
+        print(f"{name} {'per-host queues' if polite else 'plain FIFO     '}: finished in {ticks * 0.25:5.2f} s, {v:>2} politeness violations, {idle:>2} idle worker-ticks")
+# 4 hosts  plain FIFO     : finished in  2.00 s,  8 politeness violations, 0 idle worker-ticks
+# 4 hosts  per-host queues: finished in  5.50 s,  0 politeness violations, 42 idle worker-ticks
+# 24 hosts plain FIFO     : finished in 12.00 s, 48 politeness violations, 0 idle worker-ticks
+# 24 hosts per-host queues: finished in 12.00 s,  0 politeness violations, 0 idle worker-ticks
+```
+
+Read the two scenarios together. With **24 sites**, the polite crawler finishes in exactly the same time as the impolite one and breaks no rules: there is always another site ready. With **4 sites**, politeness is the bottleneck (workers sit idle, 5.5 s versus 2 s). Real crawls span millions of hosts, so the second case almost never occurs, except when deliberately crawling one large site, where the polite rate is simply the limit.
+
+**Politeness details:** fetch and cache each host's `robots.txt` (with an expiry), obey its disallow rules and any `Crawl-delay`, identify yourself with an honest `User-Agent`, limit concurrent connections per host, and back off when a server slows down or returns errors.
+
+**Sharding the frontier:** assign hosts to crawler nodes by a hash of the hostname (see [Consistent Hashing](../../system-design/consistent-hashing/)), so exactly one node owns each host's queue and its politeness timer, with no cross-node coordination for the one-per-second rule. DNS answers for a host are cached by the same node.
+
+## Decision 2: Not Visiting the Same Page Twice
+
+**URL normalization** comes first, because many spellings point at one page. Lowercase the scheme and host, resolve relative links, drop `#fragments`, sort query parameters, strip tracking parameters, and treat `/` and no path alike:
+
+```python
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+
+def normalise(base, href):
+    url = urljoin(base, href)                                    # resolve relative links
+    s = urlsplit(url)
+    query = urlencode(sorted(parse_qsl(s.query)))                # parameter order should not matter
+    return urlunsplit((s.scheme.lower(), s.netloc.lower(), s.path or "/", query, ""))   # lowercase host, drop #fragment
+base = "https://Example.com/shop/"
+for href in ("../shop/shoes?size=9&color=red", "https://example.com/shop/shoes?color=red&size=9#reviews", "/shop/shoes?color=red&size=9"):
+    print(normalise(base, href))
+# https://example.com/shop/shoes?color=red&size=9
+# https://example.com/shop/shoes?color=red&size=9
+# https://example.com/shop/shoes?color=red&size=9
+```
+
+Three different links, one canonical URL. Then check whether it has been seen. A set of ten billion URLs would need about a terabyte, so crawlers use a **Bloom filter** (see [Bloom Filters](../../data-structures/bloom-filters/)): a bit array that answers "definitely not seen" or "probably seen". It never forgets a URL it has stored (no false negatives), and its false positives merely cause an occasional new page to be skipped, an acceptable loss in a crawl:
+
+```python
+import random
+
+class Bloom:
+    def __init__(self, m, k):
+        self.m, self.k, self.bits = m, k, bytearray(m // 8 + 1)
+    def _positions(self, item):
+        rnd = random.Random(item)                                # k deterministic pseudo-random positions per item
+        return [rnd.randrange(self.m) for _ in range(self.k)]
+    def add(self, item):
+        for p in self._positions(item):
+            self.bits[p // 8] |= 1 << (p % 8)
+    def __contains__(self, item):
+        return all(self.bits[p // 8] & (1 << (p % 8)) for p in self._positions(item))
+n = 50_000
+bloom = Bloom(m=10 * n, k=7)                                     # 10 bits per URL
+for i in range(n):
+    bloom.add(f"https://site.test/page/{i}")
+false_pos = sum(f"https://site.test/other/{i}" in bloom for i in range(20_000)) / 20_000
+missing = sum(f"https://site.test/page/{i}" not in bloom for i in range(n))
+print(f"Bloom filter at 10 bits/URL: false positive rate {false_pos:.2%}, false negatives {missing} (never)")
+# Bloom filter at 10 bits/URL: false positive rate 0.78%, false negatives 0 (never)
+```
+
+**Content dedupe** is a separate problem: different URLs often serve identical (mirrors, tracking parameters) or nearly identical (the same article with a different sidebar) text. Exact duplicates are caught by hashing the page body; near-duplicates by a **similarity fingerprint** such as SimHash, where similar pages produce fingerprints differing in only a few bits.
+
+## Decision 3: Surviving the Web
+
+The web is adversarial by accident and sometimes by design:
+
+- **Spider traps** are endless URL spaces: a calendar with a "next month" link forever, session IDs that make every link unique, or a page that generates links to itself. Defences: a maximum **depth** and **URL length**, a **per-host page budget**, repeated-path-pattern detection, and normalization that strips session parameters.
+- **Slow or hostile servers:** strict connection and read **timeouts**, a size cap per response, and no unbounded redirect chains. One tarpit host must not block a worker (workers and the frontier are per-host, so the damage stays local).
+- **Malformed content:** the parser must be fault tolerant and sandboxed, since pages can be broken, enormous, or crafted to crash parsers.
+- **Failures:** a crashed worker loses its in-flight URLs, so the frontier tracks **leases** and re-queues what was not acknowledged. Fetches are idempotent (fetching twice is safe), which makes this at-least-once approach simple (see [Message Queues](../../system-design/message-queues/)).
+
+## Decision 4: Freshness Is Scheduling
+
+Pages change at wildly different rates: a news homepage in minutes, an old article never. Recrawling everything equally wastes capacity on static pages and leaves fast-changing ones stale. The scheduler estimates each page's **change rate** from history (did it differ last time?) and its **importance**, and revisits in proportion. Cheap tricks cut the cost of each revisit: a **conditional request** (`If-None-Match` or `If-Modified-Since`) lets the server answer "unchanged" with no body, and **sitemaps** let sites announce what exists and when it changed, so the crawler does not have to rediscover it by walking links. Some sources can also push updates directly.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A crawler node dies | Its hosts' queues stall | Hosts reassigned by consistent hashing; frontier leases expire and URLs are re-queued |
+| DNS becomes the bottleneck | Fetchers wait on lookups | Aggressive local DNS caching and a dedicated resolver pool |
+| A spider trap | Endless URLs from one host | Depth, length and per-host budgets; pattern detection |
+| Bloom filter fills up | False positive rate climbs | Size for the expected URL count; add or rotate filters |
+| A site blocks or throttles the crawler | Fetches fail | Honour robots.txt, adaptive backoff, honest user agent |
+| Duplicate floods (mirrors) | Wasted storage and index size | Content hashing and near-duplicate fingerprints |
+
+## What to Take Away
+
+The crawler shows how a trivial algorithm becomes a systems problem: the frontier is where **scheduling and politeness** meet; **probabilistic data structures** (Bloom filters) trade a little accuracy for orders of magnitude less memory; **sharding by host** keeps a per-host rule local; and robustness means assuming the environment is hostile. The next case, the [Collaborative Editor](../collaborative-editor/), is the opposite: very little data, but several people changing it at the same instant.
+
+<Callout type="practice">
+Respect the sites you visit: honour `robots.txt`, rate-limit, and identify your crawler. If you only need web data, a published open crawl such as Common Crawl is often better than running your own. Production crawlers differ in their frontier scoring and change-rate models, and exact figures are rarely published; the Mercator paper above is the classic reference for the frontier design.
+</Callout>

@@ -1,0 +1,181 @@
+---
+title: "Ride Hailing"
+description: "Geospatial indexing, constantly moving data and real-time matching."
+order: 5
+tier: core
+takeaways:
+  - "Ride hailing is a **real-time, location-driven** system: millions of drivers move constantly, and each request needs the *nearest* few, fast."
+  - "Ordinary indexes handle one dimension; **geospatial indexes** (geohash, grid cells, quadtrees, S2/H3) turn 2-D proximity into a lookup of a few cells."
+  - "Cell-based search has an **edge problem**: nearby points can land in different cells, so you must search the neighbouring cells too."
+  - "Driver locations are **ephemeral and high-volume**: keep them in memory, partitioned by city or cell, and keep durable, transactional **trip state** separately."
+  - "Matching is more than 'nearest': it weighs ETA, driver availability and fairness, and must **atomically claim** a driver so nobody is assigned twice."
+resources:
+  - title: "Uber Engineering: H3, Uber's hexagonal hierarchical spatial index"
+    url: "https://www.uber.com/blog/h3/"
+    note: "A public account of why a hex grid was chosen for marketplace analytics and matching."
+  - title: "Geohash (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Geohash"
+  - title: "S2 Geometry"
+    url: "http://s2geometry.io/"
+    note: "Google's spherical cell hierarchy, widely used for geospatial indexing."
+  - title: "Redis geospatial data type"
+    url: "https://redis.io/docs/latest/develop/data-types/geospatial/"
+  - title: "Assignment problem and the Hungarian algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Hungarian_algorithm"
+    note: "The classic formulation of optimal rider-to-driver matching."
+---
+
+Ride hailing is the case where **space and time** are the data. Drivers move constantly; each rider request asks for the best nearby driver *right now*; the answer is stale in seconds. It shares plumbing with the [chat application](../chat-application/) (persistent connections and real-time pushes), but its defining problem is new: how do you find "the nearest things" in two dimensions over a huge, constantly changing set of points?
+
+## Requirements
+
+**Functional:** drivers go online and report their location; a rider requests a ride from a pickup point; the system finds nearby available drivers, offers the trip, and on acceptance both sides see live positions and an ETA; the trip is tracked, priced and completed.
+
+**Non-functional:**
+
+- **Low latency matching:** a rider expects a driver offer within a few seconds.
+- **Fresh data:** a driver location older than a few seconds is misleading.
+- **Correctness of assignment:** one driver must never be given two trips, and one trip never two drivers.
+- **Availability by region:** an outage in one city must not stop another.
+- **Burst handling:** demand spikes around events, rain, and rush hours.
+
+## Estimate the Load
+
+```python
+drivers_online, update_every = 5_000_000, 4
+print(f"{drivers_online:,} drivers reporting every {update_every}s = {drivers_online / update_every:,.0f} location updates/s")
+rides_per_day = 20_000_000
+print(f"{rides_per_day:,} rides/day = {rides_per_day / 86_400:,.0f} ride requests/s on average")
+# 5,000,000 drivers reporting every 4s = 1,250,000 location updates/s
+# 20,000,000 rides/day = 231 ride requests/s on average
+```
+
+The shape is unusual: **1.25 million location writes per second** against only **231 ride requests per second**. The writes are tiny and *each one overwrites the last*, so almost all of the load is keeping a live map current, and the matching queries are comparatively rare. That asymmetry decides where each piece of data lives. (Illustrative figures.)
+
+## The Simplest Design, and Where It Breaks
+
+Keep a `drivers` table with latitude and longitude, and for a request run something like "drivers within 2 km". With a plain index on latitude and one on longitude, a database can use *one* of them and then must filter the rest, because a single B-tree sorts in one dimension and proximity is two-dimensional. Scanning every driver per request is worse. And writing every location update to a transactional disk database (1.25 million per second, each replacing the last) is both unaffordable and pointless: nobody needs a driver's position from ten seconds ago.
+
+So there are two fixes to make: a **spatial index** for the query, and an **in-memory store for the churn**.
+
+## Decision 1: A Spatial Index
+
+The idea behind every geospatial index is to **divide the map into cells** and keep, for each cell, the set of drivers inside it. "Find nearby drivers" becomes "look up the rider's cell and its neighbours", a handful of hash lookups instead of a scan. The schemes differ in how they cut the map:
+
+| Scheme | How it divides the map | Notes |
+| --- | --- | --- |
+| **Fixed grid** | Equal squares | Simplest; poor when density varies |
+| **Geohash** | A string where each character refines the cell; nearby points usually share a prefix | Easy to store and range-scan as text; has an edge problem |
+| **Quadtree** | Recursively splits a cell into four when it holds too many points | Adapts to density: small cells downtown, big cells in the countryside |
+| **S2 / H3** | Hierarchical cells on the sphere (squares or hexagons) | Uniform cell shapes; H3's hexagons have equal-distance neighbours |
+
+A **geohash** interleaves the bits of longitude and latitude and writes 5 bits per character, so longer strings mean smaller cells:
+
+```python
+BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+def geohash(lat, lon, precision=7):
+    lat_r, lon_r, bits, bit, even, out = [-90.0, 90.0], [-180.0, 180.0], 0, 0, True, ""
+    while len(out) < precision:
+        rng, val = (lon_r, lon) if even else (lat_r, lat)
+        mid = (rng[0] + rng[1]) / 2
+        if val >= mid:
+            bits, rng[0] = (bits << 1) | 1, mid
+        else:
+            bits, rng[1] = bits << 1, mid
+        even, bit = not even, bit + 1
+        if bit == 5:
+            out, bits, bit = out + BASE32[bits], 0, 0
+    return out
+a, b = (51.5007, -0.1246), (51.5014, -0.1257)                     # two points ~100 m apart
+print("nearby points  :", geohash(*a), geohash(*b), "(shared prefix: close together)")
+c, d = (51.5000, -0.00005), (51.5000, 0.00005)                    # ~7 m apart, on either side of longitude 0
+print("across an edge :", geohash(*c), geohash(*d), "(7 m apart, completely different prefixes!)")
+for p in (4, 5, 6, 7):
+    print(f"precision {p}: {geohash(*a, precision=p)}")
+# nearby points  : gcpuvpm gcpuvps (shared prefix: close together)
+# across an edge : gcpuzzr u10hbp2 (7 m apart, completely different prefixes!)
+# precision 4: gcpu
+# precision 5: gcpuv
+# precision 6: gcpuvp
+# precision 7: gcpuvpm
+```
+
+Both outputs matter. Nearby points share a long prefix (`gcpuvp...`), which is what makes lookup by cell work. But two points **7 metres apart** on either side of a cell boundary (here, the prime meridian) have completely different hashes. That is the **edge problem**, and it is why a search must always examine the rider's cell **and its neighbours**, never the one cell alone. Click around the map below, with and without neighbour search, and watch where a boundary hides the true nearest driver:
+
+<GeoGridDemo />
+
+The payoff is the work saved. On 200,000 simulated drivers in a 100 km square:
+
+```python
+import math
+import random
+import time
+from collections import defaultdict
+
+rnd = random.Random(7)
+N = 200_000
+drivers = [(rnd.uniform(0, 100), rnd.uniform(0, 100)) for _ in range(N)]   # a 100 x 100 km city
+CELL = 1.0                                                          # 1 km cells
+grid = defaultdict(list)
+for i, (x, y) in enumerate(drivers):
+    grid[int(x // CELL), int(y // CELL)].append(i)
+def near_grid(x, y):
+    cx, cy = int(x // CELL), int(y // CELL)
+    return [i for dx in (-1, 0, 1) for dy in (-1, 0, 1) for i in grid.get((cx + dx, cy + dy), ())]
+rider = (42.3, 77.7)
+t = time.perf_counter(); cand = near_grid(*rider); best_grid = min(cand, key=lambda i: math.dist(drivers[i], rider)); t_grid = time.perf_counter() - t
+t = time.perf_counter(); best_all = min(range(N), key=lambda i: math.dist(drivers[i], rider)); t_all = time.perf_counter() - t
+print(f"scan all: examined {N:,} drivers in {t_all * 1000:.0f} ms; grid: examined {len(cand)} drivers in {t_grid * 1000:.2f} ms")
+print("same nearest driver found:", best_grid == best_all)
+# scan all: examined 200,000 drivers in 19 ms; grid: examined 174 drivers in 0.17 ms
+# same nearest driver found: True
+```
+
+About a thousand times fewer drivers examined, same answer (timings vary by machine). Two cautions apply: the 3×3 block only finds the true nearest if it contains the answer, so a sparse area needs a **widening ring** of cells; and **density varies enormously**. With uniform drivers a 1 km cell holds about 20; if 60% of drivers crowd into a 5 km downtown, each cell there holds thousands. That is why real systems use **adaptive** structures (quadtrees) or **hierarchical** cells (S2, H3) where the cell size can differ by area.
+
+## Decision 2: Keep Locations in Memory, Partition by Place
+
+Driver positions are **ephemeral** (only the latest matters, and it expires if a driver goes silent) and **enormously write-heavy**, so they belong in an **in-memory store** with a short expiry, not a durable database. Each update replaces the driver's old entry and moves them between cells if they crossed a boundary. A driver who stops reporting simply times out of the index, which handles crashed apps and dead batteries without special code. The durable record is a sampled stream written to storage for trip history, safety and analytics.
+
+The natural way to **partition** is **geographically**: by city or by top-level cell. Matching is inherently local (a rider in Lisbon never needs drivers from Lima), so a region's data and requests stay on one shard with no cross-shard queries. That gives locality and fault isolation: a problem in one region stays there. The cost is **hot regions**: a stadium letting out concentrates load into a few cells, so hot cells need splitting or extra capacity (see [Database Scaling](../../system-design/database-scaling/) for the same shard-key reasoning).
+
+## Decision 3: Matching Is More Than "Nearest"
+
+The closest driver in a straight line may be across a river or on the wrong side of a one-way street, so matching uses **ETA** (estimated road-network travel time), not distance, to rank the cells' candidates. Further considerations:
+
+- **Availability and fairness:** only free drivers, ordered also by waiting time, acceptance history and trip type.
+- **Offers with timeouts:** the best candidate gets an offer; if they decline or time out, the next does. Offers must expire, or a stalled phone blocks the rider.
+- **Batching:** instead of assigning each request greedily the instant it arrives, a dispatcher can **collect requests for a couple of seconds and solve a global assignment** (the classic assignment problem; see the Hungarian algorithm link). That can lower total pickup time for everyone at the price of a short wait, a clear latency-versus-quality trade-off.
+
+The critical correctness rule is **atomic claiming**: assigning a driver is a compare-and-set on their state ("available" to "offered to trip T"). If two requests race for the same driver, exactly one claim succeeds and the other moves on. Without that, two riders get one car.
+
+## Decision 4: Trip State Is a Different Kind of Data
+
+Unlike locations, the **trip** is precious and must be consistent: money depends on it. It lives in a **durable, transactional store**, modelled as a **state machine**: requested, offered, accepted, driver arriving, in progress, completed or cancelled. Each transition is **idempotent** and guarded (a trip cannot jump from "requested" to "completed"), so network retries from phones are harmless (see [Distributed Basics](../../distributed-systems/distributed-basics/)). Payment at the end triggers a separate, careful flow (see [Payment System](../payment-system/)).
+
+Keeping the two kinds of data apart is the main architectural lesson: **ephemeral, high-churn data** (positions) in memory with expiry; **durable, low-volume, high-value data** (trips) in a transactional store.
+
+## Real-Time Updates and Surge Pricing
+
+Riders and drivers both watch a live map, so the system pushes updates over persistent connections (the same gateway pattern as in [Chat Application](../chat-application/)), usually throttled and interpolated so that a position every four seconds looks smooth.
+
+**Surge pricing** is a streaming aggregation: count open requests and available drivers **per cell per short interval** (see [Message Queues](../../system-design/message-queues/)), and raise the multiplier where demand exceeds supply. It is deliberately computed per cell, tolerant of small staleness, and smoothed over time so prices do not flicker from block to block.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A driver's app stops reporting | Stale position could be offered a trip | Short expiry removes them from the index automatically |
+| Two requests claim the same driver | Double assignment | Atomic compare-and-set on driver state |
+| A regional shard goes down | That city cannot match | Per-region replicas and failover; other regions unaffected |
+| GPS jitter or a tunnel | Positions jump | Smooth and validate updates; ignore impossible speeds |
+| A demand spike (event ends) | Hot cells overload | Split hot cells, add capacity, queue and batch requests |
+| Offer sent to an unresponsive phone | Rider waits | Offer timeouts, then the next candidate |
+
+## What to Take Away
+
+When data is **geographic**, reduce the problem to **cells**: a two-dimensional "nearest" query becomes a few lookups, with the discipline of searching neighbours and handling uneven density. Split data by **how it behaves**: ephemeral positions in memory, durable trips in a transactional store. **Partition by place** because the queries are local. Make assignment **atomic**, and treat matching as an optimization over ETA and fairness, not a nearest-point lookup. The next case, the [Distributed Rate Limiter](../rate-limiter/), is much smaller on the surface, and exposes how hard shared counters are.
+
+<Callout type="practice">
+Marketplaces differ in index choice (geohash, S2, H3, quadtree), matching strategy and pricing, and the exact numbers are proprietary. The cell-based index, in-memory location store, regional partitioning, atomic claim and separate trip state are the commonly documented pieces; Uber's public H3 article is a good primary source for one company's choices.
+</Callout>

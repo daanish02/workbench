@@ -1,0 +1,238 @@
+---
+title: "Collaborative Editor"
+description: "Concurrent edits to one document: operational transformation vs CRDTs."
+order: 9
+tier: core
+takeaways:
+  - "The problem is not volume but **concurrency**: several people change one document at the same instant, offline or over a slow network, and every copy must end up the same, with everyone's intent preserved."
+  - "Edits are **local first**: apply instantly to your own copy, send the operation, and reconcile later; waiting for the server on every keystroke would feel broken."
+  - "Replaying **positions** from another replica breaks, because an index means a different letter after a concurrent change. Naive merging diverges or silently loses edits."
+  - "**Operational transformation (OT)** rewrites each operation to account for concurrent ones, usually through a central server that sequences them (the Google Docs lineage)."
+  - "**CRDTs** give every element a unique, permanent identity so operations **commute** and merge in any order, with no central ordering (the basis of many offline-first and peer-to-peer tools)."
+resources:
+  - title: "Operational transformation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Operational_transformation"
+  - title: "crdt.tech"
+    url: "https://crdt.tech/"
+    note: "A curated introduction to CRDTs, papers and implementations."
+  - title: "Figma: How Figma's multiplayer technology works"
+    url: "https://www.figma.com/blog/how-figmas-multiplayer-technology-works/"
+    note: "A public account of choosing a CRDT-inspired design over OT for a design tool."
+  - title: "Yjs documentation"
+    url: "https://docs.yjs.dev/"
+    note: "A widely used open-source CRDT library for text and structured data."
+---
+
+A shared document that several people edit at once, with each person's cursor visible, looks like magic and is a famously hard problem. The data is tiny (a document is kilobytes) and the traffic is light. What makes it difficult is **concurrency**: two people change the same text at the same moment, neither knowing about the other, and afterwards both must see **identical** text that still reflects **what each of them meant**. It is a pure distributed-systems problem (see [Clocks & Time](../../distributed-systems/clocks/) and [Consistency Models](../../distributed-systems/consistency-models/)) with the extra constraint that the result is read by humans.
+
+## Requirements
+
+**Functional:** many users edit one document live; see each other's changes and cursors within a fraction of a second; undo and history; work offline and merge on return; permissions and sharing.
+
+**Non-functional:**
+
+- **Instant local response:** typing must never wait for the network. Edits apply to your own copy immediately.
+- **Convergence:** once all edits are delivered, every replica has exactly the same document.
+- **Intention preservation:** merged results should match what each person meant (an insert stays next to the letters it was typed beside).
+- **Resilience:** works over flaky networks and offline.
+- **Scale:** documents are small, but there are enormous numbers of them, each with a handful to a few hundred simultaneous editors.
+
+## Why the Obvious Approaches Fail
+
+- **Locking** the document while someone edits (as old file systems did) makes real-time collaboration impossible.
+- **Last write wins** on the whole document silently discards one person's work.
+- **Diff and merge** (as Git does) produces conflicts that a human must resolve, which is acceptable per commit and unacceptable per keystroke.
+
+What is needed is to merge **fine-grained operations** automatically and correctly. Consider the simplest case. The text is `cat`. Alice inserts `x` at the start; **concurrently** Bob deletes the final `t` (position 2). Each applies their own edit locally and then receives the other's operation:
+
+- Alice has `xcat` and receives "delete position 2". Position 2 in `xcat` is the letter **a**, not the `t` Bob meant. She deletes the wrong letter.
+- Bob has `ca` and receives "insert x at 0", which works.
+
+Alice now sees `xct` and Bob sees `xca`: the copies **diverge**, and no later message repairs it. The operation's meaning depended on a **position**, and the position changed under it.
+
+## Approach 1: Operational Transformation (OT)
+
+OT keeps the position-based operations but **transforms** each one against the concurrent operations that were applied before it, so it still means the same thing. For single-character operations the rules are small:
+
+- An **insert** shifts right by one if a concurrent insert landed at an earlier position (a tie-breaker, such as site id, orders inserts at the same position), and shifts left if a concurrent delete removed an earlier character.
+- A **delete** shifts the same way, and becomes a **no-op** if the other side already deleted that same character.
+
+```python
+def transform(op, other):
+    """Rewrite `op` so it still means the same thing after `other` has been applied."""
+    if op[0] == "ins" and other[0] == "ins":
+        if other[1] < op[1] or (other[1] == op[1] and other[3] < op[3]):    # equal positions: tie-break by site id
+            return ("ins", op[1] + 1, op[2], op[3])
+        return op
+    if op[0] == "ins" and other[0] == "del":
+        return ("ins", op[1] - 1, op[2], op[3]) if other[1] < op[1] else op
+    if op[0] == "del" and other[0] == "ins":
+        return ("del", op[1] + 1, op[2]) if other[1] <= op[1] else op
+    if other[1] < op[1]:                                         # del vs del
+        return ("del", op[1] - 1, op[2])
+    return None if other[1] == op[1] else op                    # both deleted the same character: nothing left to do
+```
+
+OT is usually run through a **central server** that decides the single global order of operations; each client transforms incoming operations against what it has sent but not yet had acknowledged. The server keeps the algorithm tractable, and that is the design behind long-lived products such as Google Docs. The cost is the **complexity of the transform functions**: getting them right for rich operations (formatting, tables, moves) across all pairs is notoriously hard, and many published OT algorithms were later found to have convergence bugs.
+
+## Approach 2: CRDTs
+
+A **conflict-free replicated data type** takes a different route: instead of fixing operations after the fact, design the data so that operations **always commute**. A sequence CRDT (the one in this note is a simple form of **RGA**) gives **every character a unique identity** `(counter, site)` that never changes, and an insert says **"place this after the character with id X"**, not "at position 3". Positions are derived for display, never sent. Deletion marks the character as a **tombstone** instead of removing it, so its id still anchors later inserts.
+
+Because operations refer to identities, they can arrive in **any order** and the replicas still converge, with no central sequencer needed. That makes CRDTs natural for **offline-first** and **peer-to-peer** collaboration. The costs are **memory and metadata** (every character carries an id, and tombstones accumulate until they can be safely discarded) and subtler **intent** questions for rich structures.
+
+## Try It
+
+Pick a scenario and a strategy, then press Sync:
+
+<ConcurrentEditDemo />
+
+The same three strategies in code, with real output on the same scenarios (a naive replay, OT as above, and an RGA-style CRDT):
+
+```python
+BASE = "cat"
+
+# Operations: ("ins", pos, char, site) or ("del", pos, site); positions are indexes into the replica's own text.
+def apply_op(text, op):
+    if op[0] == "ins":
+        return text[:op[1]] + op[2] + text[op[1]:]
+    return text[:op[1]] + text[op[1] + 1:] if 0 <= op[1] < len(text) else text
+
+def naive(a_ops, b_ops):
+    a, b = BASE, BASE
+    for op in a_ops: a = apply_op(a, op)
+    for op in b_ops: b = apply_op(b, op)
+    for op in b_ops: a = apply_op(a, op)                         # Alice receives Bob's ops as written...
+    for op in a_ops: b = apply_op(b, op)                         # ...and Bob receives Alice's
+    return a, b
+
+def transform_lists(mine, theirs):
+    """Transform `theirs` over `mine` (and mine over theirs) one pair at a time."""
+    mine, out = list(mine), []
+    for t in theirs:
+        new_mine = []
+        for m in mine:
+            t_next = transform(t, m) if t else None
+            m_next = transform(m, t) if (m and t) else m
+            t, m = t_next, m_next
+            new_mine.append(m)
+        mine = new_mine
+        out.append(t)
+    return [o for o in out if o], [m for m in mine if m]
+
+def ot(a_ops, b_ops):
+    a, b = BASE, BASE
+    for op in a_ops: a = apply_op(a, op)
+    for op in b_ops: b = apply_op(b, op)
+    b_for_a, a_for_b = transform_lists(a_ops, b_ops)
+    for op in b_for_a: a = apply_op(a, op)
+    for op in a_for_b: b = apply_op(b, op)
+    return a, b
+
+class Replica:                                                   # a CRDT (RGA): every character has a unique id
+    def __init__(self, site):
+        self.site, self.clock = site, 0
+        self.nodes = {}                                          # id -> [parent id, char, deleted]
+        prev = ("root",)
+        for ch in BASE:                                          # the shared starting text, with fixed ids
+            self.clock += 1
+            self.nodes[(self.clock, "init")] = [prev, ch, False]
+            prev = (self.clock, "init")
+    def visible(self):
+        order, kids = [], {}
+        for nid, (parent, _, _) in self.nodes.items():
+            kids.setdefault(parent, []).append(nid)
+        def walk(p):
+            for nid in sorted(kids.get(p, []), reverse=True):     # newer ids first, deterministically
+                order.append(nid)
+                walk(nid)
+        walk(("root",))
+        return [n for n in order if not self.nodes[n][2]]
+    def text(self):
+        return "".join(self.nodes[n][1] for n in self.visible())
+    def insert(self, pos, ch):
+        vis = self.visible()
+        parent = vis[pos - 1] if pos > 0 else ("root",)
+        self.clock += 1
+        nid = (self.clock, self.site)
+        self.nodes[nid] = [parent, ch, False]
+        return ("ins", nid, parent, ch)
+    def delete(self, pos):
+        nid = self.visible()[pos]
+        self.nodes[nid][2] = True                                # a tombstone, not a removal
+        return ("del", nid)
+    def receive(self, op):
+        if op[0] == "ins":
+            _, nid, parent, ch = op
+            self.nodes.setdefault(nid, [parent, ch, False])
+            self.clock = max(self.clock, nid[0])
+        else:
+            self.nodes[op[1]][2] = True
+
+def crdt(a_script, b_script):
+    a, b = Replica("A"), Replica("B")
+    a_ops = [getattr(a, m)(*args) for m, *args in a_script]
+    b_ops = [getattr(b, m)(*args) for m, *args in b_script]
+    for op in b_ops: a.receive(op)
+    for op in a_ops: b.receive(op)
+    return a.text(), b.text()
+
+scenarios = {
+    "A inserts 'x' at the start, B deletes the 't'": ([("ins", 0, "x", "A")], [("del", 2, "B")], [("insert", 0, "x")], [("delete", 2)], {"xca"}),
+    "A and B both insert after the 'c'": ([("ins", 1, "X", "A")], [("ins", 1, "Y", "B")], [("insert", 1, "X")], [("insert", 1, "Y")], {"cXYat", "cYXat"}),
+    "A and B both delete the 'a'": ([("del", 1, "A")], [("del", 1, "B")], [("delete", 1)], [("delete", 1)], {"ct"}),
+}
+for name, (a_ops, b_ops, a_script, b_script, wanted) in scenarios.items():
+    print(name)
+    for label, (ta, tb) in (("naive", naive(a_ops, b_ops)), ("OT   ", ot(a_ops, b_ops)), ("CRDT ", crdt(a_script, b_script))):
+        verdict = "OK" if ta == tb and ta in wanted else "converged but WRONG" if ta == tb else "DIVERGED"
+        print(f"  {label} Alice {ta!r:8} Bob {tb!r:8} {verdict}")
+# A inserts 'x' at the start, B deletes the 't'
+#   naive Alice 'xct'    Bob 'xca'    DIVERGED
+#   OT    Alice 'xca'    Bob 'xca'    OK
+#   CRDT  Alice 'xca'    Bob 'xca'    OK
+# A and B both insert after the 'c'
+#   naive Alice 'cYXat'  Bob 'cXYat'  DIVERGED
+#   OT    Alice 'cXYat'  Bob 'cXYat'  OK
+#   CRDT  Alice 'cYXat'  Bob 'cYXat'  OK
+# A and B both delete the 'a'
+#   naive Alice 'c'      Bob 'c'      converged but WRONG
+#   OT    Alice 'ct'     Bob 'ct'     OK
+#   CRDT  Alice 'ct'     Bob 'ct'     OK
+```
+
+Three lessons are visible. Naive replay **diverges**. It can even **converge on the wrong answer**: in the third scenario both copies agree on `c`, but both lost the `t` because the second "delete position 1" removed a different letter. And OT and CRDT can legitimately choose **different orders** for the concurrent inserts (`cXYat` versus `cYXat`); either is acceptable provided every replica picks the same. (The OT shown is a minimal single-character version to show the idea; real implementations handle rich operations and many concurrent peers.)
+
+<Callout type="key">
+Both approaches solve the same problem from opposite ends. **OT** keeps simple operations and adds clever **transformation**, usually with a central server to order things. **CRDTs** keep the server optional by making operations **commutative by construction**, and pay with metadata. Neither works on raw positions.
+</Callout>
+
+## The System Around the Algorithm
+
+The merge algorithm is the hard part, but a product needs infrastructure around it, much of which reuses earlier cases:
+
+- **A session per document.** All editors of one document connect (over WebSockets, as in the [Chat Application](../chat-application/)) to the **same server process**, chosen by **hashing the document id** so the right server is found without a lookup (see [Consistent Hashing](../../system-design/consistent-hashing/)). That process sequences operations (for OT), broadcasts them, and holds the document in memory.
+- **Persistence.** Every operation is appended to a durable **operation log**, and the server periodically writes a **snapshot** of the document, so loading is "latest snapshot plus recent operations" and history and undo come almost free. Compaction trims old tombstones and operations.
+- **Local-first clients.** The client applies edits immediately, keeps a queue of unacknowledged operations, and **retries safely** after a disconnect: operations carry unique ids so a re-sent one is ignored (see [Distributed Basics](../../distributed-systems/distributed-basics/)).
+- **Presence.** Cursors, selections and "who is here" are **ephemeral** and best-effort: broadcast on a short timer, never persisted, dropped under load, like typing indicators in chat.
+- **Undo.** Undo must reverse **your** operations, not whatever happened last, so it is implemented as a new operation that inverts yours (transformed past everyone's later edits).
+- **Rich content.** Formatting, tables and images are modelled as additional operation types or as nested structures (a tree or map CRDT), with rules for conflicting formatting.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| A client disconnects mid-edit | Unacknowledged operations are in doubt | Keep a local queue; re-send with unique ids; server ignores duplicates |
+| The document server crashes | Live session interrupted | Rebuild state from snapshot plus operation log; clients reconnect and resync from their last acknowledged version |
+| Two users edit offline for hours | Large divergence to merge | CRDT merge or OT of long histories; the merge is automatic but should be tested with large offline edits |
+| Tombstones and metadata grow | Memory and file size increase | Garbage-collect tombstones once all replicas have seen the deletion; periodic snapshots |
+| A bug in transform or merge | Replicas diverge permanently | Property-based and randomized convergence testing; checksums that detect divergence |
+| A document becomes extremely popular | Too many editors per session | Cap active editors; read-only fan-out for viewers |
+
+## What to Take Away
+
+Collaborative editing shows that some problems are about **concurrency, not scale**. The key ideas: **apply locally first and reconcile later** (optimistic replication); **never rely on positions that other edits can shift**; choose between **transformation** (OT, with a sequencer) and **identity-based merging** (CRDTs, with metadata), a real trade-off between algorithmic complexity and memory; and test **convergence** aggressively, because these bugs surface only under concurrency. The next case, the [Payment System](../payment-system/), is the reverse emphasis: concurrency is limited, but correctness is absolute.
+
+<Callout type="practice">
+Real products make different choices (central OT, CRDT libraries, hybrids), and implementations are far more elaborate than the minimal versions here. Use the OT article, crdt.tech, and the Figma post as primary sources; treat this note's code as an illustration of the core idea, not a production editor.
+</Callout>

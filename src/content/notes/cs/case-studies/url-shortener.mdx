@@ -1,0 +1,221 @@
+---
+title: "URL Shortener"
+description: "Turning a long link into a short one: key generation, redirects and a read-heavy cache."
+order: 1
+tier: core
+takeaways:
+  - "A shortener is a **huge key-value lookup** (short code → long URL) with about 100 reads for every write, so the design is about **fast reads and unique codes**."
+  - "A 7-character **base62** code gives 3.5 trillion combinations: enough for billions of links, and codes are just a **counter written in a bigger alphabet**."
+  - "Three ways to make codes (counter, random, hash) trade **predictability, collisions and coordination**; pick on purpose."
+  - "Link popularity is skewed, so a **small cache** serves a large share of redirects; the database mostly handles misses."
+  - "Use **301 vs 302** deliberately: permanent redirects are cacheable (cheap) but hide clicks from your analytics."
+resources:
+  - title: "MDN: HTTP redirections"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Redirections"
+    note: "301, 302, 307, 308: which are cached and which preserve the method."
+  - title: "Birthday problem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Birthday_problem"
+    note: "Why random codes collide much sooner than the size of the key space suggests."
+  - title: "RFC 9562: UUIDs (including time-ordered UUIDv7)"
+    url: "https://www.rfc-editor.org/rfc/rfc9562"
+  - title: "Designing Data-Intensive Applications"
+    url: "https://dataintensive.net/"
+    note: "Background on the partitioning, caching and replication used below."
+---
+
+A URL shortener turns `https://example.com/products/2026/summer-sale?utm=...` into something like `sho.rt/8sud2`, and sends anyone who visits the short link to the original. It looks like a weekend project, and a basic version is. What makes it a good first case study is that every real concern shows up in small form: generating unique keys without coordination, a read-heavy workload, caching, redirect semantics, abuse and analytics. We build it the way the [Systems Thinking](../../system-design/systems-thinking/) note recommends: requirements, then numbers, then the simplest design, then the decisions that matter.
+
+## Requirements
+
+**Functional:** create a short link for a long URL; redirect a short link to its target; optionally a custom alias, an expiry date, and click counts.
+
+**Non-functional, with numbers:**
+
+- **Availability:** redirects are the product. A dead redirect breaks every page that embeds the link, so aim for 99.9%+ on the read path.
+- **Latency:** the redirect should add only a few milliseconds; the user is already on their way somewhere else.
+- **Uniqueness:** two different URLs must never get the same code, and a code must never change target.
+- **Scale:** assume 100 million new links a month and 100 redirects per link created. Writes are rare; reads are the load.
+
+## Estimate the Load
+
+```python
+import math
+
+new_per_month = 100_000_000
+writes = new_per_month / (30 * 86_400)
+reads = writes * 100                                             # assume 100 redirects per link created
+print(f"writes {writes:,.0f}/s, reads {reads:,.0f}/s average, ~{reads * 3:,.0f}/s at peak")
+links_5y = new_per_month * 12 * 5
+print(f"links in 5 years: {links_5y / 1e9:.0f} billion, storage at 500 bytes each: {links_5y * 500 / 1e12:.1f} TB")
+for length in (6, 7, 8):
+    print(f"base62, {length} chars: {62 ** length:>18,} codes ({62 ** length / links_5y:,.1f}x the 5-year need)")
+# writes 39/s, reads 3,858/s average, ~11,574/s at peak
+# links in 5 years: 6 billion, storage at 500 bytes each: 3.0 TB
+# base62, 6 chars:     56,800,235,584 codes (9.5x the 5-year need)
+# base62, 7 chars:  3,521,614,606,208 codes (586.9x the 5-year need)
+# base62, 8 chars: 218,340,105,584,896 codes (36,390.0x the 5-year need)
+```
+
+Read the numbers, because they shape everything: **39 writes per second** is trivial for any database; **about 11,600 reads per second at peak** is not enormous but is the part that needs a cache; **3 TB over five years** fits on one disk (replicated and partitioned for safety, not for size); and **seven characters** is plenty (587× the five-year need). This is a lookup service, not a data-processing one.
+
+## The Simplest Design That Could Work
+
+One web service and one table:
+
+```sql
+CREATE TABLE links (
+    code       TEXT PRIMARY KEY,      -- the short code, e.g. '8sud2'
+    long_url   TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP
+);
+```
+
+`POST /links` inserts a row and returns the code; `GET /{code}` looks the row up and answers `302 Location: long_url`. On a single machine with an index on the primary key this serves thousands of requests per second, and for a small product you should stop here.
+
+It breaks in three predictable places as it grows, and each break is a design decision below: **who invents the code** when several servers create links at once, **how reads stay fast** when one database serves every redirect, and **what happens when the database dies**, since it is a single point of failure.
+
+## Decision 1: How to Generate the Code
+
+A code must be unique, short, and cheap to produce. There are three common approaches.
+
+| Approach | How | Strength | Weakness |
+| --- | --- | --- | --- |
+| **Counter → base62** | Take the next integer from a counter and write it in base 62 | No collisions, tiny codes, trivially fast | **Predictable** (anyone can enumerate links); the counter is shared state |
+| **Random code** | Pick random characters, retry if the code already exists | Unguessable, no coordination | A database check per insert; collisions appear sooner than you expect |
+| **Hash of the URL** | Hash the long URL, keep the first N characters | Same URL gives the same code (free deduplication) | Truncation causes **collisions**, and you need a fallback anyway |
+
+The counter approach is the easiest to reason about. A **base62** code is just a number written with 62 symbols instead of 10:
+
+```python
+ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+def encode(n):
+    s = ""
+    while n:
+        n, r = divmod(n, 62)
+        s = ALPHABET[r] + s
+    return s or "0"
+def decode(s):
+    n = 0
+    for ch in s:
+        n = n * 62 + ALPHABET.index(ch)
+    return n
+for n in (1, 61, 62, 125_000_000, 6_000_000_000):
+    print(f"{n:>13,} -> {encode(n):<7} -> {decode(encode(n)):,}")
+#             1 -> 1       -> 1
+#            61 -> Z       -> 61
+#            62 -> 10      -> 62
+#   125,000,000 -> 8sud2   -> 125,000,000
+# 6,000,000,000 -> 6y3o5y  -> 6,000,000,000
+```
+
+Even six billion links need only six characters. Try it, and watch how much of the key space a given length uses up:
+
+<ShortCodeBuilder />
+
+### The counter is shared state
+
+A single global counter is a bottleneck and a single point of failure. The standard fix is to **hand out ranges**: each application server asks a small coordination service (or a database row updated with an atomic increment) for a block of, say, 10,000 numbers, and then issues codes from its block locally without talking to anyone. A crashed server wastes the unused part of its block, which is fine because the key space is vast. Time-ordered IDs (a timestamp plus a machine number plus a sequence, as in Snowflake-style IDs and UUIDv7) are another way to avoid central coordination, at the price of longer codes.
+
+### Random codes and the birthday effect
+
+With a random 7-character code and a billion links already stored, the chance a new code is taken is only about 0.03%, so retrying on a collision is cheap. But the **birthday problem** means the *first* collision among random codes arrives long before the space fills:
+
+```python
+import random
+
+codes = 62 ** 7
+for existing in (1e8, 1e9, 6e9):
+    print(f"{existing:>13,.0f} links exist: chance a random 7-char code is already taken = {existing / codes:.3%}")
+rnd = random.Random(1)
+space, tried = 62 ** 4, set()                                    # 4-char codes only (14.8M), to make collisions visible
+first_collision = next(i for i in range(1, 10**6) if (c := rnd.randrange(space)) in tried or tried.add(c))
+print(f"4-char random codes: first collision after only {first_collision:,} (birthday effect, sqrt of the space is ~3,844)")
+#   100,000,000 links exist: chance a random 7-char code is already taken = 0.003%
+# 1,000,000,000 links exist: chance a random 7-char code is already taken = 0.028%
+# 6,000,000,000 links exist: chance a random 7-char code is already taken = 0.170%
+# 4-char random codes: first collision after only 8,264 (birthday effect, sqrt of the space is ~3,844)
+```
+
+The lesson: with random or hashed codes, **always check for a collision on insert** (a unique constraint makes the database do it atomically) and retry. Do not rely on the key space being "big enough".
+
+<Callout type="key">
+Choose by the property you need. **Unguessable** links (private documents) want random codes. **Fast, simple and compact** wants a counter with ranges. Truncated hashes mainly buy deduplication, and cost you collision handling.
+</Callout>
+
+## Decision 2: 301 or 302?
+
+A redirect response tells the browser where to go: `301 Moved Permanently` says "always use the new address", `302 Found` (or `307`) says "this time". Browsers and proxies may **cache a 301**, so repeat visits never reach your servers, which is cheap but means you **cannot count those clicks** and cannot change or disable the link for those users. A 302 sends every click through you, giving accurate analytics and control, at the cost of more traffic.
+
+Most shorteners that offer click statistics or link editing use a temporary redirect for exactly that reason. Choose from the product's needs: analytics and revocation want 302; a pure, never-changing link can use 301 to save load.
+
+## Decision 3: Keeping Reads Fast
+
+Redirect traffic is read-dominated and heavily skewed: a few links are clicked constantly, and most are barely touched. That is the ideal shape for a cache (see [Caching Strategies](../../system-design/caching-strategies/)). Use **cache-aside** with an LRU eviction policy: look in the cache, fall back to the database on a miss, fill the cache, and let entries expire so deleted or expired links disappear.
+
+```python
+import random
+from collections import OrderedDict
+
+rnd = random.Random(4)
+n_links = 100_000
+weights = [1 / (i + 1) for i in range(n_links)]                  # Zipf-like popularity
+requests = rnd.choices(range(n_links), weights, k=200_000)
+def lru_hit_rate(capacity):
+    cache, hits = OrderedDict(), 0
+    for k in requests:
+        if k in cache:
+            hits += 1
+            cache.move_to_end(k)
+        else:
+            cache[k] = True
+            if len(cache) > capacity:
+                cache.popitem(last=False)
+    return hits / len(requests)
+for pct in (0.1, 1, 5):
+    print(f"cache holding {pct}% of links ({int(n_links * pct / 100):,}): {lru_hit_rate(int(n_links * pct / 100)):.0%} of redirects served from cache")
+# cache holding 0.1% of links (100): 29% of redirects served from cache
+# cache holding 1% of links (1,000): 51% of redirects served from cache
+# cache holding 5% of links (5,000): 66% of redirects served from cache
+```
+
+Holding just 1% of links in memory already absorbs about half of all redirects. In a real deployment the cache is larger and the popularity skew is often sharper. A **CDN** or edge cache can serve the hottest links before the request even reaches your data centre (see [Load Balancing & CDNs](../../networks/load-balancing-and-cdns/)). The database then only sees misses and writes.
+
+## Decision 4: Storage and Scaling
+
+Every operation is "get or put by code", with no joins and no range scans, so a **key-value or wide-column store** fits the access pattern naturally (see [NoSQL](../../databases/nosql/)), though a relational database with a primary-key index also works comfortably at this scale. To scale:
+
+- **Replicate** for availability and read capacity: a failed node must not stop redirects (see [Replication](../../distributed-systems/replication/)).
+- **Partition** by a hash of the code when one machine's storage or write rate is not enough. Because the key is the only access path, partitioning is easy and queries never span shards (see [Database Scaling](../../system-design/database-scaling/) and [Consistent Hashing](../../system-design/consistent-hashing/)).
+- **Separate the paths.** Redirects (hot, simple, cacheable) and link creation (cold, validating, abuse-checked) can be different services with different scaling and deployment rules.
+
+## Decision 5: Keep Analytics Off the Hot Path
+
+Counting clicks must never slow or break a redirect. The redirect handler should do its one lookup, answer, and **publish a click event to a queue** (see [Message Queues](../../system-design/message-queues/)); a separate consumer aggregates counts in batches. If the analytics pipeline is down, events wait in the queue and redirects keep working. Counts become eventually consistent, which no user will notice.
+
+## Abuse and Edge Cases
+
+A public shortener is a gift to spammers and phishers, because the short link hides the destination. Real services:
+
+- **Rate-limit link creation** per account and per IP (see [Rate Limiting](../../system-design/rate-limiting/)).
+- **Scan and block** malicious destinations, both at creation and later (a link can be benign when created and malicious a week later), and allow takedown.
+- **Validate URLs** and reject schemes such as `javascript:`.
+- Avoid **ambiguous characters** if humans will type codes (0/O, 1/l), and reserve words such as `admin` or `api` so custom aliases cannot collide with routes.
+
+## Failure Modes
+
+| What fails | Effect | Mitigation |
+| --- | --- | --- |
+| Cache node dies | Misses spike, database load jumps | Several cache nodes; consistent hashing limits what is lost; protect the database with rate limits |
+| Database primary dies | Link creation stops | Replicated storage with automatic failover; reads continue from replicas |
+| Counter service down | No new codes | Servers keep issuing from their pre-allocated blocks; replicate the allocator |
+| One hot link goes viral | One cache key takes huge traffic | CDN or local in-process caching of the hottest keys |
+| Analytics pipeline down | Counts lag | Queue buffers events; redirects unaffected |
+
+## What to Take Away
+
+The case looks simple because its core is one lookup, but the decisions generalize. **Derive load from requirements** (it showed that 39 writes per second is not the problem). **Put the cheap, hot path in front of the expensive one** (cache before database). **Treat unique IDs as a design question**, not an implementation detail. **Decouple side effects** (analytics) from the critical path. And **separate reads from writes** when their shapes differ. The next case, [Chat Application](../chat-application/), keeps these ideas but adds a harder problem: connections that stay open and messages that must arrive in order.
+
+<Callout type="practice">
+Real shorteners differ in their details (ID schemes, storage engines, redirect policy), and companies rarely publish the exact numbers. Treat this as a reasoned reference design, not a description of any one product. Its value is that each choice is justified by a requirement or a number, which is the skill that transfers.
+</Callout>
