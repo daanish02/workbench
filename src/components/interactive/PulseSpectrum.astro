@@ -1,0 +1,60 @@
+---
+import Figure from '../Figure.astro';
+
+// Rectangular pulse of width 1 and height 1 on [−½, ½]: its Fourier transform magnitude is |sin(πf)/(πf)|.
+const sinc = (f: number) => (Math.abs(f) < 1e-9 ? 1 : Math.abs(Math.sin(Math.PI * f) / (Math.PI * f)));
+const X = (f: number) => 30 + ((f + 4) / 8) * 350;
+const Y = (v: number) => 170 - v * 140;
+const pts: string[] = [];
+for (let i = 0; i <= 400; i++) {
+  const f = -4 + (8 * i) / 400;
+  pts.push(`${i ? 'L' : 'M'}${X(f).toFixed(2)},${Y(sinc(f)).toFixed(2)}`);
+}
+const curve = pts.join(' ');
+// the pulse itself, drawn small on the left
+const pulseX0 = 40, pulseX1 = 80, pulseTop = 40;
+---
+
+<Figure
+  kind="Diagram"
+  title="A pulse and its spectrum"
+  caption="Left: a rectangular pulse of width 1 in time. Right: the magnitude of its Fourier transform, |sin(πf)/(πf)|. The spectrum has a wide central lobe at f = 0 and side lobes that die away slowly. A short pulse is a wide spectrum, and the reverse also holds."
+>
+  <svg class="ps-svg" viewBox="0 0 400 200" role="img" aria-label="Rectangular pulse in time and the sinc-shaped magnitude of its spectrum">
+    <line x1={pulseX0 - 10} y1="170" x2={pulseX1 + 10} y2="170" class="ps-axis"></line>
+    <rect x={pulseX0} y={pulseTop} width={pulseX1 - pulseX0} height={170 - pulseTop} class="ps-pulse"></rect>
+    <text x="60" y="186" class="ps-t">time</text>
+    <line x1="150" y1="170" x2="390" y2="170" class="ps-axis"></line>
+    <line x1="150" y1="20" x2="150" y2="170" class="ps-axis"></line>
+    <path d={curve} class="ps-curve"></path>
+    <text x="270" y="186" class="ps-t">frequency f</text>
+    <text x={X(0)} y="186" class="ps-t">0</text>
+  </svg>
+</Figure>
+
+<style>
+  .ps-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ps-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ps-pulse {
+    fill: rgba(66, 133, 244, 0.35);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .ps-curve {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .ps-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+</style>

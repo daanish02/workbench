@@ -1,0 +1,137 @@
+---
+import Figure from '../Figure.astro';
+
+// Signal f: a rectangle of length 8 starting at index 6 in a 40-sample window. Kernel g: a triangle of width 5.
+const L = 40;
+const f = Array.from({ length: L }, (_, n) => (n >= 6 && n < 14 ? 1 : 0));
+const idx = Array.from({ length: L }, (_, n) => n);
+// panel layout: each panel has its own baseline; bars start at x = 96 and step 7.6 px
+const X0 = 96, STEP = 7.6, BW = 5.6;
+const BASE_F = 70, BASE_G = 140, BASE_Y = 236;
+---
+
+<Figure
+  title="Convolution: slide, multiply, add"
+  caption="Top: the input f. Middle: the kernel g flipped and shifted to position s. Bottom: the output y(s) = Σ f(m) g(s − m), built up as the kernel slides. Each output value is the overlap of the two bars at that shift."
+>
+  <convolution-visualizer>
+    <div class="cv-ctl">
+      <label>shift s <input type="range" min="0" max="39" step="1" value="8" data-s /><b data-sv>8</b></label>
+    </div>
+    <svg class="cv-svg" viewBox="0 0 400 250" role="img" aria-label="Input rectangle on top, shifted triangular kernel in the middle, and the output built up at the bottom">
+      <text x="4" y="46" class="cv-lab">input f</text>
+      <line x1={X0} y1={BASE_F} x2={X0 + STEP * L} y2={BASE_F} class="cv-axis"></line>
+      {idx.map((n) => (
+        <rect data-f={n} x={X0 + n * STEP} y={BASE_F - f[n] * 36} width={BW} height={f[n] * 36} class="cv-f"></rect>
+      ))}
+      <text x="4" y="116" class="cv-lab">kernel g</text>
+      <line x1={X0} y1={BASE_G} x2={X0 + STEP * L} y2={BASE_G} class="cv-axis"></line>
+      {idx.map((n) => (
+        <rect data-k={n} x={X0 + n * STEP} y={BASE_G} width={BW} height="0" class="cv-k"></rect>
+      ))}
+      <text x="4" y="196" class="cv-lab">output y</text>
+      <line x1={X0} y1={BASE_Y} x2={X0 + STEP * L} y2={BASE_Y} class="cv-axis"></line>
+      {idx.map((n) => (
+        <rect data-y={n} x={X0 + n * STEP} y={BASE_Y} width={BW} height="0" class="cv-y"></rect>
+      ))}
+    </svg>
+    <p class="cv-stat" data-stat></p>
+  </convolution-visualizer>
+</Figure>
+
+<style>
+  .cv-ctl {
+    margin-bottom: 10px;
+  }
+  .cv-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cv-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .cv-ctl b {
+    min-width: 2.4em;
+    text-align: right;
+    color: var(--text);
+  }
+  .cv-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .cv-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .cv-f {
+    fill: var(--g-blue);
+  }
+  .cv-k {
+    fill: var(--g-yellow);
+  }
+  .cv-y {
+    fill: var(--g-red);
+  }
+  .cv-lab {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .cv-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const L = 40;
+  const f = Array.from({ length: L }, (_, n) => (n >= 6 && n < 14 ? 1 : 0));
+  const g = [1, 2, 3, 2, 1]; // kernel taps for offsets 0..4
+  const BASE_G = 140, BASE_Y = 236;
+
+  class ConvolutionVisualizer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-s]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const s = +this.querySelector<HTMLInputElement>('[data-s]')!.value;
+      this.querySelector('[data-sv]')!.textContent = String(s);
+      // kernel row: g(s − n) for n = 0..39 (the flipped kernel sits at shift s)
+      for (let n = 0; n < L; n++) {
+        const off = s - n;
+        const v = off >= 0 && off < g.length ? g[off] : 0;
+        const bar = this.querySelector<SVGRectElement>(`[data-k="${n}"]`)!;
+        bar.setAttribute('y', String(BASE_G - v * 12));
+        bar.setAttribute('height', String(v * 12));
+      }
+      // output row: y(t) = Σ_m f(m) g(t − m), drawn for positions up to s
+      const y: number[] = [];
+      for (let t = 0; t < L; t++) {
+        let acc = 0;
+        for (let m = 0; m < L; m++) {
+          const off = t - m;
+          if (off >= 0 && off < g.length) acc += f[m] * g[off];
+        }
+        y.push(acc);
+      }
+      for (let n = 0; n < L; n++) {
+        const bar = this.querySelector<SVGRectElement>(`[data-y="${n}"]`)!;
+        const shown = n <= s ? y[n] : 0;
+        bar.setAttribute('y', String(BASE_Y - shown * 9));
+        bar.setAttribute('height', String(shown * 9));
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `y(${s}) = ${y[s]} · overlap of the rectangle and the kernel at shift ${s}`;
+    }
+  }
+  customElements.define('convolution-visualizer', ConvolutionVisualizer);
+</script>

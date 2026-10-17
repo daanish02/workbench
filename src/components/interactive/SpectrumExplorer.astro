@@ -1,0 +1,123 @@
+---
+import Figure from '../Figure.astro';
+
+// 32 samples, frequency bins 0..16. Bars are fixed elements; their heights are set by the script.
+const bins = Array.from({ length: 17 }, (_, k) => k);
+---
+
+<Figure
+  title="A signal and its spectrum"
+  caption="The signal is two cosines sampled 32 times: one with frequency f₁ (set by the slider) and one at bin 5 whose strength is the second slider. The bars are the DFT magnitudes |X_k|. Each tone shows up as a peak at its own bin, which is the frequency view of the same signal."
+>
+  <spectrum-explorer>
+    <div class="se-ctl">
+      <label>f₁ (bin) <input type="range" min="1" max="12" step="1" value="2" data-f /><b data-fv>2</b></label>
+      <label>strength of bin 5 <input type="range" min="0" max="1" step="0.05" value="0.5" data-a /><b data-av>0.50</b></label>
+    </div>
+    <svg class="se-svg" viewBox="0 0 400 200" role="img" aria-label="Bar chart of DFT magnitudes for bins 0 to 16">
+      <line x1="30" y1="170" x2="390" y2="170" class="se-axis"></line>
+      {bins.map((k) => (
+        <rect data-bar={k} x={34 + k * 21} y="170" width="14" height="0" class="se-bar"></rect>
+      ))}
+      <text x="34" y="186" class="se-t">0</text>
+      <text x={34 + 16 * 21} y="186" class="se-t">16</text>
+      <text x="200" y="186" class="se-t">frequency bin k</text>
+    </svg>
+    <p class="se-stat" data-stat></p>
+  </spectrum-explorer>
+</Figure>
+
+<style>
+  .se-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .se-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .se-ctl input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .se-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .se-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .se-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .se-bar {
+    fill: var(--g-blue);
+  }
+  .se-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: start;
+  }
+  .se-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 32;
+
+  class SpectrumExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-a]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const f1 = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      const a5 = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      this.querySelector('[data-fv]')!.textContent = String(f1);
+      this.querySelector('[data-av]')!.textContent = a5.toFixed(2);
+
+      const x: number[] = [];
+      for (let n = 0; n < N; n++) {
+        x.push(Math.cos((2 * Math.PI * f1 * n) / N) + a5 * Math.cos((2 * Math.PI * 5 * n) / N));
+      }
+      const mag: number[] = [];
+      for (let k = 0; k <= 16; k++) {
+        let re = 0, im = 0;
+        for (let n = 0; n < N; n++) {
+          re += x[n] * Math.cos((2 * Math.PI * k * n) / N);
+          im -= x[n] * Math.sin((2 * Math.PI * k * n) / N);
+        }
+        mag.push(Math.hypot(re, im) / N);
+      }
+      const top = Math.max(...mag, 1e-9);
+      for (let k = 0; k <= 16; k++) {
+        const bar = this.querySelector<SVGRectElement>(`[data-bar="${k}"]`)!;
+        const h = (mag[k] / top) * 150;
+        bar.setAttribute('y', String(170 - h));
+        bar.setAttribute('height', String(h));
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `peaks at bins ${f1} and 5 · |X_${f1}| = ${mag[f1].toFixed(3)} · |X_5| = ${mag[5].toFixed(3)} · the bars are normalised to the tallest peak`;
+    }
+  }
+  customElements.define('spectrum-explorer', SpectrumExplorer);
+</script>

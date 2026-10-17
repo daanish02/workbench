@@ -1,0 +1,139 @@
+---
+import Figure from '../Figure.astro';
+
+// Up to 24 samples per second are plotted for a one-second window.
+const maxSamples = Array.from({ length: 24 }, (_, i) => i);
+---
+
+<Figure
+  title="Aliasing: one set of samples, two tones"
+  caption="A tone at frequency f is sampled fs times per second. The blue curve is the tone; the dots are its samples. The yellow dashed curve is the aliased tone at |f − fs| shifted back into the range below the Nyquist frequency fs/2. When f is above fs/2 the two curves pass through the same dots."
+>
+  <aliasing-slider>
+    <div class="al-ctl">
+      <label>tone f <input type="range" min="1" max="20" step="0.5" value="7" data-f /><b data-fv>7.0</b></label>
+      <label>sample rate fs <input type="range" min="4" max="24" step="1" value="10" data-fs /><b data-fsv>10</b></label>
+    </div>
+    <svg class="al-svg" viewBox="0 0 400 200" role="img" aria-label="A sine curve with sample dots, and the aliased sine that passes through the same dots">
+      <line x1="20" y1="100" x2="390" y2="100" class="al-axis"></line>
+      <path data-tone class="al-tone"></path>
+      <path data-alias class="al-alias"></path>
+      {maxSamples.map((i) => (
+        <circle data-s={i} r="4" class="al-dot"></circle>
+      ))}
+    </svg>
+    <p class="al-stat" data-stat></p>
+  </aliasing-slider>
+</Figure>
+
+<style>
+  .al-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .al-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .al-ctl input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .al-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .al-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .al-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .al-tone {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 1.8;
+  }
+  .al-alias {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .al-dot {
+    fill: var(--g-red);
+  }
+  .al-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class AliasingSlider extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-fs]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const f = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      const fs = +this.querySelector<HTMLInputElement>('[data-fs]')!.value;
+      this.querySelector('[data-fv]')!.textContent = f.toFixed(1);
+      this.querySelector('[data-fsv]')!.textContent = String(fs);
+
+      // one second of time: x from 20 to 390, amplitude 70 px
+      const X = (t: number) => 20 + t * 370;
+      const Y = (v: number) => 100 - v * 70;
+      const tone: string[] = [];
+      for (let i = 0; i <= 400; i++) {
+        const t = i / 400;
+        tone.push(`${i ? 'L' : 'M'}${X(t).toFixed(2)},${Y(Math.sin(2 * Math.PI * f * t)).toFixed(2)}`);
+      }
+      this.querySelector('[data-tone]')!.setAttribute('d', tone.join(' '));
+
+      // the alias: the frequency in [−fs/2, fs/2] with the same samples
+      let alias = f - Math.round(f / fs) * fs;
+      const aliasPts: string[] = [];
+      for (let i = 0; i <= 400; i++) {
+        const t = i / 400;
+        aliasPts.push(`${i ? 'L' : 'M'}${X(t).toFixed(2)},${Y(Math.sin(2 * Math.PI * alias * t)).toFixed(2)}`);
+      }
+      this.querySelector('[data-alias]')!.setAttribute('d', aliasPts.join(' '));
+
+      // samples: fs points per second, shown up to the 24 dots available
+      for (let i = 0; i < 24; i++) {
+        const dot = this.querySelector<SVGCircleElement>(`[data-s="${i}"]`)!;
+        if (i < fs) {
+          const t = i / fs;
+          dot.setAttribute('cx', X(t).toFixed(2));
+          dot.setAttribute('cy', Y(Math.sin(2 * Math.PI * f * t)).toFixed(2));
+          dot.style.display = '';
+        } else {
+          dot.style.display = 'none';
+        }
+      }
+      const nyquist = fs / 2;
+      const verdict = f <= nyquist ? 'below the Nyquist frequency: the tone is recovered' : 'above the Nyquist frequency: it aliases';
+      this.querySelector('[data-stat]')!.textContent =
+        `Nyquist = fs/2 = ${nyquist} Hz · alias = ${Math.abs(alias).toFixed(1)} Hz · ${verdict}`;
+    }
+  }
+  customElements.define('aliasing-slider', AliasingSlider);
+</script>

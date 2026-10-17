@@ -1,0 +1,179 @@
+---
+import Figure from '../Figure.astro';
+
+// Fixed set of 25 phasor segments (odd harmonics 1..49); the slider switches the extra ones off.
+const segs = Array.from({ length: 25 }, (_, i) => i);
+---
+
+<Figure
+  title="Fourier epicycles: a square wave from rotating vectors"
+  caption="Left: each harmonic is a vector that spins at its own speed, and the tip of the chain traces the sum. Right: the square wave the chain builds, with a dot at the current time. Add odd harmonics with the slider and watch the shape sharpen."
+>
+  <fourier-epicycles>
+    <div class="fe-ctl">
+      <label>terms <input type="range" min="1" max="25" step="1" value="3" data-n /><b data-nv>3</b></label>
+      <label>time t <input type="range" min="0" max="6.28" step="0.02" value="0.8" data-t /><b data-tv>0.80</b></label>
+    </div>
+    <svg class="fe-svg" viewBox="0 0 400 200" role="img" aria-label="Rotating phasor chain summing to a square wave, with the waveform drawn on the right">
+      <line x1="200" y1="10" x2="200" y2="190" class="fe-axis"></line>
+      <path data-wave class="fe-wave"></path>
+      {segs.map((i) => (
+        <line data-seg={i} class="fe-seg"></line>
+      ))}
+      {segs.map((i) => (
+        <circle data-tip={i} r="2.5" class="fe-tip"></circle>
+      ))}
+      <circle data-dot r="4" class="fe-dot"></circle>
+      <line data-link class="fe-link"></line>
+    </svg>
+    <p class="fe-stat" data-stat></p>
+  </fourier-epicycles>
+</Figure>
+
+<style>
+  .fe-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .fe-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .fe-ctl input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .fe-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .fe-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .fe-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .fe-seg {
+    stroke: #5f6368;
+    stroke-width: 1;
+  }
+  .fe-tip {
+    fill: var(--g-yellow);
+  }
+  .fe-wave {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 1.8;
+  }
+  .fe-dot {
+    fill: var(--g-red);
+  }
+  .fe-link {
+    stroke: var(--g-red);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+  }
+  .fe-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Square wave f(t) = sign(sin t) with harmonics k = 1, 3, 5, ... The k-th term is (4/π)(1/k) sin(kt) = (4/π)(1/k) cos(kt − π/2),
+  // so each phasor has length (4/π)/k and angle kt − π/2 measured from the x-axis.
+  const CX = 100, CY = 100, S = 62; // chain origin and scale
+  const WX0 = 210, WX1 = 390, WY = 100, WS = 62; // waveform x-range, centre line and vertical scale
+
+  class FourierEpicycles extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const N = +this.querySelector<HTMLInputElement>('[data-n]')!.value; // number of odd harmonics
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(N);
+      this.querySelector('[data-tv]')!.textContent = t.toFixed(2);
+
+      // waveform: partial sum over one period
+      const pts: string[] = [];
+      for (let i = 0; i <= 200; i++) {
+        const tt = (2 * Math.PI * i) / 200;
+        pts.push(`${i ? 'L' : 'M'}${(WX0 + (WX1 - WX0) * (i / 200)).toFixed(2)},${(WY - WS * this.partial(tt, N)).toFixed(2)}`);
+      }
+      this.querySelector('[data-wave]')!.setAttribute('d', pts.join(' '));
+
+      // chain: segments from the previous tip; a harmonic beyond N is hidden by a zero-length segment
+      let x = CX, y = CY;
+      let k = 0;
+      for (let i = 0; i < 25; i++) {
+        const seg = this.querySelector<SVGLineElement>(`[data-seg="${i}"]`)!;
+        const tip = this.querySelector<SVGCircleElement>(`[data-tip="${i}"]`)!;
+        const harmonic = 2 * i + 1;
+        if (i < N) {
+          const r = ((4 / Math.PI) / harmonic) * S;
+          const ang = harmonic * t - Math.PI / 2;
+          // the vertical offset of the chain is the sum of r·cos(ang) = (4/π)(1/k) sin(kt)
+          const nx = x + r * Math.sin(ang);
+          const ny = y - r * Math.cos(ang);
+          seg.setAttribute('x1', x.toFixed(2));
+          seg.setAttribute('y1', y.toFixed(2));
+          seg.setAttribute('x2', nx.toFixed(2));
+          seg.setAttribute('y2', ny.toFixed(2));
+          seg.style.display = '';
+          tip.setAttribute('cx', nx.toFixed(2));
+          tip.setAttribute('cy', ny.toFixed(2));
+          tip.style.display = '';
+          x = nx;
+          y = ny;
+          k++;
+        } else {
+          seg.style.display = 'none';
+          tip.style.display = 'none';
+        }
+      }
+      // the chain's final tip is the partial sum at time t (vertical position on the waveform)
+      const value = this.partial(t, N);
+      const wx = WX0 + (WX1 - WX0) * (t / (2 * Math.PI));
+      const wy = WY - WS * value;
+      const dot = this.querySelector<SVGCircleElement>('[data-dot]')!;
+      dot.setAttribute('cx', wx.toFixed(2));
+      dot.setAttribute('cy', wy.toFixed(2));
+      const link = this.querySelector<SVGLineElement>('[data-link]')!;
+      link.setAttribute('x1', x.toFixed(2));
+      link.setAttribute('y1', y.toFixed(2));
+      link.setAttribute('x2', wx.toFixed(2));
+      link.setAttribute('y2', wy.toFixed(2));
+      this.querySelector('[data-stat]')!.textContent =
+        `${k} harmonic${k === 1 ? '' : 's'} · partial sum at t = ${t.toFixed(2)} is ${value.toFixed(3)} · the true square wave is ±1`;
+    }
+
+    partial(t: number, N: number) {
+      let s = 0;
+      for (let i = 0; i < N; i++) {
+        const k = 2 * i + 1;
+        s += Math.sin(k * t) / k;
+      }
+      return (4 / Math.PI) * s;
+    }
+  }
+  customElements.define('fourier-epicycles', FourierEpicycles);
+</script>
