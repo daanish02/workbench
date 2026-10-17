@@ -1,0 +1,104 @@
+---
+title: "Error Correction"
+description: "Adding structured redundancy so data survives noise: repetition and parity, Hamming distance, the Hamming(7,4) code that corrects any single flipped bit, and the channel capacity that limits every code."
+order: 6
+tier: core
+takeaways:
+  - "Error-correcting codes add **redundancy** on purpose. A code that maps $k$ data bits to $n$ transmitted bits has **rate** $k/n$."
+  - "The **Hamming distance** between two codewords counts the positions where they differ. A code whose codewords are at least $d$ apart detects $d - 1$ errors and corrects $\\lfloor (d - 1)/2 \\rfloor$."
+  - "**Hamming(7,4)** sends 4 data bits as 7, has minimum distance 3, and corrects any single flipped bit. The **syndrome** $H\\mathbf{r}$ of a received word spells out the position of the error in binary."
+  - "Codes are linear algebra over the two-element field $\\{0, 1\\}$ with arithmetic mod 2: encoding is a matrix product, and checking is multiplication by a parity-check matrix."
+  - "Shannon's **channel capacity** is the best rate any code can achieve with vanishing error. For a binary channel that flips each bit with probability $p$, it is $1 - H(p)$ bits per use."
+resources:
+  - title: "Hamming(7,4) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Hamming(7,4)"
+    note: "Generator and parity-check matrices, with worked decoding."
+  - title: "Information Theory, Inference, and Learning Algorithms (MacKay)"
+    url: "https://www.inference.org.uk/itprnn/book.html"
+    note: "Free book; chapter 1 introduces repetition and Hamming codes, later chapters capacity."
+  - title: "Noisy-channel coding theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Noisy-channel_coding_theorem"
+    note: "Shannon's capacity result and what it does and does not promise."
+---
+
+The [Source Coding](../coding-theory/) note removed redundancy to make data small. Real channels, such as a radio link, a scratched disc or a memory chip hit by a cosmic ray, flip bits, and a compressed message has no slack to recover from that. Error-correcting codes add redundancy back, but in a structured way, so the receiver can find and fix the damage. This note measures what a code can correct with Hamming distance, builds the Hamming(7,4) code with matrices mod 2, and states Shannon's limit on how much redundancy reliable communication really needs. It uses the arithmetic of [Modular Arithmetic](../../discrete-math/modular-arithmetic/) and the matrices of [Linear Algebra](../../linear-algebra/matrices-as-transformations/).
+
+## Repetition and parity
+
+The simplest code repeats each bit three times: $0 \mapsto 000$, $1 \mapsto 111$, and the receiver takes a majority vote. It corrects any single flip in each group but has rate $\frac{1}{3}$. A single **parity bit**, the sum of the data bits mod 2, costs only one extra bit and detects any single flip, because the total parity changes, but it cannot say which bit flipped.
+
+## Hamming distance
+
+The **Hamming distance** between two equal-length words is the number of positions where they differ. If every pair of codewords is at least $d$ apart, then up to $d - 1$ flips cannot turn one codeword into another, so they are detected, and up to $\lfloor (d - 1)/2 \rfloor$ flips leave the received word closer to the original than to any other codeword, so they are corrected. Repetition-3 has $d = 3$ and parity has $d = 2$, which matches what each can do.
+
+## The Hamming(7,4) code
+
+Hamming's code adds three parity bits to four data bits. In matrix form, with every sum taken mod 2, data $\mathbf{d}$ is encoded as $\mathbf{c} = G^\top \mathbf{d}$, and a received word $\mathbf{r}$ is checked by the **syndrome** $\mathbf{s} = H\mathbf{r}$. The parity-check matrix $H$ is chosen so that its columns are the numbers $1$ to $7$ in binary; then a single flip in position $i$ makes the syndrome equal to column $i$, which is $i$ written in binary.
+
+```python
+import numpy as np
+
+H = np.array([[(j >> b) & 1 for j in range(1, 8)] for b in (0, 1, 2)])   # column j is j in binary
+data_pos, parity_pos = [2, 4, 5, 6], [0, 1, 3]                         # positions 3, 5, 6, 7 hold data
+
+def encode(d):
+    c = np.zeros(7, int)
+    c[data_pos] = d
+    for b, p in enumerate(parity_pos):        # choose each parity bit so its check sums to 0 mod 2
+        c[p] = (H[b] @ c) % 2
+    return c
+
+def decode(r):
+    s = (H @ r) % 2
+    pos = s[0] + 2 * s[1] + 4 * s[2]          # the syndrome is the error position in binary
+    r = r.copy()
+    if pos:
+        r[pos - 1] ^= 1
+    return r[data_pos], pos
+
+d = np.array([1, 0, 1, 1])
+c = encode(d)
+print("codeword:", c, " syndrome:", (H @ c) % 2)
+for flip in (0, 4, 6):
+    r = c.copy()
+    r[flip] ^= 1
+    fixed, pos = decode(r)
+    print(f"flip bit {flip + 1}: syndrome says position {pos}, decoded data {fixed} correct: {np.array_equal(fixed, d)}")
+# codeword: [0 1 1 0 0 1 1]  syndrome: [0 0 0]
+# flip bit 1: syndrome says position 1, decoded data [1 0 1 1] correct: True
+# flip bit 5: syndrome says position 5, decoded data [1 0 1 1] correct: True
+# flip bit 7: syndrome says position 7, decoded data [1 0 1 1] correct: True
+```
+
+In words: a valid codeword has syndrome zero. Flipping bit $1$, $5$ or $7$ produces a syndrome that names exactly that position, so the decoder flips it back and recovers the data $1011$ every time. Seven bits carry four, a rate of $\frac{4}{7}$, far better than repetition's $\frac{1}{3}$ for the same single-error protection.
+
+<HammingCode />
+
+<Callout type="pitfall">
+A code corrects only the errors it was designed for. Two flips in a Hamming(7,4) word produce a nonzero syndrome that points at a third, innocent bit, and the decoder confidently makes the word worse. When multiple errors are likely, use a code with larger minimum distance, or add an overall parity bit (the extended Hamming code), which detects double errors instead of miscorrecting them.
+</Callout>
+
+## Channel capacity
+
+How much redundancy is really needed? Shannon's noisy-channel coding theorem answers: every channel has a **capacity** $C$, and for any rate below $C$ there exist codes whose error probability goes to zero as blocks get long, while above $C$ reliable communication is impossible. For the **binary symmetric channel**, which flips each bit independently with probability $p$,
+
+$$
+C = 1 - H(p) = 1 + p\log_2 p + (1 - p)\log_2(1 - p)
+
+$$
+
+bits per channel use, with $H$ the binary entropy of the [Entropy](../entropy/) note.
+
+```python
+import math
+
+H = lambda p: -p * math.log2(p) - (1 - p) * math.log2(1 - p)
+for p in (0.001, 0.01, 0.1, 0.5):
+    print(f"flip probability {p}: capacity {1 - H(p):.3f} bits per use")
+# flip probability 0.001: capacity 0.989 bits per use
+# flip probability 0.01: capacity 0.919 bits per use
+# flip probability 0.1: capacity 0.531 bits per use
+# flip probability 0.5: capacity 0.000 bits per use
+```
+
+In words: a channel that flips one bit in a thousand can carry almost a full bit per use, $0.989$; at $p = 0.1$ the capacity is still $0.531$, so reliable communication needs less than half the bits for redundancy; at $p = 0.5$ the output is independent of the input and the capacity is zero. Modern codes such as LDPC and polar codes, used in Wi-Fi and 5G, come within a fraction of a decibel of this limit.

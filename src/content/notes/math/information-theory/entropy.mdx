@@ -5,7 +5,7 @@ order: 1
 tier: core
 takeaways:
   - "The **surprise** of an outcome with probability $p$ is $\\log_2(1/p)$ bits. Rare outcomes are more surprising, and a certain outcome carries no surprise."
-  - "The **Shannon entropy** $H(p) = -\\sum_x p(x)\\log_2 p(x)$ is the average surprise. It is the minimum average number of yes/no questions needed to identify an outcome."
+  - "The **Shannon entropy** $H(p) = -\\sum_x p(x)\\log_2 p(x)$ is the average surprise. It is a lower bound on the average number of yes/no questions needed to identify an outcome, and the best strategy comes within one question of it."
   - "Entropy is largest when all outcomes are equally likely and zero when one outcome is certain. A fair coin has one bit; a loaded coin has less."
   - "A distribution over $2^k$ equally likely outcomes has exactly $k$ bits of entropy, which is the 20-questions picture: each yes/no answer halves the possibilities."
 resources:
@@ -64,20 +64,39 @@ In words: the fair coin is the most uncertain two-outcome distribution, at one b
 
 ## Twenty questions
 
-Entropy is the number of yes/no questions an optimal player needs on average. With eight equally likely objects, each question can split the candidates in half, so three questions always suffice. With the loaded coin, a good strategy asks about the likely outcome first, and the average number of questions falls below one bit per flip only when the guess can be made correct more often.
+Entropy is a lower bound on the number of yes/no questions an optimal player needs on average, and the best strategy comes within one question of it. With eight equally likely objects, each question can split the candidates in half, so three questions always suffice, exactly the entropy. With a single loaded coin you still need one question per flip, even though the entropy is only $0.469$ bits; the average can approach the entropy only by asking about blocks of flips together.
 
-The check below computes the expected number of questions for the uniform eight-outcome case, which is exactly the entropy.
+The check below builds the best question strategy for an uneven distribution (a Huffman tree, covered in the [Coding Theory](../coding-theory/) note) and compares its average number of questions with the entropy.
 
 ```python
+import heapq
 import math
 
-outcomes = list(range(8))
-questions_needed = {x: 3 for x in outcomes}  # each outcome identified by 3 halving questions
-expected = sum(questions_needed[x] / 8 for x in outcomes)
-print("expected questions:", expected, " entropy:", round(H([1 / 8] * 8), 3))  # prints: expected questions: 3.0 entropy: 3.0
+def H(ps):
+    return -sum(p * math.log2(p) for p in ps if p > 0)
+
+def questions(ps):
+    # merge the two least likely groups; every outcome inside a merged group needs one more question
+    heap = [(p, [i]) for i, p in enumerate(ps)]
+    depth = [0] * len(ps)
+    heapq.heapify(heap)
+    while len(heap) > 1:
+        p1, g1 = heapq.heappop(heap)
+        p2, g2 = heapq.heappop(heap)
+        for i in g1 + g2:
+            depth[i] += 1
+        heapq.heappush(heap, (p1 + p2, g1 + g2))
+    return sum(p * d for p, d in zip(ps, depth))
+
+for ps in ([1 / 8] * 8, [0.4, 0.3, 0.2, 0.1]):
+    print(f"entropy {H(ps):.3f} bits, best average questions {questions(ps):.3f}")
+# entropy 3.000 bits, best average questions 3.000
+# entropy 1.846 bits, best average questions 1.900
 ```
 
-In words: the average number of questions matches the entropy exactly for this uniform case. For unequal probabilities, entropy is still the lower bound, and Huffman coding in a later note reaches it closely.
+In words: for eight equal outcomes the best strategy needs exactly $3$ questions, the entropy. For the uneven distribution it needs $1.9$ questions on average, a little above the entropy of $1.846$ bits and less than one question more, as the bound promises.
+
+<BlockCoding />
 
 <Callout type="pitfall">
 Entropy depends on the distribution, not on the labels. Two coins with the same bias have the same entropy whatever their faces are called, and an entropy value means nothing without saying which distribution it describes.

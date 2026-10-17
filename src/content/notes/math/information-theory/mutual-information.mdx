@@ -1,5 +1,5 @@
 ---
-title: "Mutual information"
+title: "Mutual Information"
 description: "How much knowing one variable reduces uncertainty about another, computed from a joint table, and its relation to entropy and independence."
 order: 4
 tier: core
@@ -76,7 +76,22 @@ I = sum(p * math.log2(p / (pX[x] * pY[y])) for (x, y), p in indep.items())
 print("mutual information of independent variables:", round(I, 12))  # prints: mutual information of independent variables: 0.0
 ```
 
-In words: independent variables share no information. Correlation can also be zero for dependent variables, for example $Y = X^2$ with $X$ symmetric, but mutual information is positive there, so it is the more sensitive measure.
+In words: independent variables share no information. Correlation can also be zero for dependent variables, and mutual information catches that case:
+
+```python
+import math
+
+xs = [-1, 0, 1]                          # X uniform on three values, Y = X^2
+joint = {(x, x * x): 1 / 3 for x in xs}
+pX = {x: 1 / 3 for x in xs}
+pY = {0: 1 / 3, 1: 2 / 3}
+cov = sum(p * x * y for (x, y), p in joint.items()) - sum(pX[x] * x for x in xs) * sum(pY[y] * y for y in pY)
+I = sum(p * math.log2(p / (pX[x] * pY[y])) for (x, y), p in joint.items())
+print("covariance:", cov, " mutual information:", round(I, 4), "bits")
+# covariance: 0.0  mutual information: 0.9183 bits
+```
+
+In words: the covariance is exactly $0$, yet knowing $X$ determines $Y$, and the mutual information is $0.918$ bits, all of $H(Y)$. Mutual information is the more sensitive measure of dependence.
 
 <Callout type="pitfall">
 Mutual information is not a measure of how strong or how positive a relationship is. A large value says the variables are informative about each other, but not whether the relationship is linear, causal, or useful for prediction. Estimating it from finite samples is also biased upward unless corrected.

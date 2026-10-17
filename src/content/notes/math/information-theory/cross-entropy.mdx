@@ -1,5 +1,5 @@
 ---
-title: "Cross-entropy"
+title: "Cross-Entropy"
 description: "Cross-entropy as the expected code length when the wrong distribution is used, its link to entropy, and why it is the standard classification loss."
 order: 2
 tier: core
@@ -92,6 +92,25 @@ In words: moving the correct class from $0.7$ to $0.1$ raises the loss from $0.3
 <Callout type="pitfall">
 Cross-entropy assumes the model outputs a probability distribution. Feeding unnormalised scores directly into the logarithm gives meaningless numbers, and the softmax function is normally applied first to turn scores into probabilities.
 </Callout>
+
+## Computing it stably
+
+A model produces scores (logits) $z_k$, and the softmax turns them into probabilities $q_k = e^{z_k} / \sum_j e^{z_j}$. Computing that literally overflows for large scores. Since the loss only needs $\log q_y$, libraries compute it directly as $z_y - \log\sum_j e^{z_j}$, with the **log-sum-exp** evaluated after subtracting the largest score:
+
+```python
+import numpy as np
+from scipy.special import log_softmax, logsumexp
+
+z = np.array([1000.0, 999.0, 990.0])   # logits; class 0 is correct
+with np.errstate(over="ignore", invalid="ignore"):
+    naive = np.exp(z) / np.exp(z).sum()
+print("naive softmax:", naive)
+print("stable loss -log q[0]:", round(-(z[0] - logsumexp(z)), 6), " via log_softmax:", round(-log_softmax(z)[0], 6))
+# naive softmax: [nan nan nan]
+# stable loss -log q[0]: 0.313295  via log_softmax: 0.313295
+```
+
+In words: $e^{1000}$ overflows, so the naive softmax returns `nan`. Subtracting the largest logit first changes nothing mathematically, since the shift cancels in the ratio, and gives the loss $0.3133$ nats. This is why frameworks offer a combined "cross-entropy from logits" function. Run it with `uv run --with numpy --with scipy`.
 
 ## Why it is used
 

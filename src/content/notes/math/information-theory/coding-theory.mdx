@@ -1,5 +1,5 @@
 ---
-title: "Coding theory"
+title: "Source Coding"
 description: "Prefix codes, Huffman's algorithm for optimal codes, and why entropy is the lower bound on average code length."
 order: 5
 tier: advanced
@@ -20,7 +20,7 @@ resources:
     note: "Entropy as the limit of lossless compression."
 ---
 
-Every time you save a file or stream a video, a code turns symbols into bits. The question is how short the bits can be on average. Shannon showed that the answer is the entropy of the source, and Huffman gave a simple algorithm that gets close to it for a single symbol at a time. This note defines prefix codes, proves that entropy is a lower bound on average length, and runs Huffman's algorithm on a small source where the bound is reached exactly.
+Every time you save a file or stream a video, a code turns symbols into bits. The question is how short the bits can be on average. Shannon showed that the answer is the entropy of the source, and Huffman gave a simple algorithm that gets close to it for a single symbol at a time. This note defines prefix codes, shows why entropy is a lower bound on average length, and runs Huffman's algorithm on a small source where the bound is reached exactly.
 
 ## Prefix codes
 
@@ -47,7 +47,6 @@ print("decoded 0 10 11 0:", decode('010110'))  # prints: decoded 0 10 11 0: abca
 
 In words: the message $abca$ encodes as $0\,10\,11\,0$, and the decoder recovers it without any separators, because the prefix property guarantees each codeword is complete the moment it matches.
 
-<PrefixTree />
 
 ## Average length and the entropy bound
 
@@ -63,6 +62,15 @@ print("entropy:", H, " fixed-length average:", fixed_len)  # prints: entropy: 1.
 ```
 
 In words: the entropy is $1.75$ bits, and a fixed two-bit code wastes a quarter of a bit per symbol. A variable-length code can do better, and Huffman's algorithm finds the best one.
+
+Why no code can beat the entropy: the codeword lengths of any prefix code satisfy the **Kraft inequality** $\sum_x 2^{-\ell(x)} \le 1$, since each codeword claims a $2^{-\ell(x)}$ share of the binary tree. Define $q(x) = 2^{-\ell(x)} / \sum_y 2^{-\ell(y)}$. Then
+
+$$
+L - H(p) = \sum_x p(x)\ell(x) + \sum_x p(x)\log_2 p(x) = D(p \,\|\, q) - \log_2 \sum_y 2^{-\ell(y)} \ge 0,
+
+$$
+
+because a KL divergence is never negative and the logarithm of a number at most $1$ is at most $0$. Equality needs $p(x) = 2^{-\ell(x)}$, which is why powers of one half are the case where the bound is met.
 
 <HuffmanBuilder />
 
@@ -97,4 +105,4 @@ Huffman coding is optimal among codes that encode one symbol at a time, but not 
 
 ## Where it is used
 
-DEFLATE, the format behind ZIP and gzip, combines Huffman coding with a dictionary method. Entropy coding stages in image and video compression do the same job, and the entropy bound explains how much any of them can save in principle.
+DEFLATE, the format behind ZIP and gzip, combines Huffman coding with a dictionary method. Entropy coding stages in image and video compression do the same job, and the entropy bound explains how much any of them can save in principle. Compression removes redundancy; the [Error Correction](../error-correction/) note adds redundancy back on purpose, so that data survives a noisy channel.

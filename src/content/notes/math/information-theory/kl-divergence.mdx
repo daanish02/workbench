@@ -1,5 +1,5 @@
 ---
-title: "KL divergence"
+title: "KL Divergence"
 description: "The Kullback-Leibler divergence as the extra code length from using the wrong distribution, why it is never negative, and why it is not symmetric."
 order: 3
 tier: core
@@ -82,13 +82,32 @@ D_qp = sum(a * math.log2(a / b) for a, b in zip(q, p))
 print("D(p || q) =", round(D_pq, 4), " D(q || p) =", round(D_qp, 4))  # prints: D(p || q) = 0.737 D(q || p) = 0.531
 ```
 
-In words: $0.737$ and $0.531$ differ. Penalising the believed distribution for ruling out outcomes that happen (the $p \,\|\, q$ direction) is harsher than the reverse, and the choice of direction decides which mistakes a fitting procedure avoids.
+In words: $0.737$ and $0.531$ differ, so the direction matters. Which one is larger depends on the pair: swap the roles of the two distributions and the inequality flips. What does not change is what each direction punishes. $D(p \,\|\, q)$ weights by $p$, so it punishes $q$ for putting little mass where $p$ has a lot; fitting $q$ this way spreads it to cover everything $p$ does. $D(q \,\|\, p)$ weights by $q$, so it punishes $q$ for putting mass where $p$ has little; fitting this way makes $q$ settle on one region where $p$ is large.
 
 <Callout type="pitfall">
 A zero in $q$ where $p$ is positive makes $D(p \,\|\, q)$ infinite, while the reverse direction may be finite. A model that assigns zero probability to something that can happen will be infinitely wrong in this sense, so smoothing or mixing with a broader distribution is common practice.
 </Callout>
 
-<AsymmetryBars />
+
+## In a library
+
+`scipy.stats.entropy` computes both entropy and KL divergence, and `scipy.special.rel_entr` gives the terms $p \log(p/q)$ with the conventions $0 \log 0 = 0$ and $p \log(p/0) = \infty$ built in:
+
+```python
+import numpy as np
+from scipy.special import rel_entr
+from scipy.stats import entropy
+
+p, q = [0.5, 0.5], [0.9, 0.1]
+print("D(p || q):", round(entropy(p, q, base=2), 4), " D(q || p):", round(entropy(q, p, base=2), 4))
+print("zero in q where p > 0:", rel_entr([0.5, 0.5], [1.0, 0.0]).sum())
+print("zero in p is fine:", round(rel_entr([1.0, 0.0], [0.5, 0.5]).sum() / np.log(2), 4))
+# D(p || q): 0.737  D(q || p): 0.531
+# zero in q where p > 0: inf
+# zero in p is fine: 1.0
+```
+
+In words: the library reproduces $0.737$ and $0.531$ bits, returns infinity when $q$ rules out an outcome $p$ allows, and handles a zero in $p$ without error, the two cases of the pitfall above. Run it with `uv run --with numpy --with scipy`.
 
 ## Where it is used
 
