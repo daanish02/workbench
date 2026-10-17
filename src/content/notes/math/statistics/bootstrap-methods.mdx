@@ -1,8 +1,83 @@
 ---
 title: "Bootstrap methods"
-description: "Resampling to estimate uncertainty without distributional assumptions."
+description: "Estimating uncertainty by resampling the data with replacement, the percentile bootstrap interval, and when the method can be trusted."
 order: 6
 tier: core
+takeaways:
+  - "The **bootstrap** estimates the sampling distribution of a statistic by resampling the data with replacement, many times, and recomputing the statistic on each resample."
+  - "The **bootstrap standard error** is the standard deviation of the resampled statistics. For a mean it matches the formula $s/\\sqrt{n}$ closely, but the bootstrap also works for statistics with no simple formula, such as the median."
+  - "A **percentile interval** takes the 2.5th and 97.5th percentiles of the resampled statistics as a $95\\%$ interval."
+  - "The bootstrap assumes the sample resembles the population. It fails for very small samples, heavy tails with infinite variance, and statistics that depend on the extremes, such as the maximum."
+resources:
+  - title: "Bootstrapping (statistics) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bootstrapping_(statistics)"
+    note: "The resampling idea, its variants, and its limits."
+  - title: "Bootstrap percentile interval (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bootstrapping_(statistics)#Deriving_confidence_intervals_from_the_bootstrap_distribution"
+    note: "How the percentile interval is built and when it is reliable."
+  - title: "Python random module"
+    url: "https://docs.python.org/3/library/random.html"
+    note: "Seeded resampling used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Many statistics have no simple formula for their uncertainty. The median, a ratio of two means, or a model's score on a test set all need a way to ask how much they would vary across samples. The bootstrap answers that question with the data already in hand: it treats the sample as a stand-in for the population and draws new samples from it. This note introduces the method, checks it against a known standard error, and gives an interval for a statistic that has no formula.
+
+## Resampling with replacement
+
+Given a sample $x_1, \dots, x_n$, a bootstrap resample is a sample of the same size $n$ drawn with replacement from those values. Some points appear twice and others not at all. Computing the statistic on each resample and looking at the spread of the results estimates the sampling variability of the statistic.
+
+## Checking against a known formula
+
+For the mean, the standard error is $s/\sqrt{n}$. The script below draws a sample of $40$ values from a normal distribution with a fixed seed, computes the bootstrap standard error of the mean from $5000$ resamples, and compares it with the formula.
+
+```python
+import math
+import random
+
+random.seed(21)
+sample = [random.gauss(10, 2) for _ in range(40)]
+n = len(sample)
+m = sum(sample) / n
+s = math.sqrt(sum((v - m) ** 2 for v in sample) / (n - 1))
+means = []
+for _ in range(5000):
+    resample = [random.choice(sample) for _ in range(n)]
+    means.append(sum(resample) / n)
+mb = sum(means) / len(means)
+boot_se = math.sqrt(sum((v - mb) ** 2 for v in means) / (len(means) - 1))
+print("bootstrap SE of mean:", round(boot_se, 4), " formula s/sqrt(n):", round(s / math.sqrt(n), 4))  # prints: bootstrap SE of mean: 0.2618 formula s/sqrt(n): 0.2622
+```
+
+In words: the bootstrap and the formula agree to about two decimal places. For the mean we did not need the bootstrap, but the same code works unchanged for any statistic, which is the point.
+
+<BootstrapResample />
+
+## An interval for the median
+
+The median has no simple standard error for a skewed sample. The script below uses exponential data, where the median is less than the mean, resamples the median $5000$ times, and takes the central $95\%$ of the results as an interval.
+
+```python
+import random
+
+random.seed(33)
+sample = sorted(random.expovariate(1 / 4) for _ in range(60))
+n = len(sample)
+median = (sample[n // 2 - 1] + sample[n // 2]) / 2
+meds = []
+for _ in range(5000):
+    r = sorted(random.choice(sample) for _ in range(n))
+    meds.append((r[n // 2 - 1] + r[n // 2]) / 2)
+meds.sort()
+lo, hi = meds[int(0.025 * len(meds))], meds[int(0.975 * len(meds))]
+print("median:", round(median, 3), " 95% bootstrap interval:", round(lo, 3), "to", round(hi, 3))  # prints: median: 2.403 95% bootstrap interval: 1.452 to 3.281
+```
+
+In words: the sample median is about $2.4$, and the bootstrap places a $95\%$ interval from about $1.45$ to $3.28$. The interval is not built from a formula for the median, so it needs no assumption that the median is normally distributed.
+
+<Callout type="pitfall">
+The bootstrap cannot create information the sample does not contain. With $n = 5$ the resamples are very limited, and the percentile interval tends to be too narrow. The method also fails for statistics governed by the extremes, such as the maximum, where resamples cannot reach values beyond the sample.
+</Callout>
+
+## Where it fits
+
+The bootstrap is a general way to get uncertainty when formulas are missing or assumptions are doubtful. It is cheap to compute and easy to explain, and it is the standard tool for model evaluation when there is only one dataset.

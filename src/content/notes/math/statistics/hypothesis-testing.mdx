@@ -1,8 +1,101 @@
 ---
 title: "Hypothesis testing"
-description: "Null/alternative hypotheses, p-values, Type I/II errors."
+description: "Null and alternative hypotheses, test statistics and p-values, Type I and Type II errors, and power, with a coin example checked by simulation."
 order: 2
 tier: core
+takeaways:
+  - "A **hypothesis test** compares a **null hypothesis** $H_0$ (usually 'no effect') with an **alternative** $H_1$. The data either fit $H_0$ comfortably or they do not."
+  - "The **p-value** is the probability, if $H_0$ is true, of a result at least as extreme as the one observed. It is not the probability that $H_0$ is true."
+  - "A **Type I error** rejects $H_0$ when it is true; its probability is the significance level $\\alpha$. A **Type II error** fails to reject $H_0$ when $H_1$ is true."
+  - "The **power** of a test is the probability of rejecting $H_0$ when $H_1$ is true: $1 - P(\\text{Type II error})$. Larger samples and larger effects raise power."
+resources:
+  - title: "Statistical hypothesis test (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Statistical_hypothesis_testing"
+    note: "The framework, test statistics, and the error types."
+  - title: "P-value (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/P-value"
+    note: "Definition, common misreadings, and the ASA statement on p-values."
+  - title: "Statistical power (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Power_of_a_test"
+    note: "Power, sample size, and the effect size needed to detect a difference."
 ---
 
-_Placeholder. Content not written yet._
+A hypothesis test answers a yes-or-no question from noisy data: is this coin biased, does this drug work, did the page redesign change clicks? The method sets up a null hypothesis that describes no effect, measures how surprising the data are under it, and decides whether to reject it. The decision can be wrong in two ways, and the test is designed around controlling one of them. This note builds a test for a coin, states the error types, and checks the probabilities by simulation.
+
+## The setup
+
+Suppose we flip a coin $100$ times and see $60$ heads. Let $p$ be the chance of heads. The null hypothesis is $H_0: p = 0.5$, a fair coin, and the alternative is $H_1: p \ne 0.5$. Under $H_0$ the number of heads $X$ is binomial with mean $50$ and standard deviation $5$, and the normal approximation gives a test statistic
+
+$$
+z = \frac{\hat p - 0.5}{\sqrt{0.5 \cdot 0.5 / n}}, \qquad \hat p = \frac{X}{n}.
+$$
+
+For our data $\hat p = 0.6$ and $z = \frac{0.1}{0.05} = 2$.
+
+## The p-value
+
+The two-sided p-value is the probability, under $H_0$, of a $z$ at least as far from $0$ as $2$.
+
+```python
+import math
+
+def Phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+z = (0.6 - 0.5) / math.sqrt(0.5 * 0.5 / 100)
+p_value = 2 * (1 - Phi(abs(z)))
+print("z =", round(z, 3), " two-sided p-value =", round(p_value, 4))  # prints: z = 2.0 two-sided p-value = 0.0455
+```
+
+In words: if the coin were fair, a result at least this far from $50$ heads would occur about $4.6\%$ of the time. That is evidence against $H_0$, but it is not the probability that the coin is fair. The p-value is a statement about the data given the hypothesis, never the reverse.
+
+<ZTestExplorer />
+
+## Type I error and the significance level
+
+Choosing $\alpha = 0.05$ means we reject $H_0$ when the p-value is below $0.05$. If $H_0$ is true, this rejects about $5\%$ of the time, the Type I error rate. A simulation with a fair coin confirms it.
+
+```python
+import random
+
+random.seed(4)
+trials, rejections = 20000, 0
+for _ in range(trials):
+    heads = sum(1 for _ in range(100) if random.random() < 0.5)
+    z = (heads / 100 - 0.5) / math.sqrt(0.25 / 100)
+    if abs(z) > 1.96:
+        rejections += 1
+print("share of fair-coin tests rejected at alpha = 0.05:", round(rejections / trials, 3))  # prints: share of fair-coin tests rejected at alpha = 0.05: 0.057
+```
+
+In words: about $5.7\%$ of tests reject a true null, close to the target $5\%$. It sits a little above because a binomial count takes whole-number values and the normal cutoff is only an approximation. The significance level is a promise about this rate, and it says nothing about how often the alternative is true.
+
+## Type II error and power
+
+If the coin really has $p = 0.6$, a test with $n = 100$ rejects only some of the time. The power is the probability of rejection under that alternative. The normal approximation gives it directly.
+
+```python
+import math
+
+def Phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+p1, n = 0.6, 100
+se0 = math.sqrt(0.25 / n)
+se1 = math.sqrt(p1 * (1 - p1) / n)
+crit = 1.96 * se0
+power = (1 - Phi((0.5 + crit - p1) / se1)) + Phi((0.5 - crit - p1) / se1)
+print("power at p = 0.6, n = 100:", round(power, 3))  # prints: power at p = 0.6, n = 100: 0.516
+```
+
+In words: the test would miss a real $60\%$ coin about half the time with $100$ flips. Doubling the sample size would raise the power substantially, which is why planning a study starts from the effect size you need to detect.
+
+<Callout type="pitfall">
+A large p-value is not evidence that $H_0$ is true. It means the data did not reject $H_0$, which may simply reflect low power. Say 'we did not find evidence of an effect' rather than 'there is no effect'.
+</Callout>
+
+<ErrorTypesDiagram />
+
+## Reading the trade-off
+
+Lowering $\alpha$ reduces Type I errors and increases Type II errors, for a fixed sample size. The only way to reduce both is more data. Choose $\alpha$ based on how costly a false alarm is, and check power before collecting data, not after.

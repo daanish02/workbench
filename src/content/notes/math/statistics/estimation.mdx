@@ -1,8 +1,85 @@
 ---
 title: "Estimation"
-description: "Point estimates, maximum likelihood estimation (MLE), maximum a posteriori (MAP)."
+description: "Point estimates from data: unbiasedness, maximum likelihood, and maximum a posteriori estimation, with checks on simulated and exact examples."
 order: 1
 tier: core
+takeaways:
+  - "An **estimator** $\\hat\\theta$ is a rule that turns data into a guess for an unknown parameter $\\theta$. The guess changes with the data, so the estimator is itself a random variable."
+  - "An estimator is **unbiased** when $E[\\hat\\theta] = \\theta$. The sample mean is unbiased for $\\mu$; the variance estimator that divides by $n$ is biased, and dividing by $n - 1$ removes the bias."
+  - "The **maximum likelihood estimate** (MLE) is the parameter value that makes the observed data most probable: $\\hat\\theta = \\arg\\max_\\theta \\prod_i f(x_i \\mid \\theta)$. For a Bernoulli sample it is the observed proportion of successes."
+  - "The **maximum a posteriori** (MAP) estimate adds a prior: it maximises the likelihood times the prior. With a uniform prior, MAP equals MLE."
+resources:
+  - title: "Maximum likelihood estimation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Maximum_likelihood_estimation"
+    note: "Definition, examples, and the asymptotic properties of the MLE."
+  - title: "Bias of an estimator (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bias_of_an_estimator"
+    note: "Unbiasedness and the bias of the sample variance."
+  - title: "Maximum a posteriori estimation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation"
+    note: "MAP as a regularised version of MLE."
 ---
 
-_Placeholder. Content not written yet._
+Statistics starts from data and an unknown quantity, such as the chance a coin lands heads or the average height in a population. An estimator is the rule that converts the data into a number. Good estimators are unbiased, consistent and efficient, and two general recipes produce most of them: maximum likelihood, which asks which parameter makes the data most probable, and maximum a posteriori, which also uses a prior belief. This note defines these terms and checks each on an example where the answer is known.
+
+## Estimators and bias
+
+Suppose $X_1, \dots, X_n$ are independent with mean $\mu$. The sample mean $\bar X = \frac{1}{n}\sum X_i$ is an estimator of $\mu$. Its expected value is $E[\bar X] = \mu$, so it is unbiased. Averaged over many datasets, it hits the right value.
+
+The sample variance is less obvious. Dividing the sum of squared deviations by $n$ gives $E\big[\frac{1}{n}\sum (X_i - \bar X)^2\big] = \frac{n - 1}{n}\sigma^2$, which is too small. Dividing by $n - 1$ instead gives an unbiased estimator. The script below checks this by simulating many small samples from a standard normal, with a fixed seed.
+
+```python
+import random
+
+random.seed(1)
+n, reps = 5, 20000
+biased, unbiased = 0.0, 0.0
+for _ in range(reps):
+    x = [random.gauss(0, 1) for _ in range(n)]
+    m = sum(x) / n
+    ss = sum((v - m) ** 2 for v in x)
+    biased += ss / n
+    unbiased += ss / (n - 1)
+print("average of divide-by-n:", round(biased / reps, 3), " average of divide-by-(n-1):", round(unbiased / reps, 3))  # prints: average of divide-by-n: 0.797 average of divide-by-(n-1): 0.996
+```
+
+In words: with $n = 5$ the divide-by-$n$ version averages $0.797$, close to $\frac{4}{5} = 0.8$ of the true variance $1$, as the formula predicts. The divide-by-$(n-1)$ version averages $0.996$, close to $1$. The bias is largest for small samples and vanishes as $n$ grows.
+
+## Maximum likelihood
+
+Given data, the likelihood $L(\theta)$ is the probability of the observed data viewed as a function of $\theta$. The MLE is the value that maximises it. For a coin with $k$ heads in $n$ flips the likelihood is $\theta^k(1 - \theta)^{n-k}$, and the maximum is at $\hat\theta = \frac{k}{n}$.
+
+The check below takes $7$ heads in $10$ flips and searches a fine grid of $\theta$ values for the largest likelihood.
+
+```python
+k, n = 7, 10
+grid = [i / 1000 for i in range(1, 1000)]
+best = max(grid, key=lambda t: t ** k * (1 - t) ** (n - k))
+print("grid MLE:", best, " k/n =", k / n)  # prints: grid MLE: 0.7 k/n = 0.7
+```
+
+In words: the grid search lands on $0.7$, the observed proportion. This is the usual answer for the Bernoulli model, and it is the one the grid is checking.
+
+<LikelihoodMLE />
+
+## Maximum a posteriori
+
+A prior distribution $\pi(\theta)$ encodes what you believe before seeing data. MAP maximises $L(\theta)\,\pi(\theta)$. For the coin with a Beta$(2, 2)$ prior, which favours values near one half, the MAP estimate is $\frac{k + 1}{n + 2}$.
+
+```python
+alpha, beta = 2, 2
+k, n = 7, 10
+grid = [i / 1000 for i in range(1, 1000)]
+map_est = max(grid, key=lambda t: t ** (k + alpha - 1) * (1 - t) ** (n - k + beta - 1))
+print("MAP with Beta(2, 2) prior:", map_est, " formula (k + 1)/(n + 2) =", round((k + 1) / (n + 2), 4))  # prints: MAP with Beta(2, 2) prior: 0.667 formula (k + 1)/(n + 2) = 0.6667
+```
+
+In words: the prior pulls the estimate from $0.7$ toward $0.5$, to about $0.667$. With more data the pull weakens, which is the main reason MAP and MLE agree for large samples.
+
+<Callout type="pitfall">
+An unbiased estimator is not always the best one. A biased estimator can have smaller mean squared error because its spread is much smaller. The MLE is not guaranteed unbiased either, so do not assume bias is zero because the method is standard.
+</Callout>
+
+## What makes an estimator good
+
+Unbiasedness is one property. Consistency asks that the estimate converges to the truth as $n$ grows, and efficiency asks how small its variance is among unbiased estimators. The MLE is consistent and asymptotically efficient under standard conditions, which is why it is the default. The next notes use these estimates to test hypotheses and build intervals.

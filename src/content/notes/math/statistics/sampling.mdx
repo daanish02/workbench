@@ -1,8 +1,82 @@
 ---
 title: "Sampling"
-description: "Sampling methods, sampling bias, why sample size matters."
+description: "Random sampling, the sample size needed for a given margin of error, and sampling bias, with exact calculations and a biased-survey simulation."
 order: 7
 tier: core
+takeaways:
+  - "A **simple random sample** gives every member of the population the same chance of selection. This is what lets the sample's average estimate the population's average, without systematic error."
+  - "The **standard error** of a sample proportion is $\\sqrt{p(1-p)/n}$. The worst case is $p = \\frac{1}{2}$, which gives a $95\\%$ margin of error of about $\\frac{1}{\\sqrt{n}}$."
+  - "To get a margin of error $E$ at $95\\%$ for a proportion, you need about $n = \\left(\\frac{1.96}{E}\\right)^2 p(1-p)$. For $\\pm 3\\%$ with $p = \\frac{1}{2}$, that is about $1068$ people."
+  - "**Sampling bias** is systematic error from how the sample is drawn. Increasing the sample size reduces random error but not bias: a large biased sample is still biased."
+resources:
+  - title: "Simple random sample (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Simple_random_sample"
+    note: "The definition and the properties that make it useful."
+  - title: "Sampling bias (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Sampling_bias"
+    note: "Types of bias in sampling and examples from surveys."
+  - title: "Margin of error (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Margin_of_error"
+    note: "How the margin of error is computed for proportions."
 ---
 
-_Placeholder. Content not written yet._
+Almost every statistical claim rests on a sample. Whether the sample can be trusted depends on how it was drawn and how large it is. Random selection removes systematic error and leaves only sampling noise, which shrinks with size. Bias, by contrast, does not shrink with more data. This note covers the standard error of a proportion, how to choose a sample size, and a simulation that shows a large biased sample being confidently wrong.
+
+## Random samples and the margin of error
+
+For a proportion $p$ estimated from $n$ random respondents, the standard error is $\sqrt{\frac{p(1-p)}{n}}$. The $95\%$ margin of error is about $1.96$ times this. The product $p(1-p)$ is largest at $p = \frac{1}{2}$, so the worst case is $\frac{1}{2}\cdot\frac{1}{2} = \frac{1}{4}$.
+
+```python
+import math
+
+for n in [100, 400, 1000, 1068]:
+    moe = 1.96 * math.sqrt(0.25 / n)
+    print(f"n = {n:>5}: worst-case 95% margin of error = {moe * 100:.2f} points")  # prints: n =   100: worst-case 95% margin of error = 9.80 points
+```
+
+In words: a sample of $100$ gives a margin of about $\pm 9.8$ points, and $400$ gives about $\pm 4.9$. Quadrupling the sample halves the margin.
+
+<MarginCurve />
+
+## Choosing a sample size
+
+Solving for $n$ gives the sample size needed for a target margin $E$: $n = \left(\frac{1.96}{E}\right)^2 p(1-p)$. For $E = 0.03$ and $p = \frac{1}{2}$ this is about $1067.1$, rounded up to $1068$.
+
+```python
+import math
+
+E, p = 0.03, 0.5
+n_needed = math.ceil((1.96 / E) ** 2 * p * (1 - p))
+print("sample size for +/- 3 points at 95%:", n_needed)  # prints: sample size for +/- 3 points at 95%: 1068
+```
+
+In words: about a thousand respondents give a margin of three points, which is why national polls often report that size. Going from three points to one point would need about nine times as many people.
+
+<SamplingBias />
+
+## Bias does not average out
+
+Suppose a population of $10000$ people, $40\%$ of whom support a policy. A survey that reaches only the people who answer their phones, where support is $60\%$, will be wrong no matter how large it is. The simulation below compares a random sample of $1000$ with a biased sample of $1000$ drawn from the reachable group, using a fixed seed.
+
+```python
+import random
+
+random.seed(8)
+# population: 4000 supporters, 6000 opponents, but supporters are more reachable
+pop = [1] * 4000 + [0] * 6000
+random_sample = random.sample(pop, 1000)
+reachable = [1] * 2400 + [0] * 1600  # reachable group: 60% supporters
+biased_sample = random.sample(reachable, 1000)
+print("true support: 0.400")  # prints: true support: 0.400
+print("random sample estimate:", round(sum(random_sample) / 1000, 3), " biased sample estimate:", round(sum(biased_sample) / 1000, 3))  # prints: random sample estimate: 0.395 biased sample estimate: 0.616
+```
+
+In words: the random sample lands near the true $40\%$. The biased sample lands near $62\%$ and is just as precise. Its margin of error looks small, but it estimates the wrong group. Only better selection fixes this, not a larger sample.
+
+<Callout type="pitfall">
+A narrow margin of error only measures random noise. It says nothing about whether the sample represents the population. A huge convenience sample can have a tiny margin of error and still be badly biased.
+</Callout>
+
+## Designing a sample
+
+Define the population first, then choose a sampling frame that covers it, draw randomly from that frame, and check for non-response. Only after that does the sample size and margin of error matter. The order is what keeps the estimate honest.

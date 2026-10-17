@@ -1,8 +1,95 @@
 ---
 title: "Time series"
-description: "Trends, seasonality, and autocorrelation in sequential data."
+description: "Data indexed by time: trend, seasonality, autocorrelation, and a simulated AR(1) process, with the sample autocorrelation checked against its theoretical value."
 order: 8
 tier: optional
+takeaways:
+  - "A **time series** is a sequence of observations ordered in time. Its main components are a **trend**, a **seasonal** pattern that repeats, and a **remainder** of irregular noise."
+  - "The **autocorrelation** at lag $k$ measures how strongly the series correlates with itself $k$ steps earlier. Values that stay high for many lags signal persistence."
+  - "An **AR(1)** process $x_t = \\phi\\,x_{t-1} + \\varepsilon_t$ has autocorrelation $\\phi^k$ at lag $k$. With $|\\phi| < 1$ it is stationary, and its autocorrelation decays geometrically."
+  - "Ordinary statistics assume independent observations. Time series break that assumption, so standard errors and intervals computed as if the points were independent are too optimistic."
+resources:
+  - title: "Time series (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Time_series"
+    note: "Components, models, and analysis methods for ordered data."
+  - title: "Autoregressive model (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Autoregressive_model"
+    note: "The AR(p) family and the stationarity condition for AR(1)."
+  - title: "Autocorrelation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Autocorrelation"
+    note: "The sample autocorrelation function and its interpretation."
 ---
 
-_Placeholder. Content not written yet._
+Many datasets come in order: daily sales, hourly temperatures, monthly unemployment, a sensor reading every second. Their values are not independent, because today's value is informed by yesterday's. Time series methods describe that dependence, separate the trend and seasonal parts from the noise, and forecast the next values. This note introduces the components, the autocorrelation that measures persistence, and the AR(1) model, with a simulation checked against its exact autocorrelation.
+
+## Trend and seasonality
+
+A simple model writes each observation as trend plus seasonal plus noise. Suppose monthly sales grow by $2$ units per month and repeat a yearly pattern with amplitude $5$. The series is $y_t = 2t + 5\sin\left(\frac{2\pi t}{12}\right) + \varepsilon_t$. The script below generates twelve years of this series without noise and checks that the seasonal pattern repeats exactly.
+
+```python
+import math
+
+y = [2 * t + 5 * math.sin(2 * math.pi * t / 12) for t in range(1, 145)]
+print("value at month 1 and month 13 differ by:", round(y[12] - y[0], 4))  # prints: value at month 1 and month 13 differ by: 24.0
+print("seasonal part repeats: sin difference over one year:", round(5 * math.sin(2 * math.pi * 13 / 12) - 5 * math.sin(2 * math.pi * 1 / 12), 10))  # prints: seasonal part repeats: sin difference over one year: 0.0
+```
+
+In words: a year later the value has risen by $24$, which is the trend $2 \times 12$, with the seasonal part exactly the same. Separating the two is the first step in most analyses.
+
+<Decomposition />
+
+## Autocorrelation
+
+The sample autocorrelation at lag $k$ is the covariance between the series and its $k$-step shift, divided by the variance. Values near $1$ mean the series stays near its current level.
+
+```python
+def acf(x, k):
+    n = len(x)
+    m = sum(x) / n
+    num = sum((x[t] - m) * (x[t + k] - m) for t in range(n - k))
+    den = sum((v - m) ** 2 for v in x)
+    return num / den
+
+import random
+random.seed(14)
+noise = [random.gauss(0, 1) for _ in range(2000)]
+print("autocorrelation of white noise, lag 1:", round(acf(noise, 1), 3))  # prints: autocorrelation of white noise, lag 1: 0.016
+```
+
+In words: independent noise has autocorrelation near zero at every lag, so any clear pattern in the autocorrelation points to dependence. The value is not exactly $0$ because the sample is finite.
+
+## The AR(1) process
+
+The AR(1) model $x_t = \phi\,x_{t-1} + \varepsilon_t$ carries memory forward with factor $\phi$. For $|\phi| < 1$ its theoretical autocorrelation at lag $k$ is $\phi^k$. The script simulates $5000$ steps with $\phi = 0.8$ and compares the sample autocorrelations with $0.8^k$.
+
+```python
+import random
+
+def acf(x, k):
+    n = len(x)
+    m = sum(x) / n
+    num = sum((x[t] - m) * (x[t + k] - m) for t in range(n - k))
+    den = sum((v - m) ** 2 for v in x)
+    return num / den
+
+random.seed(14)
+phi = 0.8
+x = [0.0]
+for _ in range(5000):
+    x.append(phi * x[-1] + random.gauss(0, 1))
+x = x[100:]  # drop the start-up period
+for k in (1, 2, 5):
+    print(f"lag {k}: sample {acf(x, k):.3f}, theory {phi ** k:.3f}")  # prints: lag 1: sample 0.812, theory 0.800
+```
+
+In words: the sample autocorrelations are $0.812$, $0.659$ and $0.351$, against theory values $0.8$, $0.64$ and $0.33$. The dependence is real and decays with the lag, which is what a forecast uses: the best guess for tomorrow is a fraction $\phi$ of today's deviation from the mean.
+
+<Callout type="pitfall">
+A series with a strong trend has high autocorrelation at every lag even when its noise is independent. Remove the trend, or difference the series, before reading the autocorrelation as persistence. Otherwise you will see dependence that comes from the trend alone.
+</Callout>
+
+<ARSimulator />
+
+## Why dependence matters
+
+If the observations are correlated, $n$ values carry less information than $n$ independent values. Confidence intervals that ignore this are too narrow, and naive significance tests find effects that are not there. Time series methods adjust for the dependence, and the same caution applies to any ordered data.

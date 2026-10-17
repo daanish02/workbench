@@ -1,8 +1,71 @@
 ---
 title: "Bayesian inference"
-description: "Priors, likelihoods, posteriors, contrasted directly with frequentist estimation."
+description: "Priors, likelihoods and posteriors for a parameter, conjugate Beta-binomial updating, credible intervals, and how the approach differs from frequentist estimation."
 order: 4
 tier: core
+takeaways:
+  - "Bayesian inference treats the unknown parameter $\\theta$ as random. The **prior** $\\pi(\\theta)$ states belief before data, the **likelihood** $p(\\text{data} \\mid \\theta)$ says how probable the data are, and the **posterior** $p(\\theta \\mid \\text{data}) \\propto p(\\text{data} \\mid \\theta)\\,\\pi(\\theta)$ combines them."
+  - "A **conjugate** prior keeps the posterior in the same family. A Beta prior with a binomial likelihood gives a Beta posterior: $\\text{Beta}(\\alpha, \\beta)$ becomes $\\text{Beta}(\\alpha + k, \\beta + n - k)$ after $k$ successes in $n$ trials."
+  - "A **credible interval** is a range with posterior probability, such as $95\\%$. It answers 'given the data, where is $\\theta$?', which a frequentist confidence interval does not."
+  - "With enough data the prior matters less and the posterior concentrates near the MLE. With little data, the prior can dominate, which is a feature when prior knowledge is real and a risk when it is not."
+resources:
+  - title: "Bayesian inference (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bayesian_inference"
+    note: "Priors, posteriors, and the general updating procedure."
+  - title: "Conjugate prior (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conjugate_prior"
+    note: "The table of conjugate pairs, including Beta-binomial."
+  - title: "Credible interval (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Credible_interval"
+    note: "Posterior intervals and how they differ from confidence intervals."
 ---
 
-_Placeholder. Content not written yet._
+Frequentist methods treat the parameter as fixed and the data as random. Bayesian methods treat the parameter as uncertain, describe that uncertainty with a probability distribution, and update it as data arrive. The update is one application of Bayes' rule from the probability section. This note works through the coin example with a conjugate prior, where the posterior has a closed form, and compares the answer with the frequentist estimate.
+
+## Prior, likelihood, posterior
+
+Let $\theta$ be the chance a coin lands heads. Before flipping we might believe every value is equally likely, so the prior is uniform on $[0, 1]$, which is the Beta$(1, 1)$ distribution. After observing $k$ heads in $n$ flips, the likelihood is $\theta^k(1 - \theta)^{n-k}$. Multiplying by the prior and normalising gives the posterior
+
+$$
+p(\theta \mid k) \propto \theta^{k}(1 - \theta)^{n-k} \cdot \theta^{0}(1 - \theta)^{0},
+$$
+
+which is the Beta$(1 + k, 1 + n - k)$ distribution. For $7$ heads in $10$ flips that is Beta$(8, 4)$.
+
+## Posterior mean and the MLE
+
+The mean of a Beta$(a, b)$ distribution is $\frac{a}{a + b}$. The posterior mean is therefore $\frac{8}{12} \approx 0.667$, and the MLE is $\frac{7}{10} = 0.7$. The prior pulls the estimate toward one half.
+
+```python
+import random
+
+a, b = 1 + 7, 1 + 3
+print("posterior mean Beta(8, 4):", round(a / (a + b), 4), " MLE 7/10 =", 0.7)  # prints: posterior mean Beta(8, 4): 0.6667 MLE 7/10 = 0.7
+```
+
+In words: the posterior mean sits between the prior's centre of one half and the data's $0.7$, closer to the data because $10$ flips carry more weight than a uniform prior that counts as two observations.
+
+<BetaPosterior />
+
+## A credible interval by sampling
+
+The $95\%$ credible interval is the central range of the posterior that holds $95\%$ of its probability. For Beta$(8, 4)$ it can be estimated by drawing from the posterior and taking percentiles. The seed keeps the output repeatable.
+
+```python
+import random
+
+random.seed(12)
+draws = sorted(random.betavariate(8, 4) for _ in range(100000))
+lo, hi = draws[int(0.025 * len(draws))], draws[int(0.975 * len(draws))]
+print("95% credible interval, approximate:", round(lo, 2), "to", round(hi, 2))  # prints: 95% credible interval, approximate: 0.39 to 0.89
+```
+
+In words: given the data and the uniform prior, the coin's heads probability lies between about $0.39$ and $0.89$ with $95\%$ posterior probability. That is the statement a credible interval makes, and it is more direct than the frequentist reading.
+
+<Callout type="pitfall">
+A prior is a modelling choice, not a neutral default. A uniform prior is not 'no information' once you transform the parameter: uniform on a probability is not uniform on its odds. Check how sensitive the posterior is to reasonable alternative priors before reporting it.
+</Callout>
+
+## Frequentist and Bayesian answers
+
+Both approaches are valid tools with different goals. The frequentist interval has a guaranteed long-run coverage, and the Bayesian interval has an intuitive probability statement given the prior. With large samples and weak priors, the two give similar numbers, and the choice is mostly about what the analysis needs to communicate.

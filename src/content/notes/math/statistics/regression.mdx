@@ -1,8 +1,81 @@
 ---
 title: "Regression"
-description: "Linear regression, least squares, interpreting coefficients."
+description: "Linear regression by least squares: the normal equations, slope and intercept formulas, residuals, R-squared, and how to read the coefficients."
 order: 5
 tier: core
+takeaways:
+  - "**Linear regression** fits $\\hat y = a + bx$ by choosing $a$ and $b$ to minimise the sum of squared residuals $\\sum (y_i - a - bx_i)^2$. This is the **least squares** fit."
+  - "The slope is $b = \\frac{\\sum (x_i - \\bar x)(y_i - \\bar y)}{\\sum (x_i - \\bar x)^2}$ and the intercept is $a = \\bar y - b\\bar x$. The fitted line always passes through $(\\bar x, \\bar y)$."
+  - "The slope is the expected change in $y$ for a one-unit change in $x$, holding nothing else fixed. It is an association in the data, not a causal effect by itself."
+  - "**R-squared** is the share of the variance of $y$ explained by the line: $R^2 = 1 - \\frac{\\sum e_i^2}{\\sum (y_i - \\bar y)^2}$, where $e_i$ are the residuals."
+resources:
+  - title: "Linear regression (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Linear_regression"
+    note: "The model, the least squares estimates, and their assumptions."
+  - title: "Least squares (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Least_squares"
+    note: "The method, its geometry, and the normal equations."
+  - title: "Coefficient of determination (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Coefficient_of_determination"
+    note: "R-squared, its interpretation, and its limits."
 ---
 
-_Placeholder. Content not written yet._
+Regression describes how one quantity changes with another. Given pairs of measurements, it finds the straight line that comes closest to the points, measured by the squared vertical distances, and uses that line to summarise the relationship and to predict. The method is simple enough to compute by hand, and most of its interpretation issues come from reading the coefficients too strongly. This note derives the least squares formulas, checks them on a small dataset, and explains what the slope and R-squared mean.
+
+## The least squares formulas
+
+Write the fitted line as $\hat y = a + bx$. The residuals are $e_i = y_i - a - bx_i$. Choosing $a$ and $b$ to minimise $\sum e_i^2$ gives the formulas
+
+$$
+b = \frac{\sum_i (x_i - \bar x)(y_i - \bar y)}{\sum_i (x_i - \bar x)^2}, \qquad a = \bar y - b\,\bar x.
+$$
+
+The script below computes them for ten points, first from these formulas and then with the standard library's `linear_regression`, which should agree.
+
+```python
+import statistics
+
+x = list(range(1, 11))
+y = [5.1, 7.9, 11.2, 13.8, 17.1, 20.2, 22.8, 26.1, 29.0, 32.2]
+xbar, ybar = sum(x) / len(x), sum(y) / len(y)
+b = sum((xi - xbar) * (yi - ybar) for xi, yi in zip(x, y)) / sum((xi - xbar) ** 2 for xi in x)
+a = ybar - b * xbar
+lr = statistics.linear_regression(x, y)
+print("by formula: intercept", round(a, 4), " slope", round(b, 4))  # prints: by formula: intercept 2.0 slope 3.0073
+print("statistics.linear_regression:", round(lr.intercept, 4), round(lr.slope, 4))  # prints: statistics.linear_regression: 2.0 3.0073
+```
+
+In words: the line is $\hat y = 2.0 + 3.0073x$. The two methods agree, and the fitted line passes through the average point $(\bar x, \bar y) = (5.5, 18.54)$.
+
+<RegressionDrag />
+
+## Residuals and R-squared
+
+The residuals show what the line misses. R-squared compares the leftover squared error with the total variation in $y$. A value near $1$ means the line explains most of the spread.
+
+```python
+import statistics
+
+x = list(range(1, 11))
+y = [5.1, 7.9, 11.2, 13.8, 17.1, 20.2, 22.8, 26.1, 29.0, 32.2]
+lr = statistics.linear_regression(x, y)
+resid = [yi - (lr.intercept + lr.slope * xi) for xi, yi in zip(x, y)]
+ybar = sum(y) / len(y)
+ss_res = sum(e * e for e in resid)
+ss_tot = sum((yi - ybar) ** 2 for yi in y)
+print("residual sum of squares:", round(ss_res, 4), " R^2:", round(1 - ss_res / ss_tot, 4))  # prints: residual sum of squares: 0.2196 R^2: 0.9997
+```
+
+In words: the residuals are small, and R-squared is $0.9997$. This data was built close to a line, so the fit is very good. Real data are usually much noisier, and an R-squared of $0.3$ can still be a useful result.
+
+## Reading the slope
+
+The slope $2.9667$ means that on average $y$ rises by about $3$ when $x$ rises by $1$, within this range of $x$. It is a statement about the data, and it is not a guarantee for other ranges, other groups, or a changed system. It also says nothing on its own about cause. A slope can be large because of a confounder, which the causal inference note treats.
+
+<Callout type="pitfall">
+A high R-squared does not prove the relationship is linear or causal. Plot the residuals against $x$: a curved pattern means the straight line is the wrong model even when R-squared looks high. Always look at the data before trusting the coefficients.
+</Callout>
+
+## Extending the model
+
+Least squares extends to several predictors, $y = \beta_0 + \beta_1 x_1 + \dots + \beta_p x_p$, with the same idea: minimise the squared residuals, now in matrix form. The coefficient on $x_1$ is then the change in $y$ per unit of $x_1$, holding the other predictors fixed. That 'holding fixed' phrase is what makes multiple regression useful, and it is also where confounding enters.

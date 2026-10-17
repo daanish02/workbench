@@ -1,8 +1,75 @@
 ---
 title: "Causal inference"
-description: "Correlation vs. causation, confounders, basic causal graphs."
+description: "Correlation versus causation, confounders, Simpson's paradox, and adjusting for a confounder, with the kidney stone data checked exactly."
 order: 9
 tier: advanced
+takeaways:
+  - "**Correlation** is an association in the data. **Causation** says what happens to $Y$ if we change $X$. Observed association does not give causal effect unless the comparison is fair."
+  - "A **confounder** affects both the treatment and the outcome. It makes the treated and untreated groups differ before any treatment, so the raw comparison is biased."
+  - "**Simpson's paradox** is the reversal of an association when data are split by a confounder. A treatment can win in every subgroup and still lose overall, or the reverse."
+  - "**Adjustment** compares like with like: within each level of the confounder, then averaged with the population weights. This is the standard fix when the confounder is measured."
+resources:
+  - title: "Causal inference (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Causal_inference"
+    note: "Potential outcomes, causal graphs, and the main methods."
+  - title: "Simpson's paradox (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Simpson%27s_paradox"
+    note: "Examples including the kidney stone data used below."
+  - title: "Confounding (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Confounding"
+    note: "What confounders are and how they bias comparisons."
 ---
 
-_Placeholder. Content not written yet._
+A dataset can show that two things go together without showing that one causes the other. Ice cream sales and drownings both rise in summer, so they are correlated, yet neither causes the other. Causal inference asks what would happen under an intervention, and it needs an argument about how the comparison was made fair. This note defines confounding, shows how a confounder can reverse a conclusion, and works an adjustment with exact numbers from a classic study.
+
+## Correlation and confounding
+
+Suppose a treatment $T$ and an outcome $Y$. If people choose the treatment, healthier people might choose it more often. A confounder $C$, here health, then affects both $T$ and $Y$. The raw comparison of treated and untreated mixes the effect of $T$ with the effect of $C$.
+
+<CausalGraph />
+
+## Simpson's paradox: the kidney stone data
+
+A well-known study compared two treatments for kidney stones, split by stone size. The table lists successes out of the group size.
+
+| Stone size | Treatment A | Treatment B |
+|---|---|---|
+| Small | $81/87$ | $234/270$ |
+| Large | $192/263$ | $55/80$ |
+
+The script below computes the success rates by size and overall.
+
+```python
+A = {"small": (81, 87), "large": (192, 263)}
+B = {"small": (234, 270), "large": (55, 80)}
+for size in ("small", "large"):
+    print(f"{size}: A = {A[size][0] / A[size][1]:.3f}, B = {B[size][0] / B[size][1]:.3f}")  # prints: small: A = 0.931, B = 0.867
+print("overall A:", round(273 / 350, 3), " overall B:", round(289 / 350, 3))  # prints: overall A: 0.78 overall B: 0.826
+```
+
+In words: treatment A wins within each stone size, at $93.1\%$ against $86.7\%$ for small stones and $73.0\%$ against $68.8\%$ for large ones. Yet treatment B wins overall, $82.6\%$ against $78.0\%$. The reversal happens because A was given mostly to the harder large-stone cases, which drags its overall rate down.
+
+<SimpsonBars />
+
+## Adjusting for the confounder
+
+Adjustment averages the within-group rates using the same weights for both treatments, the sizes of the whole population. The standardised rate for each treatment is $\sum_s P(\text{size } s)\,P(\text{success} \mid T, s)$.
+
+```python
+n_small, n_large = 87 + 270, 263 + 80
+w_small = n_small / (n_small + n_large)
+w_large = 1 - w_small
+adj_A = w_small * 81 / 87 + w_large * 192 / 263
+adj_B = w_small * 234 / 270 + w_large * 55 / 80
+print("adjusted A:", round(adj_A, 3), " adjusted B:", round(adj_B, 3))  # prints: adjusted A: 0.833 adjusted B: 0.779
+```
+
+In words: once both treatments are weighted by the same population mix of stone sizes, A has the higher rate, $83.3\%$ against $77.9\%$. The adjusted comparison agrees with the within-group results, and the paradox disappears.
+
+<Callout type="pitfall">
+Adjustment only works for confounders you measured and modelled. If an unmeasured variable also drives both treatment and outcome, no reweighting removes the bias. Ask what could cause both the choice and the result before trusting any adjusted number.
+</Callout>
+
+## Causal graphs and the next step
+
+A causal graph draws arrows from causes to effects. A confounder is a common cause of treatment and outcome, and a 'backdoor' path through it must be blocked, usually by conditioning on it. Randomised experiments break the arrow from confounders to treatment, which is why they are the reference design. Observational studies try to recover the same answer by adjustment, and their credibility depends on the arguments made about the graph.
