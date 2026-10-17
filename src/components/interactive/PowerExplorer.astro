@@ -1,0 +1,84 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Type I error, Type II error and power"
+  caption="The test statistic is normal around 0 under H₀ (grey) and around the effect size times √n under H₁ (blue). Rejecting beyond the critical value makes a Type I error with probability α (red area under H₀) and a Type II error with probability β (blue area under H₁ inside the cut-offs). Power is 1 − β. Raise n or the effect size to separate the curves; lower α to move the cut-offs out."
+>
+  <power-explorer>
+    <div class="pw-ctl">
+      <label class="pw-lbl">α <input type="range" min="0.001" max="0.2" step="0.001" value="0.05" data-a /> <b data-av>0.050</b></label>
+      <label class="pw-lbl">effect size d <input type="range" min="0" max="1" step="0.02" value="0.3" data-d /> <b data-dv>0.30</b></label>
+      <label class="pw-lbl">sample size n <input type="range" min="5" max="200" step="1" value="50" data-n /> <b data-nv>50</b></label>
+    </div>
+    <svg class="pw-svg" viewBox="0 0 360 190" role="img" aria-label="Null and alternative distributions with rejection regions">
+      <path data-beta class="pw-beta"></path>
+      <path data-alpha class="pw-alpha"></path>
+      <path data-h0 class="pw-h0"></path>
+      <path data-h1 class="pw-h1"></path>
+      <line x1="10" y1="170" x2="350" y2="170" class="pw-ax"></line>
+      <line data-c1 y1="20" y2="170" class="pw-cut"></line>
+      <line data-c2 y1="20" y2="170" class="pw-cut"></line>
+    </svg>
+    <p class="pw-stat" data-stat></p>
+  </power-explorer>
+</Figure>
+
+<style>
+  .pw-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .pw-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .pw-lbl input { flex: 1; }
+  .pw-svg { display: block; width: 100%; max-width: 440px; margin: 0 auto; }
+  .pw-h0 { fill: none; stroke: var(--text-faint); stroke-width: 2; }
+  .pw-h1 { fill: none; stroke: var(--g-blue); stroke-width: 2; }
+  .pw-alpha { fill: rgba(234, 67, 53, 0.45); }
+  .pw-beta { fill: rgba(66, 133, 244, 0.25); }
+  .pw-ax { stroke: #3c4043; }
+  .pw-cut { stroke: var(--g-red); stroke-dasharray: 4 3; }
+  .pw-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const erf = (x: number) => {
+    // Abramowitz–Stegun 7.1.26, accurate to about 1e-7
+    const s = Math.sign(x); x = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * x);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  };
+  const Phi = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
+  const invPhi = (p: number) => { let lo = -10, hi = 10; for (let i = 0; i < 80; i++) { const m = (lo + hi) / 2; if (Phi(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; };
+  const pdf = (x: number, m: number) => Math.exp(-((x - m) ** 2) / 2) / Math.sqrt(2 * Math.PI);
+  class PowerExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const g = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const a = g('[data-a]'), d = g('[data-d]'), n = g('[data-n]');
+      this.querySelector('[data-av]')!.textContent = a.toFixed(3);
+      this.querySelector('[data-dv]')!.textContent = d.toFixed(2);
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const mu = d * Math.sqrt(n);
+      const crit = invPhi(1 - a / 2);
+      const lo = -4, hi = Math.max(6, mu + 4);
+      const sx = (x: number) => 10 + ((x - lo) / (hi - lo)) * 340;
+      const sy = (v: number) => 170 - (v / 0.42) * 145;
+      const curve = (m: number) => { let s = ''; for (let i = 0; i <= 300; i++) { const x = lo + ((hi - lo) * i) / 300; s += `${i ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(pdf(x, m)).toFixed(1)}`; } return s; };
+      const area = (m: number, x0: number, x1: number) => { let s = `M${sx(x0).toFixed(1)},170`; for (let i = 0; i <= 60; i++) { const x = x0 + ((x1 - x0) * i) / 60; s += `L${sx(x).toFixed(1)},${sy(pdf(x, m)).toFixed(1)}`; } return s + `L${sx(x1).toFixed(1)},170Z`; };
+      this.querySelector('[data-h0]')!.setAttribute('d', curve(0));
+      this.querySelector('[data-h1]')!.setAttribute('d', curve(mu));
+      this.querySelector('[data-alpha]')!.setAttribute('d', area(0, crit, hi) + area(0, lo, -crit));
+      this.querySelector('[data-beta]')!.setAttribute('d', area(mu, -crit, crit));
+      for (const [sel, x] of [['[data-c1]', crit], ['[data-c2]', -crit]] as const) {
+        const el = this.querySelector(sel)!; el.setAttribute('x1', String(sx(x))); el.setAttribute('x2', String(sx(x)));
+      }
+      const beta = Phi(crit - mu) - Phi(-crit - mu);
+      this.querySelector('[data-stat]')!.textContent =
+        `critical value ±${crit.toFixed(2)} · Type I = α = ${a.toFixed(3)} · Type II = β = ${beta.toFixed(3)} · power = ${(1 - beta).toFixed(3)}`;
+    }
+  }
+  customElements.define('power-explorer', PowerExplorer);
+</script>

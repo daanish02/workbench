@@ -1,0 +1,71 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A trend fakes persistence"
+  caption="Independent noise plus a linear trend of the chosen slope, and its sample autocorrelation at lags 1 to 15. With any visible trend the autocorrelation stays high at every lag, although the noise itself has no memory. Differencing the series (x_t − x_{t−1}) removes the trend, and the autocorrelation collapses to the −0.5 at lag 1 that differencing white noise produces."
+>
+  <trend-acf>
+    <div class="ta-ctl">
+      <label class="ta-lbl">trend slope <input type="range" min="0" max="0.1" step="0.005" value="0.03" data-s /> <b data-sv>0.030</b></label>
+      <span class="ta-tog"><input type="checkbox" hidden data-d /><button type="button" class="btn" data-toggle aria-pressed="false">difference the series</button></span>
+    </div>
+    <svg class="ta-svg" viewBox="0 0 340 200" role="img" aria-label="Autocorrelation bars by lag">
+      <line x1="30" y1="100" x2="330" y2="100" class="ta-ax"></line>
+      <text x="4" y="14" class="ta-t">+1</text><text x="4" y="104" class="ta-t">0</text><text x="4" y="194" class="ta-t">−1</text>
+      <g data-bars></g>
+    </svg>
+    <p class="ta-stat" data-stat></p>
+  </trend-acf>
+</Figure>
+
+<style>
+  .ta-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ta-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ta-lbl input { flex: 1; }
+  .ta-tog { font-size: 0.875rem; color: var(--text-muted); text-align: center; }
+  .ta-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .ta-ax { stroke: #3c4043; }
+  .ta-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .ta-svg :global(.ta-bar) { fill: var(--g-blue); }
+  .ta-svg :global(.ta-bar.neg) { fill: var(--g-red); }
+  .ta-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  let seed = 21;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const NOISE = Array.from({ length: 300 }, () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand()));
+  const acf = (x: number[], k: number) => {
+    const n = x.length, m = x.reduce((a, b) => a + b) / n;
+    let num = 0, den = 0;
+    for (let t = 0; t < n; t++) den += (x[t] - m) ** 2;
+    for (let t = 0; t < n - k; t++) num += (x[t] - m) * (x[t + k] - m);
+    return num / den;
+  };
+  class TrendAcf extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const s = +this.querySelector<HTMLInputElement>('[data-s]')!.value;
+      const diff = this.querySelector<HTMLInputElement>('[data-d]')!.checked;
+      this.querySelector('[data-sv]')!.textContent = s.toFixed(3);
+      let x = NOISE.map((e, t) => s * t + e);
+      if (diff) x = x.slice(1).map((v, t) => v - x[t]);
+      let bars = '';
+      const vals: number[] = [];
+      for (let k = 1; k <= 15; k++) {
+        const r = acf(x, k);
+        vals.push(r);
+        const y = 100 - r * 90;
+        bars += `<rect class="ta-bar${r < 0 ? ' neg' : ''}" x="${(30 + (k - 0.7) * 20).toFixed(1)}" y="${Math.min(y, 100).toFixed(1)}" width="12" height="${Math.abs(y - 100).toFixed(1)}"></rect>`;
+      }
+      this.querySelector('[data-bars]')!.innerHTML = bars;
+      this.querySelector('[data-stat]')!.textContent = `lag 1: ${vals[0].toFixed(2)} · lag 15: ${vals[14].toFixed(2)}${diff ? ' · differenced' : ''}`;
+    }
+  }
+  customElements.define('trend-acf', TrendAcf);
+</script>

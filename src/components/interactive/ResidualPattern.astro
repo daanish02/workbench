@@ -1,0 +1,65 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Residuals reveal a curve that R² hides"
+  caption="Data from y = x + c·x² plus noise, fitted with a straight line. Increase the curvature c: R² stays high for a long time, but the residual plot below turns into a U shape, the sign that a line is the wrong model."
+>
+  <residual-pattern>
+    <label class="rp-lbl">curvature c <input type="range" min="0" max="0.3" step="0.01" value="0.1" data-c /> <b data-cv>0.10</b></label>
+    <svg class="rp-svg" viewBox="0 0 320 260" role="img" aria-label="Scatter with fitted line above a residual plot">
+      <g data-top></g>
+      <line x1="20" y1="215" x2="310" y2="215" class="rp-zero"></line>
+      <g data-bottom></g>
+    </svg>
+    <p class="rp-stat" data-stat></p>
+  </residual-pattern>
+</Figure>
+
+<style>
+  .rp-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .rp-lbl input { flex: 1; }
+  .rp-svg { display: block; width: 100%; max-width: 380px; margin: 0 auto; }
+  .rp-zero { stroke: #3c4043; stroke-dasharray: 3 3; }
+  .rp-svg :global(.rp-dot) { fill: var(--g-blue); }
+  .rp-svg :global(.rp-res) { fill: var(--g-yellow); }
+  .rp-svg :global(.rp-line) { stroke: var(--g-red); stroke-width: 2; }
+  .rp-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  let seed = 3;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const NOISE = Array.from({ length: 40 }, () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand()));
+  const XS = Array.from({ length: 40 }, (_, i) => (i / 39) * 10);
+
+  class ResidualPattern extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-c]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      this.querySelector('[data-cv]')!.textContent = c.toFixed(2);
+      const ys = XS.map((x, i) => x + c * x * x + 0.8 * NOISE[i]);
+      const n = XS.length, mx = XS.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n;
+      const b = XS.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / XS.reduce((a, x) => a + (x - mx) ** 2, 0);
+      const a0 = my - b * mx;
+      const res = ys.map((y, i) => y - a0 - b * XS[i]);
+      const ssr = res.reduce((s, r) => s + r * r, 0), sst = ys.reduce((s, y) => s + (y - my) ** 2, 0);
+      const ymax = Math.max(...ys, 1), ymin = Math.min(...ys, 0);
+      const tx = (x: number) => 20 + (x / 10) * 290;
+      const ty = (y: number) => 170 - ((y - ymin) / (ymax - ymin)) * 160;
+      const rmax = Math.max(...res.map(Math.abs), 0.5);
+      const ry = (r: number) => 215 - (r / rmax) * 38;
+      this.querySelector('[data-top]')!.innerHTML =
+        XS.map((x, i) => `<circle class="rp-dot" r="2.5" cx="${tx(x).toFixed(1)}" cy="${ty(ys[i]).toFixed(1)}"></circle>`).join('') +
+        `<line class="rp-line" x1="${tx(0)}" y1="${ty(a0).toFixed(1)}" x2="${tx(10)}" y2="${ty(a0 + 10 * b).toFixed(1)}"></line>`;
+      this.querySelector('[data-bottom]')!.innerHTML =
+        XS.map((x, i) => `<circle class="rp-res" r="2.5" cx="${tx(x).toFixed(1)}" cy="${ry(res[i]).toFixed(1)}"></circle>`).join('');
+      this.querySelector('[data-stat]')!.textContent = `R² = ${(1 - ssr / sst).toFixed(3)} · top: data and fitted line · bottom: residuals`;
+    }
+  }
+  customElements.define('residual-pattern', ResidualPattern);
+</script>
