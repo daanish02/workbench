@@ -1,8 +1,87 @@
 ---
 title: "Singular value decomposition (SVD)"
-description: "Decomposing any matrix into rotate, stretch and rotate again."
+description: "Every matrix, however ugly, is a rotation, a stretch along perpendicular axes, and another rotation. The singular values measure the stretches, and the largest ones give the best low-rank approximation."
 order: 8
 tier: core
+takeaways:
+  - "Every real matrix factors as $A = U\\Sigma V^\\top$, with $U$ and $V$ orthogonal and $\\Sigma$ diagonal with nonnegative entries. Read right to left: rotate, stretch along the axes, rotate."
+  - "The diagonal entries of $\\Sigma$ are the **singular values** $\\sigma_1 \\ge \\sigma_2 \\ge \\cdots \\ge 0$. They are the stretch factors, and they are always defined, even for non-square matrices."
+  - "The **rank** of $A$ is the number of nonzero singular values."
+  - "Keeping only the largest $k$ singular values gives the best rank-$k$ approximation of $A$, in the least-squares sense. This is the basis of image compression and of many dimensionality-reduction methods."
+  - "The singular values are the square roots of the eigenvalues of $A^\\top A$, which connects SVD to the eigenvector ideas of the previous note."
+resources:
+  - title: "Singular value decomposition (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Singular_value_decomposition"
+    note: "Definitions, the geometric interpretation, and the low-rank approximation theorem."
+  - title: "NumPy linalg.svd"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.svd.html"
+    note: "The routine used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Eigenvalues only work neatly for square matrices, and even then they can be complex or missing. The singular value decomposition works for every matrix, rectangular or not, and it always gives real, nonnegative numbers. It says that any linear transformation, however sheared, is a rotation, a stretch along perpendicular axes, and another rotation. That single fact underlies image compression, recommendation systems, the least-squares solution in the [Projections](../projections/) note, and the principal components of the next note.
+
+## The decomposition
+
+For any $m \times n$ matrix $A$ there are orthogonal matrices $U$ ($m \times m$) and $V$ ($n \times n$) and a diagonal matrix $\Sigma$ with nonnegative entries such that
+
+$$
+A = U\Sigma V^\top.
+$$
+
+The columns of $V$ are the right singular vectors, the directions in the input space that $A$ maps to perpendicular directions. The columns of $U$ are the left singular vectors, their images in the output space. The diagonal entries of $\Sigma$ are the singular values, the stretch along each pair of directions.
+
+The check below factors a symmetric $2 \times 2$ matrix, confirms that the three factors multiply back to $A$, and that $U$ and $V$ are orthogonal.
+
+```python
+import numpy as np
+
+A = np.array([[3.0, 1.0],
+              [1.0, 3.0]])
+U, s, Vt = np.linalg.svd(A)
+print("singular values:", np.round(s, 6))  # prints: singular values: [4. 2.]
+print("A = U diag(s) V^T:", np.allclose(U @ np.diag(s) @ Vt, A))  # prints: A = U diag(s) V^T: True
+print("U orthogonal:", np.allclose(U.T @ U, np.eye(2)), " V orthogonal:", np.allclose(Vt @ Vt.T, np.eye(2)))  # prints: U orthogonal: True V orthogonal: True
+```
+
+In words: the singular values are $4$ and $2$. The factorisation reproduces $A$, and both outer factors are orthogonal, so the transformation is exactly a rotation, a stretch by $4$ and $2$ along perpendicular axes, and another rotation.
+
+<UnitCircleToEllipse />
+
+## Low-rank approximation
+
+Write the decomposition as a sum of rank-one pieces: $A = \sum_i \sigma_i \mathbf{u}_i\mathbf{v}_i^\top$, with the terms ordered by $\sigma_i$. Keeping the first $k$ terms gives the best rank-$k$ approximation. No other rank-$k$ matrix is closer to $A$. The error of the rank-one approximation is the second singular value, because the first term already captures the largest stretch.
+
+```python
+import numpy as np
+
+A = np.array([[3.0, 1.0],
+              [1.0, 3.0]])
+U, s, Vt = np.linalg.svd(A)
+A1 = s[0] * np.outer(U[:, 0], Vt[0])
+print("rank-1 approximation error (spectral norm):", round(np.linalg.norm(A - A1, 2), 6),
+      "= second singular value", round(s[1], 6))  # prints: rank-1 approximation error (spectral norm): 2.0 = second singular value 2.0
+```
+
+In words: dropping the second term costs exactly the second singular value, $2$. An image is a large matrix of pixel values, and most of its singular values are small. Keeping only the largest few gives a close picture at a fraction of the storage, which is how SVD compresses images.
+
+## Rank from singular values
+
+The number of nonzero singular values is the rank of $A$. Numerically, a singular value that is tiny rather than exactly zero is treated as zero, which is how libraries decide rank in practice. The check below shows a rank-one matrix whose second singular value is zero.
+
+```python
+import numpy as np
+
+S = np.array([[1.0, 2.0],
+              [2.0, 4.0]])  # the second row is twice the first
+print("singular values of rank-1 matrix:", np.round(np.linalg.svd(S, compute_uv=False), 6))  # prints: singular values of rank-1 matrix: [5. 0.]
+```
+
+In words: the singular values are $5$ and $0$. One nonzero value means rank one, which matches the fact that the two rows point in the same direction.
+
+<Callout type="pitfall">
+The sign of a singular vector is not fixed: $\mathbf{u}_i$ and $\mathbf{v}_i$ can both be negated and the product $\mathbf{u}_i\mathbf{v}_i^\top$ is unchanged. Do not interpret the sign of an individual singular vector; interpret the pair.
+</Callout>
+
+## Why it matters
+
+SVD is the workhorse of numerical linear algebra. It computes rank and condition number, solves least squares stably, and gives the principal directions of data. Recommendation systems factor a user-by-item matrix with a low-rank SVD to predict missing ratings. The next note applies exactly this idea to a cloud of data points.

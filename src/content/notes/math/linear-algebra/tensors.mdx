@@ -1,8 +1,92 @@
 ---
 title: "Tensors"
-description: "Generalizing vectors and matrices to higher dimensions."
+description: "Generalising vectors and matrices to arrays with any number of indices, and the contraction operation that multiplies and sums them, written compactly with index notation."
 order: 11
-tier: optional
+tier: core
+takeaways:
+  - "A **tensor** is an array of numbers indexed by several integers. A vector has one index, a matrix two, and a tensor any number. The **rank** is the number of indices."
+  - "The shape of a tensor lists the size along each index. A rank-3 tensor of shape $(2, 3, 4)$ has $2 \\cdot 3 \\cdot 4 = 24$ entries."
+  - "**Contraction** multiplies entries and sums over a shared index. Matrix multiplication is a contraction over one index. Contracting a rank-3 tensor with a vector gives a rank-2 tensor."
+  - "**Index notation** (Einstein summation) writes contractions compactly, dropping the summation sign. In code, `einsum` expresses the same operations directly."
+  - "Tensors are the data format of deep learning frameworks, and their physical meaning comes from how they transform when coordinates change. The arithmetic is the same either way."
+resources:
+  - title: "Tensor (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Tensor"
+    note: "Tensors as multilinear maps, their transformation rules, and the array view."
+  - title: "Einstein notation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Einstein_notation"
+    note: "The index convention and the summation rule."
+  - title: "NumPy einsum"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.einsum.html"
+    note: "The contraction routine used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+A vector is a list of numbers, and a matrix is a grid. Many quantities need more structure than a grid: a colour image has height, width and three colour channels; a stress in a material has a direction of force and a direction of the surface it acts on; a batch of training examples has a batch index on top of features and time. A tensor is the general object that holds such arrays. This note explains indices, rank and shape, and shows contraction, the one operation that does most of the work, written in both index notation and code.
+
+## Rank, indices and shape
+
+An array with $r$ indices is a rank-$r$ tensor. Writing $T_{ijk}$ names a rank-3 tensor with indices $i$, $j$ and $k$, each running over its own range. The **shape** records those ranges: a tensor of shape $(2, 3, 4)$ has indices $i \in \{1, 2\}$, $j \in \{1, 2, 3\}$ and $k \in \{1, \ldots, 4\}$, and so $2 \cdot 3 \cdot 4 = 24$ entries.
+
+Rank is not the same as the number of dimensions of a space. A rank-2 tensor in a 3-dimensional space is a $3 \times 3$ array, and a rank-3 tensor in the same space has $27$ entries. The shape of a tensor depends on what it describes, not on the space it lives in.
+
+The check below builds a rank-3 tensor and reports its shape and rank.
+
+```python
+import numpy as np
+
+T3 = np.arange(24.0).reshape(2, 3, 4)
+print("shape of a rank-3 tensor:", T3.shape, " rank (ndim):", T3.ndim)  # prints: shape of a rank-3 tensor: (2, 3, 4) rank (ndim): 3
+```
+
+In words: the array has shape $(2, 3, 4)$, rank $3$, and holds the numbers $0$ to $23$ in order. The shape is the first thing to check when reading a tensor operation.
+
+## Contraction
+
+**Contraction** multiplies entries that share an index and sums over that index. The matrix product is a contraction: $C_{ik} = \sum_j A_{ij}B_{jk}$. The index $j$ appears twice and is summed away, leaving the free indices $i$ and $k$. This summation convention, where a repeated index is summed, is Einstein notation.
+
+Contracting a tensor with a vector removes one index: $M_{ij} = \sum_k T_{ijk}\,w_k$ turns a rank-3 tensor into a rank-2 one. The trace of a matrix is a contraction with itself: $\sum_i A_{ii}$.
+
+`np.einsum` writes these sums with the index letters directly. The check below computes a matrix product, a trace and an outer product through `einsum`, and confirms each against the ordinary function.
+
+```python
+import numpy as np
+
+A = np.array([[1.0, 2.0], [3.0, 4.0]])
+B = np.array([[0.0, 1.0], [1.0, 0.0]])
+
+C = np.einsum('ij,jk->ik', A, B)
+print("einsum equals matmul:", np.allclose(C, A @ B))  # prints: einsum equals matmul: True
+print("trace via einsum:", np.einsum('ii->', A), " numpy trace:", np.trace(A))  # prints: trace via einsum: 5.0 numpy trace: 5.0
+
+u = np.array([1.0, 2.0])
+v = np.array([3.0, 4.0, 5.0])
+O = np.einsum('i,j->ij', u, v)
+print("outer product shape:", O.shape, "entry (1,2):", O[1, 2])  # prints: outer product shape: (2, 3) entry (1,2): 10.0
+```
+
+In words: `'ij,jk->ik'` reads as "sum over $j$, leave $i$ and $k$", which is the matrix product. The trace contracts an index with itself. The outer product has no summed index, so it raises the rank: two vectors give a $2 \times 3$ matrix whose entries are products $u_i v_j$.
+
+<TensorSlices />
+
+## Contracting a rank-3 tensor
+
+The last contraction in the check removes an index. Contracting a rank-3 tensor of shape $(2, 3, 4)$ with a vector of length $4$ leaves a matrix of shape $(2, 3)$:
+
+```python
+import numpy as np
+
+T3 = np.arange(24.0).reshape(2, 3, 4)
+w = np.array([1.0, 0.0, -1.0, 2.0])
+M = np.einsum('ijk,k->ij', T3, w)
+print("rank after contracting with a vector:", M.ndim, "shape:", M.shape)  # prints: rank after contracting with a vector: 2 shape: (2, 3)
+```
+
+In words: the summed index $k$ is the length-4 one, so it disappears, and the rank drops from $3$ to $2$. Shape bookkeeping like this catches most tensor bugs before they run.
+
+<Callout type="pitfall">
+Contraction requires the summed indices to have the same length. Mismatched shapes are a common error in deep learning code, and `einsum` checks them for you. Read the index letters as a contract: a letter that appears twice is summed, and one that appears once survives.
+</Callout>
+
+## Tensors in practice
+
+A colour image is a rank-3 tensor with height, width and channel indices. A neural network layer applies a weight tensor to an input tensor by contraction, and attention mechanisms are contractions over feature indices. The physical meaning of a tensor, such as stress or curvature, adds a rule for how its entries change under a change of coordinates, which is what the word "tensor" means in physics. In code, only the arrays and the contractions matter.

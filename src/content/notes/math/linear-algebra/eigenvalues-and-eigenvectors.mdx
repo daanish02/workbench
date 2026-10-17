@@ -1,8 +1,96 @@
 ---
 title: "Eigenvalues and eigenvectors"
-description: "Directions unchanged by a transformation, characteristic equation, geometric intuition."
+description: "The directions a matrix only stretches, the characteristic equation that finds them, and why they reveal the long-run behaviour of a transformation."
 order: 5
 tier: core
+takeaways:
+  - "An **eigenvector** $\\mathbf{v}$ of $A$ is a nonzero vector that $A$ only scales: $A\\mathbf{v} = \\lambda\\mathbf{v}$. The number $\\lambda$ is the **eigenvalue**, and the direction of $\\mathbf{v}$ is unchanged."
+  - "Eigenvalues are the roots of the **characteristic equation** $\\det(A - \\lambda I) = 0$. For a $2 \\times 2$ matrix this is $\\lambda^2 - (\\operatorname{trace} A)\\lambda + \\det A = 0$."
+  - "A matrix that stretches along its eigenvectors is easy to understand: repeated application multiplies each eigen-direction by $\\lambda^k$, so the large eigenvalues dominate."
+  - "Some matrices have **no real eigenvectors**. A $90°$ rotation turns every direction, so its eigenvalues are $\\pm i$."
+  - "A **symmetric** matrix always has real eigenvalues and perpendicular eigenvectors. This is why eigenvalues matter so much for covariance matrices, as the PCA note shows."
+resources:
+  - title: "Eigenvalues and eigenvectors (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Eigenvalues_and_eigenvectors"
+    note: "Definitions, the characteristic polynomial, and applications."
+  - title: "NumPy linalg.eig"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.eig.html"
+    note: "The routine used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Most vectors change direction when a matrix acts on them. A few do not: they are only stretched or squashed along their own line. These special directions are the eigenvectors, and the stretch factors are the eigenvalues. Finding them turns a complicated transformation into a simple one along its natural axes, which is what makes matrix powers, differential equations and the principal components of data tractable. This note defines them, shows how to compute them for small matrices, and explains what can go wrong.
+
+## Definition
+
+A nonzero vector $\mathbf{v}$ is an eigenvector of a square matrix $A$ with eigenvalue $\lambda$ when
+
+$$
+A\mathbf{v} = \lambda\mathbf{v}.
+$$
+
+Geometrically, the matrix moves $\mathbf{v}$ along its own line. If $\lambda > 1$ it stretches, if $0 < \lambda < 1$ it shrinks, if $\lambda < 0$ it reverses, and if $\lambda = 0$ it collapses the direction to the origin. Any nonzero multiple of an eigenvector is also an eigenvector with the same eigenvalue, so each eigenvalue comes with a whole line of eigenvectors.
+
+<StaticEigenDirections />
+
+<EigenExplorer />
+
+## Finding eigenvalues
+
+Rewrite the definition as $(A - \lambda I)\mathbf{v} = \mathbf{0}$. A nonzero solution exists only when $A - \lambda I$ is not invertible, which by the [Determinants](../determinants/) note means
+
+$$
+\det(A - \lambda I) = 0.
+$$
+
+This is the characteristic equation. For a $2 \times 2$ matrix it becomes $\lambda^2 - (\operatorname{trace} A)\,\lambda + \det A = 0$, a quadratic whose roots are the eigenvalues. Once you have a root, substitute it back into $(A - \lambda I)\mathbf{v} = \mathbf{0}$ to find the eigenvector.
+
+The script below uses a symmetric matrix with eigenvalues $3$ and $1$. It checks the definition directly, $A\mathbf{v} - \lambda\mathbf{v} = \mathbf{0}$, and checks the quadratic from the characteristic equation.
+
+```python
+import numpy as np
+
+A = np.array([[2.0, 1.0],
+              [1.0, 2.0]])
+vals, vecs = np.linalg.eig(A)
+print("eigenvalues:", np.round(vals, 6))  # prints: eigenvalues: [3.+0.j 1.+0.j]
+for lam, v in zip(vals, vecs.T):
+    print(f"lambda={lam:.4f}  A v - lambda v max:", f"{np.max(np.abs(A @ v - lam * v)):.1e}")  # prints: lambda=3.0000+0.0000j A v - lambda v max: 0.0e+00 | lambda=1.0000+0.0000j A v - lambda v max: 0.0e+00
+
+tr, det = np.trace(A), np.linalg.det(A)
+print("roots of lambda^2 - tr lambda + det:", np.roots([1, -tr, det]))  # prints: roots of lambda^2 - tr lambda + det: [3. 1.]
+```
+
+In words: the eigenvalues are $3$ and $1$, and the residuals $A\mathbf{v} - \lambda\mathbf{v}$ are exactly zero for both. The quadratic from the characteristic equation has the same roots. The eigenvectors are $(1, 1)$ for $\lambda = 3$ and $(1, -1)$ for $\lambda = 1$, which are perpendicular because the matrix is symmetric.
+
+## Why they matter: powers
+
+If $A$ has eigenvectors $\mathbf{v}_1, \mathbf{v}_2$ that form a basis, any vector is a combination of them, and $A^k$ multiplies each eigen-component by $\lambda^k$. For large $k$ the component with the largest $|\lambda|$ dominates. This is the reason eigenvalues describe the long-run behaviour of repeated transformations, such as population growth or the steady state of a Markov chain.
+
+## Rotations have none
+
+A rotation by $90°$ maps no direction onto itself, so it has no real eigenvectors. The characteristic equation $\lambda^2 + 1 = 0$ has the complex roots $\pm i$. The check below confirms this, and also shows that a diagonal matrix has its diagonal entries as eigenvalues.
+
+```python
+import numpy as np
+
+R = np.array([[0.0, -1.0],
+              [1.0,  0.0]])
+print("rotation eigenvalues:", np.linalg.eigvals(R))  # prints: rotation eigenvalues: [0.+1.j 0.-1.j]
+
+D = np.diag([5.0, -2.0])
+print("diagonal eigenvalues:", np.linalg.eigvals(D))  # prints: diagonal eigenvalues: [ 5.+0.j -2.+0.j]
+```
+
+In words: the rotation's eigenvalues are $i$ and $-i$, purely imaginary, so no real direction survives. A diagonal matrix only scales the axes, so its eigenvalues are simply the diagonal entries, $5$ and $-2$. Working in the eigenbasis of a matrix is the same as reading its diagonal form.
+
+<Callout type="pitfall">
+Eigenvalues can be complex even for a real matrix, and the eigenvectors then also have complex entries. A matrix with complex eigenvalues is a rotation in some sense, so check the sign and size of the imaginary part before reading meaning into the numbers.
+</Callout>
+
+## Multiplicity
+
+An eigenvalue can appear more than once as a root of the characteristic equation. Its **algebraic multiplicity** is the number of times it appears, and its **geometric multiplicity** is the number of independent eigenvectors it has. The two agree for symmetric matrices, which is one reason symmetric matrices are so well behaved. A matrix where they disagree cannot be diagonalised, and that case needs the Jordan form.
+
+## Where eigenvectors appear
+
+Google's PageRank is an eigenvector of a web link matrix. The natural frequencies of a vibrating string or a drum are eigenvalues of a differential operator. Principal component analysis finds the eigenvectors of a data covariance matrix. The next note's ideas about orthogonality explain why, for symmetric matrices, those eigenvectors form a clean set of perpendicular axes.

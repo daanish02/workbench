@@ -1,8 +1,102 @@
 ---
 title: "Projections"
-description: "Projecting a vector onto another vector or subspace, least-squares as a projection."
+description: "Finding the closest point on a line or subspace to a given vector, the projection matrix that does it, and least squares as the projection of data onto a model."
 order: 7
 tier: core
+takeaways:
+  - "The **projection** of $\\mathbf{b}$ onto a line through $\\mathbf{u}$ is $\\frac{\\mathbf{b}\\cdot\\mathbf{u}}{\\mathbf{u}\\cdot\\mathbf{u}}\\mathbf{u}$. It is the point on the line closest to $\\mathbf{b}$."
+  - "The **residual** $\\mathbf{b} - \\mathbf{p}$ is perpendicular to the subspace. That perpendicularity is what makes the projection the closest point."
+  - "Projection onto the column space of $A$ is $P = A(A^\\top A)^{-1}A^\\top$. A projection matrix is **idempotent** ($P^2 = P$) and **symmetric** ($P^\\top = P$)."
+  - "**Least squares** finds the best-fit solution to an overdetermined system $A\\mathbf{x} \\approx \\mathbf{b}$ by projecting $\\mathbf{b}$ onto the columns of $A$. The solution satisfies the normal equations $A^\\top A\\mathbf{x} = A^\\top\\mathbf{b}$."
+  - "Fitting a line to data is a projection problem. The same geometry is behind regression in statistics and machine learning."
+resources:
+  - title: "Projection (linear algebra) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Projection_(linear_algebra)"
+    note: "Projections as idempotent maps, with the orthogonal case highlighted."
+  - title: "Least squares (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Least_squares"
+    note: "The method, its geometric meaning, and its uses in fitting data."
+  - title: "NumPy linear algebra"
+    url: "https://numpy.org/doc/stable/reference/routines.linalg.html"
+    note: "The solver and products used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Suppose you want to reach a point with a limited set of moves, and the target is out of reach. The best you can do is the closest reachable point, and the line from that point to the target is perpendicular to every move you are allowed. This is projection: finding the closest point of a subspace to a given vector. It is the core of least squares, which fits models to noisy data, and it is one of the most used operations in applied mathematics. This note computes projections onto a line and onto a general subspace, and connects them to fitting a line through data.
+
+## Projection onto a line
+
+Let $\mathbf{u}$ be a nonzero vector and $\mathbf{b}$ any vector. The point on the line through $\mathbf{u}$ closest to $\mathbf{b}$ is
+
+$$
+\mathbf{p} = \frac{\mathbf{b}\cdot\mathbf{u}}{\mathbf{u}\cdot\mathbf{u}}\,\mathbf{u}.
+$$
+
+The coefficient $\frac{\mathbf{b}\cdot\mathbf{u}}{\mathbf{u}\cdot\mathbf{u}}$ says how far along $\mathbf{u}$ the closest point lies. The residual $\mathbf{b} - \mathbf{p}$ is perpendicular to $\mathbf{u}$, which is what closest means: any other point on the line is farther from $\mathbf{b}$ by Pythagoras.
+
+The script below projects $\mathbf{b} = (1, 3)$ onto the line through $\mathbf{u} = (2, 1)$ and checks that the residual is perpendicular to $\mathbf{u}$.
+
+```python
+import numpy as np
+
+u = np.array([2.0, 1.0])
+b = np.array([1.0, 3.0])
+p = (np.dot(u, b) / np.dot(u, u)) * u
+print("projection of b onto u:", p)  # prints: projection of b onto u: [2. 1.]
+print("residual b - p is perpendicular to u:", np.isclose(np.dot(b - p, u), 0.0))  # prints: residual b - p is perpendicular to u: True
+```
+
+In words: the projection is $(2, 1)$, which is exactly $\mathbf{u}$ itself, because the dot product $\mathbf{b}\cdot\mathbf{u} = 5$ and $\mathbf{u}\cdot\mathbf{u} = 5$ make the coefficient $1$. The residual $(-1, 2)$ is perpendicular to $\mathbf{u}$, as the theorem says it must be.
+
+<ProjectionExplorer />
+
+## Projection onto a subspace
+
+When the target subspace is spanned by several vectors, collect them as the columns of a matrix $A$. The projection of $\mathbf{b}$ onto the column space of $A$ is $\mathbf{p} = A\hat{\mathbf{x}}$, where $\hat{\mathbf{x}}$ solves the **normal equations**
+
+$$
+A^\top A\,\hat{\mathbf{x}} = A^\top \mathbf{b}.
+$$
+
+Substituting back gives the projection matrix $P = A(A^\top A)^{-1}A^\top$, which maps any $\mathbf{b}$ to its projection. This $P$ is idempotent, since projecting twice changes nothing, and symmetric.
+
+```python
+import numpy as np
+
+A = np.array([[1.0, 0.0],
+              [1.0, 1.0],
+              [1.0, 2.0]])
+P = A @ np.linalg.inv(A.T @ A) @ A.T
+print("P is idempotent (P^2 = P):", np.allclose(P @ P, P))  # prints: P is idempotent (P^2 = P): True
+print("P is symmetric:", np.allclose(P, P.T))  # prints: P is symmetric: True
+```
+
+In words: both properties hold. Projecting a point that is already in the subspace leaves it where it is, which is idempotence. Symmetry is the geometric fact that the projection is an orthogonal one, not a slanted shadow.
+
+## Least squares
+
+Real data rarely lies exactly on a model. A system $A\mathbf{x} = \mathbf{b}$ with more equations than unknowns usually has no solution. Least squares replaces $\mathbf{b}$ with its projection onto the column space of $A$, which gives the $\hat{\mathbf{x}}$ that makes the total squared error smallest. For fitting a line $y = c_0 + c_1 x$ through points, $A$ has a column of ones and a column of $x$-values.
+
+The check below fits a line to three points, and confirms that the projection and the normal equations agree and that the residual is perpendicular to the model.
+
+```python
+import numpy as np
+
+A = np.array([[1.0, 0.0],
+              [1.0, 1.0],
+              [1.0, 2.0]])
+y = np.array([1.0, 2.0, 2.0])
+
+coef = np.linalg.solve(A.T @ A, A.T @ y)
+print("best-fit intercept and slope:", np.round(coef, 4))  # prints: best-fit intercept and slope: [1.1667 0.5 ]
+print("residual is perpendicular to the columns:", np.allclose(A.T @ (y - A @ coef), 0.0))  # prints: residual is perpendicular to the columns: True
+```
+
+In words: the best-fit line is $y = 1.1667 + 0.5x$. The residual of the fit is perpendicular to both columns of $A$, which is exactly the normal equation. No other line gives a smaller total squared error.
+
+<Callout type="pitfall">
+Solving the normal equations by forming $A^\top A$ squares the condition number, which can lose precision. Real libraries solve least squares with a QR factorisation instead, which is the same projection computed more stably.
+</Callout>
+
+## Where projections appear
+
+Regression in statistics is least squares. A signal is projected onto a basis of sinusoids to find its frequency content, the core step of the Fourier transform. A camera projects three-dimensional points onto a two-dimensional image. In each case the question is the same: what is the closest point of the model to the data?

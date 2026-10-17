@@ -1,8 +1,97 @@
 ---
 title: "Principal component analysis (PCA)"
-description: "Using eigenvectors/SVD to find directions of greatest variance."
+description: "Finding the directions along which a cloud of data varies most, using the eigenvectors of the covariance matrix or the SVD of the centred data, and keeping only the directions that matter."
 order: 9
 tier: core
+takeaways:
+  - "**PCA** finds the directions of greatest variance in data. The first **principal component** is the direction along which the projected data has the largest spread."
+  - "Centre the data first by subtracting the mean. Then the **covariance matrix** $C = \\frac{1}{n-1}X^\\top X$ summarises how the features vary together."
+  - "The eigenvectors of $C$ are the principal directions, and the eigenvalues are the variances along them. Eigenvectors of a symmetric matrix are perpendicular, so the directions form new orthogonal axes."
+  - "The **SVD** of the centred data gives the same answer with more stability: the squared singular values divided by $n - 1$ are the eigenvalues of $C$."
+  - "Keeping the first few components and discarding the rest compresses data while losing the least variance. The fraction of variance kept tells you how much information the reduction keeps."
+resources:
+  - title: "Principal component analysis (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Principal_component_analysis"
+    note: "The derivation from maximum variance, the covariance and SVD routes, and applications."
+  - title: "NumPy linalg.eigh"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.eigh.html"
+    note: "The symmetric eigensolver used in the check below."
 ---
 
-_Placeholder. Content not written yet._
+A dataset with fifty measurements per person is a cloud of points in fifty dimensions, and most of its variation often lies along a handful of directions. Principal component analysis finds those directions. It rotates the coordinate system so the new axes line up with the spread of the data, which lets you summarise, visualise and compress high-dimensional data without losing the structure that matters. It is one of the most used tools in statistics and machine learning, and it is built entirely from the eigenvector and SVD ideas of the last two notes.
+
+## Centring and covariance
+
+PCA starts by subtracting the mean of each feature, so the cloud is centred at the origin. This matters because variance is measured around the mean. For a centred data matrix $X$ with $n$ rows, the **covariance matrix**
+
+$$
+C = \frac{1}{n-1}X^\top X
+$$
+
+records the variance of each feature on its diagonal and how pairs of features vary together off the diagonal. $C$ is symmetric, which the [Eigenvalues and Eigenvectors](../eigenvalues-and-eigenvectors/) note showed gives real eigenvalues and perpendicular eigenvectors.
+
+## The principal directions
+
+Let $\mathbf{w}$ be a unit vector. The variance of the data projected onto $\mathbf{w}$ is $\mathbf{w}^\top C\mathbf{w}$. Maximising this over unit vectors gives the eigenvector of $C$ with the largest eigenvalue. The eigenvalue is the variance along that direction, and the eigenvectors, in order of decreasing eigenvalue, are the principal components.
+
+The script below generates correlated two-dimensional data with a fixed seed, centres it, and finds the principal directions from the covariance matrix.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+x = rng.normal(0, 3.0, 500)
+y = 0.5 * x + rng.normal(0, 0.8, 500)
+X = np.column_stack([x, y])
+
+Xc = X - X.mean(axis=0)
+C = Xc.T @ Xc / (len(Xc) - 1)
+vals, vecs = np.linalg.eigh(C)
+order = np.argsort(vals)[::-1]
+vals, vecs = vals[order], vecs[:, order]
+print("variances along principal axes:", np.round(vals, 3))  # prints: variances along principal axes: [11.711 0.446]
+print("share of variance on first component:", round(vals[0] / vals.sum(), 4))  # prints: share of variance on first component: 0.9633
+print("first principal direction:", np.round(vecs[:, 0], 4))  # prints: first principal direction: [-0.8848 -0.466 ]
+```
+
+In words: the first component carries about $96\%$ of the total variance, so the data is almost a line. The direction is roughly $(-0.88, -0.47)$, which points along the slope of the cloud, up to sign. The sign is arbitrary: $\mathbf{w}$ and $-\mathbf{w}$ describe the same axis.
+
+<PcaScatter />
+
+## Scores and the SVD route
+
+Projecting each centred point onto the first component gives its **score**. The variance of those scores equals the first eigenvalue, which is the defining property of the component. The same directions appear in the SVD of $X_c$: the right singular vectors are the principal directions, and $\sigma_i^2/(n-1)$ are the eigenvalues. In practice libraries use the SVD because it never forms $X^\top X$, which would square the condition number.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+x = rng.normal(0, 3.0, 500)
+y = 0.5 * x + rng.normal(0, 0.8, 500)
+X = np.column_stack([x, y])
+Xc = X - X.mean(axis=0)
+
+C = Xc.T @ Xc / (len(Xc) - 1)
+vals, vecs = np.linalg.eigh(C)
+w = vecs[:, np.argmax(vals)]
+
+scores = Xc @ w
+print("variance of scores equals first eigenvalue:", np.isclose(scores.var(ddof=1), vals.max()))  # prints: variance of scores equals first eigenvalue: True
+
+_, s, Vt = np.linalg.svd(Xc, full_matrices=False)
+print("SVD gives the same variances:", np.allclose(s**2 / (len(Xc) - 1), np.sort(vals)[::-1]))  # prints: SVD gives the same variances: True
+```
+
+In words: the scores along the first component have variance equal to its eigenvalue, which confirms the direction is the one that maximises variance. The SVD of the centred data gives the same variances, so the two routes agree.
+
+<Callout type="pitfall">
+PCA finds directions of maximum variance, not directions of importance for a prediction. A low-variance feature can be the most useful one for a classifier. Also scale the features before PCA when their units differ, or the largest-unit feature will dominate the components.
+</Callout>
+
+## Choosing how many components
+
+Plot the eigenvalues, or the cumulative share of variance, and keep the components before the curve flattens. The discarded directions are mostly noise. Projecting onto the kept components compresses the data from $d$ numbers per point to $k$, with the smallest possible loss of variance among all linear choices of $k$ directions.
+
+## Where PCA is used
+
+PCA compresses gene-expression data, reduces the input dimensions before training a model, and reveals structure in survey responses. It is also the linear core of more advanced methods, and the reason a two-dimensional plot of high-dimensional data can be informative at all.

@@ -1,8 +1,99 @@
 ---
 title: "Orthogonality"
-description: "Orthogonal vectors, orthonormal bases, orthogonal matrices."
+description: "Perpendicular vectors, orthonormal bases that make coordinates easy to compute, the Gram-Schmidt process that builds one, and orthogonal matrices that preserve lengths and angles."
 order: 6
 tier: core
+takeaways:
+  - "Two vectors are **orthogonal** when their dot product is zero. A set of mutually orthogonal vectors is an **orthogonal basis**."
+  - "An **orthonormal** basis has vectors of length one as well. In such a basis, the coordinates of any vector are just dot products: $\\mathbf{x} = \\sum_i (\\mathbf{x}\\cdot\\mathbf{q}_i)\\mathbf{q}_i$."
+  - "**Gram-Schmidt** turns any set of independent vectors into an orthonormal one by subtracting each vector's components along the earlier ones, then normalising."
+  - "An **orthogonal matrix** $Q$ satisfies $Q^\\top Q = I$. Its columns are orthonormal, and it preserves lengths, angles and dot products. Rotations and reflections are orthogonal."
+  - "Orthogonal bases make numerical computation stable: they avoid the amplification of errors that nearly parallel vectors cause."
+resources:
+  - title: "Orthogonal matrix (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Orthogonal_matrix"
+    note: "Definitions, the group of orthogonal matrices, and their geometric meaning."
+  - title: "Gram-Schmidt process (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gram%E2%80%93Schmidt_process"
+    note: "The algorithm, with the formula for each step."
+  - title: "NumPy linear algebra"
+    url: "https://numpy.org/doc/stable/reference/routines.linalg.html"
+    note: "The matrix products used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Perpendicular axes are the most convenient coordinate system there is. If the axes are at right angles and have unit length, finding the coordinates of a point is a set of dot products, and lengths and distances are just Pythagoras. Orthogonality is the property that makes this work, and it is the reason rotations preserve shape and the reason many numerical algorithms are stable. This note defines orthogonal and orthonormal sets, shows how to build an orthonormal basis from any independent set, and describes orthogonal matrices.
+
+## Orthogonal and orthonormal sets
+
+Two vectors $\mathbf{u}$ and $\mathbf{v}$ are orthogonal when $\mathbf{u}\cdot\mathbf{v} = 0$, which for nonzero vectors means they meet at a right angle. A set of vectors is orthogonal when every pair in it is orthogonal. It is orthonormal when, in addition, each vector has length one. Orthonormal vectors are usually written $\mathbf{q}_1, \mathbf{q}_2, \ldots$.
+
+The payoff is in coordinates. If $\mathbf{q}_1, \ldots, \mathbf{q}_n$ is an orthonormal basis, then any vector $\mathbf{x}$ satisfies
+
+$$
+\mathbf{x} = (\mathbf{x}\cdot\mathbf{q}_1)\,\mathbf{q}_1 + \cdots + (\mathbf{x}\cdot\mathbf{q}_n)\,\mathbf{q}_n.
+$$
+
+No linear system has to be solved. Each coefficient is a single dot product.
+
+## Gram-Schmidt
+
+Given independent vectors $\mathbf{a}_1, \mathbf{a}_2, \ldots$, Gram-Schmidt builds an orthonormal set one step at a time. Start with $\mathbf{q}_1 = \mathbf{a}_1 / \|\mathbf{a}_1\|$. For each next vector, subtract its components along the vectors already built, then normalise what remains:
+
+$$
+\mathbf{w} = \mathbf{a}_k - \sum_{i<k} (\mathbf{a}_k\cdot\mathbf{q}_i)\,\mathbf{q}_i, \qquad \mathbf{q}_k = \frac{\mathbf{w}}{\|\mathbf{w}\|}.
+$$
+
+The script below runs the process on three vectors in space and checks that the result is orthonormal.
+
+```python
+import numpy as np
+
+def gram_schmidt(vectors):
+    basis = []
+    for v in vectors:
+        w = v.astype(float).copy()
+        for q in basis:
+            w -= np.dot(q, v) * q
+        basis.append(w / np.linalg.norm(w))
+    return np.array(basis).T
+
+V = np.array([[1.0, 1.0, 0.0],
+              [1.0, 0.0, 1.0],
+              [0.0, 1.0, 1.0]])
+Q = gram_schmidt(V)
+print("columns orthonormal (Q^T Q = I):", np.allclose(Q.T @ Q, np.eye(3)))  # prints: columns orthonormal (Q^T Q = I): True
+```
+
+In words: the three input vectors are independent but not perpendicular. After Gram-Schmidt the columns of $Q$ are perpendicular unit vectors, and $Q^\top Q = I$ confirms it. The span has not changed: the new vectors are combinations of the old ones.
+
+<GramSchmidtStepper />
+
+## Orthogonal matrices
+
+A square matrix $Q$ is **orthogonal** when $Q^\top Q = I$, which says its columns are orthonormal. Such a matrix preserves everything geometric: $\|Q\mathbf{x}\| = \|\mathbf{x}\|$ and $(Q\mathbf{x})\cdot(Q\mathbf{y}) = \mathbf{x}\cdot\mathbf{y}$. The orthogonal matrices with determinant $+1$ are exactly the rotations, and those with determinant $-1$ include the reflections.
+
+The check below uses a rotation matrix. It confirms $R^\top R = I$, and that the rotation keeps lengths and dot products.
+
+```python
+import numpy as np
+
+theta = 0.7
+R = np.array([[np.cos(theta), -np.sin(theta)],
+              [np.sin(theta),  np.cos(theta)]])
+x = np.array([3.0, -1.0])
+y = np.array([0.5, 2.0])
+
+print("R^T R = I:", np.allclose(R.T @ R, np.eye(2)))  # prints: R^T R = I: True
+print("length preserved:", np.isclose(np.linalg.norm(R @ x), np.linalg.norm(x)))  # prints: length preserved: True
+print("dot product preserved:", np.isclose(np.dot(R @ x, R @ y), np.dot(x, y)))  # prints: dot product preserved: True
+```
+
+In words: all three checks pass. The rotation changes where $\mathbf{x}$ and $\mathbf{y}$ point but not how long they are or how far apart their directions are. That is the content of orthogonality: a change of orthonormal basis is a rotation, and it changes no geometry.
+
+<Callout type="pitfall">
+Orthogonal does not mean orthonormal, and the matrix $Q$ with orthogonal but non-unit columns is not an orthogonal matrix. Check the lengths as well as the perpendicularity, or the identity $Q^\top Q = I$ will fail.
+</Callout>
+
+## Why orthonormal bases are stable
+
+Nearly parallel vectors make a poor basis: a tiny error in the data produces a large error in the coordinates. Gram-Schmidt and the related QR factorisation avoid this. Orthonormal bases keep errors from growing, which is why numerical libraries use them for least squares, eigenvalue computation and the decompositions in a later note.

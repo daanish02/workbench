@@ -1,8 +1,96 @@
 ---
 title: "Matrix decompositions"
-description: "LU, QR, and why decompositions make computation cheaper."
+description: "Writing a matrix as a product of simpler matrices, LU, QR and Cholesky, so that solving systems, least squares and many other problems become cheap and stable."
 order: 10
 tier: core
+takeaways:
+  - "A **decomposition** writes a matrix as a product of simpler ones. Each factor has a shape that makes the next step easy, such as triangular for solving, or orthogonal for stability."
+  - "**LU** factors $A = LU$ with $L$ lower and $U$ upper triangular. Solving $A\\mathbf{x} = \\mathbf{b}$ then takes two triangular solves, and the factorisation can be reused for many right-hand sides."
+  - "**QR** factors $A = QR$ with $Q$ orthogonal and $R$ upper triangular. It is the stable way to solve least-squares problems."
+  - "**Cholesky** factors a symmetric positive definite matrix as $S = GG^\\top$. It is about twice as fast as LU for such matrices and is used in statistics and optimisation."
+  - "The decomposition is computed once and reused. In practice, the cost of solving a system is mostly the factorisation, not the substitutions."
+resources:
+  - title: "LU decomposition (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/LU_decomposition"
+    note: "The factorisation, pivoting, and its cost."
+  - title: "QR decomposition (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/QR_decomposition"
+    note: "Householder and Gram-Schmidt routes to the QR factors."
+  - title: "NumPy linalg.qr"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.qr.html"
+    note: "The factorisation routine used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Solving a linear system by elimination mixes the work of factoring the matrix with the work of solving for one right-hand side. Those are different jobs. Many problems have the same matrix with many right-hand sides, and in optimisation the matrix changes slowly. A matrix decomposition separates the two: factor the matrix once into simple pieces, then reuse the pieces. This note covers the three factorisations you will meet most often, and why each one exists.
+
+## LU: elimination written down
+
+Gaussian elimination, from the [Systems of Linear Equations](../systems-of-linear-equations/) note, can be recorded as a matrix factorisation. The $U$ factor is the upper triangular result of elimination, and $L$ is the lower triangular matrix of the multipliers used. So $A = LU$.
+
+Once you have $L$ and $U$, solving $A\mathbf{x} = \mathbf{b}$ is two triangular solves. Solve $L\mathbf{y} = \mathbf{b}$ by forward substitution, then $U\mathbf{x} = \mathbf{y}$ by back substitution. Each costs about $n^2$ operations, far less than the $\frac{2}{3}n^3$ for the factorisation, so new right-hand sides are cheap.
+
+The check below factors a $2 \times 2$ matrix by hand, then solves a system through the two triangular solves.
+
+```python
+import numpy as np
+
+A = np.array([[4.0, 3.0],
+              [6.0, 3.0]])
+
+L = np.array([[1.0, 0.0],
+              [A[1, 0] / A[0, 0], 1.0]])
+U = np.array([[A[0, 0], A[0, 1]],
+              [0.0, A[1, 1] - L[1, 0] * A[0, 1]]])
+print("L U reproduces A:", np.allclose(L @ U, A))  # prints: L U reproduces A: True
+print("U is upper triangular:", np.allclose(np.tril(U, -1), 0))  # prints: U is upper triangular: True
+
+b = np.array([1.0, 2.0])
+y = np.linalg.solve(L, b)
+x = np.linalg.solve(U, y)
+print("solution via LU equals direct solve:", np.allclose(x, np.linalg.solve(A, b)))  # prints: solution via LU equals direct solve: True
+```
+
+In words: the multiplier $\frac{6}{4} = 1.5$ sits in $L$, and $U$ holds the eliminated rows. The product $LU$ returns $A$, and the two triangular solves give the same answer as a direct solve. The factorisation is the same for any $\mathbf{b}$.
+
+<Callout type="pitfall">
+LU without row swaps fails when a pivot is zero, and it can be unstable when a pivot is tiny. Libraries use partial pivoting, which records a permutation $P$ so that $PA = LU$. The idea is the same; the bookkeeping is longer.
+</Callout>
+
+<LuStepper />
+
+## QR: stable least squares
+
+A QR factorisation writes $A = QR$, with $Q$ having orthonormal columns and $R$ upper triangular. Orthogonal matrices do not amplify errors, so QR is the stable way to solve least-squares problems, as the [Projections](../projections/) note explained. The columns of $Q$ are what Gram-Schmidt produces from the columns of $A$, and $R$ records the coefficients of that process.
+
+The check below factors a matrix into $Q$ and $R$ and confirms the orthogonality of $Q$ and the product.
+
+```python
+import numpy as np
+
+A = np.array([[4.0, 3.0],
+              [6.0, 3.0]])
+Q, R = np.linalg.qr(A)
+print("Q orthogonal:", np.allclose(Q.T @ Q, np.eye(2)), " Q R reproduces A:", np.allclose(Q @ R, A))  # prints: Q orthogonal: True Q R reproduces A: True
+```
+
+In words: $Q$ is orthogonal and $QR$ returns $A$. The same factorisation solves least squares without forming $A^\top A$, which avoids squaring the condition number.
+
+## Cholesky: symmetric positive definite matrices
+
+A symmetric matrix $S$ is **positive definite** when $\mathbf{x}^\top S\mathbf{x} > 0$ for every nonzero $\mathbf{x}$. Such matrices, which include covariance matrices, factor as $S = GG^\top$ with $G$ lower triangular. This Cholesky factorisation needs about half the work of LU, and it fails cleanly if the matrix is not positive definite, which is a useful test.
+
+```python
+import numpy as np
+
+S = np.array([[4.0, 2.0],
+              [2.0, 3.0]])
+G = np.linalg.cholesky(S)
+print("Cholesky factor G:\n", np.round(G, 4))  # prints: Cholesky factor G: [[2. 0. ] [1. 1.4142]]
+print("G G^T reproduces S:", np.allclose(G @ G.T, S))  # prints: G G^T reproduces S: True
+```
+
+In words: $G$ is lower triangular and $GG^\top$ returns $S$. Gaussian models and many optimisers use this factor to sample from or solve with a covariance matrix.
+
+## Choosing a factorisation
+
+Use LU for a general square system. Use QR for least squares and when stability matters most. Use Cholesky when the matrix is symmetric and positive definite. Use an SVD when the matrix may be singular or you need rank, as in the [Singular Value Decomposition](../singular-value-decomposition-svd/) note. The cost of solving a system is dominated by the factorisation, so choose the one whose structure matches your matrix.
