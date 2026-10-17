@@ -1,0 +1,65 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A polar cell has area r dr dθ"
+  caption="The shaded cell lies between radii r and r + Δr and angles θ and θ + Δθ. Its exact area is compared with the rectangle estimate r Δr Δθ. The two agree as the cell shrinks, and the factor r is why polar integrals carry an extra r: cells far from the origin are bigger."
+>
+  <polar-area-element>
+    <div class="pa-ctl">
+      <label class="pa-lbl">r <input type="range" min="0.2" max="2.5" step="0.1" value="1.5" data-r /> <b data-rv>1.5</b></label>
+      <label class="pa-lbl">Δr <input type="range" min="0.05" max="1" step="0.05" value="0.5" data-dr /> <b data-drv>0.50</b></label>
+      <label class="pa-lbl">Δθ (°) <input type="range" min="5" max="90" step="5" value="40" data-dt /> <b data-dtv>40</b></label>
+    </div>
+    <svg class="pa-svg" viewBox="-3.6 -3.6 7.2 7.2" role="img" aria-label="Polar grid with one highlighted cell">
+      <g transform="scale(1,-1)">
+        <g data-grid></g>
+        <path data-cell class="pa-cell"></path>
+      </g>
+    </svg>
+    <p class="pa-stat" data-stat></p>
+  </polar-area-element>
+</Figure>
+
+<style>
+  .pa-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .pa-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .pa-lbl input { flex: 1; }
+  .pa-svg { display: block; width: 100%; max-width: 300px; margin: 0 auto; }
+  .pa-svg :global(.pa-g) { fill: none; stroke: rgba(66, 133, 244, 0.35); stroke-width: 0.02; }
+  .pa-cell { fill: rgba(251, 188, 5, 0.4); stroke: var(--g-yellow); stroke-width: 0.03; }
+  .pa-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class PolarAreaElement extends HTMLElement {
+    connectedCallback() {
+      let g = '';
+      for (let r = 0.5; r <= 3.5; r += 0.5) g += `<circle class="pa-g" r="${r}"></circle>`;
+      for (let a = 0; a < 360; a += 30) { const t = (a * Math.PI) / 180; g += `<line class="pa-g" x1="0" y1="0" x2="${3.5 * Math.cos(t)}" y2="${3.5 * Math.sin(t)}"></line>`; }
+      this.querySelector('[data-grid]')!.innerHTML = g;
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      const dr = +this.querySelector<HTMLInputElement>('[data-dr]')!.value;
+      const dtDeg = +this.querySelector<HTMLInputElement>('[data-dt]')!.value;
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(1);
+      this.querySelector('[data-drv]')!.textContent = dr.toFixed(2);
+      this.querySelector('[data-dtv]')!.textContent = String(dtDeg);
+      const t0 = Math.PI / 8, t1 = t0 + (dtDeg * Math.PI) / 180, R = r + dr;
+      const pt = (rad: number, t: number) => `${(rad * Math.cos(t)).toFixed(3)},${(rad * Math.sin(t)).toFixed(3)}`;
+      const big = t1 - t0 > Math.PI ? 1 : 0;
+      const d = `M${pt(r, t0)} L${pt(R, t0)} A${R},${R} 0 ${big} 1 ${pt(R, t1)} L${pt(r, t1)} A${r},${r} 0 ${big} 0 ${pt(r, t0)} Z`;
+      this.querySelector('[data-cell]')!.setAttribute('d', d);
+      const dt = (dtDeg * Math.PI) / 180;
+      const exact = 0.5 * (R * R - r * r) * dt;
+      const est = r * dr * dt;
+      this.querySelector('[data-stat]')!.textContent =
+        `exact area ½(R² − r²)Δθ = ${exact.toFixed(4)} · estimate r Δr Δθ = ${est.toFixed(4)} · ratio ${(exact / est).toFixed(3)}`;
+    }
+  }
+  customElements.define('polar-area-element', PolarAreaElement);
+</script>

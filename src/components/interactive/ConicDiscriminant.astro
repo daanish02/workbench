@@ -1,0 +1,65 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The discriminant names the conic"
+  caption="The curve Ax² + Bxy + Cy² = 1. Move A, B and C: the sign of B² − 4AC switches the curve between ellipse (negative), parabola-like parallel lines (zero) and hyperbola (positive), and B rotates it. When the form is negative everywhere there is no curve at all."
+>
+  <conic-discriminant>
+    <div class="cd-ctl">
+      <label class="cd-lbl">A <input type="range" min="-2" max="2" step="0.1" value="1" data-a /> <b data-av>1.0</b></label>
+      <label class="cd-lbl">B <input type="range" min="-4" max="4" step="0.1" value="1" data-b /> <b data-bv>1.0</b></label>
+      <label class="cd-lbl">C <input type="range" min="-2" max="2" step="0.1" value="2" data-c /> <b data-cv>2.0</b></label>
+    </div>
+    <canvas width="240" height="240" data-cv class="cd-cv"></canvas>
+    <p class="cd-stat" data-stat></p>
+  </conic-discriminant>
+</Figure>
+
+<style>
+  .cd-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .cd-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .cd-lbl input { flex: 1; }
+  .cd-cv { display: block; width: 100%; max-width: 280px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .cd-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class ConicDiscriminant extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const v = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const A = v('[data-a]'), B = v('[data-b]'), C = v('[data-c]');
+      this.querySelector('[data-av]')!.textContent = A.toFixed(1);
+      this.querySelector('[data-bv]')!.textContent = B.toFixed(1);
+      this.querySelector('[data-cv]')!.textContent = C.toFixed(1);
+      const cv = this.querySelector<HTMLCanvasElement>('[data-cv]')!;
+      const ctx = cv.getContext('2d')!;
+      const W = cv.width, R = 3;
+      const img = ctx.createImageData(W, W);
+      const q = (x: number, y: number) => A * x * x + B * x * y + C * y * y - 1;
+      const px = (2 * R) / W;
+      let hit = false;
+      for (let i = 0; i < W; i++) for (let j = 0; j < W; j++) {
+        const x = -R + j * px, y = R - i * px;
+        const val = q(x, y);
+        // mark pixels where q changes sign within one pixel: the curve
+        const edge = Math.sign(val) !== Math.sign(q(x + px, y)) || Math.sign(val) !== Math.sign(q(x, y - px));
+        const axis = Math.abs(x) < px / 2 || Math.abs(y) < px / 2;
+        const o = 4 * (i * W + j);
+        if (edge) hit = true;
+        const [r, g, b] = edge ? [138, 180, 248] : axis ? [60, 64, 67] : val < 0 ? [18, 28, 40] : [10, 10, 10];
+        img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      const disc = B * B - 4 * A * C;
+      const kind = Math.abs(disc) < 1e-9 ? 'zero: parabola family (here two parallel lines)' : disc < 0 ? 'negative: ellipse family' : 'positive: hyperbola family';
+      this.querySelector('[data-stat]')!.textContent = `B² − 4AC = ${disc.toFixed(2)} → ${kind}${hit ? '' : ' · no real points: the form never reaches 1'}`;
+    }
+  }
+  customElements.define('conic-discriminant', ConicDiscriminant);
+</script>
