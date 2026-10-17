@@ -1,0 +1,75 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What a rank-1 matrix keeps and destroys"
+  caption="A = [[1, 2], [2, 4]] has rank 1. Left: the input plane, with the null space (red), the line of inputs sent to zero. Right: the output plane, where every output lands on the column space (blue). Drag the input: moving it along the red direction leaves Ax unchanged, which is why Ax = b has either no solution or a whole line of them."
+>
+  <null-space-viz>
+    <div class="ns-ctl">
+      <label class="ns-lbl">x₁ <input type="range" min="-2" max="2" step="0.1" value="1" data-x1 /> <b data-x1v>1.0</b></label>
+      <label class="ns-lbl">x₂ <input type="range" min="-2" max="2" step="0.1" value="0.5" data-x2 /> <b data-x2v>0.5</b></label>
+    </div>
+    <div class="ns-row">
+      <svg viewBox="-3 -3 6 6" role="img" aria-label="Input plane with null space line">
+        <g transform="scale(1,-1)">
+          <line x1="-3" y1="0" x2="3" y2="0" class="ns-axis"></line><line x1="0" y1="-3" x2="0" y2="3" class="ns-axis"></line>
+          <line x1="-3" y1="1.5" x2="3" y2="-1.5" class="ns-null"></line>
+          <line data-shift class="ns-shift"></line>
+          <circle data-in r="0.12" class="ns-pt"></circle>
+        </g>
+      </svg>
+      <svg viewBox="-12 -12 24 24" role="img" aria-label="Output plane with column space line">
+        <g transform="scale(1,-1)">
+          <line x1="-12" y1="0" x2="12" y2="0" class="ns-axis2"></line><line x1="0" y1="-12" x2="0" y2="12" class="ns-axis2"></line>
+          <line x1="-6" y1="-12" x2="6" y2="12" class="ns-col"></line>
+          <circle data-out r="0.45" class="ns-pt"></circle>
+        </g>
+      </svg>
+    </div>
+    <p class="ns-stat" data-stat></p>
+  </null-space-viz>
+</Figure>
+
+<style>
+  .ns-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ns-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ns-lbl input { flex: 1; }
+  .ns-row { display: flex; gap: 16px; justify-content: center; }
+  .ns-row svg { width: 45%; max-width: 220px; border: 1px solid var(--border); border-radius: 8px; }
+  .ns-axis { stroke: #3c4043; stroke-width: 0.02; }
+  .ns-axis2 { stroke: #3c4043; stroke-width: 0.08; }
+  .ns-null { stroke: var(--g-red); stroke-width: 0.05; }
+  .ns-col { stroke: var(--g-blue); stroke-width: 0.2; }
+  .ns-shift { stroke: var(--g-red-l); stroke-width: 0.03; stroke-dasharray: 0.12 0.08; }
+  .ns-pt { fill: var(--g-yellow); }
+  .ns-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class NullSpaceViz extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const x1 = +this.querySelector<HTMLInputElement>('[data-x1]')!.value;
+      const x2 = +this.querySelector<HTMLInputElement>('[data-x2]')!.value;
+      this.querySelector('[data-x1v]')!.textContent = x1.toFixed(1);
+      this.querySelector('[data-x2v]')!.textContent = x2.toFixed(1);
+      const inp = this.querySelector('[data-in]')!;
+      inp.setAttribute('cx', String(x1)); inp.setAttribute('cy', String(x2));
+      // the line through x parallel to the null space (-2, 1): every point on it has the same output
+      const sh = this.querySelector('[data-shift]')!;
+      sh.setAttribute('x1', String(x1 - 6)); sh.setAttribute('y1', String(x2 + 3));
+      sh.setAttribute('x2', String(x1 + 6)); sh.setAttribute('y2', String(x2 - 3));
+      const y = [x1 + 2 * x2, 2 * x1 + 4 * x2];
+      const out = this.querySelector('[data-out]')!;
+      out.setAttribute('cx', String(y[0])); out.setAttribute('cy', String(y[1]));
+      this.querySelector('[data-stat]')!.textContent =
+        `Ax = (${y[0].toFixed(1)}, ${y[1].toFixed(1)}) · every x on the dashed line gives the same output · null space = multiples of (−2, 1)`;
+    }
+  }
+  customElements.define('null-space-viz', NullSpaceViz);
+</script>

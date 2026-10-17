@@ -1,0 +1,79 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Units decide the raw principal component"
+  caption="Two correlated features: height in centimetres and a score between 0 and 1. On the raw scale the first principal component points almost straight along the large-unit feature, whatever the correlation. Standardise each feature to unit variance and the component follows the real relationship. Change the unit of the second feature to see the axis swing."
+>
+  <pca-scaling>
+    <div class="ps-ctl">
+      <label class="ps-lbl">score unit multiplier <input type="range" min="0" max="3" step="0.1" value="0" data-mul /> <b data-mulv>×1</b></label>
+      <span class="ps-tog"><input type="checkbox" hidden data-std /><button type="button" class="btn" data-toggle aria-pressed="false">standardise features</button></span>
+    </div>
+    <svg class="ps-svg" viewBox="0 0 300 220" role="img" aria-label="Scatter plot with the first principal direction">
+      <g data-pts></g>
+      <line data-pc class="ps-pc"></line>
+    </svg>
+    <p class="ps-stat" data-stat></p>
+  </pca-scaling>
+</Figure>
+
+<style>
+  .ps-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ps-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ps-lbl input { flex: 1; }
+  .ps-tog { font-size: 0.875rem; color: var(--text-muted); text-align: center; }
+  .ps-svg { display: block; width: 100%; max-width: 360px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .ps-svg :global(.ps-dot) { fill: var(--g-blue); opacity: 0.6; }
+  .ps-pc { stroke: var(--g-yellow); stroke-width: 2.5; }
+  .ps-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // fixed pseudo-random data so the figure is repeatable
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-12)) * Math.cos(2 * Math.PI * rand());
+  const DATA = Array.from({ length: 150 }, () => {
+    const z = gauss();
+    return [170 + 9 * z, 0.5 + 0.12 * (0.8 * z + 0.6 * gauss())]; // height (cm), score in [0, 1]
+  });
+
+  class PcaScaling extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const mul = 10 ** +this.querySelector<HTMLInputElement>('[data-mul]')!.value;
+      const std = this.querySelector<HTMLInputElement>('[data-std]')!.checked;
+      this.querySelector('[data-mulv]')!.textContent = `×${mul >= 10 ? Math.round(mul) : mul.toFixed(1)}`;
+      let X = DATA.map(([h, s]) => [h, s * mul]);
+      const mean = [0, 1].map((j) => X.reduce((a, r) => a + r[j], 0) / X.length);
+      X = X.map((r) => [r[0] - mean[0], r[1] - mean[1]]);
+      const sd = [0, 1].map((j) => Math.sqrt(X.reduce((a, r) => a + r[j] ** 2, 0) / (X.length - 1)));
+      if (std) X = X.map((r) => [r[0] / sd[0], r[1] / sd[1]]);
+      const c = (i: number, j: number) => X.reduce((a, r) => a + r[i] * r[j], 0) / (X.length - 1);
+      const a = c(0, 0), b = c(0, 1), d = c(1, 1);
+      // largest eigenvector of [[a, b], [b, d]]
+      const l1 = (a + d) / 2 + Math.sqrt(((a - d) / 2) ** 2 + b * b);
+      let w = Math.abs(b) > 1e-15 ? [l1 - d, b] : a >= d ? [1, 0] : [0, 1];
+      const nw = Math.hypot(w[0], w[1]); w = [w[0] / nw, w[1] / nw];
+      const share = l1 / (a + d);
+      // plot with equal scales on both axes, so angles are true
+      const span = Math.max(...X.flatMap((r) => r.map(Math.abs))) * 1.1 || 1;
+      const toX = (v: number) => 150 + (v / span) * 105;
+      const toY = (v: number) => 110 - (v / span) * 105;
+      this.querySelector('[data-pts]')!.innerHTML = X.map((r) => `<circle class="ps-dot" r="2.5" cx="${toX(r[0]).toFixed(1)}" cy="${toY(r[1]).toFixed(1)}"></circle>`).join('');
+      const pc = this.querySelector('[data-pc]')!;
+      pc.setAttribute('x1', String(toX(-w[0] * span))); pc.setAttribute('y1', String(toY(-w[1] * span)));
+      pc.setAttribute('x2', String(toX(w[0] * span))); pc.setAttribute('y2', String(toY(w[1] * span)));
+      const ang = (Math.atan2(Math.abs(w[1]), Math.abs(w[0])) * 180) / Math.PI;
+      this.querySelector('[data-stat]')!.textContent =
+        `first component at ${ang.toFixed(1)}° from the height axis · explains ${(share * 100).toFixed(1)}% of variance` +
+        (std ? ' · standardised' : '');
+    }
+  }
+  customElements.define('pca-scaling', PcaScaling);
+</script>

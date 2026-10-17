@@ -1,0 +1,71 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Eigenvalues decide bowl, saddle or ridge"
+  caption="Contours of q(x) = λ₁y₁² + λ₂y₂², where y₁ and y₂ are coordinates along two eigenvectors rotated by the angle θ. Both eigenvalues positive gives nested ellipses around a minimum; opposite signs give a saddle with hyperbolic contours; a zero eigenvalue gives parallel lines, a flat ridge. The same picture is the Hessian test for a critical point."
+>
+  <quadratic-shapes>
+    <div class="qs-ctl">
+      <label class="qs-lbl">λ₁ <input type="range" min="-3" max="3" step="0.1" value="1" data-l1 /> <b data-l1v>1.0</b></label>
+      <label class="qs-lbl">λ₂ <input type="range" min="-3" max="3" step="0.1" value="3" data-l2 /> <b data-l2v>3.0</b></label>
+      <label class="qs-lbl">θ <input type="range" min="0" max="180" step="5" value="30" data-th /> <b data-thv>30°</b></label>
+    </div>
+    <canvas width="240" height="240" data-cv class="qs-cv"></canvas>
+    <p class="qs-stat" data-stat></p>
+  </quadratic-shapes>
+</Figure>
+
+<style>
+  .qs-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .qs-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .qs-lbl input { flex: 1; }
+  .qs-cv { display: block; width: 100%; max-width: 280px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .qs-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class QuadraticShapes extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const l1 = +this.querySelector<HTMLInputElement>('[data-l1]')!.value;
+      const l2 = +this.querySelector<HTMLInputElement>('[data-l2]')!.value;
+      const th = +this.querySelector<HTMLInputElement>('[data-th]')!.value;
+      this.querySelector('[data-l1v]')!.textContent = l1.toFixed(1);
+      this.querySelector('[data-l2v]')!.textContent = l2.toFixed(1);
+      this.querySelector('[data-thv]')!.textContent = `${th}°`;
+      const t = (th * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
+      const cv = this.querySelector<HTMLCanvasElement>('[data-cv]')!;
+      const ctx = cv.getContext('2d')!;
+      const W = cv.width;
+      const img = ctx.createImageData(W, W);
+      const scale = Math.max(Math.abs(l1), Math.abs(l2), 0.1) * 8;
+      for (let i = 0; i < W; i++) for (let j = 0; j < W; j++) {
+        const x = (j / W) * 4 - 2, y = 2 - (i / W) * 4;
+        const y1 = c * x + s * y, y2 = -s * x + c * y;
+        const q = l1 * y1 * y1 + l2 * y2 * y2;
+        const band = Math.abs((q * 4) % 1) < 0.08; // contour lines every 0.25
+        const o = 4 * (i * W + j);
+        const v = Math.max(-1, Math.min(1, q / scale));
+        // blue for positive values, red for negative, white contour lines
+        img.data[o] = band ? 230 : v < 0 ? 40 + 180 * -v : 20;
+        img.data[o + 1] = band ? 230 : 25 + 40 * Math.abs(v);
+        img.data[o + 2] = band ? 230 : v > 0 ? 40 + 200 * v : 30;
+        img.data[o + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      const kind = l1 > 0 && l2 > 0 ? 'positive definite: bowl, minimum at 0'
+        : l1 < 0 && l2 < 0 ? 'negative definite: upside-down bowl, maximum at 0'
+        : l1 * l2 < 0 ? 'indefinite: saddle'
+        : l1 === 0 && l2 === 0 ? 'zero form' : 'semidefinite: flat ridge';
+      // the symmetric matrix Q diag(λ) Qᵀ
+      const a = l1 * c * c + l2 * s * s, b = (l1 - l2) * c * s, d = l1 * s * s + l2 * c * c;
+      this.querySelector('[data-stat]')!.textContent = `A = [[${a.toFixed(2)}, ${b.toFixed(2)}], [${b.toFixed(2)}, ${d.toFixed(2)}]] · ${kind}`;
+    }
+  }
+  customElements.define('quadratic-shapes', QuadraticShapes);
+</script>

@@ -1,0 +1,115 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Low-rank approximation of an image"
+  caption="A 32 × 32 grayscale image is a matrix. Keep only its k largest singular values and rebuild it. A handful of terms already shows the shape; the readout gives the storage, k(32 + 32 + 1) numbers against 1024, and the error, which equals the first singular value dropped."
+>
+  <svd-image>
+    <label class="si-lbl">rank k <input type="range" min="1" max="32" step="1" value="4" data-k /> <b data-kv>4</b></label>
+    <div class="si-row">
+      <figure><canvas width="32" height="32" data-orig></canvas><figcaption>original</figcaption></figure>
+      <figure><canvas width="32" height="32" data-approx></canvas><figcaption data-cap>rank 4</figcaption></figure>
+    </div>
+    <p class="si-stat" data-stat></p>
+  </svd-image>
+</Figure>
+
+<style>
+  .si-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .si-lbl input { flex: 1; }
+  .si-row { display: flex; gap: 20px; justify-content: center; }
+  .si-row figure { margin: 0; text-align: center; }
+  .si-row canvas { width: 140px; height: 140px; image-rendering: pixelated; border: 1px solid var(--border); border-radius: 6px; }
+  .si-row figcaption { font: 0.75rem var(--font-mono); color: var(--text-faint); margin-top: 4px; }
+  .si-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const N = 32;
+
+  function makeImage(): number[][] {
+    // a ring, a bar and a soft gradient: structure plus detail
+    const img: number[][] = [];
+    for (let i = 0; i < N; i++) {
+      const row: number[] = [];
+      for (let j = 0; j < N; j++) {
+        const r = Math.hypot(i - 12, j - 12);
+        let v = 0.15 + 0.25 * (j / N);
+        if (r > 6 && r < 9.5) v = 0.95;
+        if (i > 20 && i < 27 && j > 4 && j < 28) v = 0.75;
+        if ((i + j) % 7 === 0 && i < 8) v = 0.6;
+        row.push(v);
+      }
+      img.push(row);
+    }
+    return img;
+  }
+
+  // one-sided Jacobi SVD: orthogonalise the columns of U = A by plane rotations, accumulating V
+  function svd(A: number[][]) {
+    const m = A.length, n = A[0].length;
+    const U = A.map((r) => r.slice());
+    const V = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 1 : 0)));
+    for (let sweep = 0; sweep < 30; sweep++) {
+      let off = 0;
+      for (let p = 0; p < n - 1; p++) {
+        for (let q = p + 1; q < n; q++) {
+          let a = 0, b = 0, c = 0;
+          for (let i = 0; i < m; i++) { a += U[i][p] ** 2; b += U[i][q] ** 2; c += U[i][p] * U[i][q]; }
+          if (Math.abs(c) < 1e-12 * Math.sqrt(a * b)) continue;
+          off = Math.max(off, Math.abs(c) / Math.sqrt(a * b));
+          const zeta = (b - a) / (2 * c);
+          const t = Math.sign(zeta || 1) / (Math.abs(zeta) + Math.sqrt(1 + zeta * zeta));
+          const cs = 1 / Math.sqrt(1 + t * t), sn = cs * t;
+          for (let i = 0; i < m; i++) { const x = U[i][p], y = U[i][q]; U[i][p] = cs * x - sn * y; U[i][q] = sn * x + cs * y; }
+          for (let i = 0; i < n; i++) { const x = V[i][p], y = V[i][q]; V[i][p] = cs * x - sn * y; V[i][q] = sn * x + cs * y; }
+        }
+      }
+      if (off < 1e-10) break;
+    }
+    const s = Array.from({ length: n }, (_, j) => Math.sqrt(U.reduce((acc, r) => acc + r[j] ** 2, 0)));
+    const order = s.map((_, j) => j).sort((x, y) => s[y] - s[x]);
+    return {
+      s: order.map((j) => s[j]),
+      u: order.map((j) => U.map((r) => (s[j] > 1e-12 ? r[j] / s[j] : 0))),
+      v: order.map((j) => V.map((r) => r[j])),
+    };
+  }
+
+  function paint(canvas: HTMLCanvasElement, M: number[][]) {
+    const ctx = canvas.getContext('2d')!;
+    const im = ctx.createImageData(N, N);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const g = Math.round(255 * Math.min(1, Math.max(0, M[i][j])));
+      const o = 4 * (i * N + j);
+      im.data[o] = im.data[o + 1] = im.data[o + 2] = g; im.data[o + 3] = 255;
+    }
+    ctx.putImageData(im, 0, 0);
+  }
+
+  class SvdImage extends HTMLElement {
+    img = makeImage();
+    dec = svd(this.img);
+    connectedCallback() {
+      paint(this.querySelector<HTMLCanvasElement>('[data-orig]')!, this.img);
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      this.querySelector('[data-cap]')!.textContent = `rank ${k}`;
+      const { s, u, v } = this.dec;
+      const M = Array.from({ length: N }, () => new Array(N).fill(0));
+      for (let t = 0; t < k; t++) for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) M[i][j] += s[t] * u[t][i] * v[t][j];
+      paint(this.querySelector<HTMLCanvasElement>('[data-approx]')!, M);
+      const stored = Math.min(N * N, k * (2 * N + 1));
+      const err = k < N ? s[k] : 0;
+      this.querySelector('[data-stat]')!.textContent =
+        `stores ${stored} of ${N * N} numbers · error (spectral norm) = σ${k + 1} = ${err.toFixed(3)} · σ₁ = ${s[0].toFixed(2)}`;
+    }
+  }
+  customElements.define('svd-image', SvdImage);
+</script>

@@ -1,0 +1,88 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Nearly parallel lines amplify errors"
+  caption="Two equations, two lines, one solution where they cross. Narrow the angle between the lines, then jiggle the right-hand side: the crossing point (the solution) swings far for a small change in b. The condition number grows as the lines become parallel."
+>
+  <condition-lines>
+    <div class="cl-ctl">
+      <label class="cl-lbl">angle between lines <input type="range" min="1" max="90" step="1" value="40" data-ang /> <b data-angv>40°</b></label>
+      <label class="cl-lbl">nudge to b₂ <input type="range" min="-0.3" max="0.3" step="0.01" value="0" data-eps /> <b data-epsv>0.00</b></label>
+    </div>
+    <svg class="cl-svg" viewBox="-4 -4 8 8" role="img" aria-label="Two lines crossing, with the solution marked">
+      <g transform="scale(1,-1)">
+        <line x1="-4" y1="0" x2="4" y2="0" class="cl-axis"></line>
+        <line x1="0" y1="-4" x2="0" y2="4" class="cl-axis"></line>
+        <line data-l1 class="cl-l1"></line>
+        <line data-l2 class="cl-l2"></line>
+        <circle data-p0 r="0.12" class="cl-p0"></circle>
+        <circle data-p r="0.14" class="cl-p"></circle>
+      </g>
+    </svg>
+    <p class="cl-stat" data-stat></p>
+  </condition-lines>
+</Figure>
+
+<style>
+  .cl-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .cl-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .cl-lbl input { flex: 1; }
+  .cl-svg { display: block; width: 100%; max-width: 320px; margin: 0 auto; }
+  .cl-axis { stroke: #3c4043; stroke-width: 0.02; }
+  .cl-l1 { stroke: var(--g-blue); stroke-width: 0.05; }
+  .cl-l2 { stroke: var(--g-green); stroke-width: 0.05; }
+  .cl-p0 { fill: none; stroke: var(--text-faint); stroke-width: 0.04; }
+  .cl-p { fill: var(--g-yellow); }
+  .cl-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // each line is n · p = b with unit normal n; both pass through (1, 1) until b₂ is nudged
+  class ConditionLines extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    setLine(sel: string, n: [number, number], c: number) {
+      // points on n·p = c, far in both directions along the line
+      const d: [number, number] = [-n[1], n[0]];
+      const p0: [number, number] = [n[0] * c, n[1] * c];
+      const el = this.querySelector(sel)!;
+      el.setAttribute('x1', String(p0[0] - 10 * d[0]));
+      el.setAttribute('y1', String(p0[1] - 10 * d[1]));
+      el.setAttribute('x2', String(p0[0] + 10 * d[0]));
+      el.setAttribute('y2', String(p0[1] + 10 * d[1]));
+    }
+    draw() {
+      const ang = +this.querySelector<HTMLInputElement>('[data-ang]')!.value;
+      const eps = +this.querySelector<HTMLInputElement>('[data-eps]')!.value;
+      this.querySelector('[data-angv]')!.textContent = `${ang}°`;
+      this.querySelector('[data-epsv]')!.textContent = eps.toFixed(2);
+      const a = (ang * Math.PI) / 180;
+      const n1: [number, number] = [0, 1];
+      const n2: [number, number] = [-Math.sin(a), Math.cos(a)];
+      const x0: [number, number] = [1, 1];
+      const b1 = x0[1];
+      const b2 = n2[0] * x0[0] + n2[1] * x0[1];
+      this.setLine('[data-l1]', n1, b1);
+      this.setLine('[data-l2]', n2, b2 + eps);
+      // solve [n1; n2] x = [b1; b2 + eps]
+      const det = n1[0] * n2[1] - n1[1] * n2[0];
+      const x = ((b1) * n2[1] - n1[1] * (b2 + eps)) / det;
+      const y = (n1[0] * (b2 + eps) - (b1) * n2[0]) / det;
+      const p0 = this.querySelector('[data-p0]')!;
+      p0.setAttribute('cx', '1'); p0.setAttribute('cy', '1');
+      const p = this.querySelector('[data-p]')!;
+      p.setAttribute('cx', String(Math.max(-3.9, Math.min(3.9, x))));
+      p.setAttribute('cy', String(Math.max(-3.9, Math.min(3.9, y))));
+      const cond = (1 + Math.abs(Math.cos(a))) / (1 - Math.abs(Math.cos(a))); // ratio of singular values² of [n1; n2]
+      const kappa = Math.sqrt(cond);
+      const move = Math.hypot(x - 1, y - 1);
+      this.querySelector('[data-stat]')!.textContent =
+        `condition number ≈ ${kappa.toFixed(1)} · b moved by ${Math.abs(eps).toFixed(2)} · solution moved by ${move.toFixed(2)}`;
+    }
+  }
+  customElements.define('condition-lines', ConditionLines);
+</script>
