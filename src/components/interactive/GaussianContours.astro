@@ -1,0 +1,96 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Covariance shapes the normal's contours"
+  caption="Samples from a two-dimensional normal with standard deviations σ₁, σ₂ and correlation ρ, with the 1σ and 2σ ellipses. The ellipse axes are the eigenvectors of Σ and their lengths the square roots of its eigenvalues. Move the slice x₂ = c: the yellow tick is the conditional mean of x₁ there, which slides along the regression line."
+>
+  <gaussian-contours>
+    <div class="gc-ctl">
+      <label class="gc-lbl">σ₁ <input type="range" min="0.3" max="2" step="0.1" value="1.4" data-s1 /> <b data-s1v>1.4</b></label>
+      <label class="gc-lbl">σ₂ <input type="range" min="0.3" max="2" step="0.1" value="1" data-s2 /> <b data-s2v>1.0</b></label>
+      <label class="gc-lbl">ρ <input type="range" min="-0.95" max="0.95" step="0.05" value="0.6" data-r /> <b data-rv>0.60</b></label>
+      <label class="gc-lbl">slice x₂ = c <input type="range" min="-2.5" max="2.5" step="0.1" value="1" data-c /> <b data-cv>1.0</b></label>
+    </div>
+    <svg class="gc-svg" viewBox="-4 -4 8 8" role="img" aria-label="Scatter of normal samples with covariance ellipses">
+      <g transform="scale(1,-1)">
+        <g data-pts></g>
+        <path data-e1 class="gc-ell"></path>
+        <path data-e2 class="gc-ell2"></path>
+        <line data-slice class="gc-slice"></line>
+        <line data-reg class="gc-reg"></line>
+        <circle data-cm r="0.12" class="gc-cm"></circle>
+      </g>
+    </svg>
+    <p class="gc-stat" data-stat></p>
+  </gaussian-contours>
+</Figure>
+
+<style>
+  .gc-ctl { display: grid; gap: 8px; margin-bottom: 12px; }
+  .gc-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .gc-lbl input { flex: 1; }
+  .gc-svg { display: block; width: 100%; max-width: 320px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .gc-svg :global(.gc-dot) { fill: var(--g-blue); opacity: 0.45; }
+  .gc-ell { fill: none; stroke: var(--g-blue-l); stroke-width: 0.04; }
+  .gc-ell2 { fill: none; stroke: var(--g-blue-l); stroke-width: 0.03; stroke-dasharray: 0.12 0.08; }
+  .gc-slice { stroke: var(--text-faint); stroke-width: 0.025; stroke-dasharray: 0.1 0.08; }
+  .gc-reg { stroke: var(--g-green); stroke-width: 0.03; }
+  .gc-cm { fill: var(--g-yellow); }
+  .gc-stat { margin: 10px 0 0; font: 0.8rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  let seed = 11;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const Z = Array.from({ length: 300 }, () => {
+    const u = rand() + 1e-12, v = rand();
+    const r = Math.sqrt(-2 * Math.log(u));
+    return [r * Math.cos(2 * Math.PI * v), r * Math.sin(2 * Math.PI * v)];
+  });
+
+  class GaussianContours extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const g = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const s1 = g('[data-s1]'), s2 = g('[data-s2]'), r = g('[data-r]'), c = g('[data-c]');
+      this.querySelector('[data-s1v]')!.textContent = s1.toFixed(1);
+      this.querySelector('[data-s2v]')!.textContent = s2.toFixed(1);
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(2);
+      this.querySelector('[data-cv]')!.textContent = c.toFixed(1);
+      // Cholesky of [[s1², r s1 s2], [r s1 s2, s2²]]
+      const l11 = s1, l21 = r * s2, l22 = s2 * Math.sqrt(1 - r * r);
+      this.querySelector('[data-pts]')!.innerHTML = Z.map(([a, b]) =>
+        `<circle class="gc-dot" r="0.05" cx="${(l11 * a).toFixed(3)}" cy="${(l21 * a + l22 * b).toFixed(3)}"></circle>`).join('');
+      const ell = (k: number) => {
+        let d = '';
+        for (let i = 0; i <= 80; i++) {
+          const t = (2 * Math.PI * i) / 80, a = k * Math.cos(t), b = k * Math.sin(t);
+          d += `${i ? 'L' : 'M'}${(l11 * a).toFixed(3)},${(l21 * a + l22 * b).toFixed(3)}`;
+        }
+        return d;
+      };
+      this.querySelector('[data-e1]')!.setAttribute('d', ell(1));
+      this.querySelector('[data-e2]')!.setAttribute('d', ell(2));
+      const sl = this.querySelector('[data-slice]')!;
+      sl.setAttribute('x1', '-4'); sl.setAttribute('x2', '4'); sl.setAttribute('y1', String(c)); sl.setAttribute('y2', String(c));
+      // E[x1 | x2] = r s1/s2 x2 is the regression line of x1 on x2
+      const slope = (r * s1) / s2;
+      const reg = this.querySelector('[data-reg]')!;
+      reg.setAttribute('x1', String(-4 * slope)); reg.setAttribute('y1', '-4');
+      reg.setAttribute('x2', String(4 * slope)); reg.setAttribute('y2', '4');
+      const cm = this.querySelector('[data-cm]')!;
+      cm.setAttribute('cx', String(slope * c)); cm.setAttribute('cy', String(c));
+      const condSd = s1 * Math.sqrt(1 - r * r);
+      const tr = s1 * s1 + s2 * s2, det = s1 * s1 * s2 * s2 * (1 - r * r);
+      const lam1 = tr / 2 + Math.sqrt(tr * tr / 4 - det), lam2 = tr / 2 - Math.sqrt(tr * tr / 4 - det);
+      this.querySelector('[data-stat]')!.textContent =
+        `eigenvalues of Σ: ${lam1.toFixed(2)}, ${lam2.toFixed(2)} · E[x₁ | x₂ = ${c.toFixed(1)}] = ${(slope * c).toFixed(2)} · sd(x₁ | x₂) = ${condSd.toFixed(2)} vs sd(x₁) = ${s1.toFixed(2)}`;
+    }
+  }
+  customElements.define('gaussian-contours', GaussianContours);
+</script>

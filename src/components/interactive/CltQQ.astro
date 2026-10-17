@@ -1,0 +1,89 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where the normal approximation fails first"
+  caption="A normal Q-Q plot of 2000 standardised sample means. Each point pairs a sorted mean with the matching normal quantile; a perfect normal lies on the diagonal. For skewed sources the points bend away from the line at the ends, the tails, and straighten as n grows; a symmetric source like the uniform is already close at n = 5."
+>
+  <clt-qq>
+    <div class="qq-ctl">
+      <div class="qq-lbl">source
+        <input type="hidden" data-src value="exp" /><span class="choice"><button type="button" class="btn" data-choice="exp" aria-pressed="true">exponential (skewed)</button><button type="button" class="btn" data-choice="unif" aria-pressed="false">uniform (symmetric)</button><button type="button" class="btn" data-choice="bern" aria-pressed="false">Bernoulli p = 0.1 (very skewed)</button></span>
+      </div>
+      <label class="qq-lbl">n <input type="range" min="1" max="200" step="1" value="5" data-n /> <b data-nv>5</b></label>
+    </div>
+    <svg class="qq-svg" viewBox="-4 -4 8 8" role="img" aria-label="Normal quantile-quantile plot of sample means">
+      <g transform="scale(1,-1)">
+        <line x1="-4" y1="-4" x2="4" y2="4" class="qq-diag"></line>
+        <line x1="-4" y1="0" x2="4" y2="0" class="qq-ax"></line><line x1="0" y1="-4" x2="0" y2="4" class="qq-ax"></line>
+        <g data-pts></g>
+      </g>
+    </svg>
+    <p class="qq-stat" data-stat></p>
+  </clt-qq>
+</Figure>
+
+<style>
+  .qq-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .qq-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .qq-lbl input { flex: 1; }
+  .qq-lbl select { background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+  .qq-svg { display: block; width: 100%; max-width: 300px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; }
+  .qq-diag { stroke: var(--g-red); stroke-width: 0.03; }
+  .qq-ax { stroke: #3c4043; stroke-width: 0.02; }
+  .qq-svg :global(.qq-dot) { fill: var(--g-blue); opacity: 0.6; }
+  .qq-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // inverse normal CDF (Acklam's rational approximation, accurate to about 1e-9)
+  function probit(p: number): number {
+    const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+    const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+    const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+    const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+    const pl = 0.02425;
+    if (p < pl) { const q = Math.sqrt(-2 * Math.log(p)); return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1); }
+    if (p > 1 - pl) return -probit(1 - p);
+    const q = p - 0.5, r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  const SRC: Record<string, { draw: (u: number) => number; mu: number; sd: number }> = {
+    exp: { draw: (u) => -Math.log(1 - u), mu: 1, sd: 1 },
+    unif: { draw: (u) => u, mu: 0.5, sd: Math.sqrt(1 / 12) },
+    bern: { draw: (u) => (u < 0.1 ? 1 : 0), mu: 0.1, sd: Math.sqrt(0.09) },
+  };
+  class CltQQ extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const key = this.querySelector<HTMLSelectElement>('[data-src]')!.value;
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const src = SRC[key];
+      let seed = 2024;
+      const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const R = 2000;
+      const z: number[] = [];
+      for (let r = 0; r < R; r++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) s += src.draw(rand());
+        z.push((s / n - src.mu) / (src.sd / Math.sqrt(n)));
+      }
+      z.sort((x, y) => x - y);
+      let pts = '';
+      for (let i = 0; i < R; i += 5) {
+        const q = probit((i + 0.5) / R);
+        pts += `<circle class="qq-dot" r="0.05" cx="${q.toFixed(3)}" cy="${Math.max(-3.9, Math.min(3.9, z[i])).toFixed(3)}"></circle>`;
+      }
+      this.querySelector('[data-pts]')!.innerHTML = pts;
+      const upper = z[Math.floor(0.995 * R)];
+      this.querySelector('[data-stat]')!.textContent =
+        `99.5th percentile of the standardised means: ${upper.toFixed(2)} · normal: 2.58`;
+    }
+  }
+  customElements.define('clt-qq', CltQQ);
+</script>

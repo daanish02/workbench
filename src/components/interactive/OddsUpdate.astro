@@ -1,0 +1,56 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Each positive test multiplies the odds"
+  caption="Prior chance of the disease, the test's sensitivity, and its false-positive rate. Each additional independent positive multiplies the odds by the likelihood ratio sensitivity / false-positive rate. The bars show the probability after 0, 1, 2 and 3 positives: a rare condition needs more than one positive before the evidence wins."
+>
+  <odds-update>
+    <div class="ou-ctl">
+      <label class="ou-lbl">prior <input type="range" min="0.001" max="0.5" step="0.001" value="0.01" data-p /> <b data-pv>1.0%</b></label>
+      <label class="ou-lbl">sensitivity <input type="range" min="0.5" max="0.999" step="0.001" value="0.9" data-s /> <b data-sv>90.0%</b></label>
+      <label class="ou-lbl">false-positive rate <input type="range" min="0.001" max="0.3" step="0.001" value="0.05" data-f /> <b data-fv>5.0%</b></label>
+    </div>
+    <div class="ou-bars" data-bars></div>
+    <p class="ou-stat" data-stat></p>
+  </odds-update>
+</Figure>
+
+<style>
+  .ou-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ou-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ou-lbl input { flex: 1; }
+  .ou-bars { display: grid; gap: 6px; }
+  .ou-bars :global(.ou-row) { display: grid; grid-template-columns: 90px 1fr 60px; gap: 8px; align-items: center; font: 0.8rem var(--font-mono); color: var(--text-muted); }
+  .ou-bars :global(.ou-bar) { height: 14px; background: var(--g-red); border-radius: 4px; min-width: 2px; }
+  .ou-bars :global(.ou-bar.mid) { background: var(--g-yellow); }
+  .ou-bars :global(.ou-bar.hi) { background: var(--g-green); }
+  .ou-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class OddsUpdate extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const g = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const p = g('[data-p]'), s = g('[data-s]'), f = g('[data-f]');
+      this.querySelector('[data-pv]')!.textContent = `${(p * 100).toFixed(1)}%`;
+      this.querySelector('[data-sv]')!.textContent = `${(s * 100).toFixed(1)}%`;
+      this.querySelector('[data-fv]')!.textContent = `${(f * 100).toFixed(1)}%`;
+      const lr = s / f;
+      let odds = p / (1 - p), rows = '';
+      for (let k = 0; k <= 3; k++) {
+        const prob = odds / (1 + odds);
+        rows += `<div class="ou-row"><span>${k} positive${k === 1 ? '' : 's'}</span><div class="ou-bar ${prob > 0.5 ? 'hi' : prob > 0.1 ? 'mid' : ''}" style="width:${(prob * 100).toFixed(1)}%"></div><b>${(prob * 100).toFixed(1)}%</b></div>`;
+        odds *= lr;
+      }
+      this.querySelector('[data-bars]')!.innerHTML = rows;
+      this.querySelector('[data-stat]')!.textContent = `likelihood ratio = ${s.toFixed(3)} / ${f.toFixed(3)} = ${lr.toFixed(1)}`;
+    }
+  }
+  customElements.define('odds-update', OddsUpdate);
+</script>

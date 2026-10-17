@@ -1,0 +1,67 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The second eigenvalue sets the mixing speed"
+  caption="A two-state chain with P(stay sunny) = a and P(stay rainy) = b. Its eigenvalues are 1 and λ₂ = a + b − 1. Starting from sunny, the distance to the stationary distribution (log scale) falls on a straight line with slope log|λ₂|: chains whose states are sticky (a, b near 1) mix slowly."
+>
+  <mixing-rate>
+    <div class="mr-ctl">
+      <label class="mr-lbl">a <input type="range" min="0.05" max="0.99" step="0.01" value="0.8" data-a /> <b data-av>0.80</b></label>
+      <label class="mr-lbl">b <input type="range" min="0.05" max="0.99" step="0.01" value="0.6" data-b /> <b data-bv>0.60</b></label>
+    </div>
+    <svg class="mr-svg" viewBox="0 0 340 200" role="img" aria-label="Distance to stationarity against step on a log scale">
+      <line x1="30" y1="180" x2="330" y2="180" class="mr-ax"></line>
+      <line x1="30" y1="10" x2="30" y2="180" class="mr-ax"></line>
+      <text x="0" y="16" class="mr-t">1</text><text x="0" y="182" class="mr-t">1e-8</text><text x="300" y="196" class="mr-t">30 steps</text>
+      <path data-line class="mr-line"></path>
+      <g data-dots></g>
+    </svg>
+    <p class="mr-stat" data-stat></p>
+  </mixing-rate>
+</Figure>
+
+<style>
+  .mr-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .mr-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .mr-lbl input { flex: 1; }
+  .mr-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .mr-ax { stroke: #3c4043; }
+  .mr-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .mr-line { fill: none; stroke: var(--g-green); stroke-width: 2; }
+  .mr-svg :global(.mr-dot) { fill: var(--g-yellow); }
+  .mr-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const sx = (k: number) => 30 + (k / 30) * 300;
+  const sy = (d: number) => 10 + (-Math.log10(Math.max(d, 1e-8)) / 8) * 170;
+  class MixingRate extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(2);
+      this.querySelector('[data-bv]')!.textContent = b.toFixed(2);
+      const pi = (1 - b) / (2 - a - b); // stationary P(sunny)
+      let s = 1, d = '', dots = '';
+      for (let k = 0; k <= 30; k++) {
+        const dist = Math.abs(s - pi);
+        d += `${k ? 'L' : 'M'}${sx(k).toFixed(1)},${sy(dist).toFixed(1)}`;
+        dots += `<circle class="mr-dot" r="2" cx="${sx(k).toFixed(1)}" cy="${sy(dist).toFixed(1)}"></circle>`;
+        s = s * a + (1 - s) * (1 - b);
+      }
+      this.querySelector('[data-line]')!.setAttribute('d', d);
+      this.querySelector('[data-dots]')!.innerHTML = dots;
+      const l2 = a + b - 1;
+      const steps = Math.abs(l2) < 1e-9 ? 1 : Math.ceil(Math.log(1e-3) / Math.log(Math.abs(l2)));
+      this.querySelector('[data-stat]')!.textContent =
+        `stationary P(sunny) = ${pi.toFixed(3)} · λ₂ = ${l2.toFixed(2)} · about ${steps} steps to get within 0.1% of it`;
+    }
+  }
+  customElements.define('mixing-rate', MixingRate);
+</script>
