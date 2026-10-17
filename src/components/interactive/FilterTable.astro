@@ -16,15 +16,19 @@ const { placeholder = 'Filter…' } = Astro.props;
 </filter-table>
 
 <style>
+  filter-table {
+    display: block;
+    margin: 2rem 0 2.5rem;
+  }
   .ft-bar {
     display: grid;
-    gap: 10px;
-    padding: 10px 0;
+    gap: 16px;
+    padding: 0;
   }
   .ft-input {
     width: 100%;
-    padding: 10px 14px;
-    border-radius: 12px;
+    padding: 14px 18px;
+    border-radius: 14px;
     border: 1px solid var(--border-strong);
     background: var(--bg-soft);
     color: var(--text);
@@ -37,11 +41,11 @@ const { placeholder = 'Filter…' } = Astro.props;
   .ft-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 10px;
   }
   .ft-chips :global(button) {
     appearance: none;
-    padding: 4px 11px;
+    padding: 6px 14px;
     border-radius: 999px;
     border: 1px solid var(--border-strong);
     background: transparent;
@@ -55,9 +59,16 @@ const { placeholder = 'Filter…' } = Astro.props;
     background: rgba(138, 180, 248, 0.12);
   }
   .ft-count {
-    margin: 0;
+    margin: 20px 0 6px;
     font: 0.75rem var(--font-mono);
     color: var(--text-faint);
+  }
+  .ft-body :global(td code) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  filter-table {
+    overflow-x: clip;
   }
   .ft-body :global([hidden]) {
     display: none !important;
@@ -99,6 +110,19 @@ const { placeholder = 'Filter…' } = Astro.props;
         });
       }
       this.querySelector('[data-q]')!.addEventListener('input', () => this.apply());
+      // a table-of-contents link to a group that the filter has hidden: clear the filter first so the jump has somewhere to land
+      document.addEventListener('click', (e) => {
+        const a = (e.target as HTMLElement).closest('a[href^="#"]');
+        if (!a) return;
+        const el = document.getElementById(decodeURIComponent(a.getAttribute('href')!.slice(1)));
+        if (el && this.contains(el) && el.hidden) this.clear();
+      });
+      this.apply();
+    }
+    clear() {
+      this.querySelector<HTMLInputElement>('[data-q]')!.value = '';
+      this.active = '';
+      this.querySelectorAll('[data-chips] button').forEach((x, i) => x.setAttribute('aria-pressed', String(i === 0)));
       this.apply();
     }
     apply() {
