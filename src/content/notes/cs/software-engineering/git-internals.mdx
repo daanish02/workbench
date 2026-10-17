@@ -1,0 +1,333 @@
+---
+title: "Git"
+description: "How Git stores history, and the everyday workflow: commits, branches, merging, remotes and pull requests."
+order: 3
+tier: core
+takeaways:
+  - "Git keeps your work in **four places**: working directory, staging area, local repository, remote. Commands move a change from one to the next."
+  - "A **commit** is a snapshot plus parent links, so history is a graph of snapshots. A **branch** is just a movable label on a commit, which is why branching is nearly free."
+  - "**Merge** joins histories with a two-parent commit; **rebase** replays commits on a new base and gives them **new IDs**; **squash** folds many commits into one ordinary commit."
+  - "A **pull request** is a branch plus a conversation, checks and an approval gate, provided by the hosting service on top of Git's branches and merges."
+  - "Never rewrite history others already pulled. To undo shared work use **revert**; to recover committed work use the **reflog**."
+resources:
+  - title: "GitHub Docs: About pull requests"
+    url: "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests"
+  - title: "Pro Git: Undoing Things"
+    url: "https://git-scm.com/book/en/v2/Git-Basics-Undoing-Things"
+    note: "restore, amend, reset and revert in context."
+  - title: "Pro Git: Git Internals"
+    url: "https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain"
+    note: "Blobs, trees, commits and refs, built up from the plumbing commands."
+  - title: "Pro Git (free book)"
+    url: "https://git-scm.com/book/en/v2"
+  - title: "Learn Git Branching"
+    url: "https://learngitbranching.js.org/"
+    note: "An interactive sandbox for the same graph operations."
+  - title: "Atlassian: Merging vs. rebasing"
+    url: "https://www.atlassian.com/git/tutorials/merging-vs-rebasing"
+  - title: "Git from the inside out"
+    url: "https://codewords.recurse.com/issues/two/git-from-the-inside-out"
+    note: "A walk through what each command does to the object store."
+---
+
+Git is best understood as a content-addressed object database that records the history of a project as a directed acyclic graph (DAG). A commit points to a snapshot of the project and to its parent commit or commits; a branch is simply a movable reference to a commit. Branching is therefore cheap because Git does not copy an entire project for each branch. Merge, rebase, and squash are different ways of combining work: they differ in how they construct commits and preserve or rewrite the history graph.
+
+## The Everyday Workflow
+
+Git keeps your work in **four places**, and nearly every command moves a change from one to the next. You edit files in the **working directory**. You choose what belongs in the next snapshot by adding it to the **staging area** (also called the index). You record it in your **local repository** as a commit. You share it by pushing to a **remote**. Walk a change through all four:
+
+<GitAreas />
+
+The staging area looks like an extra step but it is the point: it lets you commit *part* of your edits as one logical change, instead of everything you touched. These are the commands you will use daily:
+
+| Command | What it does |
+| --- | --- |
+| `git init` / `git clone <url>` | Start a repository, or copy an existing one (with its whole history) |
+| `git status` | Show what is modified, staged, or out of step with the remote |
+| `git add <file>` | Stage a change for the next commit |
+| `git commit -m "message"` | Record the staged changes as a new commit |
+| `git switch -c <name>` | Create a branch and move to it |
+| `git log --oneline --graph` | Show history as a graph |
+| `git diff` | Show unstaged changes (`--staged` shows staged ones) |
+| `git fetch` / `git pull` / `git push` | Download, download and merge, upload |
+
+<Callout type="practice">
+Commit small and often, one logical change per commit, with a message that says *why* ("Reject negative ages at the API boundary"), not just *what*. Small commits are easy to review, revert and search; see [Code Review](../code-review/).
+</Callout>
+
+The rest of this note explains why these commands behave the way they do, starting with what a commit actually is.
+
+## Commits Form a Graph
+
+A Git commit records a snapshot of the project's tracked files, metadata such as author and message, and references to its parent commit or commits. Git stores this information using objects identified by cryptographic hashes.
+
+A commit usually points to a tree object, which represents the directory structure and references file blobs or nested trees. The commit's parent link connects it to earlier history.
+
+Conceptually:
+
+<GitDiagram kind="chain" />
+
+A commit does not normally store a complete independent copy of every file. Its tree describes the snapshot, while Git's object storage and packing mechanisms reuse identical objects and compress data efficiently. Conceptually, though, each commit represents the complete project state at that point in history.
+
+This distinction matters: Git's history is not fundamentally a list of edits. It is a graph of snapshots connected by parent relationships. Git can calculate diffs between snapshots, but those diffs are not the primary structure defining commit ancestry.
+
+## Branches Are Movable References
+
+A branch such as `main` or `feature/search` is a named reference to a commit. When you make a new commit while on a branch, Git creates a commit whose parent is usually the current commit, then advances the branch reference to the new commit.
+
+Suppose `main` points to commit C. Creating a branch named `feature` adds a second label on C; committing on `feature` then advances only that label:
+
+<GitDiagram kind="branch" />
+
+Both branches share the same earlier history. Git does not need to duplicate the entire repository to create the new branch.
+
+`HEAD` usually identifies the currently checked-out branch, or directly identifies a commit in detached-HEAD mode. When you switch branches, Git updates the working tree and index to reflect the selected state, subject to protections for local changes.
+
+This makes branches inexpensive, but it does not make every operation free. Switching branches may require substantial working-tree updates, and large repositories still incur storage and computational costs.
+
+<Callout type="key">
+A branch is a 41-byte file holding a commit ID. Creating one copies nothing; committing moves the label forward. Everything a branch "contains" is simply what is reachable from its commit by following parent links.
+</Callout>
+
+## Merge Keeps Both Histories
+
+Suppose a feature branch and `main` have diverged: commit D holds feature work, while E holds separate work on `main`. A merge combines the two histories. When both have progressed independently, Git commonly creates a merge commit with two parents:
+
+<GitDiagram kind="merge" />
+
+The merge commit M records a snapshot that incorporates the combined changes and points to both E and D as parents. The graph preserves the fact that the two lines of work developed independently.
+
+Git normally performs a three-way merge, using the common ancestor of the branches and the two branch tips to determine how changes can be combined. If the same parts of a file have incompatible changes, Git may report conflicts that require manual resolution.
+
+If the branch being merged is already an ancestor of the current branch, Git can simply report that the branch is already incorporated. If the current branch has not diverged, Git may perform a fast-forward instead of creating a merge commit. The branch reference just moves forward.
+
+Merge is useful when preserving the topology of parallel work matters—for example, when a team wants the history to show that a feature was developed independently and then integrated.
+
+## Rebase Rewrites Commits
+
+Rebase takes the changes represented by a series of commits and reapplies them onto another base commit. It creates new commits with new parent relationships, so the rewritten commits generally have different hashes from the originals.
+
+Starting from the same divergence, a rebase of `feature` onto `main` reapplies D's change on top of E, creating a new commit D′:
+
+<GitDiagram kind="rebase" />
+
+The feature's resulting history is now linear. D′ may contain the same intended change as D, but it is a different commit because its parent and therefore its identity have changed.
+
+Rebase is useful for keeping a branch up to date with a moving base and for producing a linear history. It can also involve conflict resolution, since each commit's changes are replayed against the new base.
+
+The critical rule is that rebase rewrites history. Rewriting local, unpublished commits is generally straightforward. Rewriting commits that other people already depend on can disrupt their work because the old and new commits have different identities. Shared-history rewrites require coordination.
+
+<Callout type="pitfall">
+Rebasing (or amending) commits you have already pushed and others have pulled creates a parallel history. Their copies still point at the old commits, so the branches diverge and the same changes can be applied twice. Rewrite only local, unpublished commits; prefer merge for shared branches.
+</Callout>
+
+## Squash Collapses Commits
+
+Squashing combines multiple commits' changes into a smaller number of commits, often one, without preserving the original commits as individual ancestors of the resulting commit.
+
+For example, a feature branch may contain three commits D, E and F. A squash can combine their net changes into a single new commit S on `main`:
+
+<GitDiagram kind="squash" />
+
+The resulting snapshot includes the feature's changes, but S is not a merge commit with D, E, and F as parents. Their original commit history is not preserved as ancestry in the resulting line.
+
+Squash is useful when a feature branch contains many small intermediate commits—such as typo fixes, incremental experiments, and cleanup—and the project prefers one coherent commit for the completed feature.
+
+Git supports squashing in different ways. Interactive rebase can combine commits by rewriting the branch's history, while `git merge --squash` prepares the combined changes for a new commit without creating a merge commit that records the source branch as a parent. These workflows produce related outcomes but are not identical in their mechanics.
+
+## What Each Preserves
+
+| Operation | Main effect                                 | History shape                   | Original commits retained as ancestry?                    |
+| --------- | ------------------------------------------- | ------------------------------- | --------------------------------------------------------- |
+| Merge     | Combines branch histories                   | Can preserve divergence         | Yes, through parent links                                 |
+| Rebase    | Replays commits onto a new base             | Usually linearizes the branch   | Rewritten commits replace the originals on the new branch |
+| Squash    | Combines several changes into fewer commits | Usually simpler and more linear | Not as individual ancestors of the squash commit          |
+
+The choice is not merely cosmetic. Git history can answer questions about where a change came from, which commits introduced it, and how different lines of development were integrated.
+
+A merge records integration explicitly. A rebase preserves individual changes as new commits but changes their ancestry. A squash prioritizes a compact history of the final combined change over preserving every intermediate commit as an ancestor.
+
+Build the graph yourself. Start with the diverged scenario and try each way of combining the two branches:
+
+<GitGraph />
+
+## Remotes and Pull Requests
+
+A **remote** is another copy of the repository, usually on a hosting service. The one you cloned from is called `origin` by default. `git push` uploads your commits, `git fetch` downloads others' commits without touching your files, and `git pull` is a fetch followed by a merge (or a rebase with `--rebase`). A push is **rejected** if the remote has commits you lack: Git will not overwrite them, so you pull first (try it in the figure above).
+
+A **pull request** (PR, called a merge request on GitLab) is not a Git feature but a feature of hosting services: a proposal to merge one branch into another, wrapped in a page for discussion, automated checks and approval. A typical flow:
+
+1. **Branch:** `git switch -c fix-login` from an up-to-date `main`.
+2. **Commit** your work in small steps and **push** the branch.
+3. **Open the PR** against `main` with a description of the problem, the approach and how you tested it.
+4. **Automated checks** (the [CI pipeline](../ci-cd/)) run on the branch; teammates **review** (see [Code Review](../code-review/) for how a good review works).
+5. **Address feedback** by pushing more commits to the same branch; the PR updates itself.
+6. **Merge** once checks pass and reviewers approve, then delete the branch.
+
+The merge button usually offers the three strategies from above, so the choice decides what your history looks like:
+
+| Button | Equivalent to | History afterwards |
+| --- | --- | --- |
+| Create a merge commit | `git merge --no-ff` | All branch commits kept, plus a merge commit |
+| Squash and merge | `git merge --squash` | One commit per PR on `main`, a clean readable log |
+| Rebase and merge | `git rebase` then fast-forward | Linear history with every commit, new IDs |
+
+Teams protect important branches with rules: require a PR, require passing checks and a number of approvals, forbid force pushes. This is how "nobody commits straight to `main`" is enforced rather than hoped for. Open-source projects add a **fork**: you copy the repository to your own account, push to your fork and open the PR from there.
+
+When two branches change the **same lines**, Git cannot choose, so it stops and writes both versions into the file. You edit the file to the result you want, `git add` it and commit. This script runs real Git in a temporary repository (with fixed timestamps so the IDs repeat) to show a merge, a rebase and a conflict:
+
+```python
+import os, subprocess, tempfile
+
+env = {**os.environ, "GIT_AUTHOR_NAME": "Ada", "GIT_AUTHOR_EMAIL": "ada@example.com", "GIT_COMMITTER_NAME": "Ada",
+       "GIT_COMMITTER_EMAIL": "ada@example.com", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+repo = tempfile.mkdtemp()
+tick = [1700000000]
+
+def git(*args, check=True):
+    tick[0] += 60                                     # fixed, increasing timestamps keep the commit IDs repeatable
+    e = {**env, "GIT_AUTHOR_DATE": f"{tick[0]} +0000", "GIT_COMMITTER_DATE": f"{tick[0]} +0000"}
+    r = subprocess.run(["git", *args], cwd=repo, env=e, capture_output=True, text=True)
+    if check and r.returncode:
+        raise RuntimeError(r.stderr)
+    return r.stdout.strip()
+
+def write(name, text):
+    open(os.path.join(repo, name), "w", newline="\n").write(text)
+
+def commit(name, text, message):
+    write(name, text); git("add", name); git("commit", "-m", message)
+
+git("init", "-q", "-b", "main")
+commit("app.py", "greeting = 'hello'\n", "A: first version")
+git("switch", "-q", "-c", "feature")
+commit("feature.py", "x = 1\n", "D: add feature")
+git("switch", "-q", "main")
+commit("notes.txt", "notes\n", "E: main moves on")
+
+# merge: both histories kept, plus a merge commit with two parents
+git("switch", "-q", "-c", "try-merge")
+git("merge", "--no-edit", "feature")
+print("merge:\n" + git("log", "--graph", "--oneline", "--format=%h %s"))
+
+# rebase: replay the feature commit onto main; it gets a new ID (compare with the merge graph above)
+git("switch", "-q", "feature")
+before = git("rev-parse", "--short", "HEAD")
+git("rebase", "main")
+after = git("rev-parse", "--short", "HEAD")
+print(f"\nrebase: D was {before}, replayed as {after}\n" + git("log", "--graph", "--oneline", "--format=%h %s"))
+
+# conflict: both branches change the same line, so Git cannot choose and writes markers into the file
+git("switch", "-q", "main")
+commit("app.py", "greeting = 'hello, world'\n", "main edits the greeting")
+git("switch", "-q", "-c", "other", "main~1")
+commit("app.py", "greeting = 'hi there'\n", "other edits the greeting")
+r = subprocess.run(["git", "merge", "main"], cwd=repo, env=env, capture_output=True, text=True)
+print("\nmerge result:", r.stdout.strip().splitlines()[-1])
+print(open(os.path.join(repo, "app.py")).read().rstrip())
+# merge:
+# *   a3b156f Merge branch 'feature' into try-merge
+# |\  
+# | * d26053a D: add feature
+# * | f8dffaa E: main moves on
+# |/  
+# * 806ebe7 A: first version
+#
+# rebase: D was d26053a, replayed as 8918b83
+# * 8918b83 D: add feature
+# * f8dffaa E: main moves on
+# * 806ebe7 A: first version
+#
+# merge result: Automatic merge failed; fix conflicts and then commit the result.
+# <<<<<<< HEAD
+# greeting = 'hi there'
+# =======
+# greeting = 'hello, world'
+# >>>>>>> main
+```
+
+Compare the first two graphs: the merge keeps D's original ID and adds a merge commit, while the rebase gives D a new ID and leaves a straight line. The last block is what a conflict looks like in the file: the part between `<<<<<<<` and `=======` is your branch's version, the part after is the other branch's, and the markers must be removed before committing.
+
+<Callout type="key">
+A pull request is a branch plus a conversation. Git supplies the branch and the merge; the hosting service adds the discussion, the checks and the gate.
+</Callout>
+
+## Undoing Things
+
+Because commits are never edited, only added, most mistakes can be undone. Pick the tool by *how far* the mistake has travelled:
+
+| Situation | Command | Safe on shared history? |
+| --- | --- | --- |
+| Discard edits to a file not yet staged | `git restore <file>` | Yes (local only, but the edits are gone) |
+| Unstage a file | `git restore --staged <file>` | Yes |
+| Fix the last commit (message or content), not yet pushed | `git commit --amend` | No: it replaces the commit |
+| Undo a commit that is already shared | `git revert <commit>` | **Yes**: adds a new commit that cancels it |
+| Move a branch back to an earlier commit | `git reset <commit>` | No: rewrites history |
+| Recover a "lost" commit | `git reflog` | Yes: lists where `HEAD` has been |
+
+<Callout type="pitfall">
+`git reset --hard` and `git restore` discard uncommitted work for good: Git has nothing recorded to bring it back. Anything that was **committed** can almost always be recovered from the reflog for weeks, which is another reason to commit early.
+</Callout>
+
+## The Object Model Underneath
+
+Git's core objects are blobs, trees, commits, and annotated tags.
+
+- **Blob:** Stores file content.
+- **Tree:** Represents a directory structure and references blobs or other trees.
+- **Commit:** References a tree, parent commit or commits, and metadata.
+- **Annotated tag:** Stores tag metadata and points to another Git object, often a commit.
+
+Objects are content-addressed: their identifiers are derived from their contents and object type. Changing a commit's parent changes the commit object and therefore its identifier, even if the file snapshot remains identical.
+
+This explains why rebase creates new commit IDs. It also explains why branches can move independently: branches are references to objects, not containers holding separate copies of a project's history.
+
+Because commits form a DAG, Git can determine ancestry, find merge bases, traverse history, and identify commits reachable from one reference but not another. Many commands that appear to manipulate “branches” are really updating references or constructing new nodes in this graph.
+
+The model is small enough to rebuild. This script hashes objects exactly the way Git does (the blob ID matches what `git hash-object` prints for the same bytes), shows that a rebased commit is a different commit, and finds a merge base by walking parent links:
+
+```python
+import hashlib
+
+def object_id(kind, body):                      # Git names an object by the SHA-1 of "<kind> <size>\0<content>"
+    return hashlib.sha1(f"{kind} {len(body)}".encode() + b"\0" + body).hexdigest()
+
+def commit(tree, parents, message):
+    lines = [f"tree {tree}"] + [f"parent {p}" for p in parents]
+    lines += ["author Ada <ada@example.com> 1700000000 +0000", "committer Ada <ada@example.com> 1700000000 +0000", "", message, ""]
+    return object_id("commit", "\n".join(lines).encode())
+
+blob = object_id("blob", b"hello\n")
+print("blob for 'hello\\n':", blob)               # the same bytes always give the same ID, in every repository
+tree = object_id("tree", b"100644 hello.txt\0" + bytes.fromhex(blob))
+
+A = commit(tree, [], "A")
+B = commit(tree, [A], "B")
+C = commit(tree, [B], "C")
+D = commit(tree, [C], "D: feature work")          # feature branch
+E = commit(tree, [C], "E: main moves on")         # main branch
+print("D (parent C):", D[:10])
+D2 = commit(tree, [E], "D: feature work")         # a rebase replays D onto E: same tree and message, new parent
+print("D' (parent E):", D2[:10], "-> different commit:", D != D2)
+
+parents = {A: [], B: [A], C: [B], D: [C], E: [C]}
+def ancestors(c):                                 # everything reachable by following parent links
+    seen, todo = set(), [c]
+    while todo:
+        x = todo.pop()
+        if x not in seen:
+            seen.add(x)
+            todo += parents[x]
+    return seen
+
+base = max(ancestors(D) & ancestors(E), key=lambda c: len(ancestors(c)))      # the merge base: newest shared ancestor
+print("merge base of D and E is C:", base == C)
+print("on feature but not main (git log main..feature):", [c == D for c in ancestors(D) - ancestors(E)])
+# blob for 'hello\n': ce013625030ba8dba906f756967f9e9ca394464a
+# D (parent C): 85b0d46b20
+# D' (parent E): 84cdfeab56 -> different commit: True
+# merge base of D and E is C: True
+# on feature but not main (git log main..feature): [True]
+```
+
+The most useful mental model is therefore to separate three things: snapshots describe project state, parent links describe history, and branch references identify points in that history. Merge, rebase, and squash differ because they create or preserve those links in different ways.

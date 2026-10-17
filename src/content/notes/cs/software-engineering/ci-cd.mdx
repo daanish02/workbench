@@ -1,0 +1,196 @@
+---
+title: "CI/CD"
+description: "The CI/CD pipeline concept, and the stage gates that guard each release."
+order: 4
+tier: core
+takeaways:
+  - "**Continuous integration** merges small changes often and verifies each one automatically; **continuous delivery** keeps every verified change ready to release; **continuous deployment** releases it automatically."
+  - "A **pipeline** is an ordered set of stages (build, test, package, deploy). **Stage gates** are explicit conditions that stop a bad change from advancing."
+  - "Order stages so **cheap, likely-to-fail checks run first**: the pipeline then reports problems quickly and wastes little work."
+  - "**Build once, promote the same artifact** through every environment; configuration changes, the artifact does not."
+  - "Passing the pipeline is not proof of a good release. **Canary, blue-green and rolling** strategies limit the damage of a failure that only real traffic reveals."
+resources:
+  - title: "Martin Fowler: Continuous Integration"
+    url: "https://martinfowler.com/articles/continuousIntegration.html"
+  - title: "Martin Fowler: Continuous Delivery"
+    url: "https://martinfowler.com/bliki/ContinuousDelivery.html"
+  - title: "Martin Fowler: Canary Release"
+    url: "https://martinfowler.com/bliki/CanaryRelease.html"
+  - title: "Martin Fowler: Blue-Green Deployment"
+    url: "https://martinfowler.com/bliki/BlueGreenDeployment.html"
+  - title: "Google SRE book: Release Engineering"
+    url: "https://sre.google/sre-book/release-engineering/"
+  - title: "DORA: software delivery performance"
+    url: "https://dora.dev/"
+    note: "Deployment frequency, lead time, change failure rate and recovery time."
+---
+
+CI/CD is a way to turn software changes into a repeatable process that verifies code, packages it, and delivers it toward production. Continuous integration (CI) checks that changes can work together; continuous delivery or deployment (CD) automates the path from validated code to a releasable or running system. A pipeline expresses this process as ordered stages, while stage gates define the conditions that must be satisfied before work can proceed. The goal is not simply to automate more steps, but to catch failures early, make releases predictable, and limit the risk of shipping defective software.
+
+## A Pipeline Turns Changes Into Releases
+
+A developer commits a change and pushes it to a shared repository. Instead of relying on someone to remember every verification step, an automated pipeline runs a defined sequence of jobs.
+
+A typical pipeline might look like this:
+
+| Stage | What happens |
+| --- | --- |
+| 1. Source | A commit or pull request triggers the run |
+| 2. Build | Compile and resolve dependencies |
+| 3. Test | Unit and integration tests |
+| 4. Package | Create a versioned artifact |
+| 5. Deploy to staging | Run against a production-like environment |
+| 6. Release | Approve and deploy to production |
+
+Each stage consumes an output from an earlier stage and produces evidence or an artifact for the next one. If a test fails, the pipeline can stop before packaging or deployment.
+
+The stages are not universal. A small application might have only build, test, and deploy stages. A regulated service might include security scanning, compliance checks, approvals, and additional verification. The pipeline should reflect the risks and delivery requirements of the software rather than follow a fixed template.
+
+## CI Catches Integration Problems Early
+
+Continuous integration means developers integrate changes into a shared codebase frequently, with automated checks that reveal whether those changes work together.
+
+Without CI, developers may work independently for weeks and discover that their changes conflict only near a release. The longer the changes remain separate, the harder it can be to identify which change caused a failure.
+
+A CI pipeline commonly performs:
+
+- Compilation or another build step.
+- Unit tests for individual functions and components.
+- Integration tests for interactions between components.
+- Static analysis, linting, and type checks.
+- Dependency and security checks.
+
+These checks provide different kinds of evidence. A successful build shows that the code can be built; it does not prove that the application behaves correctly. Unit tests verify selected behaviors but may miss failures that appear only when services interact.
+
+CI is most effective when feedback arrives quickly and failures are easy to reproduce. A pipeline that takes hours to report a simple syntax error discourages frequent integration and delays debugging.
+
+## Delivery Versus Deployment
+
+Both approaches automate the process of preparing and delivering software, but they differ in what happens after validation.
+
+Continuous delivery keeps the software in a deployable state. The pipeline automates the build, testing, and release preparation, but a production release may still require a deliberate approval or business decision.
+
+Continuous deployment goes further: every change that passes the required automated checks is automatically deployed to production.
+
+| Practice               | What happens after checks pass?                     |
+| ---------------------- | --------------------------------------------------- |
+| Continuous integration | The change is built and verified                    |
+| Continuous delivery    | A production-ready release is available for release |
+| Continuous deployment  | The change is automatically released to production  |
+
+A manual approval step does not mean the process is not automated. It can be a deliberate control in a continuous-delivery pipeline, especially where releases carry substantial operational or regulatory risk.
+
+## Stage Gates Stop Unverified Changes
+
+A stage gate is a condition that must be met before a pipeline advances. Gates turn quality and operational expectations into explicit, enforceable rules.
+
+For example:
+
+| Gate       | Example requirement                    | Failure response                     |
+| ---------- | -------------------------------------- | ------------------------------------ |
+| Build      | Compilation succeeds                   | Stop the pipeline                    |
+| Tests      | Required tests pass                    | Block the artifact                   |
+| Security   | No disallowed critical vulnerabilities | Block release or require remediation |
+| Staging    | Health checks and smoke tests pass     | Prevent production deployment        |
+| Approval   | Authorized reviewer approves release   | Wait for approval                    |
+| Production | Health metrics remain within limits    | Roll back or halt rollout            |
+
+A gate is only as useful as the condition it checks. “Tests passed” is meaningful only if the tests cover relevant risks. A security scan may identify known vulnerable dependencies but cannot guarantee that the application is secure.
+
+Good gates are specific, measurable, and connected to an action. If a check fails, the pipeline should explain what failed, preserve useful diagnostic output, and make it clear whether the next step is to fix code, update a dependency, obtain approval, or investigate an environmental problem.
+
+Not every stage needs a gate. Excessive or poorly designed gates can slow delivery without improving safety. The objective is to block changes that fail important requirements, not to add ceremony to every transition.
+
+Order matters when something fails. Pick which stage will fail and compare orderings (a stage can never run before the one it depends on):
+
+<PipelineSim />
+
+The expected cost of an ordering follows from each stage's duration and chance of failing. Searching every valid ordering of these seven stages:
+
+```python
+from itertools import permutations
+
+# (minutes, chance the stage fails, stage it depends on)
+STAGES = {"lint": (1, .10, None), "build": (4, .03, None), "unit": (3, .15, None), "security": (5, .05, None),
+          "integration": (8, .10, "build"), "staging": (5, .03, "build"), "e2e": (15, .08, "staging")}
+
+def valid(order):                                  # a stage may only run after the stage it depends on
+    return all(dep is None or order.index(dep) < order.index(s) for s, (_, _, dep) in STAGES.items())
+
+def expected_minutes(order):
+    """Expected time until the pipeline stops (first failure, or the end)."""
+    total, still_passing = 0.0, 1.0
+    for s in order:
+        total += still_passing * STAGES[s][0]      # a stage only runs if everything before it passed
+        still_passing *= 1 - STAGES[s][1]
+    return total
+
+orders = [o for o in permutations(STAGES) if valid(o)]
+best, worst = min(orders, key=expected_minutes), max(orders, key=expected_minutes)
+listed = tuple(STAGES)
+print(f"{len(orders)} valid orderings out of 5,040")
+print(f"as listed: {expected_minutes(listed):5.1f} min   {' > '.join(listed)}")
+print(f"best     : {expected_minutes(best):5.1f} min   {' > '.join(best)}")
+print(f"worst    : {expected_minutes(worst):5.1f} min   {' > '.join(worst)}")
+# 630 valid orderings out of 5,040
+# as listed:  29.0 min   lint > build > unit > security > integration > staging > e2e
+# best     :  28.4 min   lint > unit > build > integration > security > staging > e2e
+# worst    :  36.7 min   build > staging > e2e > security > integration > unit > lint
+```
+
+The gain here is modest (the end-to-end tests must come last anyway), but the rule it illustrates is general: run what is cheap and likely to fail first, and the expensive stages only for changes that survived.
+
+## Artifacts Make Releases Reproducible
+
+A build artifact is the packaged output of a pipeline, such as a compiled binary, container image, or deployable application bundle.
+
+A reliable pipeline produces a versioned artifact and promotes that same artifact through testing, staging, and production. Rebuilding independently for each environment can produce subtly different outputs because dependencies, build settings, or external inputs may have changed.
+
+The desired flow is:
+
+```
+build once → versioned artifact → test and record results → promote the same artifact: staging → production
+```
+
+Configuration may differ between environments, but the application artifact should remain identifiable. This improves traceability: if a release fails, the team can determine exactly which build was deployed and which source revision produced it.
+
+Artifact immutability is especially useful when paired with versioned dependencies, controlled build environments, and recorded pipeline results. It does not guarantee reproducibility on its own, but it reduces the chance that a release changes unexpectedly between stages.
+
+## Deployment Strategy Closes the Loop
+
+Passing a stage gate is not the same as proving that a change will behave correctly under real production traffic. Some failures appear only with real workloads, particular data, or interactions that tests do not reproduce.
+
+Deployment strategies reduce the impact of such failures:
+
+- **Rolling deployment:** Replaces running instances gradually.
+- **Blue-green deployment:** Maintains two environments and switches traffic from the old version to the new one.
+- **Canary deployment:** Sends a small portion of traffic to the new version, then expands if health indicators remain acceptable.
+
+Compare how much traffic a bad release reaches under each strategy:
+
+<CanaryRollout />
+
+```python
+RPS, ERROR_RATE, DETECT_MIN = 1000, 0.30, 3        # traffic, share of requests the bad build breaks, minutes to notice
+
+share = {                                          # fraction of traffic on the new version at minute t
+    "all at once": lambda t: 1.0,
+    "rolling":     lambda t: min(1.0, 0.25 * (int(t) + 1)),
+    "canary":      lambda t: 0.01 if t < 5 else 0.05 if t < 10 else 0.25 if t < 15 else 1.0,
+}
+for name, f in share.items():
+    steps = int(DETECT_MIN * 60)
+    failed = sum(f(s / 60) * RPS * ERROR_RATE for s in range(steps))     # one-second steps until the rollback
+    print(f"{name:<12} {failed:>9,.0f} failed requests, {f(DETECT_MIN - 1e-6):>4.0%} of traffic exposed at rollback")
+# all at once     54,000 failed requests, 100% of traffic exposed at rollback
+# rolling         27,000 failed requests,  75% of traffic exposed at rollback
+# canary             540 failed requests,   1% of traffic exposed at rollback
+```
+
+The canary keeps most users on the old version while the new one is judged on real traffic, so a bad release is caught with a fraction of the damage. The cost is time: it takes longer to reach everyone, even when the release is good.
+
+Production monitoring supplies the feedback needed to determine whether the release is healthy. Metrics such as error rate, latency, saturation, and business-critical outcomes can act as post-deployment gates. If those indicators deteriorate, the system can halt the rollout or revert to a previous version.
+
+Rollback is not always trivial. A new application version may change the database schema or create data that an older version cannot interpret. Safer release processes often use backward-compatible, staged database migrations and changes that allow old and new application versions to coexist during rollout.
+
+The pipeline is therefore more than a sequence of build commands. It is a controlled path from source change to verified production behavior, with evidence at each stage and a defined response when a requirement is not met.

@@ -1,0 +1,191 @@
+---
+title: "Infrastructure as Code"
+description: "Declarative vs. imperative infrastructure, state, and drift."
+order: 6
+tier: optional
+takeaways:
+  - "**Infrastructure as Code** describes infrastructure in version-controlled files so environments are **reproducible, reviewable and auditable** instead of hand-built."
+  - "**Declarative** code states the desired end result and the tool works out the steps; **imperative** code lists the steps. Declarative is easier to re-run safely."
+  - "A tool **reconciles**: read desired state, inspect actual state, compute the difference (the **plan**), apply it."
+  - "**State** links names in your code to real resource IDs. Protect it (it can hold secrets) and lock it so two runs cannot collide."
+  - "**Drift** is reality diverging from the code, usually through manual edits. Decide per case whether to reconcile, adopt or investigate, and give each resource a single owner."
+resources:
+  - title: "Terraform: Introduction"
+    url: "https://developer.hashicorp.com/terraform/intro"
+  - title: "Terraform: State"
+    url: "https://developer.hashicorp.com/terraform/language/state"
+    note: "What state records and why it needs locking and protection."
+  - title: "Kubernetes: Controllers"
+    url: "https://kubernetes.io/docs/concepts/architecture/controller/"
+    note: "Continuous reconciliation of desired and actual state."
+  - title: "Martin Fowler: Infrastructure as Code"
+    url: "https://martinfowler.com/bliki/InfrastructureAsCode.html"
+  - title: "Infrastructure as code (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Infrastructure_as_code"
+---
+
+Infrastructure as Code (IaC) manages infrastructure through version-controlled definitions rather than relying on manual configuration through consoles or command-line sessions. The central idea is to make infrastructure reproducible: describe what should exist, let tools create or modify it, and track how the real environment compares with the intended configuration. Declarative IaC specifies the desired state; imperative IaC specifies the operations to perform. State records what a tool knows about managed resources, while drift occurs when actual infrastructure diverges from the intended configuration. Together, these concepts explain how IaC makes infrastructure changes repeatable—and why it still requires careful reconciliation and control.
+
+## Declarative Versus Imperative
+
+Imagine you need a virtual machine with two CPU cores, 8 GB of memory, and a particular network configuration.
+
+An imperative approach describes the operations needed to build it:
+
+```
+create-network
+create-subnet
+create-firewall-rule
+create-virtual-machine
+attach-network
+```
+
+The script specifies how to perform the setup. It assumes that the operations are appropriate for the environment in its current condition. If the script runs twice, it may fail because resources already exist, or it may create duplicates unless it explicitly handles those cases.
+
+A declarative approach describes the intended result:
+
+```
+server:
+  cpu: 2
+  memory_gb: 8
+  network: production
+```
+
+This is illustrative configuration, not a real provider-specific schema. A declarative tool compares the declared intent with what it knows about the environment and determines which operations are needed.
+
+The distinction is between describing a target state and describing a sequence of actions.
+
+| Property           | Declarative                                     | Imperative                                    |
+| ------------------ | ----------------------------------------------- | --------------------------------------------- |
+| Main expression    | What should exist                               | What operations to perform                    |
+| Typical execution  | Reconcile actual state toward desired state     | Execute prescribed steps                      |
+| Repeated execution | Often converges toward the same target          | Depends on idempotency and current conditions |
+| Change handling    | Tool determines required changes                | Author writes the change logic                |
+| Examples           | Terraform, CloudFormation, Kubernetes manifests | Shell scripts, procedural deployment scripts  |
+
+These categories are not absolute. Declarative tools still execute imperative API calls under the hood, and imperative scripts can be written to be idempotent. The difference is which layer is responsible for determining the changes.
+
+## Reconciliation Closes the Gap
+
+A declarative IaC tool generally follows a cycle: read the desired configuration, inspect the current environment, determine the difference, and apply changes intended to close that gap.
+
+Suppose the configuration declares three application servers, but only two exist. A planning step might propose creating one more. If four exist, the tool may propose removing one—depending on the resource definition and lifecycle rules.
+
+```
+desired state (what the code declares)
+   → compare and plan (additions, changes, removals)
+   → apply (call provider APIs)
+   → actual infrastructure (the result)
+   → read it back and compare again
+```
+
+The cycle is often called reconciliation. Kubernetes controllers use this pattern continuously: they observe resources and attempt to bring the running system toward the declared state. Terraform typically uses an explicit plan-and-apply workflow rather than continuously reconciling by itself.
+
+Reconciliation does not guarantee that the desired state will be achieved. API failures, permissions, quota limits, dependency failures, and conflicting changes can prevent convergence. A good tool reports these failures instead of treating a configuration file as proof that the environment matches it.
+
+## State Maps Code to Resources
+
+Infrastructure configuration might declare a resource as `production_database`, but the cloud provider identifies the actual database using its own resource ID. The IaC tool needs a way to associate the configuration with that real object.
+
+In Terraform, this association is maintained in a state file. State commonly records resource identities, attributes, and dependency information that help Terraform determine what it manages and how changes should be planned.
+
+State is not simply a copy of the configuration, nor is it necessarily a perfect real-time mirror of the provider. It is a record used alongside configuration and refreshed information from the real environment.
+
+For example, a configuration may define:
+
+```
+resource "example_server" "app" {
+  name = "production-app"
+  size = "small"
+}
+```
+
+Terraform state associates `example_server.app` with the corresponding real resource. If the resource's size changes in the configuration, Terraform can use that association to determine which existing object needs modification.
+
+State becomes especially important when multiple people or automation jobs manage the same environment. A remote state backend with locking or other concurrency controls can help prevent conflicting operations. Sensitive state values also need protection, because state may contain secrets or other sensitive attributes even when those values are not obvious in the configuration.
+
+Not every IaC tool uses a Terraform-style state file. Some derive more information from the live environment, while others use controllers and resource metadata. The underlying requirement remains: the system needs enough information to understand which resources it manages and what needs to change.
+
+## Drift: Reality Diverges
+
+Suppose an IaC configuration specifies that a production firewall permits traffic only on approved ports. Someone manually changes the firewall through the cloud console to allow an additional port.
+
+The live infrastructure now differs from the intended configuration. This is configuration drift.
+
+Drift can result from manual edits, emergency fixes, another automation system, provider-side changes, or changes that were only partially applied. It can be harmless, such as a provider updating a nonessential metadata field, or serious, such as a firewall becoming less restrictive.
+
+A drift-detection workflow compares the declared configuration with the live environment and identifies differences. The response depends on the intended ownership model:
+
+- **Reconcile:** Apply the declared configuration to undo an unintended manual change.
+- **Adopt:** Update the configuration to reflect an intentional change.
+- **Investigate:** Determine whether the difference is expected, provider-managed, or potentially dangerous.
+
+The important point is that drift detection and drift correction are separate decisions. Automatically overwriting every difference can destroy a legitimate emergency fix or an externally managed resource. Ignoring all differences can leave infrastructure insecure or inconsistent.
+
+## Plans Make Changes Reviewable
+
+Before applying changes, many IaC workflows generate a plan describing what would be created, updated, replaced, or destroyed.
+
+A plan makes consequences visible before execution. For example, changing a machine's size might require an in-place update, while changing a property that the provider cannot modify directly may force resource replacement.
+
+Replacement can be consequential: a database or server might be recreated, causing downtime or data loss if its lifecycle is not handled correctly. Reviewing the plan helps catch such effects before they happen.
+
+A robust workflow commonly includes:
+
+1. Version-control the infrastructure definitions.
+2. Validate the configuration and generate a plan.
+3. Review changes, especially replacements, destructive operations, and security-sensitive settings.
+4. Apply through controlled automation with appropriate credentials and state coordination.
+5. Verify that the resulting environment behaves as expected.
+
+This process gives infrastructure changes a traceable history similar to application code. It also reduces the risk of one engineer making a change that another cannot explain or reproduce.
+
+Try the whole loop: change the desired state, plan, apply, then simulate a manual console edit and plan again to see the drift:
+
+<DriftPlan />
+
+```python
+def plan(want, have):
+    """Diff desired state against actual state, the way a declarative tool does. Returns (lines, add, change, destroy)."""
+    out, add, chg, rm = [], 0, 0, 0
+    if want["region"] != have["region"]:             # region cannot be changed in place: destroy everything, create it again
+        out += [f"- destroy {have['servers']} servers in {have['region']}", f"+ create  {want['servers']} servers in {want['region']}   # region forces replacement"]
+        add, rm = want["servers"], have["servers"]
+    else:
+        if want["servers"] > have["servers"]: out.append(f"+ create {want['servers'] - have['servers']} server(s)"); add += want["servers"] - have["servers"]
+        if want["servers"] < have["servers"]: out.append(f"- destroy {have['servers'] - want['servers']} server(s)"); rm += have["servers"] - want["servers"]
+        if want["size"] != have["size"]: out.append(f"~ size {have['size']} -> {want['size']} (in place)"); chg += min(want["servers"], have["servers"])
+    if set(want["ports"]) != set(have["ports"]):
+        out.append(f"~ ports {sorted(have['ports'])} -> {sorted(want['ports'])}"); chg += 1
+    return out, add, chg, rm
+
+want = {"servers": 3, "size": "small", "region": "eu", "ports": [443]}
+live = dict(want)
+print("clean:", plan(want, live)[0] or "no changes")
+live.update(ports=[22, 443], servers=4)              # someone edits production by hand: drift
+for line in plan(want, live)[0]: print(line)
+live = dict(want)                                    # apply: reconcile the live state to the code
+print("after apply:", plan(want, live)[0] or "no changes (applying again changes nothing)")
+want2 = dict(want, region="us")
+lines, a, c, d = plan(want2, live)
+print(*lines, f"Plan: {a} to add, {c} to change, {d} to destroy.", sep="\n")
+# clean: no changes
+# - destroy 1 server(s)
+# ~ ports [22, 443] -> [443]
+# after apply: no changes (applying again changes nothing)
+# - destroy 3 servers in eu
+# + create  3 servers in us   # region forces replacement
+# Plan: 3 to add, 0 to change, 3 to destroy.
+```
+
+Two properties matter in that output. Applying twice changes nothing the second time (**idempotence**), which is what makes declarative tools safe to re-run. And a region change shows up as a destroy plus a create, the kind of line a plan review exists to catch.
+
+## Ownership Keeps IaC Safe
+
+Infrastructure as Code is most effective when the team clearly defines which system owns each resource and which changes are permitted outside that system.
+
+A common failure is split ownership: Terraform manages a resource, a shell script modifies it, and an operator edits it manually. Each system has a different view of the intended state, so drift becomes inevitable and automated correction may undo another system's work.
+
+A better approach is to establish a single authoritative workflow for each managed resource, make changes through version-controlled definitions where possible, and treat manual changes as exceptions that must be reconciled afterward.
+
+Declarative configuration provides a target, state connects definitions to managed resources, and drift detection reveals when the environment no longer matches the target. Together, these mechanisms make infrastructure changes more reproducible and auditable, but only when state is protected, plans are reviewed, and resource ownership is explicit.

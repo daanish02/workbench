@@ -1,0 +1,233 @@
+---
+title: "Testing Strategy"
+description: "The testing pyramid, and how to split tests between layers."
+order: 8
+tier: core
+takeaways:
+  - "A testing strategy aims for **fast, trustworthy feedback at reasonable cost**, not the largest number of tests."
+  - "The **testing pyramid**: many fast **unit** tests, fewer **integration** tests, a few **end-to-end** tests. Broader tests are more realistic but slower, flakier and harder to debug."
+  - "Test types answer different questions. By scope: unit, component, integration, contract, E2E. By purpose: **smoke, sanity, regression, acceptance**. Non-functional: **performance, security, usability**. Techniques: exploratory, property-based, fuzz, mutation."
+  - "Assign each behaviour to the **lowest layer that can verify it**, add broader tests only for risks the narrow ones cannot reach, and add a regression test for every bug fixed."
+  - "Coverage shows what is *untested*, not what is *correct*. **Mutation testing** checks whether your tests would notice a bug at all."
+resources:
+  - title: "Martin Fowler: The Practical Test Pyramid"
+    url: "https://martinfowler.com/articles/practical-test-pyramid.html"
+  - title: "Google Testing Blog: Just say no to more end-to-end tests"
+    url: "https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html"
+  - title: "Martin Fowler: Mocks aren't stubs"
+    url: "https://martinfowler.com/articles/mocksArentStubs.html"
+    note: "Test doubles and the two schools of unit testing."
+  - title: "Pact: consumer-driven contract testing"
+    url: "https://docs.pact.io/"
+  - title: "Hypothesis (property-based testing for Python)"
+    url: "https://hypothesis.readthedocs.io/"
+---
+
+A testing strategy is not about maximizing the number of tests; it is about finding defects quickly, reliably, and at a reasonable cost. The testing pyramid organizes automated tests by scope: many fast, focused unit tests at the base, fewer integration tests in the middle, and a small number of end-to-end tests at the top. The underlying principle is that the broader a test's scope, the more realistic its coverage tends to be, but the more expensive and fragile it becomes. A good strategy balances these strengths rather than relying on a single kind of test.
+
+## Speed Against Confidence
+
+The traditional testing pyramid has three layers:
+
+- **Unit tests** — the base. Verify individual functions, classes, or small components in isolation. They run quickly, pinpoint failures, and are inexpensive to maintain. They catch logic errors but cannot prove that components work correctly together.
+- **Integration tests** — the middle. Verify that multiple components collaborate correctly, such as an application communicating with a database or a service calling another service. They catch interface mismatches, incorrect queries, serialization bugs, and configuration problems.
+- **End-to-end (E2E) tests** — the top. Exercise complete user journeys through the system, often through the real UI and backend. They provide strong evidence that important workflows function as a whole, but are slower, harder to diagnose, and more sensitive to environmental changes.
+
+The pyramid's shape is a useful allocation principle, not a universal numerical rule. A project might have hundreds of unit tests, dozens of integration tests, and a handful of E2E tests. The right proportions depend on architecture, risk, and the cost of testing each layer.
+
+## Each Layer Answers a Question
+
+Consider an online store's checkout process.
+
+A unit test might verify that a function calculates a discount correctly. An integration test might verify that the checkout service persists an order and reserves inventory in a database. An E2E test might verify that a customer can add an item to a cart, pay, and receive an order confirmation.
+
+These tests are related, but they are not interchangeable. A correct discount function does not guarantee that checkout invokes it. A working database integration does not guarantee that the payment flow succeeds. A passing E2E test does not explore every discount combination or boundary condition.
+
+The layers provide different kinds of evidence:
+
+| Test type   | Primary question                   | Typical failure                        |
+| ----------- | ---------------------------------- | -------------------------------------- |
+| Unit        | Is this piece of logic correct?    | Incorrect calculation                  |
+| Integration | Do these components work together? | Invalid database query or API contract |
+| E2E         | Does the complete workflow work?   | Checkout cannot complete               |
+
+A useful strategy assigns each behavior to the lowest layer that can verify it meaningfully, then adds broader tests where interactions or user-visible outcomes create additional risk.
+
+## Too Many E2E Tests Hurt
+
+E2E tests are attractive because they resemble real use. However, they often depend on many components, external services, network conditions, test data, and environment configuration. When one fails, the cause may be far from the step that reported the failure.
+
+This creates three costs:
+
+1. Execution time: broad tests usually take longer, slowing feedback and continuous integration.
+2. Diagnostic difficulty: failures can have many possible causes, so debugging takes longer.
+3. Flakiness: timing, shared state, and environmental instability can produce intermittent failures even when the application code has not changed.
+
+Suppose 200 tests all exercise the browser, backend, and database. A failure may require investigating the entire stack. If most business rules are instead covered by focused unit tests, the failing test often identifies the defective behavior directly.
+
+The goal is not to eliminate E2E tests. Keep them for critical workflows and risks that only a complete system test can reveal. Avoid using them to repeat every assertion already covered reliably at a lower level.
+
+The shape is an economic argument, and you can price it. Set the number of tests per layer, or load a classic shape, and compare run time and how often a run is red from flakiness alone:
+
+<TestPyramidBudget />
+
+```python
+COST = {"unit": (0.005, 0.0), "integration": (0.5, 0.0002), "e2e": (20, 0.005)}     # (seconds per test, chance a test flakes)
+SUITES = {"pyramid": (1000, 100, 10), "ice-cream cone": (50, 100, 400), "hourglass": (800, 10, 300)}
+
+for name, counts in SUITES.items():
+    seconds = sum(n * COST[k][0] for n, k in zip(counts, COST))
+    green = 1.0
+    for n, k in zip(counts, COST):
+        green *= (1 - COST[k][1]) ** n               # every test must avoid flaking for the run to be clean
+    print(f"{name:<15} {sum(counts):>4} tests  {seconds / 60:>6.1f} min  {1 - green:>5.1%} of runs red from flakiness alone")
+# pyramid         1110 tests     4.2 min   6.8% of runs red from flakiness alone
+# ice-cream cone   550 tests   134.2 min  86.8% of runs red from flakiness alone
+# hourglass       1110 tests   100.2 min  77.8% of runs red from flakiness alone
+```
+
+The ice-cream cone (few unit tests, many end-to-end tests) takes two hours and fails from flakiness nearly nine runs in ten, while the pyramid with more tests in total finishes in minutes. The per-test numbers are illustrative; the ratios between layers are the point.
+
+## A Guide, Not a Law
+
+Some systems need a different balance. Applications built around many services may require substantial integration and contract testing. Data-heavy systems may benefit from extensive tests against databases and pipelines. Frontend applications with complex interactions may need more component tests and a carefully chosen set of browser tests.
+
+Two related practices refine the basic pyramid:
+
+- **Contract testing** checks whether communicating components honor an agreed interface, without necessarily running the entire system. It can catch compatibility problems between services at lower cost than broad E2E tests.
+- **Component testing** verifies a larger unit than an individual function, often with selected dependencies real and others controlled. It can be especially useful for UI components and service boundaries.
+
+These practices do not invalidate the pyramid. They address gaps between isolated logic and complete-system behavior.
+
+The testing pyramid also describes test scope, not test quality. A large number of weak unit tests can provide less confidence than a small number of well-designed tests. Tests should target meaningful behavior, edge cases, failure modes, and business risks—not merely execute lines of code.
+
+## Types of Testing
+
+The pyramid sorts tests by **scope**. Real projects also name tests by **purpose** or **technique**, and the names overlap (a regression test can be a unit test). It helps to know all of them and what question each one asks.
+
+### By scope: what is under test
+
+| Type | What it checks | Notes |
+| --- | --- | --- |
+| **Unit** | One function or class in isolation | Fast, precise, the base of the pyramid |
+| **Component** | A larger unit (a service or UI component) with some real parts and some faked | Covers the gap between unit and integration |
+| **Integration** | Several parts working together, such as code and a real database or queue | Finds interface, query and configuration bugs |
+| **Contract** | That two services honour an agreed interface, checked without running both | Consumer-driven contracts (for example Pact) catch breaking API changes cheaply |
+| **End-to-end (system)** | A complete user journey through the real system | Most realistic, slowest, flakiest: keep few |
+
+### By purpose: why you run it
+
+| Type | Purpose | When |
+| --- | --- | --- |
+| **Smoke** | A shallow, fast check that the build is alive: it starts, the main page loads, login works | Right after each build or deployment; if it fails, stop |
+| **Sanity** | A narrow check that one specific change or fix works | After a small change, before spending time on broad testing |
+| **Regression** | Confirms that behaviour which used to work still does, and that fixed bugs stay fixed | On every change; add a test for each bug you fix |
+| **Acceptance (UAT)** | Confirms the feature meets the agreed criteria from the customer or product owner | Before release; often scripted from the acceptance criteria |
+| **Alpha / beta** | Real users try pre-release software and report problems | Late in development, with a limited audience |
+
+### Non-functional: how well it works
+
+| Type | What it measures |
+| --- | --- |
+| **Load** | Behaviour under expected and peak traffic (latency percentiles, throughput, errors) |
+| **Stress** | Where and how the system breaks when pushed past its limits |
+| **Soak (endurance)** | Behaviour over hours or days: memory leaks, resource exhaustion |
+| **Spike** | Reaction to a sudden surge and recovery afterwards |
+| **Security** | Vulnerabilities, using static analysis (SAST), running-app scans (DAST), dependency checks and [penetration testing](../../security/penetration-testing/) |
+| **Usability and accessibility** | Whether real people, including those using assistive technology, can use it |
+| **Compatibility** | Behaviour across browsers, devices, operating systems and versions |
+| **Reliability and chaos** | Whether the system survives failures it is deliberately subjected to (see [Fault Tolerance](../../distributed-systems/fault-tolerance/)) |
+
+### Techniques that find what examples miss
+
+- **Exploratory testing:** a person explores the system without a script, guided by curiosity and risk. It finds the surprising problems no one thought to write a test for.
+- **Property-based testing:** instead of examples, state a rule that must hold for all inputs ("sorting twice equals sorting once") and let a tool generate hundreds of cases, shrinking any failure to a minimal one.
+- **Fuzzing:** feed enormous volumes of malformed or random input to find crashes and security holes, especially in parsers.
+- **Mutation testing:** automatically introduce small bugs into the code and check that the suite fails; surviving mutants reveal weak tests. It measures the *quality* of tests, which coverage cannot.
+- **Snapshot (golden master) testing:** compare output to a saved approved version; useful for large outputs, but approve changes deliberately.
+
+The script below runs the first, fourth and a hand-rolled version of the second against a deliberately flawed discount function: the example tests pass, a property test finds an input that breaks the rule, and a mutation run shows that the tests never check decimal places.
+
+```python
+import random
+
+def apply_discount(price, percent):
+    return round(price * (1 - percent / 100), 2)
+
+# example-based tests: a few hand-picked cases
+assert apply_discount(100, 10) == 90
+assert apply_discount(50, 0) == 50
+print("example tests pass")
+
+# property-based test: for ANY valid input the result must stay between 0 and the price
+rng = random.Random(1)
+for i in range(10_000):
+    price, pct = rng.uniform(0, 1000), rng.uniform(0, 150)          # the 100% limit is nowhere enforced
+    result = apply_discount(price, pct)
+    if not 0 <= result <= price:
+        print(f"property violated on try {i + 1}: apply_discount({price:.2f}, {pct:.1f}) = {result}")
+        break
+
+# mutation testing: change the code slightly; a good test suite should notice every change
+tests = lambda f: f(100, 10) == 90 and f(50, 0) == 50
+mutants = {
+    "1 - p/100  ->  1 + p/100": lambda price, percent: round(price * (1 + percent / 100), 2),
+    "p/100  ->  p/10": lambda price, percent: round(price * (1 - percent / 10), 2),
+    "round(.., 2)  ->  round(.., 0)": lambda price, percent: round(price * (1 - percent / 100), 0),
+}
+survived = 0
+for name, mutant in mutants.items():
+    caught = not tests(mutant)
+    survived += not caught
+    print(f"mutant {name:<30} {'killed' if caught else 'SURVIVED: the tests never check decimals'}")
+print(f"mutation score: {len(mutants) - survived}/{len(mutants)} killed")
+# example tests pass
+# property violated on try 1: apply_discount(134.36, 127.1) = -36.43
+# mutant 1 - p/100  ->  1 + p/100       killed
+# mutant p/100  ->  p/10                killed
+# mutant round(.., 2)  ->  round(.., 0) SURVIVED: the tests never check decimals
+# mutation score: 2/3 killed
+```
+
+Test your understanding: match each situation to the type of test it needs.
+
+<TestTypeMatcher />
+
+### Test doubles and test-driven development
+
+Tests often replace a real dependency with a **test double** so that the unit under test runs in isolation:
+
+| Double | What it does |
+| --- | --- |
+| **Dummy** | Fills a parameter and is never used |
+| **Stub** | Returns canned answers |
+| **Fake** | A simplified working implementation (an in-memory database) |
+| **Spy** | A stub that also records how it was called |
+| **Mock** | Pre-programmed with expectations about the calls it should receive, and fails if they are not met |
+
+Overusing mocks ties tests to implementation details, so they break on harmless refactoring. Prefer fakes and real collaborators where they are cheap. **Test-driven development (TDD)** writes the test first: a failing test (**red**), the least code that passes (**green**), then cleanup under test protection (**refactor**). Its benefit is as much design as verification, since code that is hard to test first is usually too tightly coupled (see [Coding Practices](../coding-practices/)).
+
+## Build Around Risk and Feedback
+
+A practical testing strategy begins with the consequences of failure and the fastest reliable way to detect it.
+
+For each important behavior, ask:
+
+- Can its logic be tested in isolation?
+- Could defects arise from interactions between components?
+- Does the behavior depend on real infrastructure, configuration, or external services?
+- Is there a critical user journey that must work from beginning to end?
+
+Then choose the narrowest test that answers the relevant question. Add broader tests for risks that the narrower tests cannot expose.
+
+For example, an order-total calculation deserves many focused tests for discounts, rounding, taxes, and boundary conditions. The connection between checkout and the database deserves integration tests. Completing a purchase and receiving confirmation deserves a small number of E2E tests.
+
+Run fast tests frequently and broader tests at appropriate checkpoints in the delivery pipeline. When a broad test discovers a defect in a specific business rule, consider adding a focused regression test at the appropriate lower layer so that the same defect is detected faster next time.
+
+Add a **regression test** with every bug fix: write a test that fails because of the bug, fix it, and the suite now guards it forever. Coverage percentages can help identify untested areas, but they do not establish correctness. A test suite is valuable when it detects consequential defects, provides fast and trustworthy feedback, and remains maintainable as the system changes.
+
+## Maximize Feedback per Cost
+
+The testing pyramid is ultimately an economic model of confidence. Narrow tests are cheap enough to run frequently and precisely enough to localize failures. Broader tests verify assumptions about component interactions and real user behavior that isolated tests cannot establish.
+
+A strong suite therefore combines depth at the bottom with selective realism at the top. It does not treat all tests as equally expensive or equally informative. The objective is to catch each class of defect at the earliest layer capable of detecting it reliably, while retaining enough end-to-end coverage to establish that the system works for its users.

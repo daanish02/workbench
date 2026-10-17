@@ -1,0 +1,168 @@
+---
+title: "Observability"
+description: "Logs, metrics and traces: what each one tells you, and when."
+order: 7
+tier: optional
+takeaways:
+  - "**Observability** is being able to explain what a system is doing from the signals it emits, without shipping new code to find out."
+  - "**Logs** say what happened (events), **metrics** say how much and when (numbers over time), **traces** say where a request spent its time across services."
+  - "Use them together: **metrics detect**, **traces localize**, **logs explain**. A shared **trace ID** is what joins them."
+  - "Each signal has a cost: log volume, **metric cardinality** (every label combination is a new time series) and trace sampling."
+  - "Instrument what users feel: define **SLIs** (measured behaviour) and **SLOs** (the target) and alert on those, not on every internal blip."
+resources:
+  - title: "OpenTelemetry: Observability primer"
+    url: "https://opentelemetry.io/docs/concepts/observability-primer/"
+  - title: "Google SRE book: Monitoring Distributed Systems"
+    url: "https://sre.google/sre-book/monitoring-distributed-systems/"
+    note: "The four golden signals and what makes an alert worth waking someone."
+  - title: "Dapper: a distributed systems tracing infrastructure"
+    url: "https://research.google/pubs/dapper-a-large-scale-distributed-systems-tracing-infrastructure/"
+    note: "The paper behind modern distributed tracing."
+  - title: "Prometheus: Metric types"
+    url: "https://prometheus.io/docs/concepts/metric_types/"
+    note: "Counters, gauges, histograms and summaries."
+  - title: "Prometheus: Naming and labels"
+    url: "https://prometheus.io/docs/practices/naming/"
+    note: "Including why high-cardinality labels are dangerous."
+---
+
+Observability is the ability to infer what is happening inside a system from the signals it produces. In a distributed application, a request may pass through several services, encounter a slow database, and fail somewhere far from the component the user interacts with. Logs explain individual events, metrics reveal patterns and trends, and traces show how work flows across components. These signals answer different questions, so effective observability combines them rather than treating any one as a complete picture of system health.
+
+## Logs Record What Happened
+
+A log is a record of an event that occurred inside an application or infrastructure component. It commonly includes a timestamp, severity, message, and contextual fields.
+
+For example, a service might emit:
+
+```
+{
+  "timestamp": "2026-10-16T10:30:12Z",
+  "level": "ERROR",
+  "service": "checkout",
+  "order_id": "ord-1842",
+  "message": "Payment provider request timed out"
+}
+```
+
+This record gives an engineer a concrete clue about a particular failure. Logs are especially useful when investigating what a component observed, which inputs it handled, or why it took a particular branch in its logic.
+
+Logs can be plain text, but structured logs with consistent fields are easier to search and aggregate. Fields such as `service`, `request_id`, and `error_code` allow engineers to narrow a large dataset to relevant events.
+
+The limitation is volume. A busy service may produce millions of log records, and searching them all can be expensive. Logs can also lack context if developers do not record the right information. Excessive logging increases storage costs and can expose sensitive data if records are not designed carefully.
+
+Logs are best for questions such as: What happened during this particular failure, and what did the application observe?
+
+## Metrics Summarize Over Time
+
+A metric is a numerical measurement recorded over time. Rather than storing the complete details of every request, a metric summarizes behavior using measurements such as request rate, error rate, latency, memory usage, or queue depth.
+
+Suppose a service reports:
+
+- Request rate: 1,200 requests per second.
+- Error rate: 4%.
+- 95th-percentile latency: 850 ms.
+- Memory usage: 78% of its limit.
+
+These measurements make it easier to detect abnormal behavior, compare current performance with historical patterns, and trigger alerts when thresholds or service-level objectives are violated.
+
+Metrics are especially useful because they compress many events into a small set of time-series measurements. An engineer can see that error rates increased at 10:30 even before investigating individual requests.
+
+A counter can track the number of requests, while a gauge can represent a value such as current queue depth. Histograms can record distributions of observations, making percentile latency estimates possible.
+
+Metric design matters. A metric labeled with every unique user ID or request ID can create millions of distinct time series, a problem called high cardinality. This can increase memory usage, storage costs, and query overhead. High-cardinality identifiers generally belong in logs or traces rather than ordinary metric labels.
+
+Metrics are best for questions such as: Is the system healthy, how is it changing, and when did the problem begin?
+
+## Traces Show a Request's Path
+
+A distributed request often crosses several components. A user action might invoke an API gateway, a checkout service, a payment service, and a database. Each component may be healthy in isolation while the entire request remains slow.
+
+A distributed trace represents that request's journey through the system. It contains a trace identifier and a set of spans, where each span represents an operation with timing and contextual information.
+
+Traces reveal where time is spent, which services called which dependencies, and where an error occurred. If the checkout request takes two seconds but most of that time is spent waiting for a payment provider, the trace helps identify the bottleneck.
+
+Distributed tracing relies on propagating trace context across service boundaries. Without that propagation, a request may appear as disconnected operations rather than one connected journey.
+
+Tracing also has tradeoffs. Collecting every span from every request can be expensive, so systems may sample traces. A sampled trace can provide detailed context, but an unsampled request may not have the same visibility. Trace data also needs careful handling to avoid recording secrets or personal information.
+
+Traces are best for questions such as: Where did this request spend its time, and which component contributed to the failure or delay?
+
+Slide the payment provider's latency and watch the three signals diverge. The metrics panel notices that something is wrong, the trace shows where the time went, and the logs sharing the trace ID give the reason:
+
+<TraceWaterfall />
+
+## Three Signals, Three Questions
+
+| Signal  | Typical data                       | Best question                                     | Main limitation                              |
+| ------- | ---------------------------------- | ------------------------------------------------- | -------------------------------------------- |
+| Logs    | Event records                      | What happened?                                    | Can be voluminous and difficult to aggregate |
+| Metrics | Numerical time series              | How often, how much, and when?                    | Usually lack detailed event context          |
+| Traces  | Timed operations linked by context | Where did this request go, and where did time go? | Can be costly to collect and store at scale  |
+
+Consider a checkout service whose latency suddenly rises.
+
+Metrics might first show that p95 latency has increased from 200 ms to 1.5 seconds. A trace can reveal that the payment-service span accounts for most of the additional delay. Logs from that service may then show repeated timeout errors from the external provider.
+
+Each signal narrows the investigation in a different way. Metrics identify the pattern, traces localize the problem, and logs provide event-level evidence that helps explain it.
+
+## Correlation Joins the Signals
+
+The three signals become substantially more useful when they share context. A trace ID recorded in a log can connect an error message to the trace for the same request. A service name and deployment version can connect a latency spike to the component and release that produced it.
+
+For example:
+
+1. An alert fires because the checkout error rate exceeds its target.
+2. A dashboard shows that the increase began immediately after a deployment.
+3. A trace shows that the payment call is failing or taking too long.
+4. Logs show the provider's error response and the relevant application context.
+
+This workflow is not guaranteed to identify the cause automatically, but consistent correlation makes it much easier to move from symptom to explanation.
+
+OpenTelemetry is a widely used standard for instrumenting applications and collecting traces, metrics, and logs. It helps standardize how telemetry is generated and exported, while a separate backend typically stores, queries, visualizes, and alerts on that data.
+
+The mechanics are small. Structured logs carry a trace ID set once at the edge, histograms turn many samples into a few counters from which percentiles are estimated, and label choice decides how many time series a metric creates:
+
+```python
+import contextvars, json, random, collections
+
+trace_id = contextvars.ContextVar("trace_id", default="-")
+
+def log(level, svc, message, **fields):             # structured log: one JSON object per line, always carrying the trace ID
+    print(json.dumps({"level": level, "svc": svc, "trace": trace_id.get(), "msg": message, **fields}))
+
+trace_id.set("a41f09")                              # set once at the edge; every log line in this request carries it
+log("INFO", "inventory", "reserved items", ms=25)
+log("ERROR", "payment", "provider request timed out", ms=1500)
+
+# metrics: store a distribution cheaply as histogram buckets, then estimate percentiles from the counts
+rng = random.Random(3)
+bounds = [50, 100, 200, 400, 800, 1600, 3200]
+counts = collections.Counter()
+for _ in range(1000):
+    ms = rng.lognormvariate(5.2, 0.6)                # mostly ~180 ms with a long tail
+    counts[next((b for b in bounds if ms <= b), 9999)] += 1
+seen = 0
+for b in bounds + [9999]:
+    seen += counts[b]
+    if seen >= 0.95 * 1000:
+        print(f"p95 is at most {b} ms (from {len(bounds) + 1} bucket counters instead of 1,000 samples)"); break
+
+# cardinality: every distinct label combination is a separate time series
+by_route = {("GET", route, "200") for route in ["/cart", "/pay", "/search"]}
+by_user = {("GET", f"user-{i}", "200") for i in range(100_000)}
+print(f"label by route: {len(by_route)} series;  label by user ID: {len(by_user):,} series")
+# {"level": "INFO", "svc": "inventory", "trace": "a41f09", "msg": "reserved items", "ms": 25}
+# {"level": "ERROR", "svc": "payment", "trace": "a41f09", "msg": "provider request timed out", "ms": 1500}
+# p95 is at most 800 ms (from 8 bucket counters instead of 1,000 samples)
+# label by route: 3 series;  label by user ID: 100,000 series
+```
+
+## Tie It to User Impact
+
+Collecting telemetry is not the same as having useful observability. A system may produce enormous amounts of data without making its failures easier to understand.
+
+Useful instrumentation begins with the behaviors that matter: request success, latency, saturation, dependency failures, and critical business operations. Service-level indicators (SLIs) measure those behaviors, while service-level objectives (SLOs) define the reliability targets the service is expected to meet.
+
+For example, an SLO might require 99.9% of eligible requests to succeed over a rolling period, with latency below a specified threshold. Metrics can track compliance, traces can help explain slow requests, and logs can provide evidence for specific failures.
+
+Good observability therefore focuses on questions engineers and operators need to answer, not simply on collecting more data. Metrics help detect and quantify problems, traces expose the structure and timing of distributed work, and logs preserve the details of events. Together, they turn a system's internal behavior into evidence that can guide diagnosis and operational decisions.

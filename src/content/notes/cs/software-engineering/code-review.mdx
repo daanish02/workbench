@@ -1,0 +1,144 @@
+---
+title: "Code Review"
+description: "What good code review looks for, and how to give useful feedback."
+order: 9
+tier: core
+takeaways:
+  - "Code review examines a change **before it merges** to improve correctness, design, security and shared understanding, not to police style."
+  - "Start with the **intent and design**, then the execution paths, then the details. A change can be locally correct and still be the wrong change."
+  - "Review **by risk**: correctness, design, security and privacy, concurrency and reliability, maintainability. Look hardest where failure would cost most."
+  - "**Small, focused changes** review better, and let **tools handle the mechanical checks** so human attention goes to judgment."
+  - "Good comments name the problem, the consequence and a direction. **Approval means accepting the remaining risk**, not certifying the code is bug-free."
+resources:
+  - title: "Google Engineering Practices: Code Review"
+    url: "https://google.github.io/eng-practices/review/"
+    note: "What reviewers look for and how authors should write changes."
+  - title: "Modern Code Review: A Case Study at Google"
+    url: "https://research.google/pubs/modern-code-review-a-case-study-at-google/"
+    note: "Empirical findings on what review achieves in practice."
+  - title: "Conventional Comments"
+    url: "https://conventionalcomments.org/"
+    note: "A light convention for labelling how serious a comment is."
+  - title: "Stripe API: Idempotent requests"
+    url: "https://docs.stripe.com/api/idempotent_requests"
+    note: "The mechanism that makes the retry example above safe."
+---
+
+Code review is a systematic examination of a proposed code change before it becomes part of the main codebase. Its purpose is not simply to find mistakes or enforce a preferred coding style; it is to improve correctness, maintainability, security, and shared understanding while keeping changes small enough to reason about. Effective reviews focus on the risks introduced by a change, use automated checks for mechanical work, and reserve human attention for decisions that require judgment. The central skill is learning to evaluate not just whether code works, but whether it is the right change to make.
+
+## Start With the Change
+
+A code review usually examines a proposed change through a pull request or merge request. The reviewer needs to understand the intended behavior before judging the implementation.
+
+A useful sequence is to establish the problem being solved, inspect the overall design, trace the important execution paths, and then examine implementation details. Starting with individual lines can obscure a more fundamental issue: the code may be locally correct but solve the wrong problem or introduce an inappropriate abstraction.
+
+For example, a change that adds retries to an API request may look reasonable line by line. Reviewing its intent raises deeper questions: Are all failures retryable? Could retries duplicate a payment? Is there a limit on attempts? Does the operation support idempotency?
+
+These questions reveal why code review is more than proofreading. The reviewer evaluates the behavior of the system under realistic conditions, including failure cases that may not be obvious from the happy path.
+
+Here is that exact change. Click each line to see the question a reviewer would ask; the serious findings all come from asking what happens under failure:
+
+<ReviewDiff />
+
+The retry question is concrete enough to run. The first response is lost in transit, so the client sees a timeout even though the charge went through. Without an idempotency key the retry charges twice; with one, the server recognizes the repeat and returns the original result:
+
+```python
+import uuid
+
+class PaymentsAPI:
+    """Charges a card. The first response is lost in transit, so the client sees a timeout even though the charge happened."""
+    def __init__(self):
+        self.charges, self.seen, self.calls = [], {}, 0
+    def post(self, amount, key=None):
+        self.calls += 1
+        if key and key in self.seen:                 # idempotency: the same key returns the original result, no new charge
+            return self.seen[key]
+        self.charges.append(amount)
+        result = {"charged": amount}
+        if key: self.seen[key] = result
+        if self.calls == 1: raise TimeoutError("response lost")
+        return result
+
+def charge(api, amount, key=None, attempts=3):
+    for _ in range(attempts):
+        try:
+            return api.post(amount, key)
+        except TimeoutError:
+            continue                                  # retry only a transient failure
+
+naive = PaymentsAPI()
+charge(naive, 50)
+print("retry without an idempotency key: charged", sum(naive.charges), "for an order of 50")
+safe = PaymentsAPI()
+charge(safe, 50, key=str(uuid.UUID(int=1)))
+print("retry with an idempotency key   : charged", sum(safe.charges), "for an order of 50")
+# retry without an idempotency key: charged 100 for an order of 50
+# retry with an idempotency key   : charged 50 for an order of 50
+```
+
+## Highest Risk First
+
+Not every line deserves equal scrutiny. A useful review prioritizes the aspects most likely to produce consequential defects.
+
+- **Correctness:** Does the change implement the intended behavior, including boundary cases and error handling?
+- **Design:** Are responsibilities placed appropriately? Does the change introduce unnecessary coupling, duplication, or abstraction?
+- **Security and privacy:** Does it expose sensitive data, weaken authorization, trust unvalidated input, or mishandle secrets?
+- **Concurrency and reliability:** Could simultaneous operations, retries, partial failures, or resource exhaustion break the system?
+- **Maintainability:** Can another developer understand, test, and safely modify the code later?
+
+The appropriate emphasis depends on the change. A database migration deserves close attention to data integrity and rollback behavior. An authentication change deserves particular scrutiny of authorization boundaries. A small documentation correction may need little beyond checking accuracy.
+
+This is a risk-based process: the review should be proportional to the potential consequences of failure, not simply the number of lines changed.
+
+## Small Changes Review Better
+
+Review quality decreases when a change becomes too large to understand as one coherent unit. A pull request that combines a feature, a refactor, dependency upgrades, and unrelated formatting changes forces reviewers to separate several different questions mentally.
+
+Smaller, focused changes help because they reduce the number of possible interactions, make the intended behavior clearer, and allow reviewers to identify the source of a defect more precisely. They also make it easier to understand the reasoning behind individual decisions.
+
+A useful pull request description explains the problem, summarizes the approach, identifies important trade-offs, and provides evidence that the change works. Tests, screenshots, logs, or migration instructions can supply evidence that is difficult to infer from the diff alone.
+
+Small does not mean artificially splitting a coherent change into fragments that cannot be reviewed independently. The objective is a manageable unit of reasoning.
+
+## Tools and People Differ
+
+A healthy review process divides responsibility between tools and people.
+
+Automated tools are good at repeatable checks: formatting, linting, type checking, static analysis, dependency vulnerability scanning, and test execution. These checks are consistent and can run on every proposed change.
+
+Human reviewers are better suited to questions such as whether an abstraction is justified, whether a failure mode has been overlooked, whether a public interface is appropriate, or whether a simpler design would be safer.
+
+This division matters because reviewer attention is limited. If people repeatedly comment on formatting or obvious lint violations, they spend less time reasoning about correctness and architecture. Automating mechanical checks preserves that attention for problems that tools may not understand.
+
+Passing CI is therefore necessary evidence in many workflows, but it is not proof that a change is good. Tests can be incomplete, requirements can be misunderstood, and a system can satisfy its tests while still having a flawed design.
+
+## Useful Feedback
+
+Review comments are most useful when they explain the concern rather than merely expressing a preference.
+
+Compare these two comments:
+
+- “This function is badly designed.”
+- “This function retries every error, including authorization failures. Could we restrict retries to transient failures so a permanent error does not generate unnecessary requests?”
+
+The second comment identifies a concrete risk, explains its consequence, and suggests a direction without dictating every implementation detail.
+
+It also helps to distinguish different levels of concern. A correctness or security defect may block approval. A maintainability concern may warrant discussion. A stylistic preference may not justify changing working code, especially when the project has no established convention on the matter.
+
+Reviewers should criticize the code and its consequences, not the author's intelligence or competence. Authors, in turn, should treat review comments as information to evaluate rather than as personal judgments. Disagreement is productive when participants can explain the trade-offs and converge on a defensible decision.
+
+## Approval Accepts Residual Risk
+
+A review does not establish that code is defect-free. It establishes that the change has been examined sufficiently for the team to accept its remaining risks.
+
+This distinction is important because the review process itself has costs. Excessive review requirements slow delivery, while superficial approvals allow preventable defects through. The right balance depends on the change's impact, reversibility, test coverage, and operational consequences.
+
+A practical review loop is:
+
+1. The author submits a focused change with a clear explanation and relevant tests.
+2. Automated checks run and report mechanical or repeatable failures.
+3. The reviewer evaluates intent, design, correctness, and risk.
+4. The author addresses substantive concerns or explains why an alternative is preferable.
+5. The reviewer confirms that important concerns are resolved and approves the change when the remaining risk is acceptable.
+
+After merging, production incidents and escaped defects should feed back into the process. If reviews repeatedly miss the same category of issue, the answer may be a new automated check, a testing improvement, clearer design guidance, or a change in how reviewers investigate that risk. Simply asking reviewers to be more careful is rarely a sufficient corrective action.

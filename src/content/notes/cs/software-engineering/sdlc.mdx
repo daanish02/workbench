@@ -1,0 +1,137 @@
+---
+title: "SDLC"
+description: "The phases every piece of software goes through, and the process models that arrange them."
+order: 1
+tier: core
+takeaways:
+  - "The **software development life cycle (SDLC)** is the set of activities that take software from an idea to retirement: **requirements, design, implementation, testing, deployment and maintenance**."
+  - "A **process model** decides how those phases are arranged in time: one long pass (**waterfall**), repeated passes (**iterative, spiral**), or very short continuous ones (**agile, DevOps**)."
+  - "The main variable is the **feedback loop**: the longer between a decision and real feedback, the more work is built on a wrong assumption."
+  - "**Agile** is a set of values (working software, collaboration, responding to change) delivered through practices such as Scrum and Kanban; it does not mean 'no planning' or 'no documentation'."
+  - "Most of a system's life and cost is **maintenance**. Choose the model by how well the requirements are known, how costly change is, and what regulators demand, and mix models where needed."
+resources:
+  - title: "Manifesto for Agile Software Development"
+    url: "https://agilemanifesto.org/"
+    note: "The four values and twelve principles, in two short pages."
+  - title: "The Scrum Guide"
+    url: "https://scrumguides.org/scrum-guide.html"
+    note: "The official definition of Scrum roles, events and artifacts."
+  - title: "Systems development life cycle (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Systems_development_life_cycle"
+  - title: "DORA: software delivery performance"
+    url: "https://dora.dev/"
+    note: "Research on which delivery practices correlate with better outcomes."
+  - title: "Software Engineering at Google"
+    url: "https://abseil.io/resources/swe-book"
+    note: "A free book on how a very large organization builds and maintains software over time."
+---
+
+Writing code is one activity in a larger process. Someone has to decide what to build, how it should be structured, how to check it works, how to put it in users' hands and how to keep it working for years. The **software development life cycle (SDLC)** names those activities, and a **process model** says how to organize them. Everything else in this section (version control, pipelines, testing, review) is a tool serving a stage of this cycle. It is also the frame that connects the thinking skills in this course: [algorithmic thinking](../../foundations/algorithmic-thinking/) shapes a solution, [coding practices](../coding-practices/) shape the code, and [systems thinking](../../system-design/systems-thinking/) shapes the whole system.
+
+## The Phases of the Life Cycle
+
+Every model contains the same six activities. Models differ in how they order, repeat and overlap them.
+
+| Phase | Question it answers | Typical output |
+| --- | --- | --- |
+| **Requirements** | What problem are we solving, for whom, and how will we know it is solved? | User stories, acceptance criteria, constraints |
+| **Design** | How will the system be structured to meet those needs? | Architecture sketch, interfaces, data model, decision records |
+| **Implementation** | How do we build it? | Source code, reviewed and under version control |
+| **Testing** | Does it do what was asked, and nothing harmful? | Test results, defect reports |
+| **Deployment** | How does it reach users safely? | Released, monitored software |
+| **Maintenance** | How do we keep it correct, secure and useful? | Fixes, updates, new features, eventual retirement |
+
+Two points are easy to miss. First, **requirements are never complete**: users discover what they want by seeing something, and the world changes underneath the project. Second, **maintenance dominates**: most of the lifetime of a successful system is spent being changed, so the ease of changing code is worth more than the speed of writing it.
+
+<Callout type="key">
+Finding a mistake earlier is cheaper than finding it later, because less has been built on top of it. The exact "100× more expensive" figures often quoted are disputed, but the direction is solid. Every process model is, at heart, a different answer to "how soon can we get real feedback?"
+</Callout>
+
+## Process Models
+
+### Waterfall: plan everything, then build
+
+**Waterfall** runs the phases once, in order: all requirements, then all design, then all code, then all testing. It is easy to manage and produces thorough documentation, and it fits work where requirements are stable and well understood or where regulation demands a documented, auditable plan. Its weakness is that the first real feedback from users arrives at the end, when changes are most expensive. (The **V-model** is the same idea with a test phase paired to each design phase.)
+
+### Iterative and incremental: repeat in slices
+
+**Iterative** development builds a rough version, gets feedback and refines it. **Incremental** development delivers the system in usable slices. Combined, the project becomes a series of small waterfalls, each ending with something users can try. The **spiral model** adds explicit **risk analysis** at the start of each loop, which suits large projects with serious unknowns.
+
+### Agile: short cycles and constant adaptation
+
+**Agile** is a family of approaches built on the 2001 [Agile Manifesto](https://agilemanifesto.org/), which values individuals and interactions, working software, customer collaboration and responding to change. The right-hand items still matter; the manifesto says the left-hand ones matter more. Agile teams work in short cycles, deliver working software each time and re-plan constantly.
+
+Two common frameworks:
+
+- **Scrum** organizes work into fixed-length **sprints** (usually one to four weeks). A **product owner** orders the **backlog**, the team commits to a slice for the sprint, meets briefly each day, shows the result in a **review** and improves its own process in a **retrospective**.
+- **Kanban** has no fixed sprints. Work items flow across a board, and **work-in-progress (WIP) limits** keep the team from starting more than it can finish, which exposes bottlenecks.
+
+### DevOps and continuous delivery
+
+**DevOps** extends the loop to include operations: the same team builds, releases and runs the software, supported by automation ([CI/CD](../ci-cd/), [infrastructure as code](../infrastructure-as-code/), [observability](../observability/)). Releases become small, frequent and routine, which shortens the feedback loop to days or hours and makes each release low-risk.
+
+## Why Short Feedback Loops Matter
+
+Suppose a requirement turns out to be wrong. Work keeps flowing into the old assumption until the next moment the plan is revisited. Drag the change point and compare how long each model keeps building on the outdated requirement:
+
+<SdlcFeedback />
+
+```python
+import math
+
+# How long can work continue on a requirement that has already changed? Until the next time the plan is revisited.
+CYCLE_MONTHS = {"waterfall": 12, "iterative (quarterly)": 3, "agile (2-week sprints)": 0.5, "continuous (weekly)": 0.25}
+
+def stale_months(change_at, cycle):
+    """Months of effort spent on the old requirement: from the change until the next planning boundary."""
+    next_boundary = math.ceil(change_at / cycle - 1e-9) * cycle
+    return next_boundary - change_at
+
+for change_at in (1.0, 4.7, 10.0):
+    print(f"requirement changes in month {change_at}:")
+    for model, cycle in CYCLE_MONTHS.items():
+        print(f"   {model:<24} {stale_months(change_at, cycle):>5.2f} months on the outdated requirement")
+# requirement changes in month 1.0:
+#    waterfall                11.00 months on the outdated requirement
+#    iterative (quarterly)     2.00 months on the outdated requirement
+#    agile (2-week sprints)    0.00 months on the outdated requirement
+#    continuous (weekly)       0.00 months on the outdated requirement
+# requirement changes in month 4.7:
+#    waterfall                 7.30 months on the outdated requirement
+#    iterative (quarterly)     1.30 months on the outdated requirement
+#    agile (2-week sprints)    0.30 months on the outdated requirement
+#    continuous (weekly)       0.05 months on the outdated requirement
+# requirement changes in month 10.0:
+#    waterfall                 2.00 months on the outdated requirement
+#    iterative (quarterly)     2.00 months on the outdated requirement
+#    agile (2-week sprints)    0.00 months on the outdated requirement
+#    continuous (weekly)       0.00 months on the outdated requirement
+```
+
+The numbers are a simplification, but they capture the trade: a long cycle means big batches, late learning and costly change, while a short cycle means frequent, small, cheap corrections. This is why modern practice pushes towards smaller releases rather than more thorough upfront plans.
+
+## Choosing a Model
+
+| Situation | Leans towards |
+| --- | --- |
+| Requirements stable, fixed scope, heavy regulation or safety (aviation, medical devices) | Plan-driven (waterfall, V-model), often with iterative elements |
+| Requirements unclear or likely to change, users available for feedback | Agile (Scrum, Kanban) |
+| Large system with serious technical risk | Spiral or iterative, with early prototypes |
+| Running service that changes daily | Kanban or DevOps with continuous delivery |
+| Mixed (hardware plus software, a regulated core with a flexible surface) | A hybrid, plan-driven where it must be and agile elsewhere |
+
+<Callout type="pitfall">
+Adopting the ceremonies without the intent is common: stand-ups that are status reports, sprints that are mini-waterfalls, "agile" that means no design and no documentation. Agile still needs requirements, design and testing; it just does each in small, continuous pieces.
+</Callout>
+
+## Requirements and Design in Practice
+
+Requirements are most useful when they say how success is checked. A **user story** captures who, what and why ("as a shopper, I can save my cart so I can finish later"), and **acceptance criteria** make it testable ("a saved cart is still there after logging out and back in"). Non-functional needs (latency, availability, security, compliance) belong in the requirements too, because they shape the architecture; see [Systems Thinking](../../system-design/systems-thinking/).
+
+Design decisions are worth writing down briefly while their reasons are fresh. An **architecture decision record (ADR)** is a short note stating the context, the options considered, the decision and its consequences. Six months later it answers the question "why did we do it this way?" without anyone having to remember.
+
+## Maintenance Is Most of the Life
+
+After release, software keeps changing for four reasons: **corrective** (fix bugs), **adaptive** (adjust to a new operating system, law or dependency), **perfective** (new features and improvements) and **preventive** (refactoring and upgrades that avoid future problems). Skipping preventive work builds up **technical debt**: shortcuts that make every later change slower. Like financial debt, a little taken deliberately can be sensible, but unpaid interest compounds.
+
+This is why the rest of this section exists. [Version control](../git-internals/) makes change safe to attempt and undo. [CI/CD](../ci-cd/) and [testing](../testing-strategy/) make change cheap to verify. [Code review](../code-review/) spreads knowledge and catches risk. [Observability](../observability/) tells you what happened after release. Together they let a team keep the feedback loop short for as long as the software lives.

@@ -1,0 +1,188 @@
+---
+title: "Coding Practices"
+description: "Language-agnostic principles for writing code that other people can read, trust and change."
+order: 2
+tier: core
+takeaways:
+  - "Code is **read far more often than it is written**. Optimize for the next person (often you in six months): clear names, small functions, comments that explain *why*."
+  - "A handful of principles recur everywhere: **DRY** (one source of truth), **KISS** (the simplest thing that works), **YAGNI** (do not build what you do not need yet), and **separation of concerns**."
+  - "Good structure means **high cohesion** (things that change together live together) and **low coupling** (modules depend on small stable interfaces), so a change stays local."
+  - "**Fail fast and loudly**: validate at the boundary, never swallow errors, make illegal states hard to represent."
+  - "Keep **pure logic separate from side effects**: it is trivial to test and reason about. Refactor in **small, test-protected steps**, and measure before optimizing."
+resources:
+  - title: "A Philosophy of Software Design (John Ousterhout)"
+    url: "https://web.stanford.edu/~ouster/cgi-bin/book.php"
+    note: "A short book on managing complexity with deep modules and simple interfaces."
+  - title: "Refactoring catalog (Martin Fowler)"
+    url: "https://refactoring.com/catalog/"
+    note: "Named, step-by-step refactorings, language independent."
+  - title: "Google Engineering Practices"
+    url: "https://google.github.io/eng-practices/"
+    note: "How a large engineering organization approaches review and change size."
+  - title: "Parse, don't validate (Alexis King)"
+    url: "https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/"
+    note: "Make illegal states unrepresentable by turning raw input into precise types."
+  - title: "SOLID (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/SOLID"
+  - title: "PEP 20: The Zen of Python"
+    url: "https://peps.python.org/pep-0020/"
+    note: "A language's aphorisms that apply far beyond it."
+---
+
+Most of the notes in this course use Python, but the ideas that make code good are not about Python. They are about **people and change**: the person who reads your code next, and the change that will inevitably arrive. This note collects the principles that hold in any language. They connect the three kinds of thinking in this course: [algorithmic thinking](../../foundations/algorithmic-thinking/) finds a correct approach, **coding practice** turns it into code that can live in a team, and [systems thinking](../../system-design/systems-thinking/) fits that code into a whole system.
+
+## Write for the Reader
+
+Code is read many times for each time it is written, and most of the reading is trying to understand what it does so it can be changed. The cheapest improvement is therefore clarity.
+
+- **Name things for what they mean**, not how they are stored. `days_until_expiry` beats `d`; `is_eligible` beats `flag`. A good name removes the need for a comment.
+- **Keep functions small and single-purpose.** If you cannot describe what a function does without "and", it probably does two things. A good function operates at **one level of abstraction**: it either coordinates steps or does detailed work, not both.
+- **Comments explain *why*, not *what*.** The code already says what it does; a comment earns its place by recording a reason, a constraint or a surprising decision ("retry once: the provider drops the first request after idle").
+- **Prefer obvious over clever.** A one-line trick that needs a minute to decode costs more than three plain lines, every time someone reads it.
+- **Follow the conventions of the codebase.** Consistency lets readers skip syntax and focus on meaning. Let a formatter settle style arguments.
+
+<Callout type="key">
+The goal is not short code but **low reading cost**. Sometimes the clearest version is longer.
+</Callout>
+
+## Principles That Recur
+
+| Principle | Idea | Watch out for |
+| --- | --- | --- |
+| **DRY** (Don't Repeat Yourself) | Each piece of knowledge lives in one place, so a change is made once | Merging code that looks alike but changes for different reasons |
+| **KISS** (Keep It Simple) | Choose the simplest design that meets the need | Mistaking *easy to write* for *simple to understand* |
+| **YAGNI** (You Aren't Gonna Need It) | Do not build for hypothetical future needs | Under-building things that are truly expensive to add later (security, data models) |
+| **Separation of concerns** | Each part has one job: parsing, business rules, storage, display | Over-splitting into layers that only pass data through |
+| **Least surprise** | Names and behaviour match what a reader expects | APIs that do more than the name says |
+| **Composition over inheritance** | Build behaviour by combining small parts, not deep class hierarchies | Reaching for inheritance only to reuse code |
+
+**SOLID** is a well-known set of five guidelines for object-oriented design: a class should have one reason to change (**S**ingle responsibility); extend behaviour without editing tested code (**O**pen/closed); subtypes must be usable wherever their parent is (**L**iskov substitution); prefer several small interfaces to one large one (**I**nterface segregation); depend on abstractions, not concrete details (**D**ependency inversion). Treat them as heuristics for managing change, not laws: applying them everywhere produces needless indirection.
+
+## Cohesion and Coupling
+
+Two properties describe how a codebase holds together.
+
+**Cohesion** is how closely the parts of one module belong together. A cohesive module has one clear purpose, and the things that change for the same reason live in it. **Coupling** is how much modules depend on each other's details. Aim for **high cohesion and low coupling**: then a change stays inside one module instead of rippling outwards.
+
+The practical tool for low coupling is a **small, stable interface**. A module that uses a `Repository` interface does not care whether it is backed by SQL or a file; the concrete implementation can be rewritten without touching its users. See how far a change travels in each design:
+
+<ModuleRipple />
+
+A related idea is the **deep module**: a simple interface that hides a lot of complexity (a file-system call hides disks, caches and journaling). Prefer a few deep modules over many shallow ones that just forward calls.
+
+## Handle Errors Honestly
+
+Bugs hide where errors are ignored. A few habits keep them visible:
+
+1. **Validate at the boundary.** Check input where it enters the system (user input, network, files) and reject bad data immediately with a clear reason. Inside the boundary you can trust it.
+2. **Fail fast.** An early, loud failure at the point of the mistake is far easier to debug than a wrong value that travels through ten functions.
+3. **Never swallow errors.** An empty `catch` or a `return 0` default turns a bug into silent corruption. Handle an error you can recover from; otherwise let it propagate.
+4. **Make illegal states unrepresentable.** Use precise types (a validated `EmailAddress` instead of a bare string) so the compiler or constructor stops the bad value, rather than relying on every caller to remember to check.
+5. **Be careful with absent values.** Returning `null` pushes a check onto every caller. Prefer an explicit "not found" result, an empty collection, or an error.
+
+```python
+# 1. Fail fast at the boundary: bad input is rejected where it enters, with a clear reason
+def parse_age_bad(text):
+    try:
+        return int(text)
+    except Exception:
+        return 0                                      # swallowed: "abc" quietly becomes 0, and a negative age sails through unchecked
+
+def parse_age(text):
+    age = int(text)                                   # raises ValueError for "abc": the caller learns immediately
+    if not 0 <= age <= 150:
+        raise ValueError(f"age out of range: {age}")
+    return age
+
+for raw in ["34", "abc", "-5"]:
+    bad = parse_age_bad(raw)
+    try:
+        good = parse_age(raw)
+    except ValueError as e:
+        good = f"rejected ({e})"
+    print(f"{raw!r:>6}: swallowing version -> {bad!r:<4} validating version -> {good}")
+
+# 2. Guard clauses flatten nesting without changing behaviour
+def shipping_nested(order):
+    if order is not None:
+        if order["items"]:
+            if order["country"] == "US":
+                return 5 if order["total"] < 50 else 0
+            else:
+                return 15
+        else:
+            return None
+    else:
+        return None
+
+def shipping(order):
+    if order is None or not order["items"]:
+        return None
+    if order["country"] != "US":
+        return 15
+    return 5 if order["total"] < 50 else 0
+
+orders = [None, {"items": [], "country": "US", "total": 0}, {"items": [1], "country": "US", "total": 20},
+          {"items": [1], "country": "US", "total": 80}, {"items": [1], "country": "DE", "total": 80}]
+assert [shipping_nested(o) for o in orders] == [shipping(o) for o in orders]
+print("refactored shipping() returns", [shipping(o) for o in orders], "- identical to the nested version")
+
+# 3. Separate pure logic from side effects so the logic is trivial to test
+def late_fee(days_late, daily_rate=2, cap=30):         # pure: same input, same output, nothing else touched
+    return min(cap, max(0, days_late) * daily_rate)
+
+def handle_return(days_late, ledger):             # the thin shell does the I/O and calls the pure logic
+    ledger.append(late_fee(days_late))
+
+ledger = []
+handle_return(4, ledger)
+assert ledger == [8]
+print("fees:", [late_fee(d) for d in (-3, 0, 4, 40)])
+#   '34': swallowing version -> 34   validating version -> 34
+#  'abc': swallowing version -> 0    validating version -> rejected (invalid literal for int() with base 10: 'abc')
+#   '-5': swallowing version -> -5   validating version -> rejected (age out of range: -5)
+# refactored shipping() returns [None, None, 5, 0, 15] - identical to the nested version
+# fees: [0, 0, 8, 30]
+```
+
+The first block shows the cost of swallowing: "abc" silently becomes 0 and a negative age passes unchecked, while the validating version rejects both at once. The second shows **guard clauses** (handle the special cases first and return) flattening a nest of `if`s without changing behaviour, which the assertion proves. The third separates a pure calculation from the thin layer that performs I/O.
+
+## Keep Logic Pure and Side Effects at the Edge
+
+A **pure function** returns the same output for the same input and touches nothing else. Pure code is easy to understand (no hidden state), easy to test (no setup) and safe to reuse and run in parallel. Real programs need side effects (reading files, calling services, writing to a database), so the design question is where they happen. A reliable pattern is a **functional core and an imperative shell**: put the decisions in pure functions and keep the code that does I/O thin, around the edges.
+
+The same idea makes code testable. Instead of a function that creates its own database connection, pass the dependency in (**dependency injection**) so a test can supply a fake. Code that is hard to test is usually telling you its parts are too tightly coupled.
+
+<Callout type="practice">
+If a function needs a mock of five things to test, it is doing too much or knows too much. Split out the pure decision, test that thoroughly with plain values, and test the thin shell with a small number of integration tests. See [Testing Strategy](../testing-strategy/).
+</Callout>
+
+## Smells and Refactoring
+
+A **code smell** is a surface sign that something may be wrong with the design. It is a prompt to look, not a proof of a bug.
+
+| Smell | Why it hurts | Typical remedy |
+| --- | --- | --- |
+| Long function | Cannot be understood or tested as a unit | Extract well-named smaller functions |
+| Duplicated logic | Fixes must be made in several places and get missed | Extract the shared part (once it is genuinely the same idea) |
+| Magic numbers and strings | The meaning of `86400` is lost | Name the constant |
+| Deep nesting | Hard to follow the happy path | Guard clauses, early returns |
+| Large class or "god object" | Everything depends on it; every change touches it | Split by responsibility |
+| Primitive obsession | Passing raw strings and ints invites mix-ups | Introduce small types |
+| Long parameter list | Callers must remember order and meaning | Group related values into one object |
+
+**Refactoring** means changing the structure of code without changing its behaviour, in **small steps, each protected by tests**. The tests are what make it safe: if they pass before and after, behaviour is preserved. Two rules of thumb help judge when to do it. The **rule of three**: tolerate duplication the first two times and abstract on the third, when the real pattern is visible (a wrong abstraction is costlier than duplication). The **boy scout rule**: leave the code a little cleaner than you found it.
+
+## Optimize Last, With Evidence
+
+Donald Knuth's warning is "premature optimization is the root of all evil", in the sense that programmers waste time speeding up code that is not the bottleneck while making it harder to read. First make it correct and clear, then **measure** with a profiler to find where time actually goes, and fix that. Choosing a better algorithm or data structure ([Big O](../../algorithms/big-o-notation/)) usually beats micro-tuning.
+
+## Let Tools Enforce the Boring Parts
+
+Reviewers' attention is scarce, so automate what is mechanical:
+
+- A **formatter** ends style debates (the whole team's code looks the same).
+- A **linter** and **type checker** catch whole classes of mistakes before the code runs.
+- **Pre-commit hooks** and [CI](../ci-cd/) run these checks on every change, so [code review](../code-review/) can focus on design and risk.
+
+A final check: before sending code for review, read your own diff as a stranger would. Would a new teammate understand each name, each branch, and each comment? If not, fix it now; it only gets more expensive later.

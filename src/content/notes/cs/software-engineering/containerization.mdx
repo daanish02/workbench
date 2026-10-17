@@ -1,0 +1,207 @@
+---
+title: "Containerization"
+description: "Namespaces, cgroups, and layered filesystems, before any tool syntax."
+order: 5
+tier: core
+takeaways:
+  - "A container is an **ordinary process with a private view and a resource cap**, not a small virtual machine: it shares the host's kernel."
+  - "**Namespaces** isolate what a process can see (processes, network, mounts, hostname, users); **cgroups** limit how much CPU, memory and I/O it can use."
+  - "An **image** is built from read-only, shareable **layers**; a running **container** adds a thin writable layer on top using copy-on-write."
+  - "A layer is reused from cache only if it and everything below it are unchanged, so **put rarely changing steps first** in a build file."
+  - "Sharing the kernel makes containers light and fast but a weaker security boundary than a VM; runtimes add seccomp, capabilities and user namespaces to compensate."
+resources:
+  - title: "Linux man page: namespaces(7)"
+    url: "https://man7.org/linux/man-pages/man7/namespaces.7.html"
+  - title: "Linux man page: cgroups(7)"
+    url: "https://man7.org/linux/man-pages/man7/cgroups.7.html"
+  - title: "OCI Image Specification"
+    url: "https://github.com/opencontainers/image-spec"
+    note: "The open standard for how an image's layers and metadata are laid out."
+  - title: "Docker: OverlayFS storage driver"
+    url: "https://docs.docker.com/engine/storage/drivers/overlayfs-driver/"
+    note: "How image layers and the writable layer are combined."
+  - title: "Docker: Build cache"
+    url: "https://docs.docker.com/build/cache/"
+    note: "How layer caching is decided and how to use it."
+---
+
+Containerization packages an application and its dependencies into an isolated environment that can run consistently across machines. A container is not usually a complete virtual machine: it shares the host operating system's kernel while using kernel mechanisms to isolate processes, limit resources, and present a controlled filesystem. In Linux, three mechanisms explain much of how containers work: namespaces isolate what a process can see, cgroups control how much it can use, and layered filesystems make container images reusable and efficient to store. Understanding these mechanisms makes the tools and commands much easier to understand later.
+
+## Isolation Without a Second OS
+
+A virtual machine typically runs a guest operating system on virtualized hardware. A Linux container instead runs ordinary host-kernel processes inside a restricted environment.
+
+```
+Virtual machine                        Containers
+  application                            container A      container B
+  guest libraries                        (app + libs)     (app + libs)
+  guest OS and kernel                    ----------- shared host kernel -----------
+  hypervisor and virtual hardware
+```
+
+For a side-by-side measurement of what each instance carries, see [VMs vs. Containers](../../cloud/vms-vs-containers/).
+
+Because containers share the host kernel, they usually start faster and require less memory than full virtual machines. They can still have different user-space environments, including different libraries, executables, and filesystem layouts.
+
+The tradeoff is that containers do not provide a separate kernel boundary by default. A kernel vulnerability or a misconfiguration in container isolation can affect the host or other containers. Containers are useful isolation mechanisms, but they are not automatically equivalent to virtual machines as a security boundary.
+
+## Namespaces Control What It Sees
+
+A Linux namespace creates an isolated view of a particular system resource. Processes inside different namespaces can experience different environments even though they share the same kernel.
+
+For example, a process in a container may see its own process IDs, network interfaces, and hostname rather than the host's complete set.
+
+Important namespace types include:
+
+- **PID namespace:** Isolates process ID visibility. A process can appear as PID 1 inside its container while having a different PID on the host.
+- **Network namespace:** Provides an independent network environment, including interfaces, routes, and firewall-related network state.
+- **Mount namespace:** Gives processes a separate view of filesystem mount points.
+- **UTS namespace:** Isolates hostname and domain-name settings.
+- **IPC namespace:** Isolates certain interprocess communication resources.
+- **User namespace:** Maps user and group IDs, allowing a process to have different privilege identities inside and outside the namespace.
+
+Imagine a container running a web server. Its network namespace can contain a virtual network interface and its own routes. Its mount namespace can expose the application's filesystem without showing the host's full directory tree. Its PID namespace can make the web server appear to be the main process.
+
+These are not separate operating systems. The kernel implements the boundaries, and processes still depend on the same underlying kernel.
+
+Namespaces also do not automatically hide everything. Information can be exposed through deliberately shared namespaces, mounted host resources, permissions, or configuration errors. Container isolation depends on how the runtime configures the environment.
+
+## Cgroups Control What It Uses
+
+Namespaces answer a question like “What resources can this process see?” Control groups, or cgroups, address a different question: “How much of these resources can this group consume?”
+
+Cgroups allow the kernel to account for and control resources used by a group of processes. Container runtimes commonly use them to enforce resource limits.
+
+For example, an application may be configured with a memory limit of 512 MiB. If the processes in its cgroup exceed the permitted memory usage, the system may reclaim memory or invoke out-of-memory handling, potentially killing a process in that group.
+
+Cgroups can also manage:
+
+- **CPU:** Limit CPU bandwidth or weight a group relative to others.
+- **Memory:** Account for memory usage and enforce limits.
+- **I/O:** Control or prioritize certain block-device operations, where supported.
+- **Process counts:** Limit the number of processes or tasks through the relevant cgroup controls.
+
+Resource controls are important because isolation without limits does not prevent a container from consuming excessive host resources. A runaway process could otherwise use enough memory or CPU to degrade unrelated workloads.
+
+Cgroups are not the same as virtual hardware. A container with a CPU quota does not own a dedicated physical core; its processes compete for the host's CPU according to the configured scheduling and resource controls.
+
+Namespaces and cgroups therefore solve complementary problems: namespaces provide isolated views, while cgroups provide resource accounting and control.
+
+Compare what the host sees with what the process inside sees, and try a memory limit on a leaking application:
+
+<IsolationLab />
+
+## Layered Filesystems Make Images Reusable
+
+A container image contains the filesystem content and metadata needed to create a container. Rather than storing every image as a completely independent copy, container systems commonly use a layered representation.
+
+A simplified image might contain:
+
+```
+application layer   application files and configuration
+dependency layer    libraries and runtime
+base image layer    core user-space filesystem
+```
+
+This is a conceptual picture; actual image formats and storage drivers vary.
+
+If several images use the same base layer, the host can reuse the shared content rather than storing separate full copies. When an image is updated, only changed content generally needs to be transferred or stored as new layers, depending on the image format and storage implementation.
+
+When a container is created, the runtime assembles the image layers into a usable filesystem view. Many Linux container systems use a union or copy-on-write filesystem mechanism. The image layers are typically read-only, while a writable container layer captures changes made during the container's lifetime.
+
+This explains a common behavior: modifying a file inside a running container usually does not change the original image. The modification belongs to the container's writable layer. Removing the container can remove that layer, so data that must persist should be stored in an appropriate volume or external service.
+
+Layering improves distribution and storage efficiency, but it does not mean every filesystem operation is free. Large layers, inefficient image construction, or heavy writes to a container's writable layer can still affect startup, transfer time, and runtime performance.
+
+Layers also explain why the **order of build instructions** matters. A layer is reused from cache only if its own inputs and every layer below it are unchanged, so one early change forces everything after it to rebuild:
+
+<LayerCacheDemo />
+
+```python
+import hashlib
+
+def h(*parts):
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
+
+def build(dockerfile, files, cache):
+    """Layer cache: a layer is reused when its instruction, the files it reads, and the layer below are all unchanged."""
+    below, secs = "scratch", 0
+    for instruction, reads, cost in dockerfile:
+        key = h(below, instruction, *[files[f] for f in reads])
+        if key in cache:
+            status = "cached "
+        else:
+            status, secs = "rebuilt", secs + cost
+            cache.add(key)
+        print(f"  {status} {instruction}")
+        below = key
+    print(f"  -> {secs} s")
+
+bad  = [("FROM python:3.12", [], 0), ("COPY . /app", ["src", "req"], 1), ("RUN pip install -r requirements.txt", ["req"], 40)]
+good = [("FROM python:3.12", [], 0), ("COPY requirements.txt /app", ["req"], 1), ("RUN pip install -r requirements.txt", ["req"], 40), ("COPY . /app", ["src", "req"], 1)]
+for name, df in (("copy everything first", bad), ("install dependencies first", good)):
+    cache, files = set(), {"src": "v1", "req": "v1"}
+    print(name); build(df, files, cache)
+    files["src"] = "v2"                              # edit one source file and rebuild
+    print("after editing app code:"); build(df, files, cache)
+
+# union filesystem: lookups search from the top layer down; a write copies the file up into the writable layer
+layers = [{"/app/main.py": "print('v1')", "/etc/os-release": "debian"}, {"/app/config": "debug=false"}]   # read-only image layers
+writable = {}
+def read(path):
+    for layer in [writable] + layers[::-1]:
+        if path in layer: return layer[path]
+def write(path, data):
+    writable[path] = data                            # copy-up: the image layers are never modified
+write("/app/config", "debug=true")
+print("container sees:", read("/app/config"), "| image still holds:", layers[1]["/app/config"], "| writable layer:", writable)
+# copy everything first
+#   rebuilt FROM python:3.12
+#   rebuilt COPY . /app
+#   rebuilt RUN pip install -r requirements.txt
+#   -> 41 s
+# after editing app code:
+#   cached  FROM python:3.12
+#   rebuilt COPY . /app
+#   rebuilt RUN pip install -r requirements.txt
+#   -> 41 s
+# install dependencies first
+#   rebuilt FROM python:3.12
+#   rebuilt COPY requirements.txt /app
+#   rebuilt RUN pip install -r requirements.txt
+#   rebuilt COPY . /app
+#   -> 42 s
+# after editing app code:
+#   cached  FROM python:3.12
+#   cached  COPY requirements.txt /app
+#   cached  RUN pip install -r requirements.txt
+#   rebuilt COPY . /app
+#   -> 1 s
+# container sees: debug=true | image still holds: debug=false | writable layer: {'/app/config': 'debug=true'}
+```
+
+The cache is a chain of hashes: each layer's key includes the key of the layer below. The second half of the script is the other mechanism, copy-on-write: a read walks from the top layer down, and a write copies the file into the writable layer, leaving the image untouched.
+
+## Image Versus Container
+
+The distinction between image and container follows naturally from the underlying mechanisms.
+
+An image is an immutable, versioned package of filesystem content and configuration metadata. A container is an instance created from that image, with a running process environment, isolation settings, resource controls, and often a writable layer.
+
+Multiple containers can be created from the same image. They can share the image's read-only content while maintaining separate process environments and writable changes.
+
+For example, one application image might be used to create several web-server containers. A runtime can configure each container with its own process namespace, network setup, resource limits, and environment variables. The application package remains the same while the execution environment differs.
+
+Containers are also not necessarily long-running. A container can run a short task, exit, and be removed. Its lifecycle is tied to the container runtime's management of the process and its associated resources, rather than to a complete guest operating system.
+
+This separation between image and instance is what makes it practical to build an application once and deploy multiple instances across development, testing, and production environments.
+
+## An Assembly of Kernel Features
+
+The word container describes the resulting execution environment, not one single kernel feature. A container runtime coordinates several mechanisms to construct it.
+
+At a high level, the runtime obtains or unpacks the image, prepares the filesystem view, configures namespaces and cgroups, sets up networking and permissions, and starts the container's process. Additional security mechanisms, such as Linux capabilities, seccomp filters, and mandatory access-control systems, can further restrict what the process may do.
+
+The resulting environment is isolated enough for many deployment workloads while still sharing the host kernel. This is why containers are lightweight compared with full virtual machines, but also why their security and resource behavior depends on kernel configuration and runtime policy.
+
+The key mental model is to separate the responsibilities: namespaces define visibility, cgroups constrain resource use, layered filesystems provide the image's files, and the runtime brings these pieces together into an executable environment.
