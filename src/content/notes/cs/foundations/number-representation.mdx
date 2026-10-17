@@ -1,0 +1,154 @@
+---
+title: "Number Representation"
+description: "Binary, hexadecimal, and two's complement, and how numbers are stored."
+order: 2
+tier: core
+takeaways:
+  - "A bit pattern has **no meaning on its own**. Unsigned, signed, hex and text are all interpretations of the same bits."
+  - "n bits give exactly 2ⁿ patterns: unsigned 0 … 2ⁿ − 1, two's complement −2ⁿ⁻¹ … 2ⁿ⁻¹ − 1."
+  - "Hex is shorthand for binary: **one hex digit = four bits**, so a byte is always two hex digits."
+  - "**Two's complement** gives the top bit a negative weight, so one adder handles both signs. Negate by flipping the bits and adding 1."
+  - "Fixed width means arithmetic **wraps around**, and overflow is silent unless the language checks for it."
+resources:
+  - title: "Two's complement (Cornell CS 104 notes)"
+    url: "https://www.cs.cornell.edu/~tomf/notes/cps104/twoscomp.html"
+    note: "Short, classic explanation of why flip-and-add-one works."
+  - title: "Two's complement"
+    url: "https://en.wikipedia.org/wiki/Two%27s_complement"
+  - title: "Integer overflow"
+    url: "https://en.wikipedia.org/wiki/Integer_overflow"
+    note: "Real-world failures caused by wraparound, from games to rockets."
+---
+
+Computers represent numbers using patterns of bits because digital hardware distinguishes between a small number of physical states, commonly interpreted as 0 and 1. Binary is the underlying number system, hexadecimal provides a compact way to read binary patterns, and two’s complement gives those patterns a practical interpretation as signed integers. The crucial distinction is that a bit pattern has no inherent numerical meaning: its value depends on how the system interprets it.
+
+## Binary: representing numbers with bits
+
+Our everyday number system is decimal, or base 10. Each digit represents a power of ten, determined by its position. Binary works the same way, except each position represents a power of two.
+
+For example,
+
+$$
+1011_2 = 1(2^3)+0(2^2)+1(2^1)+1(2^0)=11_{10}
+$$
+
+The rightmost bit represents $2^0=1$, the next represents $2^1=2$, then $2^2=4$, and so on. A bit is therefore not a tiny decimal digit; it is a binary digit whose positional weight depends on where it appears.
+
+Converting a positive integer from decimal to binary involves repeatedly dividing by two and recording the remainders, then reading those remainders from last to first. For example, $13_{10}=1101_2$. Conversely, converting binary to decimal means adding the powers of two wherever a bit is 1.
+
+A fixed-width binary representation uses a specified number of bits. With $n$ bits, there are $2^n$ possible patterns, ranging from all zeros to all ones. If the patterns represent unsigned integers, their values range from
+
+$$
+0 \quad \text{to} \quad 2^n-1
+$$
+
+Thus, 8 bits can represent 256 distinct unsigned values, from 0 to 255. The number of patterns is fixed by the width; their interpretation is a separate question.
+
+## Hexadecimal: a compact view of binary
+
+Long binary strings are difficult for humans to read and compare. Hexadecimal, or base 16, makes them shorter by assigning a single digit to each group of four bits. Its digits are `0`–`9` followed by `A`–`F`, where `A` represents 10 and `F` represents 15.
+
+The relationship is direct because $16=2^4$: every hexadecimal digit corresponds to exactly four binary bits.
+
+For example,
+
+$$
+\begin{aligned} 1101\,1010_2 &= \mathrm{DA}_{16} \\ \mathrm{D} &= 13,\qquad \mathrm{A} = 10 \\ \mathrm{DA}_{16} &= 13(16)+10=218_{10} \end{aligned}
+$$
+
+To convert binary to hexadecimal, group the bits into fours from the right and translate each group. Add leading zeros if needed to complete the leftmost group. To convert hexadecimal to binary, replace each digit with its four-bit equivalent.
+
+Hexadecimal is especially useful when inspecting memory addresses, machine instructions, byte values, and color codes. A byte contains eight bits, so it can be written as exactly two hexadecimal digits, from `00` to `FF`. Hexadecimal does not change the underlying data; it is simply a more convenient notation for the same bit pattern.
+
+## Unsigned and signed integers
+
+A sequence of bits does not specify whether a number is positive or negative. Consider the 8-bit pattern `11111111`. Interpreted as an unsigned integer, it equals 255. Under a common signed representation, the same pattern equals −1.
+
+<Callout type="key">
+The bits themselves have not changed. Only the interpretation has. Every number type in every language is a pairing of a **bit width** with an **interpretation rule**.
+</Callout>
+
+For unsigned integers, every bit contributes a nonnegative power of two. For signed integers, the representation must also encode negative values. Computers commonly use **two’s complement** for signed integers because it allows addition and subtraction to use the same basic binary arithmetic circuitry.
+
+For an $n$-bit two’s complement integer, the representable range is
+
+$$
+-2^{n-1} \quad \text{to} \quad 2^{n-1}-1
+$$
+
+With 8 bits, that means −128 through 127. One bit pattern represents each value in this range, giving 256 distinct signed values. Compared with the unsigned range, half of the available patterns now represent negative numbers, and the largest positive value is reduced.
+
+## Two’s complement: encoding negative numbers
+
+Positive integers in two’s complement use the familiar binary representation, provided the value fits within the chosen width. Negative values are formed by taking the positive value’s fixed-width binary representation, flipping every bit, and adding one.
+
+To represent $-5$ using 8 bits, begin with $5$:
+
+```
+  00000101   +5
+  11111010   flip every bit
++        1
+-----------
+  11111011   -5
+```
+
+Why does this work? For an $n$-bit pattern with bits $b_{n-1},\ldots,b_0$, two’s complement interprets the most significant bit as having a negative weight:
+
+$$
+x = -b_{n-1}\,2^{n-1} + \sum_{i=0}^{n-2} b_i\,2^i
+$$
+
+In words: every bit keeps its usual positive weight except the top one, which counts as $-2^{n-1}$ instead of $+2^{n-1}$. For `11111011`, the leading bit contributes $-128$, while the remaining bits contribute $123$. The result is $-128+123=-5$.
+
+<BitExplorer />
+
+This encoding also makes arithmetic convenient. For example, adding $5$ and $-5$ in 8-bit arithmetic produces:
+
+```
+  00000101
++ 11111011
+----------
+1 00000000
+```
+
+The result is eight zeros after discarding the carry beyond the 8-bit width, giving zero. The same binary adder can handle positive and negative integers without needing a separate subtraction mechanism for each case.
+
+<Callout type="pitfall" title="The asymmetry">
+The negative range contains one more value than the positive range. An 8-bit signed integer can represent $-128$, but not $+128$. Consequently, negating the smallest representable value overflows: flip-and-add-one turns `10000000` back into `10000000`, so in many languages `abs(INT_MIN)` is still negative.
+</Callout>
+
+## Bit width, overflow, and interpretation
+
+A fixed-width representation places limits on which values can be stored. In ordinary $n$-bit arithmetic, results are retained modulo $2^n$: any carry beyond the available width is discarded. This behavior is useful for hardware, but it can produce results that differ from ordinary integer arithmetic.
+
+For example, in 8-bit unsigned arithmetic,
+
+$$
+250+10=260\equiv 4\pmod{256}
+$$
+
+The stored result is 4 because the value wraps around after 255. In signed two’s complement arithmetic, overflow can instead occur when a mathematically valid result falls outside the signed range. For example, adding 100 and 50 in 8 bits produces the bit pattern `10010110`, which represents −106 as a signed value—even though the mathematical sum is 150.
+
+The same pattern can therefore have different meanings depending on the data type and operation. A processor or programming language may detect, flag, or otherwise handle overflow differently depending on the operation and architecture; it should not be assumed that every calculation automatically reports it.
+
+<NumberWheel />
+
+Python integers never overflow, which makes Python a handy place to *simulate* fixed-width arithmetic and see what the hardware would do:
+
+```python
+def to_unsigned(x, bits=8):
+    # Keep only the low `bits` bits. Fixed-width hardware does this to every result.
+    return x & ((1 << bits) - 1)
+
+def to_signed(pattern, bits=8):
+    # A set top bit was worth -2^(bits-1), not +2^(bits-1): a difference of 2^bits.
+    return pattern - (1 << bits) if pattern & (1 << (bits - 1)) else pattern
+
+print(f"{to_unsigned(-5):08b}")   # 11111011  (how -5 is stored in a byte)
+print(to_signed(0b11111011))      # -5
+print(to_unsigned(250 + 10))      # 4         (unsigned wraparound, mod 256)
+print(to_signed(100 + 50))        # -106      (signed overflow)
+print(f"{218:08b} = {218:#x}")    # 11011010 = 0xda
+```
+
+This is why binary representation is more than a way of writing numbers. It is the agreement between a bit pattern, a fixed width, and a rule for interpreting the pattern. Binary defines the underlying digits, hexadecimal makes those digits easier to inspect, and two’s complement assigns signed integer meanings to them.

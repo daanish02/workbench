@@ -1,0 +1,101 @@
+---
+title: "Abstraction Layers"
+description: "Hardware → machine code → assembly → high-level languages → applications."
+order: 4
+tier: core
+takeaways:
+  - "Each layer exposes an **interface** and hides its implementation; the layer above depends only on the interface."
+  - "The usual stack: hardware → machine code → assembly → high-level language → application, with runtimes, the OS and libraries woven in between."
+  - "Abstraction **organizes** complexity rather than removing it, which lets parts be swapped and teams work independently."
+  - "Abstractions **leak**: speed, errors and limits from lower layers show through, which is why knowing them pays off when things break."
+resources:
+  - title: "The Law of Leaky Abstractions (Joel Spolsky)"
+    url: "https://www.joelonsoftware.com/2002/11/11/the-law-of-leaky-abstractions/"
+    note: "The classic essay on why lower layers keep showing through."
+  - title: "Python dis module"
+    url: "https://docs.python.org/3/library/dis.html"
+    note: "Reference for reading CPython bytecode, the layer between your code and the interpreter."
+  - title: "Compiler Explorer"
+    url: "https://godbolt.org/"
+    note: "Type C, C++, Rust or Go and watch the assembly appear. Ideal for exploring the language-to-machine boundary."
+---
+
+Abstraction layers let humans work with computers without having to manage every physical detail of their operation. At the bottom, hardware manipulates electrical states; above it, machine code, assembly, and high-level languages provide increasingly convenient ways to describe computation. Applications combine these layers into useful behavior. Each layer hides implementation details behind an interface, allowing people to reason about what a system does without needing to understand every mechanism underneath it.
+
+## Why abstraction exists
+
+A computer is enormously complex when viewed as a collection of transistors, electrical signals, memory cells, and control circuits. Yet a programmer can write `print("Hello")` without manually controlling any of those components.
+
+This is possible because abstraction separates what a component does from how it does it. A layer exposes certain operations and hides the details required to implement them. The layer above relies on the exposed behavior rather than needing to know the underlying mechanism.
+
+<Callout type="key">
+Abstraction does not eliminate complexity; it organizes it. Each layer answers *what* it does through an interface and keeps *how* to itself.
+</Callout>
+
+A programmer can use a function without knowing its implementation, just as an application can request that an operating system open a file without controlling the storage device directly. When something goes wrong, however, understanding the lower layers can become necessary.
+
+## The layers from hardware to applications
+
+<AbstractionStack />
+
+The stack is a useful mental model, though real computers contain additional layers and many interactions that do not follow one simple vertical path.
+
+**Hardware** is the physical machinery: processors, registers, memory, storage devices, and the circuits that connect them. The processor executes operations through electrical signals and digital logic. Hardware determines which instructions can be performed directly and how data is physically represented and moved.
+
+**Machine code** is the binary encoding of instructions that a processor architecture can execute. An instruction might add two register values, load data from memory, or branch to another instruction. The exact encoding and meaning depend on the processor's instruction set architecture (ISA). Machine code is not universally interchangeable between different processor architectures.
+
+**Assembly language** represents machine instructions using human-readable mnemonics and symbolic operands. Instead of reading a binary instruction encoding, a programmer might see `ADD R1, R2, R3`. An assembler translates such instructions into machine code. The exact syntax and meaning vary by architecture and assembler.
+
+**High-level languages** such as Python, Java, C, and Rust allow programmers to express computation using concepts closer to algorithms and problem domains: variables, functions, loops, data structures, and types. A compiler or interpreter translates or executes these constructs through lower-level mechanisms. The path varies: C may compile directly to machine code, while Python commonly runs through a runtime that executes bytecode and may use native machine code internally.
+
+**Applications** combine code, libraries, runtime services, and operating-system facilities to perform tasks for users. A web browser, image editor, or spreadsheet program is not simply one layer of code; it is a complete system built on top of many abstractions, often including networking, filesystems, graphics APIs, and external services.
+
+## How a request travels through the layers
+
+Consider an application saving a document. The user selects Save, and the application invokes a file-writing interface provided by the operating system. The operating system and its filesystem code determine how the data should be handled, while device drivers and storage hardware carry out the physical operations.
+
+At lower levels, the processor executes machine instructions implementing these operations. Those instructions are represented in memory as bit patterns and ultimately carried out by digital circuits. The exact path depends on the operating system, programming language, hardware, and storage device; there is no single instruction that corresponds directly to “save this document.”
+
+<RequestTrace />
+
+The important point is that each layer translates a high-level intention into lower-level operations. The application reasons about documents and files, the operating system reasons about file operations and permissions, and the hardware handles memory transfers and physical storage behavior. Each layer can be understood and developed largely independently as long as its interface and guarantees are respected.
+
+## Interfaces, contracts, and dependencies
+
+Abstraction works because layers agree on interfaces. An interface specifies what operations are available and what behavior callers can expect, without necessarily exposing how those operations are implemented.
+
+For example, a programming language's file API may provide a function to read bytes from a file. The caller does not need to know whether the underlying data resides on an SSD, a network filesystem, or a cached memory page. The implementation can change while the interface remains stable.
+
+This separation creates modularity: one component can be replaced or improved without rewriting every component that depends on it. It also allows different teams to work at different levels of the system.
+
+<Callout type="pitfall" title="Abstractions leak">
+Interfaces can leak implementation details through performance, errors, resource limits, or unexpected behavior. A program that reads a large file may need to understand buffering and memory usage even though its file API hides the storage hardware. The lower layers remain relevant whenever their properties affect the result.
+</Callout>
+
+## Why the stack is not a simple ladder
+
+The sequence from hardware to applications is a conceptual model, not a literal chain in which every layer directly translates into the next. High-level code may pass through a compiler, intermediate representation, virtual machine, interpreter, runtime, and libraries before reaching machine instructions.
+
+You can peel back one of these hidden layers yourself. CPython first compiles every function to bytecode for its virtual machine, and the standard `dis` module prints it:
+
+```python
+import dis
+
+def add(a, b):
+    return a + b
+
+dis.dis(add)
+# Output on CPython 3.14 (opcode names change between versions):
+#   RESUME                   0
+#   LOAD_FAST_BORROW_LOAD_FAST_BORROW 1 (a, b)   <- push both arguments in one step
+#   BINARY_OP                0 (+)               <- the interpreter's generic "add" opcode
+#   RETURN_VALUE
+```
+
+`BINARY_OP` does not know that `a` and `b` are integers; at run time the interpreter checks their types and calls the matching addition routine, which is itself compiled machine code. A C compiler, by contrast, knows the types ahead of time and can emit a single `lea` instruction. Same source-level idea, very different paths underneath. Applications also call operating-system services and hardware interfaces that bypass some of the apparent layers.
+
+Assembly and machine code are closely related representations of instructions, while high-level languages provide more substantial abstractions. Applications, meanwhile, are built using multiple layers simultaneously rather than forming a single language level above all the others.
+
+The same distinction explains portability. A high-level program can often run on different processor architectures if the required compiler, runtime, libraries, and operating-system interfaces exist for each platform. Machine code compiled for one ISA generally cannot be executed directly by an incompatible processor without emulation or translation.
+
+Abstraction therefore gives computers both their complexity and their usability: each layer builds on capabilities beneath it, exposes a more manageable interface above it, and allows a human to work at the level appropriate to the problem.

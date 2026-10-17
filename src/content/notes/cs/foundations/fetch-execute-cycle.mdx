@@ -1,0 +1,138 @@
+---
+title: "Fetch-Execute Cycle"
+description: "What a computer actually does: the fetch-execute cycle, and why instructions are just data."
+order: 1
+tier: core
+takeaways:
+  - "A program is just **bit patterns in memory**. The processor runs it by repeating one loop: fetch, decode, execute, write back, advance."
+  - "The **program counter (PC)** holds the address of the next instruction; jumps and branches work by changing it."
+  - "Code and data are stored the same way. Whether a word is an instruction or a number depends only on **how it is used**."
+  - "Modern CPUs pipeline and reorder this work, but the **visible result** must match the simple model."
+resources:
+  - title: "Instruction cycle"
+    url: "https://en.wikipedia.org/wiki/Instruction_cycle"
+    note: "The cycle in more detail, including how pipelining overlaps its stages."
+  - title: "Nand2Tetris"
+    url: "https://www.nand2tetris.org/"
+    note: "Free course that builds a working computer from NAND gates up to a compiler. The best way to make this note concrete."
+  - title: "Ben Eater: build an 8-bit computer"
+    url: "https://eater.net/8bit"
+    note: "Video series wiring a breadboard CPU whose fetch–execute cycle you can literally watch."
+---
+
+A computer is a machine that repeatedly reads instructions encoded as data, interprets them according to its architecture, and performs the operations they specify. At the hardware level, a program is not an abstract sequence of ideas: it is a sequence of encoded instructions stored in memory, alongside the data those instructions manipulate. The processor retrieves an instruction, decodes what it means, executes the corresponding operation, and moves on to the next instruction or a different location in the program. This repeating process is the **fetch–execute cycle**, and it is the foundation of conventional programmable computing.
+
+## Instructions are data that tell the machine what to do
+
+Consider the difference between a human following a recipe and a computer running a program. A human interprets written instructions using experience and judgment. A processor instead follows a precisely defined set of operations established by its [instruction set architecture (ISA)](https://en.wikipedia.org/wiki/Instruction_set_architecture). An instruction might mean "add these two numbers," "load a value from memory," or "jump to another instruction if a condition is satisfied."
+
+At the machine level, instructions are encoded as binary patterns. A simplified instruction might specify an operation and the registers involved:
+
+```
+ADD R1, R2, R3
+```
+
+Conceptually, this means
+
+$$
+R_1 \leftarrow R_2 + R_3
+$$
+
+The actual machine instruction is a binary encoding defined by the processor's architecture. The processor's control logic recognizes that encoding and activates the hardware needed to perform the addition.
+
+<Callout type="key">
+Instructions and ordinary data are both represented as bits. A sequence of bits has no inherent meaning by itself; its interpretation depends on how the hardware and software treat it. The same bit pattern could represent an integer, part of a memory address, a character, or an instruction, depending on the context.
+</Callout>
+
+This is the foundation of the **stored-program concept**. In a conventional [von Neumann architecture](https://en.wikipedia.org/wiki/Von_Neumann_architecture), program instructions and data occupy a shared memory system. The processor can retrieve instructions from memory just as it retrieves values that those instructions operate on.
+
+## What happens during the fetch–execute cycle
+
+The processor maintains a [program counter (PC)](https://en.wikipedia.org/wiki/Program_counter), a register that identifies the memory address associated with the next instruction to fetch. It also has an [instruction register (IR)](https://en.wikipedia.org/wiki/Instruction_register) or equivalent internal structures that hold the instruction being processed.
+
+A simplified cycle works as follows.
+
+1. **Fetch:** The processor uses the program counter to locate and retrieve the next instruction from memory.
+2. **Decode:** The processor determines which operation the instruction specifies, including its operands and addressing mode.
+3. **Execute:** The relevant hardware performs the operation. This might involve arithmetic, moving data, accessing memory, or evaluating a condition.
+4. **Write back:** If the operation produces a result, that result is written to a register or memory as required.
+5. **Advance:** The processor selects the next instruction address, usually by advancing the program counter, unless a jump, branch, exception, or other control-flow event changes it.
+
+The process then repeats.
+
+<TinyCpu />
+
+This is a conceptual model rather than a literal timetable for every modern processor. Contemporary CPUs use pipelines, caches, speculative execution, multiple execution units, and out-of-order execution to overlap and reorganize work. Nevertheless, the architectural effect must remain consistent with the program's specified behavior.
+
+## How a program becomes a sequence of machine operations
+
+Suppose a program needs to add two values and store the result. At a conceptual level, the processor might execute operations like these:
+
+```
+LOAD R1, [A]
+LOAD R2, [B]
+ADD  R3, R1, R2
+STORE [C], R3
+```
+
+The program reads values from memory locations `A` and `B`, adds them, and stores the result at `C`. In mathematical form,
+
+$$
+C \leftarrow A + B
+$$
+
+The processor does not need to understand what `A`, `B`, or `C` mean to the programmer. They are represented through addresses or other machine-level references. The instructions specify how to retrieve and manipulate the corresponding values.
+
+The whole cycle fits in a few lines of Python. This toy machine stores its program and its data in the same `memory`, exactly like the stored-program model:
+
+```python
+# Program and data share one memory: addresses 0-4 hold instructions, 12-14 hold numbers.
+memory = {
+    0: ("LOAD", "R1", 12),         # R1 <- memory[12]
+    1: ("LOAD", "R2", 13),         # R2 <- memory[13]
+    2: ("ADD", "R3", "R1", "R2"),  # R3 <- R1 + R2
+    3: ("STORE", 14, "R3"),        # memory[14] <- R3
+    4: ("HALT",),
+    12: 7, 13: 5, 14: 0,           # A, B, C
+}
+registers = {"R1": 0, "R2": 0, "R3": 0}
+pc = 0  # program counter: where the next instruction lives
+
+while True:
+    instruction = memory[pc]   # fetch: the PC, not the contents, decides this is code
+    op, *args = instruction    # decode: separate the opcode from its operands
+    pc += 1                    # advance now; a jump instruction would overwrite pc instead
+    if op == "HALT":
+        break
+    elif op == "LOAD":         # execute + write back, one branch per opcode
+        reg, addr = args
+        registers[reg] = memory[addr]
+    elif op == "ADD":
+        dst, a, b = args
+        registers[dst] = registers[a] + registers[b]
+    elif op == "STORE":
+        addr, reg = args
+        memory[addr] = registers[reg]
+
+print(memory[14])  # 12
+```
+
+Real processors do the decode step in hardware and the "dispatch" is wiring rather than an `if` chain, but the shape of the loop is the same. Interpreters for languages like Python are built around exactly this kind of loop, only over bytecode instead of machine instructions.
+
+High-level languages such as Python, C, and Java provide abstractions that make programs easier to write. A compiler or interpreter translates those abstractions into operations that a processor or runtime can carry out. The resulting machine instructions still rely on the same fundamental mechanisms: encoded operations, registers, memory, and control flow.
+
+This is also why a computer can perform radically different tasks without changing its fundamental hardware design. The hardware supplies a general set of operations; different programs arrange those operations into different sequences. A text editor, a physics simulation, and a video game differ mainly in their instructions, data, and supporting software, not in the basic principle by which the processor executes a program.
+
+## Why the distinction between instructions and data matters
+
+If instructions and data are both bits, what prevents the processor from treating a number as an instruction or an instruction as a number?
+
+The answer is context and control flow. During normal execution, the program counter directs the processor toward locations interpreted as instructions. An instruction can then direct the processor to retrieve other locations as data. The hardware does not need to infer the intended meaning of every bit pattern; the architecture defines how each operation interprets its inputs.
+
+This flexibility has important consequences. In a stored-program computer, software can be loaded into memory and executed without physically rewiring the machine. Programs can also generate, transform, inspect, or even modify instruction representations. This is part of the broader idea of [code as data](https://en.wikipedia.org/wiki/Stored-program_computer), which appears in compilers, interpreters, virtual machines, and metaprogramming.
+
+<Callout type="pitfall" title="Security consequence">
+If an attacker can cause data to be interpreted as executable instructions, or redirect control flow toward unintended code, the processor may perform operations the programmer never intended. Modern systems use mechanisms such as memory permissions (marking data pages non-executable), address-space isolation, and execution protections to reduce these risks.
+</Callout>
+
+There is a subtle but important distinction here: the processor executes **instructions, not meanings**. It does not inherently know that a value represents a bank balance, a temperature, or a person's age. Those meanings arise from the program's design and the conventions imposed on the data. The machine follows the operations it has been given, and the correctness of the result depends on whether those operations correctly represent the problem.

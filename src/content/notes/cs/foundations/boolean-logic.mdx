@@ -1,0 +1,124 @@
+---
+title: "Boolean Logic"
+description: "AND, OR, NOT, XOR, and the truth tables that define them."
+order: 3
+tier: core
+takeaways:
+  - "Two values, four core operators: **AND** (both true), **OR** (at least one), **NOT** (flip), **XOR** (the inputs differ)."
+  - "A **truth table** defines an operator completely by listing every input combination: 2ⁿ rows for n inputs."
+  - "**De Morgan's laws**: not (A and B) = (not A) or (not B); not (A or B) = (not A) and (not B)."
+  - "The same logic runs in gates, in the CPU's adder (XOR for the sum, AND for the carry), and in every `if` you write."
+resources:
+  - title: "NandGame"
+    url: "https://nandgame.com/"
+    note: "Browser puzzle game: build logic gates, an adder, and eventually a CPU, all from NAND."
+  - title: "De Morgan's laws"
+    url: "https://en.wikipedia.org/wiki/De_Morgan%27s_laws"
+  - title: "Boolean algebra"
+    url: "https://en.wikipedia.org/wiki/Boolean_algebra"
+    note: "The full set of laws, plus the history from George Boole to Claude Shannon's circuits."
+---
+
+Boolean logic is a system for reasoning about values that are either true or false. Its basic operations—AND, OR, NOT, and XOR—combine or transform these values according to precise rules. Truth tables make those rules explicit, while the same logic can be implemented in computer circuits and used to control program behavior. Understanding Boolean logic reveals how simple decisions can be built from combinations of true/false conditions.
+
+## Truth values and logical operations
+
+Boolean logic works with two values: true and false, often represented as $1$ and $0$. These symbols resemble binary digits, but the concepts are distinct: binary represents data, while Boolean logic describes relationships between truth values.
+
+A logical operator takes one or more Boolean inputs and produces a Boolean output. For example, if $A$ means “the door is open” and $B$ means “the key is valid,” then $A \land B$ is true only when both conditions are true.
+
+A **truth table** lists every possible input combination and the output produced by an operation. With two Boolean inputs, there are $2^2=4$ possible combinations. Truth tables are useful because they define an operation completely, without relying on ambiguous natural-language interpretations.
+
+## AND, OR, NOT, and XOR
+
+AND ($\land$) is true only when both inputs are true. It represents a conjunction: both conditions must hold.
+
+OR ($\lor$) is true when at least one input is true, including when both are true. This is the usual inclusive OR of formal logic.
+
+<Callout type="pitfall" title="“Or” in English vs. in logic">
+In everyday language, “soup or salad” usually means one but not both. Boolean OR has no such restriction: true OR true is true. When a requirement really means “exactly one”, the operator you want is XOR.
+</Callout>
+
+NOT ($\lnot$) reverses a truth value. True becomes false, and false becomes true. It operates on one input, so it is called a unary operator.
+
+XOR ($\oplus$), or exclusive OR, is true when the two inputs differ. If exactly one input is true, the output is true; if both inputs match, the output is false.
+
+## Truth tables
+
+The following table defines all four operations. Here, $0$ means false and $1$ means true.
+
+| $A$ | $B$ | $A \land B$ | $A \lor B$ | $A \oplus B$ |
+| ------- | ------- | --------------- | -------------- | ---------------- |
+| 0       | 0       | 0               | 0              | 0                |
+| 0       | 1       | 0               | 1              | 1                |
+| 1       | 0       | 0               | 1              | 1                |
+| 1       | 1       | 1               | 1              | 0                |
+
+NOT has a single input:
+
+| $A$ | $\lnot A$ |
+| ------- | ------------- |
+| 0       | 1             |
+| 1       | 0             |
+
+An easy way to distinguish the binary operators is to look at the final row, where both inputs are true. AND outputs true, OR outputs true, but XOR outputs false. XOR cares about whether the inputs differ, not merely whether at least one is true.
+
+<LogicGates />
+
+## Combining logical expressions
+
+Logical operators become more powerful when combined. Suppose a system should unlock when a valid key is present and either an administrator is present or emergency mode is enabled. Let $K$ represent a valid key, $A$ an administrator, and $E$ emergency mode. The condition is
+
+$$
+K \land (A \lor E)
+$$
+
+The parentheses matter: the system requires a valid key, plus at least one of the other two conditions. If the expression were $(K \land A) \lor E$, emergency mode alone would be sufficient.
+
+Two important identities help simplify expressions:
+
+$$
+\begin{aligned} A \land 1 &= A & A \lor 0 &= A \\ A \land 0 &= 0 & A \lor 1 &= 1 \end{aligned}
+$$
+
+AND with true leaves a value unchanged, while OR with false does the same. Conversely, AND with false is always false, and OR with true is always true. These identities are useful when simplifying circuits and checking program conditions.
+
+De Morgan’s laws describe how NOT interacts with AND and OR:
+
+$$
+\begin{aligned} \lnot(A \land B) &= \lnot A \lor \lnot B \\ \lnot(A \lor B) &= \lnot A \land \lnot B \end{aligned}
+$$
+
+In words, “not both $A$ and $B$” means at least one is false; “not either $A$ or $B$” means both are false. These equivalences are valuable when translating requirements into logic or simplifying conditions.
+
+With only two inputs there are just four cases, so a law like this can be checked exhaustively, which is exactly what a truth table does:
+
+```python
+from itertools import product
+
+# product((False, True), repeat=2) yields every row of a two-input truth table.
+for a, b in product((False, True), repeat=2):
+    assert (not (a and b)) == ((not a) or (not b))   # De Morgan, first law
+    assert (not (a or b)) == ((not a) and (not b))   # De Morgan, second law
+print("both laws hold in all 4 cases")
+
+key, admin, emergency = True, False, True
+print(key and (admin or emergency))    # True: key plus one of the other two
+print((key and admin) or emergency)    # True, but for a different reason: emergency alone suffices
+```
+
+<Callout type="pitfall" title="One test case proves little">
+The two `print` lines agree for this input, yet the expressions are not equivalent: set `key = False` and only the second one stays true. A truth table would expose the difference immediately, while testing a single case does not.
+</Callout>
+
+## From logic to computers
+
+Boolean logic is not just an abstract notation. Digital circuits implement these operations using logic gates, which process electrical signals interpreted as binary values. AND, OR, and NOT gates perform the corresponding operations; XOR gates are particularly useful in arithmetic circuits because they produce the sum bit of binary addition before the carry is considered.
+
+<HalfAdder />
+
+The same operators exist in programming languages at two levels. *Logical* operators (`and`, `or`, `not` in Python) work on whole truth values. *Bitwise* operators (`&`, `|`, `^`, `~`) apply the same truth tables to every bit position of an integer at once: `6 & 3` is `0b110 & 0b011 = 0b010 = 2`, and `6 ^ 3` is `0b101 = 5`.
+
+At the software level, Boolean logic controls decisions and combines conditions. An expression such as `is_logged_in AND has_permission` determines whether both requirements are satisfied. XOR can test whether two Boolean values differ, while NOT can invert a condition.
+
+The underlying principle is the same in both hardware and software: define how each possible input combination maps to an output. Once that mapping is precise, more complex behavior can be constructed from simple operations.

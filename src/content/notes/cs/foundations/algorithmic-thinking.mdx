@@ -1,0 +1,131 @@
+---
+title: "Algorithmic Thinking"
+description: "Pseudocode and the habit of turning problems into precise steps."
+order: 5
+tier: core
+takeaways:
+  - "An **algorithm** is a finite, precise procedure from input to output. Start by pinning down the inputs, the expected output and the constraints."
+  - "**Pseudocode** captures the logic without language syntax, which surfaces decisions such as starting values and edge cases."
+  - "Most algorithms are built from three structures: **sequence**, **selection** (if) and **iteration** (loops)."
+  - "**Trace** by hand, test the edge cases (empty, single, negative, duplicates), then ask how the work grows, e.g. O(n)."
+resources:
+  - title: "Python Tutor"
+    url: "https://pythontutor.com/"
+    note: "Paste any small program and step through it line by line with every variable drawn, a trace done for you."
+  - title: "Pseudocode"
+    url: "https://en.wikipedia.org/wiki/Pseudocode"
+    note: "Common conventions, and how textbooks such as CLRS write their pseudocode."
+  - title: "How to Solve It (George Pólya)"
+    url: "https://en.wikipedia.org/wiki/How_to_Solve_It"
+    note: "The 1945 classic on problem decomposition; its four-step method applies directly to algorithm design."
+---
+
+Algorithmic thinking is the process of turning a problem into a sequence of precise, manageable steps that reliably produce a desired result. Pseudocode helps express those steps without committing to the syntax of a particular programming language. Together, they let you reason about a solution's logic before worrying about how to implement it in code. The central skill is not writing instructions quickly, but identifying the right steps, their order, and the conditions under which they work.
+
+## From problems to algorithms
+
+An algorithm is a finite, well-defined procedure for solving a problem or performing a computation. It takes some input, follows specified operations, and produces an output. An algorithm might describe how to sort a list, find the largest number in a collection, or determine whether a password meets certain requirements.
+
+Developing an algorithm begins by clarifying the problem. What information is provided? What result is expected? What constraints must be respected? Without these answers, it is easy to produce a procedure that works for the obvious example but fails on less convenient inputs.
+
+Consider finding the largest number in a list. The important insight is that you do not need to compare every number with every other number. You can keep track of the largest value seen so far and update it whenever a larger value appears.
+
+<Callout type="key">
+A useful algorithm often emerges when the problem is reframed around the **smallest amount of information needed to make the next decision**. For the largest number, that is a single value: the best seen so far.
+</Callout>
+
+## Pseudocode: expressing logic without syntax
+
+Pseudocode describes an algorithm in a structured, readable form that resembles programming but is not bound to a specific language. It commonly uses constructs such as `IF`, `ELSE`, `FOR`, `WHILE`, and `RETURN`.
+
+For example, an algorithm for finding the largest number in a non-empty list can be written as:
+
+```
+FUNCTION FindLargest(numbers)
+    largest = numbers[0]
+
+    FOR each number IN numbers
+        IF number > largest
+            largest = number
+
+    RETURN largest
+```
+
+The first assignment establishes a starting value. The loop examines each number, the condition determines whether the current candidate should change, and the final return produces the result.
+
+<Callout type="pitfall" title="The starting value matters">
+Initializing `largest` with the first element is important. Starting at zero would fail for a list containing only negative numbers, because zero would be larger than every element despite not appearing in the list. The example also assumes the input is non-empty; an implementation must decide what to do if that assumption is not guaranteed.
+</Callout>
+
+Pseudocode is useful precisely because it exposes these decisions without distracting you with language-specific details such as type declarations, braces, imports, or library APIs. There is no single universal pseudocode syntax, so clarity and consistency matter more than exact formatting.
+
+## Decomposing problems into steps
+
+Algorithmic thinking becomes easier when a large problem is divided into smaller subproblems. This is called **decomposition**. Each part should have a clear responsibility, and the parts should fit together to solve the original problem.
+
+Suppose a program must calculate the average test score for a class. The task can be decomposed into reading the scores, accumulating their total, counting how many there are, and dividing the total by the count. This decomposition also reveals a necessary edge case: if there are no scores, division by zero must be avoided.
+
+Another useful technique is **abstraction**: temporarily ignoring details that do not affect the current reasoning. When designing the average calculation, you can focus on the total and count before deciding how scores will be read from a file or displayed to a user.
+
+These techniques complement each other. Decomposition separates a problem into manageable pieces; abstraction keeps each piece understandable by hiding irrelevant detail.
+
+## Sequence, selection, and iteration
+
+Most basic algorithms can be expressed using three fundamental control structures.
+
+**Sequence** means performing operations in a particular order. For example, calculate a total before dividing it to obtain an average. Changing the order can change the result or make the computation impossible.
+
+**Selection** means choosing between paths based on a condition. An `IF` statement might check whether a number is negative before applying a transformation. The condition determines which branch runs.
+
+**Iteration** means repeating operations, usually until every item has been processed or a condition changes. A loop can inspect every element of a list or repeat a search until it finds a match.
+
+These structures combine to express more complex behavior. In the largest-number algorithm, sequence initializes the candidate, iteration examines the list, and selection updates the candidate only when the condition is satisfied. Recognizing these patterns helps turn a verbal description into an executable plan.
+
+## Tracing, testing, and improving an algorithm
+
+Writing an algorithm is only part of the task. You must also check whether its steps produce the intended result. A **trace** follows the algorithm through an example, recording how important variables change at each step.
+
+For the list `[4, 9, 2, 7]`, the largest-number algorithm begins with `largest = 4`. It then updates the value to 9 when it encounters 9, leaves it unchanged for 2, and leaves it unchanged again for 7. The final result is 9.
+
+<AlgorithmTracer />
+
+Once the trace convinces you, translation into a real language is mostly mechanical. Notice how the Python version makes the empty-list decision explicit instead of leaving it as an assumption:
+
+```python
+def find_largest(numbers):
+    # The pseudocode assumed a non-empty list; real code has to choose a behaviour.
+    if not numbers:
+        raise ValueError("find_largest() needs at least one number")
+
+    largest = numbers[0]          # a real element, so all-negative lists still work
+    for number in numbers[1:]:    # numbers[0] is already the candidate
+        if number > largest:
+            largest = number
+    return largest
+
+print(find_largest([4, 9, 2, 7]))    # 9
+print(find_largest([-8, -3, -12]))   # -3  (starting at 0 would wrongly return 0)
+print(find_largest([5]))             # 5
+```
+
+In everyday Python you would simply call the built-in `max(numbers)`, which runs the same linear scan. Writing it out once is how you learn what `max` costs and what it assumes.
+
+A good test set includes more than a typical example. For this algorithm, useful cases include a single-element list, a list containing negative values, repeated maximum values, and a list already sorted in either direction. Testing should also account for invalid inputs, such as an empty list, if the surrounding program might provide one.
+
+Correctness and efficiency are separate concerns. An algorithm can return the right answer but do unnecessary work. Finding the largest value in a list of $n$ elements requires examining each element at most once, so its running time grows linearly with the list size:
+
+$$
+T(n)=O(n)
+$$
+
+This is called linear time. The notation describes how the work scales as the input grows, rather than predicting an exact number of seconds. Algorithmic thinking includes finding a correct procedure first, then considering whether its time and memory requirements are reasonable.
+
+<Callout type="practice" title="A reliable workflow">
+1. Define the problem and its constraints.
+2. Devise the logic and express it in pseudocode.
+3. Trace representative cases by hand.
+4. Test the edge cases.
+5. Only then translate it into a programming language.
+
+Pseudocode makes the reasoning visible; algorithmic thinking makes that reasoning systematic.
+</Callout>
