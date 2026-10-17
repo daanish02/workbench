@@ -6,22 +6,38 @@ import expressiveCode from 'astro-expressive-code';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
-// Labels for the editor tab shown on code blocks without a title. Shell languages and plain
+// Labels for the language badge shown on code blocks without a title. Shell languages and plain
 // text are left out: shell blocks render as a terminal, and text/diagram blocks need no label.
 const LANGUAGE_LABELS = {
   python: 'Python', sql: 'SQL', typescript: 'TypeScript', ts: 'TypeScript', javascript: 'JavaScript', js: 'JavaScript',
   rust: 'Rust', kotlin: 'Kotlin', java: 'Java', go: 'Go', swift: 'Swift', ruby: 'Ruby', r: 'R', php: 'PHP',
   lua: 'Lua', json: 'JSON', yaml: 'YAML', cypher: 'Cypher', csharp: 'C#', cpp: 'C++', c: 'C', html: 'HTML', css: 'CSS',
 };
-function languageTabs() {
+function languageBadges() {
   return {
-    name: 'language-tabs',
+    name: 'language-badges',
     hooks: {
-      preprocessMetadata: ({ codeBlock }) => {
+      // tag the rendered frame with its language; the badge itself is drawn by baseStyles below
+      postprocessRenderedBlock: ({ codeBlock, renderData }) => {
         const label = LANGUAGE_LABELS[codeBlock.language];
-        if (label && !codeBlock.props.title) codeBlock.props.title = label;
+        if (!label || codeBlock.props.title) return;
+        renderData.blockAst.properties = { ...renderData.blockAst.properties, dataLang: label };
       },
     },
+    baseStyles: `
+      .frame[data-lang] { position: relative; }
+      .frame[data-lang]::after {
+        content: attr(data-lang);
+        position: absolute; top: 0.55rem; right: 0.75rem; z-index: 1;
+        font: 600 0.6875rem/1 'Inter', system-ui, sans-serif;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        color: #8ab4f8; background: rgba(138, 180, 248, 0.1);
+        border: 1px solid rgba(138, 180, 248, 0.25); border-radius: 999px;
+        padding: 0.3rem 0.55rem; pointer-events: none;
+        transition: opacity 0.15s;
+      }
+      .frame[data-lang]:hover::after, .frame[data-lang]:focus-within::after { opacity: 0; }
+    `,
   };
 }
 
@@ -42,8 +58,8 @@ export default defineConfig({
   integrations: [
     expressiveCode({
       themes: ['github-dark-default'],
-      // Code blocks get an editor tab naming their language; shell blocks keep the terminal frame.
-      plugins: [languageTabs()],
+      // Code blocks get a small language badge; shell blocks keep the terminal frame.
+      plugins: [languageBadges()],
       styleOverrides: {
         borderRadius: '12px',
         borderColor: '#262626',
