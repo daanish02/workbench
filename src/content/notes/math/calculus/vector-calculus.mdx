@@ -1,8 +1,97 @@
 ---
 title: "Vector calculus"
-description: "Divergence, curl, and line and surface integrals, the tools of vector fields."
+description: "Vector fields, divergence and curl as measures of spreading and rotation, and line integrals whose values connect to the curl through Green's theorem."
 order: 10
-tier: optional
+tier: core
+takeaways:
+  - "A **vector field** assigns a vector to every point, like wind speed across a map. The **divergence** $\\nabla \\cdot \\mathbf{F}$ measures how much the field spreads out from a point; the **curl** measures how much it rotates."
+  - "For $\\mathbf{F} = (P, Q)$, the divergence is $\\frac{\\partial P}{\\partial x} + \\frac{\\partial Q}{\\partial y}$ and the curl is $\\frac{\\partial Q}{\\partial x} - \\frac{\\partial P}{\\partial y}$."
+  - "A **line integral** $\\int_C \\mathbf{F} \\cdot d\\mathbf{r}$ adds the component of the field along a path. Along a circle, the field $(-y, x)$ gives $2\\pi$."
+  - "**Green's theorem** says the line integral around a closed curve equals the integral of the curl over the enclosed region. It turns a path integral into an area integral."
+  - "Maxwell's equations and fluid dynamics are written with divergence and curl. Physics students meet these operators first in electromagnetism."
+resources:
+  - title: "Vector calculus (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Vector_calculus"
+    note: "Gradient, divergence, curl, and the integral theorems."
+  - title: "Green's theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Green%27s_theorem"
+    note: "The planar version of the theorem, with its relation to curl."
+  - title: "NumPy trapezoid"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.trapezoid.html"
+    note: "The numerical integrator used for the line integral below."
 ---
 
-_Placeholder. Content not written yet._
+A vector field describes a flow: water velocity in a river, the wind across a weather map, the force on a charged particle. Two operators summarise how a field behaves locally. Divergence says whether the field is spreading out at a point, like a source. Curl says whether it swirls, like an eddy. Line integrals add up the field along a path, and Green's theorem connects a path integral to the region it encloses. This note defines the operators, computes them for a simple field, and checks Green's theorem on a circle.
+
+## Divergence
+
+For a field $\mathbf{F} = (P, Q)$ in the plane, the divergence is
+
+$$
+\nabla \cdot \mathbf{F} = \frac{\partial P}{\partial x} + \frac{\partial Q}{\partial y}.
+
+$$
+
+A positive divergence means more fluid leaves a small region than enters it, so there is a source. Negative divergence means a sink. Zero means the field neither creates nor destroys fluid locally, as in incompressible flow.
+
+## Curl
+
+The curl in the plane is the scalar
+
+$$
+\operatorname{curl} \mathbf{F} = \frac{\partial Q}{\partial x} - \frac{\partial P}{\partial y}.
+
+$$
+
+It measures the rotation of the field: how much a small paddle wheel placed in the flow would spin. The field $\mathbf{F} = (-y, x)$ is a pure rotation about the origin, and its curl is $1 - (-1) = 2$ everywhere, while its divergence is $0$.
+
+```python
+import numpy as np
+
+h = 1e-6
+F = lambda p: np.array([-p[1], p[0]])
+p = np.array([0.3, 0.4])
+
+div = (F(p + [h, 0])[0] - F(p - [h, 0])[0]) / (2 * h) + (F(p + [0, h])[1] - F(p - [0, h])[1]) / (2 * h)
+print("divergence of (-y, x):", round(div, 6))  # prints: divergence of (-y, x): 0.0
+
+curl = (F(p + [h, 0])[1] - F(p - [h, 0])[1]) / (2 * h) - (F(p + [0, h])[0] - F(p - [0, h])[0]) / (2 * h)
+print("curl of (-y, x):", round(curl, 6))  # prints: curl of (-y, x): 2.0
+```
+
+In words: the divergence is $0$, so no fluid is created or destroyed, while the curl is $2$, so the field rotates everywhere. The code computes each partial derivative by a central difference, so it checks the formulas rather than assuming them.
+
+<VectorFieldExplorer />
+
+## Line integrals and Green's theorem
+
+The line integral of $\mathbf{F}$ along a curve $C$ with parametrisation $\mathbf{r}(t)$ is $\int \mathbf{F}(\mathbf{r}(t)) \cdot \mathbf{r}'(t)\,dt$. It adds the component of the field along the path. For the unit circle $\mathbf{r}(t) = (\cos t, \sin t)$ and $\mathbf{F} = (-y, x)$, the integrand is $(-\sin t)(-\sin t) + (\cos t)(\cos t) = 1$, so the integral is $2\pi$.
+
+Green's theorem says that for a closed curve $C$ bounding a region $D$,
+
+$$
+\oint_C (P\,dx + Q\,dy) = \iint_D \left(\frac{\partial Q}{\partial x} - \frac{\partial P}{\partial y}\right) dA.
+
+$$
+
+The right side is the integral of the curl over the disc. Since the curl is $2$ and the disc has area $\pi$, the right side is $2\pi$. The check below computes the line integral numerically.
+
+```python
+import numpy as np
+
+t = np.linspace(0, 2 * np.pi, 200001)
+x, y = np.cos(t), np.sin(t)
+dx, dy = -np.sin(t), np.cos(t)
+integrand = (-y) * dx + x * dy
+print("line integral around the circle:", round(np.trapezoid(integrand, t), 6), " 2 pi =", round(2 * np.pi, 6))  # prints: line integral around the circle: 6.283185  2 pi = 6.283185
+```
+
+In words: the path integral is $6.283185$, which is $2\pi$. The curl times the area of the disc gives the same number, which is the content of Green's theorem for this field.
+
+<Callout type="pitfall">
+Green's theorem needs the curve to be closed and oriented anticlockwise. Traversing it clockwise flips the sign of the line integral. Check the orientation before trusting a sign.
+</Callout>
+
+## Why this is used
+
+Fluid dynamics uses divergence to express conservation of mass, and curl to describe vorticity. Electromagnetism's Maxwell equations are statements about the divergence and curl of the electric and magnetic fields. The same theorems that relate paths to areas underlie the gradient, divergence and curl forms of the fundamental theorem, which generalise to surfaces and volumes.

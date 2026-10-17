@@ -1,8 +1,94 @@
 ---
 title: "Limits"
-description: "Intuition (approaching a value), formal epsilon-delta definition, limits at infinity."
+description: "What it means for a function to approach a value, the epsilon-delta definition that makes 'approach' precise, and limits at infinity."
 order: 1
 tier: core
+takeaways:
+  - "The **limit** $\\lim_{x \\to a} f(x) = L$ says $f(x)$ gets as close to $L$ as you like when $x$ gets close to $a$. The value of $f$ at $a$ itself does not matter."
+  - "The **epsilon-delta** definition makes 'as close as you like' precise: for every $\\varepsilon > 0$ there is a $\\delta > 0$ so that $0 < |x - a| < \\delta$ implies $|f(x) - L| < \\varepsilon$."
+  - "Limits explain why $\\frac{\\sin x}{x}$ approaches $1$ at $0$ even though it is undefined there, and why $\\left(1 + \\frac{1}{n}\\right)^n$ approaches $e$."
+  - "**Limits at infinity** ask what happens as $x$ grows without bound. The limit of $\\frac{1}{x}$ at infinity is $0$."
+  - "Every derivative and integral in calculus is a limit. Limits are the reason calculus is rigorous rather than a collection of tricks."
+resources:
+  - title: "Limit of a function (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Limit_of_a_function"
+    note: "The informal and epsilon-delta definitions with examples."
+  - title: "Epsilon-delta definition of a limit (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/%CE%95-%CE%B4_definition_of_limit"
+    note: "The formal definition and how to construct delta from epsilon."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "sin and e, used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Calculus is built on one idea: what a function does as its input gets very close to a point, even if the function is not defined at that point. Newton and Leibniz used this idea informally, and it took about a century to make it precise. The precise version, the limit, is the foundation of derivatives, integrals and infinite sums. This note introduces limits informally, gives the epsilon-delta definition, and works through the two limits that most people meet first.
+
+## Approaching a value
+
+Consider $f(x) = \frac{\sin x}{x}$. At $x = 0$ the formula divides by zero, so $f(0)$ is undefined. But as $x$ gets close to $0$ from either side, the values get close to $1$. We write
+
+$$
+\lim_{x \to 0} \frac{\sin x}{x} = 1.
+
+$$
+
+The script below evaluates the function at points closing in on $0$ from both sides.
+
+```python
+import math
+
+for x in [0.1, 0.01, 0.001, -0.001]:
+    print(f"x = {x:>7}: sin(x)/x = {math.sin(x) / x:.8f}")  # prints: x =     0.1: sin(x)/x = 0.99833417 ...
+```
+
+In words: at $x = 0.001$ the value is $0.99999983$, and from the negative side it is the same. The limit does not depend on the direction of approach. A table of values is evidence, not proof, which is why the definition below is needed.
+
+<LimitCloseIn />
+
+## The epsilon-delta definition
+
+Say $\lim_{x \to a} f(x) = L$ means: for every tolerance $\varepsilon > 0$, there is a window $\delta > 0$ around $a$ such that every $x$ within $\delta$ of $a$, other than $a$ itself, has $f(x)$ within $\varepsilon$ of $L$. Written out:
+
+$$
+\forall\,\varepsilon > 0\ \exists\,\delta > 0:\quad 0 < |x - a| < \delta \implies |f(x) - L| < \varepsilon.
+
+$$
+
+The game has two players. One gives you a tolerance $\varepsilon$, and you must produce a $\delta$ that works for it. If you can do that for every $\varepsilon$, the limit is $L$.
+
+For a linear function the choice is direct. For $f(x) = 2x + 1$ at $a = 3$ with limit $7$, the distance $|f(x) - 7| = 2|x - 3|$, so $\delta = \varepsilon / 2$ always works. The check below tests this for $\varepsilon = 0.01$.
+
+```python
+eps = 0.01
+delta = eps / 2
+worst = max(abs((2 * (3 + h) + 1) - 7) for h in [delta * k / 1000 for k in range(-1000, 1001)])
+print(f"largest |f(x) - 7| = {worst:.4f} (below epsilon)")  # prints: largest |f(x) - 7| = 0.0100 (below epsilon)
+```
+
+In words: the largest error over the window is exactly $0.0100$, which equals $\varepsilon$ at the edge of the window. Anything closer than $\delta$ gives an error less than $\varepsilon$.
+
+<Callout type="pitfall">
+A limit describes behaviour near $a$, not at $a$. $\lim_{x \to 2} \frac{x^2 - 4}{x - 2} = 4$ even though the expression is undefined at $x = 2$. Cancelling the common factor is legitimate here, because the function agrees with $x + 2$ everywhere except that single point.
+</Callout>
+
+## The number e
+
+The limit $\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n$ defines the number $e$. It is the limit of compound interest compounded more and more often. The script below evaluates the expression for growing $n$.
+
+```python
+import math
+
+for n in [10, 1000, 100000]:
+    print(f"n = {n:>6}: (1 + 1/n)^n = {(1 + 1 / n) ** n:.6f}")  # prints: n = 10: (1 + 1/n)^n = 2.593742 ...
+print("e =", round(math.e, 6))  # prints: e = 2.718282
+```
+
+In words: at $n = 100000$ the expression is $2.718268$, within a few millionths of $e = 2.718282$. Growth in the limit is slow, which is why $e$ is hard to reach by brute force, and why the exact definition matters.
+
+## Limits at infinity
+
+The same idea works when $x$ grows without bound. As $x$ increases, $\frac{1}{x}$ gets smaller and smaller, so $\lim_{x \to \infty} \frac{1}{x} = 0$. Rational functions behave like their leading terms at infinity: $\frac{3x^2 + 1}{x^2}$ tends to $3$, because the $1$ is swamped by $x^2$.
+
+## Where limits are used
+
+Every derivative in the next note is a limit of difference quotients. Every integral is a limit of sums. In numerical work, the limit is the reason a finite step size gives a good approximation, and the error analysis of nearly every algorithm rests on the epsilon-delta idea.

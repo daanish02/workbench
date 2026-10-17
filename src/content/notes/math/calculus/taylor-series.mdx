@@ -1,8 +1,101 @@
 ---
 title: "Taylor series"
-description: "Approximating functions with polynomials, Taylor's theorem, common expansions."
+description: "Approximating a smooth function by a polynomial built from its derivatives at one point, how the error shrinks as terms are added, and the expansions that appear everywhere."
 order: 6
 tier: core
+takeaways:
+  - "The **Taylor polynomial** of degree $n$ at $a$ matches $f$ and its first $n$ derivatives at $a$: $\\sum_{k=0}^{n} \\frac{f^{(k)}(a)}{k!}(x-a)^k$."
+  - "Each added term makes the approximation better near $a$. For $e^x$ at $0$, degree $8$ is already accurate to about $3 \\times 10^{-6}$ at $x = 1$."
+  - "**Taylor's theorem** bounds the error. If $|f^{(n+1)}| \\le M$ on an interval, the error of the degree-$n$ polynomial is at most $\\frac{M}{(n+1)!}|x-a|^{n+1}$."
+  - "Common expansions include $e^x = \\sum \\frac{x^k}{k!}$, $\\sin x = x - \\frac{x^3}{3!} + \\frac{x^5}{5!} - \\cdots$, and $\\frac{1}{1-x} = \\sum x^k$ for $|x| < 1$."
+  - "Taylor polynomials are how computers evaluate $\\sin$, $\\exp$ and $\\log$ internally. They turn hard functions into the only operations a processor does quickly: additions and multiplications."
+resources:
+  - title: "Taylor series (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Taylor_series"
+    note: "The series, convergence, and the common expansions."
+  - title: "Taylor's theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Taylor%27s_theorem"
+    note: "The remainder formulas that bound the error."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "factorial, exp and sin, used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+A polynomial is the simplest function a computer can evaluate: it needs only additions and multiplications. Many useful functions, such as $e^x$, $\sin x$ and $\ln(1+x)$, are not polynomials, but near a point they look like one. The Taylor polynomial is the polynomial that matches a function at a point to as high an order as you choose. This note builds the polynomial from derivatives, shows how the error behaves, and lists the expansions to remember.
+
+## Matching derivatives
+
+Suppose $f$ is smooth near $a$. We want a polynomial $P$ with $P(a) = f(a)$, $P'(a) = f'(a)$, $P''(a) = f''(a)$, and so on up to degree $n$. Writing $P(x) = \sum c_k (x - a)^k$ and differentiating shows that the coefficients must be $c_k = \frac{f^{(k)}(a)}{k!}$. So
+
+$$
+P_n(x) = \sum_{k=0}^{n} \frac{f^{(k)}(a)}{k!}(x-a)^k.
+
+$$
+
+The factorial in the denominator undoes the $k$ factors produced by differentiating $(x-a)^k$ $k$ times. For $e^x$ every derivative is $e^x$, so at $a = 0$ every coefficient is $\frac{1}{k!}$, and $P_n(x) = \sum_{k=0}^{n} \frac{x^k}{k!}$.
+
+## Watching the error shrink
+
+The script below evaluates $e^1$ with polynomials of increasing degree, and compares with the exact value.
+
+```python
+import math
+
+def taylor_exp(x, n):
+    return sum(x ** k / math.factorial(k) for k in range(n + 1))
+
+x = 1.0
+for n in [1, 2, 4, 8]:
+    print(f"e^x, degree {n}: {taylor_exp(x, n):.8f} error {abs(math.exp(x) - taylor_exp(x, n)):.2e}")  # prints: e^x, degree 1: 2.00000000 error 7.18e-01 ...
+print("exact e =", round(math.e, 8))  # prints: exact e = 2.71828183
+```
+
+In words: degree $1$ gives $2$, degree $2$ gives $2.5$, and degree $8$ gives $2.71827877$, within $3 \times 10^{-6}$ of $e$. Each term is smaller than the one before, so the series settles quickly for $x = 1$. The error falls off like $\frac{1}{(n+1)!}$, which is why factorial growth in the denominator makes these series so effective.
+
+The same construction works for $\sin x$, whose derivatives cycle through $\sin$, $\cos$, $-\sin$, $-\cos$, so only odd powers appear:
+
+```python
+import math
+
+def taylor_sin(x, n):
+    return sum((-1) ** k * x ** (2 * k + 1) / math.factorial(2 * k + 1) for k in range(n // 2 + 1))
+
+for n in [1, 3, 5]:
+    print(f"sin(1), degree {n}: {taylor_sin(1.0, n):.8f} error {abs(math.sin(1.0) - taylor_sin(1.0, n)):.2e}")  # prints: sin(1), degree 1: 1.00000000 error 1.59e-01 ...
+```
+
+In words: the degree-$5$ polynomial already matches $\sin 1$ to about $2 \times 10^{-4}$, using only the terms $x$, $x^3/3!$ and $x^5/5!$.
+
+<TaylorApprox />
+
+## Bounding the error
+
+Taylor's theorem says the error of the degree-$n$ polynomial is $\frac{f^{(n+1)}(\xi)}{(n+1)!}(x-a)^{n+1}$ for some $\xi$ between $a$ and $x$. If the derivative is bounded by $M$ on the interval, the error is at most $\frac{M}{(n+1)!}|x - a|^{n+1}$. For $e^x$ on $[0, 1]$, $M = e$, so the error at degree $n$ is at most $\frac{e}{(n+1)!}$. The check below confirms this bound at degree $6$.
+
+```python
+import math
+
+def taylor_exp(x, n):
+    return sum(x ** k / math.factorial(k) for k in range(n + 1))
+
+n = 6
+print("error at degree 6 is below e/7! :", abs(math.e - taylor_exp(1, n)) <= math.e / math.factorial(n + 1))  # prints: error at degree 6 is below e/7! : True
+```
+
+In words: the bound holds, so the degree-$6$ polynomial is guaranteed to be within $e/7! \approx 0.00052$ of $e$ on $[0, 1]$. A bound like this is what lets an engineer choose the number of terms in advance.
+
+<Callout type="pitfall">
+A Taylor polynomial is accurate near its centre $a$ and can be terrible far away. The degree-$8$ polynomial for $e^x$ is excellent at $x = 1$, but at $x = 10$ it is off by thousands. Check the interval where you need the approximation.
+</Callout>
+
+## Common expansions
+
+These are worth knowing by heart:
+
+- $e^x = \sum_{k=0}^{\infty} \frac{x^k}{k!}$ for all $x$.
+- $\sin x = \sum_{k=0}^{\infty} (-1)^k \frac{x^{2k+1}}{(2k+1)!}$ for all $x$.
+- $\frac{1}{1-x} = \sum_{k=0}^{\infty} x^k$ for $|x| < 1$.
+
+## Where Taylor series are used
+
+Every calculator and math library evaluates $\sin$, $\exp$ and $\log$ with polynomials of this kind, usually after reducing the argument to a small range. Physics uses the first few terms to linearise nonlinear systems, which is why a pendulum swinging at small angles behaves like a simple harmonic oscillator. Numerical methods and gradient-based optimisation are built on the same idea: approximate locally, then improve.

@@ -1,8 +1,92 @@
 ---
 title: "Integrals"
-description: "Area under a curve, the integral as a limit of sums, fundamental theorem of calculus."
+description: "The integral as the limit of sums of thin rectangles, the area under a curve, and the fundamental theorem of calculus that joins integration to differentiation."
 order: 4
 tier: core
+takeaways:
+  - "The **definite integral** $\\int_a^b f(x)\\,dx$ is the signed area under $f$ between $a$ and $b$. It is defined as the limit of Riemann sums: add up $f$ times thin widths."
+  - "A **Riemann sum** with $n$ rectangles approximates the integral. As $n$ grows the sum approaches the integral, and the error shrinks with the width of each rectangle."
+  - "The **fundamental theorem of calculus** says the integral of $f$ from $0$ to $x$ is a function $F(x)$ with $F'(x) = f(x)$. Integration undoes differentiation."
+  - "Antiderivatives give exact integrals: $\\int_a^b x^2\\,dx = \\frac{b^3 - a^3}{3}$. Over $[0, 1]$ this is $\\frac{1}{3}$."
+  - "Integrals compute totals from rates: distance from velocity, mass from density, probability from a density function. In probability and statistics most quantities are integrals."
+resources:
+  - title: "Integral (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Integral"
+    note: "Definite and indefinite integrals, Riemann sums and the fundamental theorem."
+  - title: "Riemann sum (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Riemann_sum"
+    note: "Left, right, midpoint and trapezoid sums, and their error."
+  - title: "NumPy trapezoid"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.trapezoid.html"
+    note: "The numerical integrator used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Some things are easy to describe as rates and hard to describe as totals: speed at each instant, flow through a pipe, density along a rod. The integral adds up those rates over an interval to give the total. It is the second half of calculus, and the fundamental theorem shows it is the reverse of differentiation. This note builds the integral from Riemann sums, states the fundamental theorem, and checks both numerically.
+
+## Area as a limit of sums
+
+To find the area under $f(x) = x^2$ between $0$ and $1$, cut the interval into $n$ equal pieces of width $\Delta x = \frac{1}{n}$. On each piece put a rectangle whose height is $f$ at the left end. The total area is a **left Riemann sum**:
+
+$$
+\sum_{k=0}^{n-1} f\!\left(\frac{k}{n}\right) \frac{1}{n}.
+
+$$
+
+As $n$ grows the rectangles fit the curve more closely, and the sum approaches the definite integral $\int_0^1 x^2\,dx$. The script below computes the sum for increasing $n$.
+
+```python
+import numpy as np
+
+f = lambda x: x ** 2
+for n in [10, 1000, 100000]:
+    xs = np.linspace(0, 1, n, endpoint=False)
+    print(f"n = {n:>6}: left Riemann sum = {np.sum(f(xs)) / n:.6f}")  # prints: n = 10: left Riemann sum = 0.285000
+print("exact integral = 1/3 =", round(1 / 3, 6))  # prints: exact integral = 1/3 = 0.333333
+```
+
+In words: with $10$ rectangles the sum is $0.285$, with $100{,}000$ it is $0.333328$, and the exact value is $\frac{1}{3}$. The error shrinks steadily as the rectangles thin. The limit of these sums is the integral.
+
+<RiemannSums />
+
+## The fundamental theorem
+
+Define $F(x) = \int_0^x f(t)\,dt$, the area accumulated up to $x$. The fundamental theorem of calculus says that $F$ is differentiable and
+
+$$
+F'(x) = f(x).
+
+$$
+
+Accumulating a function and then differentiating gives the function back. This is why antiderivatives compute integrals: if $G' = f$, then $\int_a^b f(x)\,dx = G(b) - G(a)$. For $f(x) = x^2$ the antiderivative is $G(x) = \frac{x^3}{3}$, so the integral over $[0, 1]$ is $\frac{1}{3}$.
+
+The check below computes $F(0.8)$ by numerical integration and compares it with $\frac{0.8^3}{3}$, then differentiates $F$ numerically to recover $f(0.8)$.
+
+```python
+import numpy as np
+
+f = lambda x: x ** 2
+
+def F(x, n=20000):
+    ts = np.linspace(0, x, n)
+    return np.trapezoid(ts ** 2, ts)
+
+x0, h = 0.8, 1e-4
+print("F(0.8) numeric:", round(F(x0), 6), " exact x^3/3:", round(x0 ** 3 / 3, 6))  # prints: F(0.8) numeric: 0.170667  exact x^3/3: 0.170667
+print("F'(0.8) by difference quotient:", round((F(x0 + h) - F(x0 - h)) / (2 * h), 4), " exact f(0.8) =", round(f(x0), 4))  # prints: F'(0.8) by difference quotient: 0.64  exact f(0.8) = 0.64
+```
+
+In words: the numerical integral matches the antiderivative $\frac{x^3}{3}$ to six digits. Differentiating the accumulated area gives back $f(0.8) = 0.64$. The two operations undo each other, which is the content of the theorem.
+
+<Callout type="pitfall">
+A definite integral is a number, while an indefinite integral $\int f(x)\,dx$ is a family of functions that differ by a constant. Forgetting the $+C$ in an indefinite integral loses information; forgetting the limits in a definite one leaves the answer unspecified.
+</Callout>
+
+<StaticRiemannDiagram />
+
+## Signed area
+
+Where $f$ is negative, its integral counts that area negatively. So $\int_{-1}^{1} x\,dx = 0$ even though the region between the line and the axis is not empty. The integral measures net accumulation, which is what you want for displacement or net charge, and it is the area only when $f$ stays positive.
+
+## Where integrals appear
+
+Probability is integrals: the chance a random value lies in an interval is the integral of its density over that interval. Physics uses integrals for work, centre of mass and total charge. Every "average value" is an integral divided by the length of the interval. The next note uses the same ideas to build functions from their derivatives, and to approximate hard integrals with series.

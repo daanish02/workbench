@@ -1,8 +1,106 @@
 ---
 title: "Derivatives"
-description: "Rate of change, the derivative as a limit, differentiation rules (product, quotient, chain)."
+description: "The derivative as the limit of a difference quotient: the slope of a curve at a point, the rules for differentiating sums, products and compositions, and what the derivative says about change."
 order: 2
 tier: core
+takeaways:
+  - "The **derivative** $f'(a) = \\lim_{h \\to 0} \\frac{f(a+h) - f(a)}{h}$ is the slope of the tangent line at $a$, and the instantaneous rate of change of $f$ there."
+  - "**Power rule:** $\\frac{d}{dx} x^n = n x^{n-1}$. So $\\frac{d}{dx} x^3 = 3x^2$, which at $x = 2$ gives the slope $12$."
+  - "**Product rule:** $(fg)' = f'g + fg'$. **Chain rule:** $(f \\circ g)'(x) = f'(g(x))\\,g'(x)$. These two rules cover almost all differentiation."
+  - "The derivative of a sum is the sum of the derivatives, and constants come out of the derivative unchanged."
+  - "The chain rule is the single most important rule for machine learning: backpropagation is the chain rule applied layer by layer."
+resources:
+  - title: "Derivative (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Derivative"
+    note: "Definitions, the notation, and the standard rules."
+  - title: "Chain rule (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Chain_rule"
+    note: "The rule for composed functions, with the proof sketch."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "sin and cos, used in the rule checks below."
 ---
 
-_Placeholder. Content not written yet._
+A curve tells you where you are; its derivative tells you how fast you are changing. A car's position is a function of time, and its velocity is the derivative of position. A population grows at a rate that is the derivative of its size. The derivative is the tool that turns a function into its rate of change at every point. This note defines the derivative as a limit, computes it numerically, and states the rules that make it practical: power, product and chain.
+
+## The derivative as a limit
+
+Take a point $a$ and a nearby point $a + h$. The slope of the line through $(a, f(a))$ and $(a+h, f(a+h))$ is the difference quotient
+
+$$
+\frac{f(a+h) - f(a)}{h}.
+
+$$
+
+As $h$ shrinks, this line turns into the tangent line at $a$. The derivative is the limit of the difference quotient, which is where the [Limits](../limits/) note comes in:
+
+$$
+f'(a) = \lim_{h \to 0} \frac{f(a+h) - f(a)}{h}.
+
+$$
+
+The script below takes $f(x) = x^3$ at $a = 2$, where the true derivative is $3 \cdot 2^2 = 12$, and watches the difference quotient approach it.
+
+```python
+def f(x):
+    return x ** 3
+
+a = 2.0
+for h in [0.1, 0.001, 0.00001]:
+    print(f"h = {h:>8}: difference quotient = {(f(a + h) - f(a)) / h:.6f}")  # prints: h = 0.1: difference quotient = 12.610000 ...
+print("exact f'(2) = 12")  # prints: exact f'(2) = 12
+```
+
+In words: at $h = 0.1$ the quotient is $12.61$, at $h = 0.00001$ it is $12.00006$. The error shrinks roughly in proportion to $h$, and the limit is $12$.
+
+<TangentSlope />
+
+## The rules
+
+Computing limits of difference quotients by hand is slow, so calculus gives rules. The most used are:
+
+- **Power rule:** $\frac{d}{dx} x^n = n x^{n-1}$ for any real $n$.
+- **Constant multiple and sum:** $(cf)' = cf'$ and $(f + g)' = f' + g'$.
+- **Product rule:** $(fg)' = f'g + fg'$.
+- **Quotient rule:** $\left(\frac{f}{g}\right)' = \frac{f'g - fg'}{g^2}$.
+- **Chain rule:** $(f \circ g)'(x) = f'(g(x))\,g'(x)$.
+
+The product and chain rules are the ones to check numerically, since they are easy to misapply. The script below checks both at $x = 1.5$ with $f(x) = x^3$, $g(x) = \sin x$, and the composition $\sin(x^2)$.
+
+```python
+import math
+
+def f(x):
+    return x ** 3
+
+def df(x):
+    return 3 * x * x
+
+g = lambda x: math.sin(x)
+dg = lambda x: math.cos(x)
+
+x0, h = 1.5, 1e-6
+lhs = (f(x0 + h) * g(x0 + h) - f(x0 - h) * g(x0 - h)) / (2 * h)
+rhs = df(x0) * g(x0) + f(x0) * dg(x0)
+print("product rule holds:", math.isclose(lhs, rhs, rel_tol=1e-6))  # prints: product rule holds: True
+
+k = lambda x: math.sin(x * x)
+num = (k(x0 + h) - k(x0 - h)) / (2 * h)
+print("chain rule holds:", math.isclose(num, 2 * x0 * math.cos(x0 * x0), rel_tol=1e-6))  # prints: chain rule holds: True
+```
+
+In words: both checks pass. The chain rule for $\sin(x^2)$ says the derivative is $2x\cos(x^2)$: the outer derivative $\cos$ evaluated at the inner function, times the inner derivative $2x$. Numerical differentiation confirms the formula without trusting the algebra.
+
+<Callout type="pitfall">
+Forgetting the inner derivative in the chain rule is the most common error. $\frac{d}{dx} \sin(x^2)$ is $\cos(x^2)$ only if you also multiply by $2x$. Ask of every composed function: what is the inside, and what is its derivative?
+</Callout>
+
+<StaticTangentDiagram />
+
+## What the derivative tells you
+
+The sign of $f'$ says whether $f$ is increasing or decreasing. Its size says how fast. A derivative of zero marks a flat point, which may be a maximum, a minimum or a level stretch. The next note uses this to find optimal values and to sketch curves.
+
+## Why this matters for learning
+
+A neural network is a long composition of functions, and training it means computing the derivative of a loss with respect to every weight. Backpropagation is the chain rule, applied from the output back to the input, one layer at a time. The rules here are exactly what the training code applies, many times over.

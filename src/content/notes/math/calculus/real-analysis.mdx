@@ -1,8 +1,89 @@
 ---
 title: "Real analysis"
-description: "Rigorous foundations of limits/continuity, for anyone who wants the proofs behind calculus."
+description: "The rigorous foundations behind calculus: the real numbers as a complete ordered field, convergence of sequences, the Cauchy criterion, and why the limits used throughout calculus are well defined."
 order: 12
-tier: advanced
+tier: core
+takeaways:
+  - "The **supremum** (least upper bound) of a set exists for every bounded nonempty set of real numbers. This completeness property is what the rationals lack: $\\sqrt{2}$ is the supremum of $\\{x : x^2 < 2\\}$ but is not rational."
+  - "A **monotone bounded** sequence always converges. The proof is the completeness property applied to the set of its values."
+  - "A sequence is **Cauchy** when its terms eventually stay arbitrarily close to each other. In the real numbers, Cauchy sequences converge; this is the criterion used to prove convergence without knowing the limit."
+  - "Continuity is defined with epsilon and delta: $f$ is continuous at $a$ when $\\lim_{x \\to a} f(x) = f(a)$. Most functions in calculus are continuous, and the theorems depend on it."
+  - "Real analysis is the proofs behind the rules you already use. It is worth studying when you need to know exactly when a limit or a derivative is allowed to be interchanged with a sum or integral."
+resources:
+  - title: "Real analysis (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Real_analysis"
+    note: "The rigorous theory of limits, continuity, differentiation and integration."
+  - title: "Least-upper-bound property (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Least-upper-bound_property"
+    note: "Completeness of the real numbers and its equivalent forms."
+  - title: "Cauchy sequence (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cauchy_sequence"
+    note: "The Cauchy criterion and its role in defining the reals."
 ---
 
-_Placeholder. Content not written yet._
+Calculus uses the real numbers without ever asking what they are. Every derivative, integral and limit depends on a property the rationals do not have: there are no holes. Real analysis makes that property explicit and proves the results calculus relies on. This note covers the completeness of the reals, monotone sequences, the Cauchy criterion, and a numerical check of the convergence that the proofs guarantee.
+
+## Completeness
+
+The rationals have holes. The set $\{x \in \mathbb{Q} : x^2 < 2\}$ has upper bounds, such as $2$, but no least upper bound among the rationals, because the candidate $\sqrt{2}$ is irrational. In the reals the hole is filled: every nonempty set bounded above has a **supremum**, its least upper bound. This is the completeness axiom, and it is what makes the reals suitable for calculus.
+
+Bisection makes the supremum concrete. Start with an interval $[1, 2]$ that contains $\sqrt{2}$ and repeatedly halve it, keeping the half where $x^2 < 2$ on the left and $x^2 > 2$ on the right. The endpoints converge to $\sqrt{2}$. The check below runs sixty steps of bisection.
+
+```python
+import math
+
+lo, hi = 1.0, 2.0
+for _ in range(60):
+    mid = (lo + hi) / 2
+    if mid * mid < 2:
+        lo = mid
+    else:
+        hi = mid
+print("bisection gives sqrt(2) to 8 places:", round(lo, 8), " true:", round(math.sqrt(2), 8))  # prints: bisection gives sqrt(2) to 8 places: 1.41421356  true: 1.41421356
+```
+
+In words: after sixty halvings the left endpoint agrees with $\sqrt{2} = 1.41421356$ to eight places. The interval halves each step, so the error bound shrinks by a factor of two each time. The completeness axiom is what guarantees that the nested intervals shrink to a single real number.
+
+<SequenceBand />
+
+## Monotone sequences
+
+A sequence $a_n$ that is increasing and bounded above converges, to the supremum of its values. The reason is completeness: the set of values has a least upper bound $L$, and for any $\varepsilon > 0$ some term exceeds $L - \varepsilon$, so every later term is within $\varepsilon$ of $L$.
+
+The sequence $a_n = 1 - \frac{1}{n}$ is increasing and bounded by $1$, so it converges, and its limit is $1$. The check below confirms the monotonicity and the value of the last term.
+
+```python
+a = [1 - 1 / n for n in range(1, 10001)]
+print("a_n increasing:", all(a[i] < a[i + 1] for i in range(len(a) - 1)), " last term:", round(a[-1], 6))  # prints: a_n increasing: True  last term: 0.9999
+```
+
+In words: every term is larger than the one before, and the last term $0.9999$ is close to the limit $1$. Monotonicity plus boundedness is enough; no formula for the limit is needed.
+
+## The Cauchy criterion
+
+A sequence is **Cauchy** when, for every $\varepsilon > 0$, there is an $N$ such that $|a_m - a_n| < \varepsilon$ for all $m, n > N$. In the real numbers, every Cauchy sequence converges. This lets you prove convergence without knowing the limit, which is often the hard part.
+
+The partial sums of $\sum \frac{1}{n^2}$ are Cauchy: the tail after $N$ is at most $\frac{1}{N}$, which can be made as small as needed. Their limit, though, is $\frac{\pi^2}{6}$, a value the Cauchy criterion alone does not reveal. The check below computes the partial sum and confirms the tail bound.
+
+```python
+import math
+
+partial = 0.0
+N = 1000
+for n in range(1, 100001):
+    partial += 1 / n ** 2
+    if n == N:
+        p_N = partial
+print("sum of 1/n^2 to 100000:", round(partial, 6), " pi^2/6 =", round(math.pi ** 2 / 6, 6))  # prints: sum of 1/n^2 to 100000: 1.644924  pi^2/6 = 1.644934
+print("tail after N=1000 is below 1/N:", (math.pi ** 2 / 6 - p_N) <= 1 / N)  # prints: tail after N=1000 is below 1/N: True
+```
+
+In words: the partial sum to $100{,}000$ is $1.644924$, close to $\frac{\pi^2}{6} = 1.644934$. The tail after $1000$ terms is below $\frac{1}{1000}$, so the sum converges. The Cauchy criterion gives convergence; the value $\frac{\pi^2}{6}$ needs separate work.
+
+<Callout type="pitfall">
+Numerical evidence is not proof. A sequence can look convergent in a table of terms and still fail to converge later, and a sum can be slow to settle. Use the completeness property or the Cauchy criterion to establish convergence, and use numbers to check your guess about the limit.
+</Callout>
+
+## Why the foundations matter
+
+Real analysis explains when calculus can be trusted. It shows that the derivative of a convergent series is the series of derivatives only under extra conditions, and that a limit and an integral can be exchanged under conditions that are not always met. These are the questions behind the convergence theorems used in probability, signal processing and machine learning.

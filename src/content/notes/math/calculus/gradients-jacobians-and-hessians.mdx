@@ -1,8 +1,106 @@
 ---
 title: "Gradients, Jacobians, and Hessians"
-description: "Gradient as steepest ascent, Jacobian for vector functions, Hessian for curvature."
+description: "The gradient points in the direction of steepest ascent, the Jacobian is the derivative of a vector-valued function, and the Hessian describes the curvature that decides whether a critical point is a minimum."
 order: 8
 tier: core
+takeaways:
+  - "The **gradient** $\\nabla f = \\left(\\frac{\\partial f}{\\partial x_1}, \\ldots, \\frac{\\partial f}{\\partial x_n}\\right)$ points in the direction in which $f$ increases fastest. Its length is that maximum rate."
+  - "For $f(x, y) = x^2 + 3y^2$ the gradient is $(2x, 6y)$, which at $(1, 2)$ is $(2, 12)$. Moving along it increases $f$; moving against it decreases $f$."
+  - "The **Jacobian** $J$ collects all partial derivatives of a vector-valued function $\\mathbf{F}$. It is the best linear approximation of $\\mathbf{F}$ near a point, the multivariable analogue of the derivative."
+  - "The **Hessian** $H$ collects the second partial derivatives. If $H$ is positive definite at a critical point, the point is a local minimum; if negative definite, a local maximum."
+  - "Gradient descent, which trains nearly every modern model, moves against the gradient. The Hessian explains why some directions are slow to train: the eigenvalues of $H$ set the step sizes that work."
+resources:
+  - title: "Gradient (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gradient"
+    note: "The gradient as steepest ascent, and its coordinate-free definition."
+  - title: "Jacobian matrix and determinant (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Jacobian_matrix_and_determinant"
+    note: "The Jacobian for maps between spaces of any dimension."
+  - title: "Hessian matrix (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Hessian_matrix"
+    note: "The second-derivative matrix and the second derivative test in several variables."
 ---
 
-_Placeholder. Content not written yet._
+A function of several variables has a single number at each point, but its behaviour is captured by a set of arrays. The gradient is the vector of first partial derivatives; it tells you which direction is uphill. The Jacobian generalises that to functions with several outputs. The Hessian is the matrix of second derivatives, which describes the curvature. Together they are the toolkit for optimisation, and for the training of neural networks, which is nothing more than optimisation of a very large function.
+
+## The gradient
+
+For $f(x_1, \ldots, x_n)$ the gradient collects the partial derivatives into a vector, written $\nabla f$. For $f(x, y) = x^2 + 3y^2$ it is $\nabla f = (2x, 6y)$.
+
+Its key property is geometric. The directional derivative in a unit direction $\mathbf{u}$ is $\nabla f \cdot \mathbf{u}$, and by the Cauchy–Schwarz inequality this is largest when $\mathbf{u}$ points along $\nabla f$. So the gradient is the direction of steepest ascent, and the negative gradient is the direction of steepest descent. The check below confirms the gradient numerically and that stepping along it raises the function.
+
+```python
+import numpy as np
+
+f = lambda p: p[0] ** 2 + 3 * p[1] ** 2
+
+def grad_num(f, p, h=1e-6):
+    g = np.zeros(2)
+    for i in range(2):
+        e = np.zeros(2)
+        e[i] = h
+        g[i] = (f(p + e) - f(p - e)) / (2 * h)
+    return g
+
+p = np.array([1.0, 2.0])
+print("gradient numeric:", np.round(grad_num(f, p), 4), " exact (2x, 6y) =", [2, 12])  # prints: gradient numeric: [ 2. 12.]  exact (2x, 6y) = [2, 12]
+
+step = 0.01 * grad_num(f, p) / np.linalg.norm(grad_num(f, p))
+print("f increases along gradient:", f(p + step) > f(p))  # prints: f increases along gradient: True
+```
+
+In words: the gradient at $(1, 2)$ is $(2, 12)$, which points mostly in the $y$ direction because $f$ is steeper there. A small step along it increases $f$, as the geometry predicts.
+
+<GradientField />
+
+## The Jacobian
+
+When $\mathbf{F}$ maps $\mathbb{R}^n$ to $\mathbb{R}^m$, its derivative is an $m \times n$ matrix, the Jacobian, whose entries are $J_{ij} = \frac{\partial F_i}{\partial x_j}$. Each row is the gradient of one output. Near a point, $\mathbf{F}(\mathbf{p} + \mathbf{h}) \approx \mathbf{F}(\mathbf{p}) + J\mathbf{h}$: the Jacobian is the linear map that best approximates $\mathbf{F}$.
+
+For $\mathbf{F}(x, y) = (xy, x + y^2)$ the Jacobian is
+
+$$
+J = \begin{pmatrix} y & x \\ 1 & 2y \end{pmatrix}.
+
+$$
+
+At $(1, 2)$ this is $\begin{pmatrix} 2 & 1 \\ 1 & 4 \end{pmatrix}$. The check below computes it by finite differences and confirms the formula at that point.
+
+```python
+import numpy as np
+
+F = lambda p: np.array([p[0] * p[1], p[0] + p[1] ** 2])
+p = np.array([1.0, 2.0])
+J = np.zeros((2, 2))
+h = 1e-6
+for j in range(2):
+    e = np.zeros(2)
+    e[j] = h
+    J[:, j] = (F(p + e) - F(p - e)) / (2 * h)
+print("Jacobian numeric:\n", np.round(J, 4))  # prints: Jacobian numeric: [[2. 1.] [1. 4.]]
+```
+
+In words: the numerical Jacobian is $\begin{pmatrix} 2 & 1 \\ 1 & 4 \end{pmatrix}$, matching the formula at $(1, 2)$. Each row holds the gradient of one output component.
+
+## The Hessian and curvature
+
+The Hessian of a scalar function is the symmetric matrix $H_{ij} = \frac{\partial^2 f}{\partial x_i \partial x_j}$. At a critical point it classifies the point through its eigenvalues. All positive means a local minimum, all negative a local maximum, and mixed signs a saddle point.
+
+For $f(x, y) = x^2 + 3y^2$ the Hessian is the constant matrix $\operatorname{diag}(2, 6)$. Its eigenvalues are $2$ and $6$, both positive, so $f$ is a bowl with a single minimum at the origin. The check below computes them.
+
+```python
+import numpy as np
+
+H = np.diag([2.0, 6.0])
+print("Hessian eigenvalues:", np.linalg.eigvalsh(H))  # prints: Hessian eigenvalues: [2. 6.]
+```
+
+In words: both eigenvalues are positive, so the bowl curves upward in every direction. The eigenvalue $6$ is steeper than $2$, so the function is more sharply curved in the $y$ direction, which is why gradient descent takes smaller steps along $y$.
+
+<Callout type="pitfall">
+The gradient of a function with several outputs is not defined; the Jacobian is the right object. Writing "the gradient of $\mathbf{F}$" and meaning its Jacobian is common, but the two differ when the output is a vector.
+</Callout>
+
+## Why this matters for training
+
+Training a neural network minimises a loss $L(\mathbf{w})$ over millions of weights. The gradient $\nabla L$ says how to change every weight, and gradient descent repeats $\mathbf{w} \leftarrow \mathbf{w} - \eta \nabla L$. The Hessian's eigenvalues explain why learning rates must be small in steep directions and why training can crawl along flat ones. Computing the Jacobian of each layer, and chaining them, is what backpropagation does.

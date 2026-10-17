@@ -1,8 +1,84 @@
 ---
 title: "Differential equations"
-description: "ODEs, separable equations, and the basic solution methods."
+description: "Equations that relate a function to its derivatives, the separable and linear first-order cases you can solve by hand, and Euler's method for when you cannot."
 order: 11
-tier: advanced
+tier: core
+takeaways:
+  - "A **differential equation** relates a function to its derivatives, such as $y' = ky$. Its solution is a function, not a number, and an initial condition $y(0) = y_0$ picks out one solution."
+  - "The equation $y' = ky$ has solution $y = y_0 e^{kt}$. Positive $k$ is exponential growth, negative $k$ is decay, and this is the model of compound interest and radioactive decay."
+  - "A **separable** equation $y' = g(t)h(y)$ can be solved by moving all the $y$ terms to one side and all the $t$ terms to the other, then integrating both."
+  - "**Euler's method** approximates a solution one small step at a time, using the slope at each step. It is the simplest numerical solver, and its error shrinks as the step size shrinks."
+  - "Newton's second law is a differential equation. Most physical laws, from heat flow to the wave equation, are written as differential equations."
+resources:
+  - title: "Differential equation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Differential_equation"
+    note: "Types of equations, solution methods, and examples from physics."
+  - title: "Separation of variables (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Separation_of_variables"
+    note: "The method for separable first-order equations."
+  - title: "Euler method (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Euler_method"
+    note: "The numerical method, its error, and the step-size trade-off."
 ---
 
-_Placeholder. Content not written yet._
+Many laws of nature do not say what a quantity is; they say how it changes. Population grows in proportion to its size. Radioactive material decays in proportion to what is left. A cooling cup of tea loses heat in proportion to the temperature difference. Each of these is a differential equation, and solving it means finding the function whose rate of change matches the rule. This note covers the cases you can solve exactly, and Euler's method for the cases you cannot.
+
+## The exponential equation
+
+The simplest example is $y' = ky$ with $y(0) = y_0$. The solution is $y(t) = y_0 e^{kt}$. To check, differentiate: $y' = k y_0 e^{kt} = k y$, which is the equation, and $y(0) = y_0$ is the initial condition. Growth and decay are the same equation with the sign of $k$ reversed.
+
+The script below solves $y' = -2y$ with $y(0) = 1$ and approximates $y(1)$ by Euler's method with increasing numbers of steps. The exact answer is $e^{-2}$.
+
+```python
+import math
+
+def euler(f, y0, t_end, steps):
+    h = t_end / steps
+    y = y0
+    for _ in range(steps):
+        y = y + h * f(y)
+    return y
+
+f = lambda y: -2 * y
+exact = math.exp(-2 * 1.0)
+for steps in [10, 100, 1000]:
+    approx = euler(f, 1.0, 1.0, steps)
+    print(f"Euler with {steps:>4} steps: y(1) = {approx:.6f}, error {abs(approx - exact):.2e}")  # prints: Euler with 10 steps: y(1) = 0.107374, error 2.80e-02 ...
+print("exact y(1) = e^-2 =", round(exact, 6))  # prints: exact y(1) = e^-2 = 0.135335
+```
+
+In words: with $10$ steps the approximation is off by $0.028$, with $100$ by $0.0027$, and with $1000$ by $0.00027$. The error falls roughly tenfold for each tenfold increase in steps. Euler's method is first-order accurate, so it is slow, but it works for equations with no closed-form solution.
+
+<SlopeField />
+
+## Separable equations
+
+A first-order equation is separable when it can be written $\frac{dy}{dt} = g(t)\,h(y)$. Divide by $h(y)$, multiply by $dt$, and integrate both sides:
+
+$$
+\int \frac{dy}{h(y)} = \int g(t)\,dt.
+
+$$
+
+For $y' = y^2$ with $y(0) = 1$, the separated form is $\frac{dy}{y^2} = dt$, so $-\frac{1}{y} = t + C$. The initial condition gives $C = -1$, and so $y = \frac{1}{1 - t}$. The solution blows up at $t = 1$, which the derivative of $y$ also reveals: a solution can cease to exist in finite time.
+
+The check below evaluates that solution at $t = 0.5$, where the formula gives $2$.
+
+```python
+t = 0.5
+print("solution y(0.5) =", 1 / (1 - t))  # prints: solution y(0.5) = 2.0
+```
+
+In words: the formula gives $y(0.5) = 2$. Between $t = 0$ and $t = 1$ the solution grows from $1$ to infinity, so the equation has no solution beyond $t = 1$.
+
+<Callout type="pitfall">
+When you divide by $h(y)$, you may lose solutions where $h(y) = 0$. For $y' = y^2$, the constant solution $y = 0$ satisfies the equation but is not in the family $y = \frac{1}{1-t}$. Check for such constant solutions before you finish.
+</Callout>
+
+## Why numerical methods matter
+
+Most differential equations have no closed-form solution. Engineers solve them with Euler's method or its more accurate relatives, which trade computing time for precision. The step size controls the error, and the art of numerical integration is choosing steps that keep the error small without wasting work.
+
+## Where differential equations are used
+
+Circuit analysis, mechanical vibrations, heat flow, population dynamics, and the training of neural networks viewed as continuous flows are all differential equations. The equations in this note are the simplest members of a large family, and most of physics is written in that family.

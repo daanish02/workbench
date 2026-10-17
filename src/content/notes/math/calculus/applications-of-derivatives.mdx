@@ -1,8 +1,84 @@
 ---
 title: "Applications of derivatives"
-description: "Optimization, related rates, and curve sketching using derivatives."
+description: "Using the derivative to find maxima and minima, sketch the shape of a curve from its critical points and its second derivative, and turn a word problem into an optimisation."
 order: 3
 tier: core
+takeaways:
+  - "A **critical point** is where $f'(x) = 0$ (or $f'$ is undefined). A maximum or minimum of a smooth function on an interval happens at a critical point or at an endpoint."
+  - "The **second derivative test**: if $f'(c) = 0$ and $f''(c) < 0$, then $c$ is a local maximum; if $f''(c) > 0$, a local minimum."
+  - "**Optimisation** turns a word problem into a function of one variable, then finds its critical points. For a rectangle with fixed perimeter, the best shape is a square."
+  - "The sign of $f'$ tells you where $f$ rises and falls. The sign of $f''$ tells you where it bends up or down. Together they sketch a curve without plotting many points."
+  - "Related rates use the chain rule to link the rates of change of quantities that depend on each other, such as the rate a balloon's volume grows when its radius is known."
+resources:
+  - title: "Optimization (mathematics) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Mathematical_optimization"
+    note: "Maxima and minima, constraints, and the broader field."
+  - title: "Second derivative test (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Second_derivative_test"
+    note: "The test for local extrema and when it is inconclusive."
+  - title: "NumPy linspace"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linspace.html"
+    note: "The grid used to check the rectangle maximum below."
 ---
 
-_Placeholder. Content not written yet._
+The derivative is a tool for finding the best value of something: the largest area that fits a fence, the smallest cost, the highest point of a trajectory. Each of those is a function of one variable, and the best value sits where its rate of change is zero. This note shows how to find those points, how to tell a maximum from a minimum, and how the first and second derivatives together sketch a curve. The method applies directly to the optimisation that trains machine learning models.
+
+## Critical points
+
+A **critical point** of $f$ is a value $c$ where $f'(c) = 0$, or where $f'$ does not exist. At a smooth interior maximum or minimum the curve is flat, so the derivative vanishes there. The converse is not true: a flat point can be neither a maximum nor a minimum, as in $f(x) = x^3$ at $x = 0$.
+
+To find the maximum of a function on a closed interval, check the critical points inside it and the two endpoints, then take the largest value.
+
+## An optimisation problem
+
+Suppose you have $20$ metres of fence and want the rectangle with the largest area. Call the width $x$. The length is then $10 - x$, since the perimeter is $2x + 2(10 - x) = 20$. The area is
+
+$$
+A(x) = x(10 - x) = 10x - x^2.
+
+$$
+
+The derivative is $A'(x) = 10 - 2x$, which is zero at $x = 5$. The second derivative $A''(x) = -2$ is negative, so $x = 5$ is a maximum. The rectangle is a square of side $5$, with area $25$.
+
+The check below evaluates the area on a fine grid and reads off the largest value. It should agree with the calculus.
+
+```python
+import numpy as np
+
+xs = np.linspace(0, 10, 10001)
+area = xs * (10 - xs)
+i = np.argmax(area)
+print("best width:", round(xs[i], 3), "area:", round(area[i], 3))  # prints: best width: 5.0 area: 25.0
+print("derivative at x = 5:", 10 - 2 * 5)  # prints: derivative at x = 5: 0
+```
+
+In words: the grid search finds a width of $5.0$ and an area of $25.0$, matching the derivative. Checking the derivative at that point gives $0$, which is the condition for a critical point. A grid is a reliable check, but calculus gives the exact answer and says why the point is a maximum.
+
+## Sketching a curve
+
+Take $f(x) = x^3 - 3x$. Its derivative $f'(x) = 3x^2 - 3$ vanishes at $x = \pm 1$. The second derivative $f''(x) = 6x$ classifies them: negative at $x = -1$, so a local maximum, and positive at $x = 1$, so a local minimum.
+
+```python
+import numpy as np
+
+f = lambda x: x ** 3 - 3 * x
+roots = np.roots([3, 0, -3])  # solves 3x^2 - 3 = 0
+for r in sorted(roots.real):
+    second = 6 * r
+    kind = "local max" if second < 0 else "local min"
+    print(f"x = {r:.4f}: f = {f(r):.4f}, f'' = {second:.4f} -> {kind}")  # prints: x = -1.0000: f = 2.0000, f'' = -6.0000 -> local max
+```
+
+In words: at $x = -1$ the curve peaks at height $2$, and at $x = 1$ it dips to $-2$. Between them the curve falls, and outside them it rises. Those four facts sketch the cubic: it rises, peaks, falls through the middle, dips, and rises again.
+
+<Callout type="pitfall">
+A zero of $f'$ does not guarantee an extremum. At $x = 0$ the function $x^3$ has $f'(0) = 0$ and $f''(0) = 0$, and it is increasing straight through. When the second derivative test is inconclusive, look at the sign of $f'$ on either side instead.
+</Callout>
+
+## Related rates
+
+When two quantities are linked, their rates of change are linked too. For a sphere, $V = \frac{4}{3}\pi r^3$, so $\frac{dV}{dt} = 4\pi r^2 \frac{dr}{dt}$. The chain rule turns a known rate of the radius into the rate of volume. This is the same composition of functions as in the [Derivatives](../derivatives/) note, now with time as the outer variable.
+
+## Where this is used
+
+Gradient descent is optimisation by the derivative: step against the slope until it is flat. Engineers use optimisation to minimise material or cost, and physicists find the path of least action as a critical point of an integral. The shape of a graph, read from its derivatives, is also how a plotting library decides where to put the interesting points.

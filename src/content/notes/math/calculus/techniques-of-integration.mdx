@@ -1,8 +1,103 @@
 ---
 title: "Techniques of integration"
-description: "Substitution, integration by parts, and partial fractions."
+description: "Substitution, integration by parts and partial fractions: the three methods that turn a hard integral into one you can evaluate."
 order: 5
 tier: core
+takeaways:
+  - "**Substitution** reverses the chain rule: if $u = g(x)$ then $\\int f(g(x))\\,g'(x)\\,dx = \\int f(u)\\,du$. Look for a function and its derivative appearing together."
+  - "**Integration by parts** reverses the product rule: $\\int u\\,dv = uv - \\int v\\,du$. Choose $u$ so that its derivative is simpler than $u$ itself."
+  - "**Partial fractions** split a rational function into simple pieces such as $\\frac{A}{x - 1}$ and $\\frac{B}{x + 1}$, each of which integrates to a logarithm."
+  - "Every method is checkable: differentiate your answer and confirm you get the integrand back. Numerical integration gives a second check when the algebra is long."
+resources:
+  - title: "Integration by substitution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Integration_by_substitution"
+    note: "The method, with the change-of-variables formula and worked examples."
+  - title: "Integration by parts (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Integration_by_parts"
+    note: "The rule, the tabular method, and when it applies."
+  - title: "NumPy trapezoid"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.trapezoid.html"
+    note: "The numerical integrator used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Most integrals you meet are not table entries. A function like $x e^x$ or $\frac{1}{x^2 - 1}$ does not match any single antiderivative you remember, but it can be rewritten into one that does. Techniques of integration are the rewriting rules. They do not add new ideas: each one is a derivative rule read backwards. This note covers the three methods that handle most of the integrals that appear in practice.
+
+## Substitution
+
+The chain rule says $\frac{d}{dx} F(g(x)) = F'(g(x))\,g'(x)$. Reading this backwards gives substitution: if the integrand has the form $f(g(x))\,g'(x)$, let $u = g(x)$, so $du = g'(x)\,dx$, and the integral becomes $\int f(u)\,du$.
+
+Take $\int_0^1 2x\cos(x^2)\,dx$. The factor $2x$ is the derivative of $x^2$, so set $u = x^2$. The limits become $0$ to $1$, and the integral is $\int_0^1 \cos u\,du = \sin 1$. The check below evaluates the integral numerically.
+
+```python
+import numpy as np
+
+def integrate(f, a, b, n=200000):
+    xs = np.linspace(a, b, n)
+    return np.trapezoid(f(xs), xs)
+
+v = integrate(lambda x: 2 * x * np.cos(x ** 2), 0, 1)
+print("substitution numeric:", round(v, 6), " sin(1) =", round(np.sin(1), 6))  # prints: substitution numeric: 0.841471  sin(1) = 0.841471
+```
+
+In words: the numerical value matches $\sin 1 = 0.841471$. The substitution turned a product into a single function, which is the whole method.
+
+## Integration by parts
+
+The product rule is $(uv)' = u'v + uv'$. Integrating both sides and rearranging gives integration by parts:
+
+$$
+\int u\,dv = uv - \int v\,du.
+
+$$
+
+The method works when $\int v\,du$ is easier than the original integral. For $\int_0^1 x e^x\,dx$ take $u = x$ and $dv = e^x dx$, so $du = dx$ and $v = e^x$. Then $\int_0^1 x e^x\,dx = [x e^x]_0^1 - \int_0^1 e^x\,dx = e - (e - 1) = 1$.
+
+```python
+import numpy as np
+
+def integrate(f, a, b, n=200000):
+    xs = np.linspace(a, b, n)
+    return np.trapezoid(f(xs), xs)
+
+v2 = integrate(lambda x: x * np.exp(x), 0, 1)
+print("by parts numeric:", round(v2, 6), " exact = 1")  # prints: by parts numeric: 1.0  exact = 1
+```
+
+In words: the boundary term $e$ cancels against the integral $e - 1$, leaving $1$, which the numerical integral confirms. A good choice of $u$ is one that gets simpler when differentiated: $x$ becomes $1$, while $e^x$ stays $e^x$.
+
+<Callout type="pitfall">
+Choosing $u$ badly makes the new integral harder, not easier. For $\int x e^x\,dx$, taking $u = e^x$ and $dv = x\,dx$ gives $\int \frac{x^2}{2} e^x\,dx$, which is worse. If the integral does not simplify after one step, try the other choice.
+</Callout>
+
+## Partial fractions
+
+A rational function $\frac{P(x)}{Q(x)}$ with the degree of $P$ below that of $Q$ can be split into simple fractions. For $\frac{1}{x^2 - 1}$, the denominator factors as $(x - 1)(x + 1)$, and
+
+$$
+\frac{1}{x^2 - 1} = \frac{1}{2}\left(\frac{1}{x - 1} - \frac{1}{x + 1}\right).
+
+$$
+
+Each term integrates to a logarithm, so $\int \frac{1}{x^2 - 1}\,dx = \frac{1}{2}\ln\left|\frac{x - 1}{x + 1}\right| + C$. The check below integrates over $[2, 3]$ numerically and compares it with the antiderivative.
+
+```python
+import numpy as np
+
+def integrate(f, a, b, n=200000):
+    xs = np.linspace(a, b, n)
+    return np.trapezoid(f(xs), xs)
+
+v3 = integrate(lambda x: 1 / (x ** 2 - 1), 2, 3)
+antider = lambda x: 0.5 * np.log(abs((x - 1) / (x + 1)))
+print("partial fractions numeric:", round(v3, 6), " antiderivative difference:", round(antider(3) - antider(2), 6))  # prints: partial fractions numeric: 0.202733  antiderivative difference: 0.202733
+```
+
+In words: the numerical integral and the difference of the antiderivative agree to six places, $0.202733$. The split into two simple fractions is what made the antiderivative possible.
+
+## Checking your work
+
+Differentiate the answer. If the derivative is the integrand, the answer is right, regardless of how it was found. When the algebra is long, a numerical integral of the original function is the second check. Both are cheap, and both catch the sign and constant errors that are the most common.
+
+## Where these methods are used
+
+Probability densities, physical work and areas all reduce to integrals of this form. Engineers use substitution and parts constantly; the numerical integrators in scientific software exist because many integrals have no closed form at all, which is when the methods here stop and numerical methods start.

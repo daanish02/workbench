@@ -1,8 +1,79 @@
 ---
 title: "Multivariable calculus"
-description: "Partial derivatives, multiple integrals, the idea of a function of several variables."
+description: "Functions of several variables: partial derivatives that hold the others fixed, double integrals over regions, and the idea that calculus works in any number of dimensions."
 order: 7
 tier: core
+takeaways:
+  - "A **partial derivative** $\\frac{\\partial f}{\\partial x}$ differentiates with respect to one variable and treats the others as constants. It measures the change of $f$ in the $x$ direction alone."
+  - "Mixed partials usually commute: $\\frac{\\partial^2 f}{\\partial x \\partial y} = \\frac{\\partial^2 f}{\\partial y \\partial x}$ for smooth functions, so the order of differentiation rarely matters."
+  - "A **double integral** adds the function over a two-dimensional region. Over a rectangle it can be computed as an iterated one-dimensional integral, one variable at a time."
+  - "Everything from single-variable calculus carries over: the product rule, the chain rule and the fundamental theorem all have multivariable versions."
+  - "Neural networks take many inputs and produce many outputs, so multivariable calculus is the everyday language of their training."
+resources:
+  - title: "Multivariable calculus (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Multivariable_calculus"
+    note: "Partial derivatives, multiple integrals and the main theorems."
+  - title: "Partial derivative (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Partial_derivative"
+    note: "Notation, the rules, and the geometric meaning on a surface."
+  - title: "NumPy meshgrid"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.meshgrid.html"
+    note: "The grid used for the double integral check below."
 ---
 
-_Placeholder. Content not written yet._
+Most quantities depend on more than one thing. The temperature in a room depends on position and time; the output of a neural network depends on thousands of weights; the cost of a trip depends on distance and speed. Multivariable calculus extends differentiation and integration to these functions. The main new idea is the partial derivative: change one input at a time and see what happens. This note introduces partial derivatives, checks them numerically, and computes a double integral.
+
+## Partial derivatives
+
+Let $f(x, y) = x^2 y + \sin y$. To find $\frac{\partial f}{\partial x}$, treat $y$ as a constant and differentiate in $x$: $\frac{\partial f}{\partial x} = 2xy$. To find $\frac{\partial f}{\partial y}$, treat $x$ as a constant: $\frac{\partial f}{\partial y} = x^2 + \cos y$.
+
+Geometrically, the surface $z = f(x, y)$ has a tangent line in the $x$ direction and another in the $y$ direction, and the partial derivatives are their slopes. The same definition as a limit applies, with only one variable moving:
+
+$$
+\frac{\partial f}{\partial x}(x_0, y_0) = \lim_{h \to 0} \frac{f(x_0 + h, y_0) - f(x_0, y_0)}{h}.
+
+$$
+
+The check below evaluates both partials at $(1.5, 0.8)$ by central differences and compares them with the formulas.
+
+```python
+import numpy as np
+
+f = lambda x, y: x ** 2 * y + np.sin(y)
+
+x0, y0, h = 1.5, 0.8, 1e-6
+fx = (f(x0 + h, y0) - f(x0 - h, y0)) / (2 * h)
+fy = (f(x0, y0 + h) - f(x0, y0 - h)) / (2 * h)
+print("f_x numeric:", round(fx, 6), " exact 2xy =", round(2 * x0 * y0, 6))  # prints: f_x numeric: 2.4  exact 2xy = 2.4
+print("f_y numeric:", round(fy, 6), " exact x^2 + cos y =", round(x0 ** 2 + np.cos(y0), 6))  # prints: f_y numeric: 2.946707  exact x^2 + cos y = 2.946707
+```
+
+In words: both numerical partials agree with the formulas to six places. The $x$ partial $2.4$ is the slope of the surface in the $x$ direction at that point, and the $y$ partial $2.946707$ is the slope in the $y$ direction.
+
+<PartialSlice />
+
+## Double integrals
+
+The double integral $\iint_R f(x, y)\,dA$ sums $f$ over a region $R$. Over a rectangle $[a, b] \times [c, d]$ it is an iterated integral, one variable at a time: $\int_a^b \left(\int_c^d f(x,y)\,dy\right) dx$, and the order can be swapped for nice functions (Fubini's theorem).
+
+For $f(x, y) = xy$ over the unit square, the inner integral in $y$ is $\frac{x}{2}$ and the outer integral is $\int_0^1 \frac{x}{2}\,dx = \frac{1}{4}$. The check below computes the same double integral on a grid.
+
+```python
+import numpy as np
+
+n = 2000
+xs = np.linspace(0, 1, n)
+X, Y = np.meshgrid(xs, xs)
+val = np.trapezoid(np.trapezoid(X * Y, xs, axis=1), xs)
+print("double integral of xy over unit square:", round(val, 6), " exact 1/4 =", 0.25)  # prints: double integral of xy over unit square: 0.25  exact 1/4 = 0.25
+```
+
+In words: the grid computation gives $0.25$, matching $\frac{1}{4}$. The code integrates along one axis, then the other, exactly as the iterated integral does on paper.
+
+<Callout type="pitfall">
+A partial derivative is not the total rate of change. If $x$ and $y$ both depend on time, the total change is $\frac{df}{dt} = \frac{\partial f}{\partial x}\frac{dx}{dt} + \frac{\partial f}{\partial y}\frac{dy}{dt}$. The next notes develop this as the multivariable chain rule.
+</Callout>
+
+## Where it is used
+
+Physics describes fields such as temperature and pressure with partial derivatives, and conservation laws are equations involving them. Economics uses partial derivatives for how profit responds to each input. Machine learning uses the gradient, the vector of all partial derivatives, to decide how to change each weight. The next note develops that vector and its relatives.

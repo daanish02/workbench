@@ -1,8 +1,80 @@
 ---
 title: "The chain rule (multivariable)"
-description: "The backbone of backpropagation, explicit connection called out."
+description: "The chain rule for functions of several variables: how derivatives combine along a path, and the layer-by-layer computation that backpropagation performs."
 order: 9
 tier: core
+takeaways:
+  - "If $z = f(x, y)$ with $x(t)$ and $y(t)$, then $\\frac{dz}{dt} = \\frac{\\partial f}{\\partial x}\\frac{dx}{dt} + \\frac{\\partial f}{\\partial y}\\frac{dy}{dt}$. Each route from $z$ back to $t$ contributes one product."
+  - "In matrix form the chain rule is a product of Jacobians: the Jacobian of a composition is the product of the Jacobians, taken in the right order."
+  - "**Backpropagation** is the chain rule applied from the output backward. It reuses intermediate values, which is why it costs about as much as one forward pass."
+  - "The order matters for efficiency: multiplying Jacobians from the output backward keeps the intermediate products small when the output is a single number, as in a loss."
+resources:
+  - title: "Chain rule (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Chain_rule"
+    note: "The single-variable rule, the multivariable version, and the Jacobian form."
+  - title: "Backpropagation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Backpropagation"
+    note: "How the chain rule is organised to compute gradients efficiently in networks."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "Used through NumPy in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+The single-variable chain rule says that the derivative of a composition is a product of derivatives. Several variables make this a sum over paths: a change in $t$ can reach the output $z$ along several routes, and each route contributes its own product. The same rule, written with matrices, is what training a deep network requires. This note states the multivariable chain rule, checks it numerically, and shows the layer-by-layer form that backpropagation uses.
+
+## The chain rule along a path
+
+Let $z = f(x, y)$ where $x$ and $y$ each depend on $t$. Changing $t$ moves $x$ and $y$, and both changes move $z$:
+
+$$
+\frac{dz}{dt} = \frac{\partial f}{\partial x}\,\frac{dx}{dt} + \frac{\partial f}{\partial y}\,\frac{dy}{dt}.
+
+$$
+
+Take $f(x, y) = x^2 y$ with $x = \cos t$ and $y = \sin t$. The partial derivatives are $\frac{\partial f}{\partial x} = 2xy$ and $\frac{\partial f}{\partial y} = x^2$, and the derivatives along the path are $-\sin t$ and $\cos t$. The check below compares the chain rule with a direct numerical derivative at $t = 0.7$.
+
+```python
+import numpy as np
+
+f = lambda x, y: x ** 2 * y
+x = lambda t: np.cos(t)
+y = lambda t: np.sin(t)
+t0, h = 0.7, 1e-6
+
+num = (f(x(t0 + h), y(t0 + h)) - f(x(t0 - h), y(t0 - h))) / (2 * h)
+xv, yv = x(t0), y(t0)
+chain = (2 * xv * yv) * (-np.sin(t0)) + (xv ** 2) * np.cos(t0)
+print("dz/dt numeric:", round(num, 6), " chain rule:", round(chain, 6))  # prints: dz/dt numeric: -0.187424  chain rule: -0.187424
+print("chain rule matches:", np.isclose(num, chain, rtol=1e-6))  # prints: chain rule matches: True
+```
+
+In words: both values are $-0.187424$, so the sum over the two routes is the full rate of change. Each route contributes one product: the change in $f$ caused by $x$ times the speed of $x$, plus the same for $y$.
+
+<ChainTree />
+
+## Compositions as products of Jacobians
+
+If $\mathbf{g}$ maps $\mathbb{R}^n$ to $\mathbb{R}^m$ and $\mathbf{f}$ maps $\mathbb{R}^m$ to $\mathbb{R}^k$, the Jacobian of the composition $\mathbf{f} \circ \mathbf{g}$ is the matrix product $J_{\mathbf{f}}(\mathbf{g}(\mathbf{x}))\,J_{\mathbf{g}}(\mathbf{x})$. The sums over routes are exactly the entries of this matrix product. A neural network is a long composition, so its gradient is a long product of Jacobians.
+
+## Backpropagation in miniature
+
+Consider a loss that depends on a weight $w$ through two steps: $a = 2w$, then $z = wa$, then $L = (z - 3)^2$. The chain rule gives the gradient by working backward from the loss. Let $\frac{dL}{dz} = 2(z - 3)$ at the loss end, and multiply by the local derivatives as we go back to $w$. The check below does this with $w = 0.5$.
+
+```python
+w, target = 0.5, 3.0
+a = 2 * w
+z = w * a
+dLdz = 2 * (z - target)
+dzdw = a + w * 2
+print("chain-rule gradient dL/dw:", round(dLdz * dzdw, 4))  # prints: chain-rule gradient dL/dw: -10.0
+```
+
+In words: $dL/dz = 2(0.5 - 3) = -5$ and $dz/dw = a + 2w = 2$, so $dL/dw = -10$. The loss drops if $w$ increases, which the sign tells you. Backpropagation computes exactly this, one local derivative at a time, and it stores $a$ and $z$ from the forward pass so they need not be recomputed.
+
+<Callout type="pitfall">
+When one variable feeds into a function through several paths, add the contributions. A common bug is to follow only one path, which gives a plausible-looking but wrong gradient. Check with a numerical derivative whenever a path has a fork.
+</Callout>
+
+## Why backpropagation runs backward
+
+For a scalar loss, multiplying the Jacobians from the output end keeps the intermediate result a row vector: one number per input. Going forward would produce a large matrix at every step. Working backward reuses the same intermediate products for every weight, so the cost of the whole gradient is a small multiple of the cost of computing the output. That efficiency is the reason deep learning is practical.
