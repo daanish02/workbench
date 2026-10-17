@@ -1,0 +1,137 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Vector fields: spreading and swirling"
+  caption="Each arrow is the field at its point. Pick a field and drag the probe. Divergence measures spreading at the probe and curl measures swirling, computed from the arrows by finite differences: the rotation field has zero divergence and curl 2, the source field has divergence 2 and zero curl."
+>
+  <vector-field>
+    <div class="vf-ctl">
+      <button class="btn" data-field="rot" aria-pressed="true">rotation (−y, x)</button>
+      <button class="btn" data-field="src" aria-pressed="false">source (x, y)</button>
+    </div>
+    <svg class="vf-svg" viewBox="-3.2 -3.2 6.4 6.4" role="img" aria-label="Arrows showing a vector field and a draggable probe">
+      <g transform="scale(1, -1)">
+        <line x1="-3.2" y1="0" x2="3.2" y2="0" class="vf-axis"></line>
+        <line x1="0" y1="-3.2" x2="0" y2="3.2" class="vf-axis"></line>
+        <g data-arrows></g>
+        <circle data-p r="0.12" class="vf-p"></circle>
+      </g>
+    </svg>
+    <p class="vf-stat" data-stat></p>
+  </vector-field>
+</Figure>
+
+<style>
+  .vf-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+  .vf-svg {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .vf-svg :global(circle) {
+    cursor: grab;
+  }
+  .vf-svg :global(.vf-arrow) {
+    stroke: #9aa0a6;
+    stroke-width: 0.03;
+  }
+  .vf-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .vf-p {
+    fill: var(--g-yellow);
+  }
+  .vf-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const FIELDS: Record<string, (x: number, y: number) => [number, number]> = {
+    rot: (x, y) => [-y, x],
+    src: (x, y) => [x, y],
+  };
+
+  class VectorField extends HTMLElement {
+    field = 'rot';
+    p = { x: 1, y: 1 };
+    drag = false;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.vf-svg')!;
+      this.querySelectorAll<HTMLButtonElement>('[data-field]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.field = b.dataset.field!;
+          this.querySelectorAll('[data-field]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.querySelector('[data-p]')!.addEventListener('pointerdown', (e) => {
+        this.drag = true;
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const r = svg.getBoundingClientRect();
+        const s = 6.4 / r.width;
+        this.p = {
+          x: Math.max(-2.8, Math.min(2.8, (e.clientX - (r.left + r.width / 2)) * s)),
+          y: Math.max(-2.8, Math.min(2.8, -(e.clientY - (r.top + r.height / 2)) * s)),
+        };
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = false));
+      this.draw();
+    }
+
+    // central differences of the field components
+    derivs(x: number, y: number) {
+      const F = FIELDS[this.field];
+      const h = 1e-5;
+      const P = (x: number, y: number) => F(x, y)[0];
+      const Q = (x: number, y: number) => F(x, y)[1];
+      const dPdx = (P(x + h, y) - P(x - h, y)) / (2 * h);
+      const dQdy = (Q(x, y + h) - Q(x, y - h)) / (2 * h);
+      const dQdx = (Q(x + h, y) - Q(x - h, y)) / (2 * h);
+      const dPdy = (P(x, y + h) - P(x, y - h)) / (2 * h);
+      return { div: dPdx + dQdy, curl: dQdx - dPdy };
+    }
+
+    draw() {
+      const F = FIELDS[this.field];
+      const k = 0.35;
+      let arrows = '';
+      for (let i = -3; i <= 3; i++) {
+        for (let j = -3; j <= 3; j++) {
+          const [u, v] = F(i, j);
+          const m = Math.hypot(u, v) || 1;
+          const s = Math.min(k, 0.5 / m) * (Math.hypot(u, v) > 0 ? 1 : 0);
+          arrows += `<line class="vf-arrow" x1="${i}" y1="${j}" x2="${(i + u * s).toFixed(4)}" y2="${(j + v * s).toFixed(4)}"></line>`;
+        }
+      }
+      this.querySelector('[data-arrows]')!.innerHTML = arrows;
+      const cp = this.querySelector('[data-p]')!;
+      cp.setAttribute('cx', this.p.x.toFixed(4));
+      cp.setAttribute('cy', this.p.y.toFixed(4));
+      const { div, curl } = this.derivs(this.p.x, this.p.y);
+      const [u, v] = F(this.p.x, this.p.y);
+      this.querySelector('[data-stat]')!.textContent =
+        `F = (${u.toFixed(2)}, ${v.toFixed(2)}) · divergence = ${div.toFixed(3)} · curl = ${curl.toFixed(3)}`;
+    }
+  }
+  customElements.define('vector-field', VectorField);
+</script>

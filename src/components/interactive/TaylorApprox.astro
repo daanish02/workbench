@@ -1,0 +1,112 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Adding terms: the polynomial hugs the curve"
+  caption="The curve is sin x. The blue curve is its Taylor polynomial at 0 of the chosen degree. Raise the degree and the polynomial stays close to sin x over a wider range; far from 0 it still fails, which is why the interval matters."
+>
+  <taylor-approx>
+    <div class="ta-ctl">
+      <label>degree <input type="range" min="1" max="15" step="2" value="3" data-n /><b data-nv>3</b></label>
+    </div>
+    <svg class="ta-svg" viewBox="-4 -2 8 4" role="img" aria-label="The sine curve and its Taylor polynomial at zero of the chosen degree">
+      <g transform="scale(1, -1)">
+        <line x1="-4" y1="0" x2="4" y2="0" class="ta-axis"></line>
+        <line x1="0" y1="-2" x2="0" y2="2" class="ta-axis"></line>
+        <path data-sin class="ta-sin"></path>
+        <path data-poly class="ta-poly"></path>
+      </g>
+    </svg>
+    <p class="ta-stat" data-stat></p>
+  </taylor-approx>
+</Figure>
+
+<style>
+  .ta-ctl {
+    margin-bottom: 10px;
+  }
+  .ta-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ta-ctl input {
+    flex: 1;
+  }
+  .ta-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ta-svg {
+    display: block;
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  .ta-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .ta-sin {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 0.05;
+  }
+  .ta-poly {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.05;
+  }
+  .ta-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // degree-n Taylor polynomial of sin x at 0: sum of (-1)^k x^(2k+1) / (2k+1)!
+  const poly = (x: number, n: number) => {
+    let s = 0;
+    let fact = 1;
+    for (let k = 0; k <= Math.floor((n - 1) / 2); k++) {
+      if (k > 0) fact *= (2 * k) * (2 * k + 1);
+      s += ((k % 2 === 0 ? 1 : -1) * x ** (2 * k + 1)) / fact;
+    }
+    return s;
+  };
+
+  class TaylorApprox extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+
+      const sinPts: string[] = [];
+      const polyPts: string[] = [];
+      for (let i = 0; i <= 400; i++) {
+        const x = -4 + (8 * i) / 400;
+        sinPts.push(`${i ? 'L' : 'M'}${x.toFixed(4)},${(-Math.sin(x)).toFixed(4)}`);
+        const p = Math.max(-2, Math.min(2, poly(x, n)));
+        polyPts.push(`${i ? 'L' : 'M'}${x.toFixed(4)},${(-p).toFixed(4)}`);
+      }
+      this.querySelector('[data-sin]')!.setAttribute('d', sinPts.join(' '));
+      this.querySelector('[data-poly]')!.setAttribute('d', polyPts.join(' '));
+
+      const err1 = Math.abs(Math.sin(1) - poly(1, n));
+      const err3 = Math.abs(Math.sin(3) - poly(3, n));
+      this.querySelector('[data-stat]')!.textContent =
+        `at x = 1 the error is ${err1.toExponential(2)} · at x = 3 the error is ${err3.toExponential(2)}`;
+    }
+  }
+  customElements.define('taylor-approx', TaylorApprox);
+</script>

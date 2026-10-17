@@ -1,0 +1,141 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The derivative as the limit of secant slopes"
+  caption="The curve is f(x) = x³ − 3x. The dashed line is the secant through (a, f(a)) and (a + h, f(a + h)). Shrink h and the secant turns into the tangent (solid). Its slope is the derivative f'(a) = 3a² − 3."
+>
+  <tangent-slope>
+    <div class="ts-grid">
+      <label>a <input type="range" min="-2" max="2" step="0.05" value="0.5" data-a /><b data-av>0.50</b></label>
+      <label>h <input type="range" min="0.01" max="1.5" step="0.01" value="0.8" data-h /><b data-hv>0.80</b></label>
+    </div>
+    <svg class="ts-svg" viewBox="-3 -4 6 8" role="img" aria-label="Graph of x cubed minus 3x with a secant and the tangent at a point">
+      <g transform="scale(1, -1)">
+        <line x1="-3" y1="0" x2="3" y2="0" class="ts-axis"></line>
+        <line x1="0" y1="-4" x2="0" y2="4" class="ts-axis"></line>
+        <path data-curve class="ts-curve"></path>
+        <line data-sec class="ts-sec"></line>
+        <line data-tan class="ts-tan"></line>
+        <circle data-pa r="0.09" class="ts-pa"></circle>
+        <circle data-pb r="0.09" class="ts-pb"></circle>
+      </g>
+    </svg>
+    <p class="ts-stat" data-stat></p>
+  </tangent-slope>
+</Figure>
+
+<style>
+  .ts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ts-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ts-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .ts-grid b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ts-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .ts-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .ts-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.05;
+  }
+  .ts-sec {
+    stroke: #9aa0a6;
+    stroke-width: 0.04;
+    stroke-dasharray: 0.12 0.1;
+  }
+  .ts-tan {
+    stroke: var(--g-yellow);
+    stroke-width: 0.05;
+  }
+  .ts-pa {
+    fill: var(--g-red);
+  }
+  .ts-pb {
+    fill: var(--g-green);
+  }
+  .ts-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const f = (x: number) => x ** 3 - 3 * x;
+  const df = (x: number) => 3 * x * x - 3;
+
+  class TangentSlope extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-a]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-h]')!.addEventListener('input', () => this.draw());
+      const pts: string[] = [];
+      for (let i = 0; i <= 300; i++) {
+        const x = -3 + (6 * i) / 300;
+        pts.push(`${i ? 'L' : 'M'}${x.toFixed(4)},${(-f(x)).toFixed(4)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+      this.draw();
+    }
+
+    draw() {
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const h = +this.querySelector<HTMLInputElement>('[data-h]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(2);
+      this.querySelector('[data-hv]')!.textContent = h.toFixed(2);
+
+      const seg = (sel: string, x1: number, y1: number, x2: number, y2: number) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('x1', x1.toFixed(4));
+        el.setAttribute('y1', (-y1).toFixed(4));
+        el.setAttribute('x2', x2.toFixed(4));
+        el.setAttribute('y2', (-y2).toFixed(4));
+      };
+      const dot = (sel: string, x: number, y: number) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('cx', x.toFixed(4));
+        el.setAttribute('cy', (-y).toFixed(4));
+      };
+
+      const fa = f(a), fb = f(a + h);
+      const secSlope = (fb - fa) / h;
+      // secant line extended a little past both points
+      seg('[data-sec]', a - 1, fa - secSlope, a + h + 1, fb + secSlope);
+      // tangent line at a
+      const slope = df(a);
+      seg('[data-tan]', a - 1, fa - slope, a + 1, fa + slope);
+      dot('[data-pa]', a, fa);
+      dot('[data-pb]', a + h, fb);
+
+      this.querySelector('[data-stat]')!.textContent =
+        `secant slope = ${secSlope.toFixed(3)} · tangent slope f'(${a.toFixed(2)}) = ${slope.toFixed(3)} · difference: ${(secSlope - slope).toFixed(3)}`;
+    }
+  }
+  customElements.define('tangent-slope', TangentSlope);
+</script>

@@ -1,0 +1,122 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A partial derivative is the slope of one slice"
+  caption="Fix y and look only at x: the surface f(x, y) = x²y + sin y becomes a curve in x. Its slope at x₀ is the partial derivative ∂f/∂x. Move y₀ and x₀ to see the slice and its slope change."
+>
+  <partial-slice>
+    <div class="ps-grid">
+      <label>y₀ <input type="range" min="-2" max="2" step="0.05" value="0.8" data-y /><b data-yv>0.80</b></label>
+      <label>x₀ <input type="range" min="-2" max="2" step="0.05" value="1" data-x /><b data-xv>1.00</b></label>
+    </div>
+    <svg class="ps-svg" viewBox="-2.4 -4 4.8 8" role="img" aria-label="The slice of x squared y plus sin y at a fixed y, with its tangent at x0">
+      <g transform="scale(1, -1)">
+        <line x1="-2.4" y1="0" x2="2.4" y2="0" class="ps-axis"></line>
+        <line x1="0" y1="-4" x2="0" y2="4" class="ps-axis"></line>
+        <path data-curve class="ps-curve"></path>
+        <line data-tan class="ps-tan"></line>
+        <circle data-pt r="0.1" class="ps-pt"></circle>
+      </g>
+    </svg>
+    <p class="ps-stat" data-stat></p>
+  </partial-slice>
+</Figure>
+
+<style>
+  .ps-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ps-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ps-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .ps-grid b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ps-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .ps-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .ps-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.05;
+  }
+  .ps-tan {
+    stroke: var(--g-yellow);
+    stroke-width: 0.05;
+  }
+  .ps-pt {
+    fill: var(--g-red);
+  }
+  .ps-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // f(x, y) = x^2 y + sin y, sliced at a fixed y
+  const f = (x: number, y: number) => x * x * y + Math.sin(y);
+
+  class PartialSlice extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-y]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-x]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const y0 = +this.querySelector<HTMLInputElement>('[data-y]')!.value;
+      const x0 = +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+      this.querySelector('[data-yv]')!.textContent = y0.toFixed(2);
+      this.querySelector('[data-xv]')!.textContent = x0.toFixed(2);
+
+      const pts: string[] = [];
+      for (let i = 0; i <= 160; i++) {
+        const x = -2.4 + (4.8 * i) / 160;
+        pts.push(`${i ? 'L' : 'M'}${x.toFixed(4)},${f(x, y0).toFixed(4)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+
+      // the slope in x at x0: ∂f/∂x = 2 x y, drawn as a short tangent segment
+      const slope = 2 * x0 * y0;
+      const v = f(x0, y0);
+      const tan = this.querySelector('[data-tan]')!;
+      tan.setAttribute('x1', (x0 - 0.7).toFixed(4));
+      tan.setAttribute('y1', (v - 0.7 * slope).toFixed(4));
+      tan.setAttribute('x2', (x0 + 0.7).toFixed(4));
+      tan.setAttribute('y2', (v + 0.7 * slope).toFixed(4));
+      const pt = this.querySelector('[data-pt]')!;
+      pt.setAttribute('cx', x0.toFixed(4));
+      pt.setAttribute('cy', v.toFixed(4));
+
+      // the view flips y, so the drawn curve and point use the same sign convention
+      this.querySelector('[data-stat]')!.textContent =
+        `f(x₀, y₀) = ${v.toFixed(3)} · ∂f/∂x = 2x₀y₀ = ${slope.toFixed(3)}`;
+    }
+  }
+  customElements.define('partial-slice', PartialSlice);
+</script>

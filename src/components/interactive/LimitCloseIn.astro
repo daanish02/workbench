@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Closing in on a point the function never visits"
+  caption="f(x) = sin x / x has a hole at x = 0 (open circle). Move the distance δ and see the function values at ±δ get close to 1. The yellow band is ε around the limit: the readout says whether every sampled point within δ of 0 lands inside it."
+>
+  <limit-close-in>
+    <div class="lc-grid">
+      <label>δ <input type="range" min="0.01" max="2" step="0.01" value="1" data-d /><b data-dv>1.00</b></label>
+      <label>ε <input type="range" min="0.01" max="0.5" step="0.01" value="0.1" data-e /><b data-ev>0.10</b></label>
+    </div>
+    <svg class="lc-svg" viewBox="-3.2 -1.6 6.4 3.2" role="img" aria-label="Graph of sin x over x with a hole at zero, a window of width delta and a band of width epsilon around 1">
+      <g transform="scale(1, -1)">
+        <line x1="-3.2" y1="0" x2="3.2" y2="0" class="lc-axis"></line>
+        <line x1="0" y1="-1.6" x2="0" y2="1.6" class="lc-axis"></line>
+        <rect data-band x="-3.2" y="-0.1" width="6.4" height="0.2" class="lc-band"></rect>
+        <line data-win1 x1="0" y1="-1.6" x2="0" y2="1.6" class="lc-win"></line>
+        <path data-curve class="lc-curve"></path>
+        <circle cx="0" cy="-1" r="0.06" class="lc-hole"></circle>
+        <circle data-p1 r="0.07" class="lc-pt"></circle>
+        <circle data-p2 r="0.07" class="lc-pt"></circle>
+      </g>
+    </svg>
+    <p class="lc-stat" data-stat></p>
+  </limit-close-in>
+</Figure>
+
+<style>
+  .lc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .lc-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lc-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .lc-grid b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .lc-svg {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .lc-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .lc-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 0.04;
+  }
+  .lc-hole {
+    fill: #0b0b0b;
+    stroke: var(--g-blue);
+    stroke-width: 0.02;
+  }
+  .lc-band {
+    fill: rgba(251, 188, 4, 0.18);
+  }
+  .lc-win {
+    stroke: #9aa0a6;
+    stroke-width: 0.02;
+    stroke-dasharray: 0.05 0.05;
+  }
+  .lc-pt {
+    fill: var(--g-red);
+  }
+  .lc-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const f = (x: number) => (Math.abs(x) < 1e-12 ? 1 : Math.sin(x) / x);
+
+  class LimitCloseIn extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-d]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-e]')!.addEventListener('input', () => this.draw());
+      const pts: string[] = [];
+      let open = false;
+      for (let i = 0; i <= 600; i++) {
+        const x = -3 + (6 * i) / 600;
+        if (Math.abs(x) < 0.003) {
+          open = false;
+          continue;
+        }
+        pts.push(`${open ? 'L' : 'M'}${x.toFixed(4)},${f(x).toFixed(4)}`);
+        open = true;
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+      this.draw();
+    }
+
+    draw() {
+      const d = +this.querySelector<HTMLInputElement>('[data-d]')!.value;
+      const e = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-dv]')!.textContent = d.toFixed(2);
+      this.querySelector('[data-ev]')!.textContent = e.toFixed(2);
+
+      const band = this.querySelector('[data-band]')!;
+      band.setAttribute('y', (1 - e).toFixed(3));
+      band.setAttribute('height', (2 * e).toFixed(3));
+      // the screen flip is applied to the group, so y = 1 is drawn at -1 in group coordinates
+      band.setAttribute('y', (-(1 + e)).toFixed(3));
+      band.setAttribute('height', (2 * e).toFixed(3));
+
+      const place = (sel: string, x: number) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('cx', x.toFixed(4));
+        el.setAttribute('cy', (-f(x)).toFixed(4));
+      };
+      place('[data-p1]', d);
+      place('[data-p2]', -d);
+
+      // every sampled x in (0, δ) and (−δ, 0) must have f(x) within ε of 1
+      let inside = true;
+      for (let k = 1; k <= 200; k++) {
+        const x = (d * k) / 200;
+        if (Math.abs(f(x) - 1) >= e || Math.abs(f(-x) - 1) >= e) inside = false;
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `f(${d.toFixed(2)}) = ${f(d).toFixed(4)} · f(−${d.toFixed(2)}) = ${f(-d).toFixed(4)} · ` +
+        (inside ? `every sampled point within δ is inside the ε band` : `some points within δ fall outside the ε band: shrink δ`);
+    }
+  }
+  customElements.define('limit-close-in', LimitCloseIn);
+</script>

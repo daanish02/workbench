@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The gradient points uphill, perpendicular to the contours"
+  caption="The curves are level sets of f(x, y) = x² + 3y². Drag the point. The arrow is the gradient (2x, 6y): it crosses the contours at right angles and points toward higher values."
+>
+  <gradient-field>
+    <svg class="gf-svg" viewBox="-3.2 -3.2 6.4 6.4" role="img" aria-label="Contour ellipses of x squared plus 3 y squared with a draggable point and its gradient arrow">
+      <g transform="scale(1, -1)">
+        <line x1="-3.2" y1="0" x2="3.2" y2="0" class="gf-axis"></line>
+        <line x1="0" y1="-3.2" x2="0" y2="3.2" class="gf-axis"></line>
+        <g data-contours></g>
+        <line data-arrow class="gf-arrow"></line>
+        <circle data-p r="0.12" class="gf-p"></circle>
+      </g>
+    </svg>
+    <p class="gf-stat" data-stat></p>
+  </gradient-field>
+</Figure>
+
+<style>
+  .gf-svg {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .gf-svg :global(circle) {
+    cursor: grab;
+  }
+  .gf-svg :global(.gf-contour) {
+    fill: none;
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .gf-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .gf-arrow {
+    stroke: var(--g-yellow);
+    stroke-width: 0.06;
+  }
+  .gf-p {
+    fill: var(--g-blue);
+  }
+  .gf-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // f(x, y) = x^2 + 3 y^2; level set f = c is the ellipse x = sqrt(c) cos t, y = sqrt(c / 3) sin t
+  const f = (x: number, y: number) => x * x + 3 * y * y;
+
+  class GradientField extends HTMLElement {
+    p = { x: 1.5, y: 1.0 };
+    drag = false;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.gf-svg')!;
+      // contours at levels 1, 2, 4, 6, 8
+      let contours = '';
+      for (const c of [1, 2, 4, 6, 8]) {
+        const pts: string[] = [];
+        for (let i = 0; i <= 120; i++) {
+          const t = (i / 120) * 2 * Math.PI;
+          pts.push(`${i ? 'L' : 'M'}${(Math.sqrt(c) * Math.cos(t)).toFixed(4)},${(Math.sqrt(c / 3) * Math.sin(t)).toFixed(4)}`);
+        }
+        contours += `<path class="gf-contour" d="${pts.join(' ')}"></path>`;
+      }
+      this.querySelector('[data-contours]')!.innerHTML = contours;
+
+      this.querySelector('[data-p]')!.addEventListener('pointerdown', (e) => {
+        this.drag = true;
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const r = svg.getBoundingClientRect();
+        const s = 6.4 / r.width;
+        this.p = {
+          x: Math.max(-3, Math.min(3, (e.clientX - (r.left + r.width / 2)) * s)),
+          y: Math.max(-3, Math.min(3, -(e.clientY - (r.top + r.height / 2)) * s)),
+        };
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = false));
+      this.draw();
+    }
+
+    draw() {
+      const { x, y } = this.p;
+      const gx = 2 * x, gy = 6 * y;
+      const k = 0.15;
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [name, v] of Object.entries(attrs)) el.setAttribute(name, v.toFixed(4));
+      };
+      set('[data-p]', { cx: x, cy: y });
+      set('[data-arrow]', { x1: x, y1: y, x2: x + k * gx, y2: y + k * gy });
+      const len = Math.hypot(gx, gy);
+      this.querySelector('[data-stat]')!.textContent =
+        `f = ${f(x, y).toFixed(2)} · ∇f = (${gx.toFixed(2)}, ${gy.toFixed(2)}) · |∇f| = ${len.toFixed(2)}`;
+    }
+  }
+  customElements.define('gradient-field', GradientField);
+</script>

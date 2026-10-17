@@ -1,0 +1,105 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Slope field of y′ = −2y"
+  caption="Each short segment shows the slope y′ = −2y at its point, with no formula needed. A solution is a curve that follows the segments. Pick a starting height y(0) and the solution y = y(0)e^(−2t) is drawn through it."
+>
+  <slope-field>
+    <div class="sf-ctl">
+      <label>y(0) <input type="range" min="-2" max="2" step="0.1" value="1" data-y0 /><b data-y0v>1.0</b></label>
+    </div>
+    <svg class="sf-svg" viewBox="-0.3 -2.6 4.6 5.2" role="img" aria-label="Slope field for y prime equals minus two y with a solution curve through the chosen starting point">
+      <g transform="scale(1, -1)">
+        <line x1="-0.3" y1="0" x2="4.3" y2="0" class="sf-axis"></line>
+        <line x1="0" y1="-2.5" x2="0" y2="2.5" class="sf-axis"></line>
+        <g data-field></g>
+        <path data-sol class="sf-sol"></path>
+      </g>
+    </svg>
+    <p class="sf-stat" data-stat></p>
+  </slope-field>
+</Figure>
+
+<style>
+  .sf-ctl {
+    margin-bottom: 10px;
+  }
+  .sf-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .sf-ctl input {
+    flex: 1;
+  }
+  .sf-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .sf-svg {
+    display: block;
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  .sf-svg :global(.sf-seg) {
+    stroke: #5f6368;
+    stroke-width: 0.025;
+  }
+  .sf-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .sf-sol {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 0.05;
+  }
+  .sf-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // y' = -2y: the slope at height y is -2y, and the solution through y(0) = y0 is y0 e^(-2t)
+  class SlopeField extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-y0]')!.addEventListener('input', () => this.draw());
+      // slope segments on a grid of t in [0, 4] and y in [-2, 2]
+      let segs = '';
+      const L = 0.12;
+      for (let t = 0; t <= 4; t += 0.5) {
+        for (let y = -2; y <= 2; y += 0.5) {
+          const s = -2 * y;
+          const k = L / Math.hypot(1, s);
+          segs += `<line class="sf-seg" x1="${(t - k).toFixed(4)}" y1="${(y - s * k).toFixed(4)}" x2="${(t + k).toFixed(4)}" y2="${(y + s * k).toFixed(4)}"></line>`;
+        }
+      }
+      this.querySelector('[data-field]')!.innerHTML = segs;
+      this.draw();
+    }
+
+    draw() {
+      const y0 = +this.querySelector<HTMLInputElement>('[data-y0]')!.value;
+      this.querySelector('[data-y0v]')!.textContent = y0.toFixed(1);
+      const pts: string[] = [];
+      for (let i = 0; i <= 120; i++) {
+        const t = (4 * i) / 120;
+        pts.push(`${i ? 'L' : 'M'}${t.toFixed(4)},${(-y0 * Math.exp(-2 * t)).toFixed(4)}`);
+      }
+      this.querySelector('[data-sol]')!.setAttribute('d', pts.join(' '));
+      const yAt1 = y0 * Math.exp(-2);
+      this.querySelector('[data-stat]')!.textContent =
+        `y(t) = ${y0.toFixed(1)}e^(−2t) · y(1) = ${yAt1.toFixed(4)} · every solution tends to 0 as t grows`;
+    }
+  }
+  customElements.define('slope-field', SlopeField);
+</script>

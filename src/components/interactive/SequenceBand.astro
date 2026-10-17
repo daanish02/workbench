@@ -1,0 +1,118 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Eventually inside every band"
+  caption="The sequence aₙ = 1 − 1/n approaches 1. Pick a tolerance ε. The yellow band is 1 ± ε. The marked index N is the first term after which every term stays inside the band: that is what convergence means."
+>
+  <sequence-band>
+    <div class="sb-ctl">
+      <label>ε <input type="range" min="0.02" max="0.5" step="0.01" value="0.2" data-e /><b data-ev>0.20</b></label>
+    </div>
+    <svg class="sb-svg" viewBox="-1 -1.4 22 3.4" role="img" aria-label="Points 1 minus 1 over n for n from 1 to 20, with the band of width epsilon around 1">
+      <g transform="scale(1, -1)">
+        <rect data-band x="-1" y="0" width="22" height="0" class="sb-band"></rect>
+        <line x1="-1" y1="-1" x2="21" y2="-1" class="sb-limit"></line>
+        <line x1="-1" y1="0" x2="21" y2="0" class="sb-axis"></line>
+        <g data-pts></g>
+        <line data-nline x1="0" y1="-1.3" x2="0" y2="1.3" class="sb-nline"></line>
+      </g>
+    </svg>
+    <p class="sb-stat" data-stat></p>
+  </sequence-band>
+</Figure>
+
+<style>
+  .sb-ctl {
+    margin-bottom: 10px;
+  }
+  .sb-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .sb-ctl input {
+    flex: 1;
+  }
+  .sb-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .sb-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .sb-svg :global(.sb-dot) {
+    fill: var(--g-blue);
+  }
+  .sb-svg :global(.sb-dot.out) {
+    fill: var(--g-red);
+  }
+  .sb-band {
+    fill: rgba(251, 188, 4, 0.18);
+  }
+  .sb-limit {
+    stroke: var(--g-yellow);
+    stroke-width: 0.02;
+  }
+  .sb-axis {
+    stroke: #3c4043;
+    stroke-width: 0.01;
+  }
+  .sb-nline {
+    stroke: #9aa0a6;
+    stroke-width: 0.02;
+    stroke-dasharray: 0.08 0.06;
+  }
+  .sb-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class SequenceBand extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-e]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const e = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-ev]')!.textContent = e.toFixed(2);
+      const band = this.querySelector('[data-band]')!;
+      // the group flips y, so the band from 1 − ε to 1 + ε starts at −(1 + ε) in group coordinates
+      band.setAttribute('y', (-(1 + e)).toFixed(4));
+      band.setAttribute('height', (2 * e).toFixed(4));
+
+      // points a_n = 1 - 1/n for n = 1..20, drawn with y flipped by the group transform
+      let html = '';
+      let firstInside = -1;
+      for (let n = 1; n <= 20; n++) {
+        const a = 1 - 1 / n;
+        const out = Math.abs(a - 1) >= e;
+        // the index N is the last n that is still outside the band; every later term is inside
+        if (out) firstInside = -1;
+        else if (firstInside < 0) firstInside = n;
+        html += `<circle class="sb-dot${out ? ' out' : ''}" cx="${n}" cy="${(-a).toFixed(4)}" r="0.12"></circle>`;
+      }
+      this.querySelector('[data-pts]')!.innerHTML = html;
+      // |aₙ − 1| = 1/n must be strictly below ε, so n must exceed 1/ε
+      const N = Math.floor(1 / e) + 1;
+      const nline = this.querySelector('[data-nline]')!;
+      nline.setAttribute('x1', String(N));
+      nline.setAttribute('x2', String(N));
+      this.querySelector('[data-stat]')!.textContent =
+        `the terms stay inside the band from n = ${N} on (need n > 1/ε = ${(1 / e).toFixed(2)}) · red points are outside`;
+    }
+  }
+  customElements.define('sequence-band', SequenceBand);
+</script>
