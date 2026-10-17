@@ -28,12 +28,13 @@ function languageBadges() {
       .frame[data-lang] { position: relative; }
       .frame[data-lang]::after {
         content: attr(data-lang);
-        position: absolute; top: 0.55rem; right: 0.75rem; z-index: 1;
+        position: absolute; top: 0; right: 0; z-index: 1;
         font: 600 0.6875rem/1 'Inter', system-ui, sans-serif;
         letter-spacing: 0.06em; text-transform: uppercase;
         color: #8ab4f8; background: rgba(138, 180, 248, 0.1);
-        border: 1px solid rgba(138, 180, 248, 0.25); border-radius: 999px;
-        padding: 0.3rem 0.55rem; pointer-events: none;
+        border: 1px solid rgba(138, 180, 248, 0.25); border-top: 0; border-right: 0;
+        border-radius: 0 12px 0 8px; /* top-right matches the frame's 12px corner */
+        padding: 0.4rem 0.7rem; pointer-events: none;
         transition: opacity 0.15s;
       }
       .frame[data-lang]:hover::after, .frame[data-lang]:focus-within::after { opacity: 0; }
