@@ -1,8 +1,103 @@
 ---
 title: "Determinants"
-description: "Area and volume scaling, computing 2x2 and 3x3 determinants, and invertibility."
+description: "A single number that tells you how a square matrix scales area or volume, whether it flips orientation, and whether it can be inverted."
 order: 4
 tier: core
+takeaways:
+  - "The **determinant** $\\det A$ of a square matrix is a number. For $2 \\times 2$, $\\det\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix} = ad - bc$."
+  - "Geometrically, $|\\det A|$ is the factor by which $A$ scales **area** (in 2D) or **volume** (in 3D). The unit square becomes a parallelogram with area $|\\det A|$."
+  - "A **negative** determinant means the transformation flips orientation, like a reflection."
+  - "$\\det A = 0$ exactly when $A$ squashes space into a lower dimension. Then $A$ has no inverse, and $A\\mathbf{x} = \\mathbf{b}$ may have no solution or many."
+  - "The determinant of a product is the product of determinants: $\\det(AB) = \\det A \\det B$. Scaling areas twice multiplies the factors."
+resources:
+  - title: "Determinant (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Determinant"
+    note: "The definitions, the geometric meaning and the properties used here."
+  - title: "NumPy linalg.det"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.det.html"
+    note: "The library function used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+A matrix moves every point of space, and some of its effects are easy to read off: it stretches, rotates, shears. The determinant reduces the most important of these effects to one number. It tells you how much area or volume a transformation scales, whether it turns space inside out, and whether the transformation can be undone. This note defines the determinant for $2 \times 2$ and $3 \times 3$ matrices, explains the geometry, and shows the one-line test for invertibility that the earlier notes have been pointing to.
+
+## The 2×2 formula
+
+For a $2 \times 2$ matrix
+
+$$
+A = \begin{pmatrix} a & b \\ c & d \end{pmatrix},
+$$
+
+the determinant is $\det A = ad - bc$. The formula looks arbitrary, but it has a clear meaning. The columns of $A$ are the images of the two basis vectors, and $\det A$ is the signed area of the parallelogram they span.
+
+The check below computes the determinant of a $2 \times 2$ matrix, then confirms the area claim by mapping the unit square and measuring the image.
+
+```python
+import numpy as np
+
+M = np.array([[3.0, 1.0],
+              [1.0, 2.0]])
+print("det of 2x2:", round(np.linalg.det(M), 6), "expected 3*2 - 1*1 =", 3 * 2 - 1 * 1)
+
+square = np.array([[0, 1, 1, 0], [0, 0, 1, 1]], dtype=float)
+image = M @ square
+area = 0.5 * abs(sum(image[0, i] * image[1, (i + 1) % 4] - image[0, (i + 1) % 4] * image[1, i] for i in range(4)))
+print("area of image of unit square:", round(area, 6))
+```
+
+In words: $\det M = 3 \cdot 2 - 1 \cdot 1 = 5$. The unit square, with area $1$, maps to a parallelogram of area $5$, so the transformation scales area by a factor of $5$. The shoelace formula measures the image directly and agrees.
+
+## Area scaling and sign
+
+Because the factor is signed, the sign of $\det A$ records orientation. A positive determinant means the transformation preserves the order of the basis vectors (counterclockwise stays counterclockwise). A negative one means it reverses it, as a mirror does. A zero determinant means the image has zero area: the parallelogram collapsed onto a line or a point.
+
+The three effects multiply. Scaling by $s$ in one direction and $t$ in the other gives $\det = st$, so a stretch by $2$ and $3$ scales area by $6$, as in the [Geometric Transformations](../../geometry/geometric-transformations/) note. A rotation has $\det = 1$, because it preserves area.
+
+## The 3×3 formula
+
+For a $3 \times 3$ matrix the determinant is a sum of three terms, each a $2 \times 2$ determinant weighted by an entry from the first row. This is cofactor expansion along the first row:
+
+$$
+\det A = a_{11}\det\begin{pmatrix} a_{22} & a_{23} \\ a_{32} & a_{33} \end{pmatrix} - a_{12}\det\begin{pmatrix} a_{21} & a_{23} \\ a_{31} & a_{33} \end{pmatrix} + a_{13}\det\begin{pmatrix} a_{21} & a_{22} \\ a_{31} & a_{32} \end{pmatrix}.
+$$
+
+The signs alternate, and the cofactor expansion can be done along any row or column with the same result. In three dimensions, $|\det A|$ is the volume scaling factor.
+
+```python
+import numpy as np
+
+N = np.array([[2.0, 0.0, 1.0],
+              [1.0, 3.0, 2.0],
+              [1.0, 1.0, 2.0]])
+cof = (N[0, 0] * (N[1, 1] * N[2, 2] - N[1, 2] * N[2, 1])
+       - N[0, 1] * (N[1, 0] * N[2, 2] - N[1, 2] * N[2, 0])
+       + N[0, 2] * (N[1, 0] * N[2, 1] - N[1, 1] * N[2, 0]))
+print("3x3 by cofactors:", cof, " numpy:", round(np.linalg.det(N), 6))
+```
+
+In words: the cofactor expansion gives $6$, and so does the library. The matrix therefore multiplies volume by $6$.
+
+## Invertibility
+
+The most useful consequence is this: $A$ has an inverse exactly when $\det A \neq 0$. If the determinant is nonzero, the area (or volume) is preserved up to a factor, so no information is lost and the map can be reversed. If $\det A = 0$, the image has lost a dimension, and two different inputs can share an output. The check below confirms both sides of that claim.
+
+```python
+import numpy as np
+
+M = np.array([[3.0, 1.0],
+              [1.0, 2.0]])
+S = np.array([[1.0, 2.0], [2.0, 4.0]])
+
+print("inverse of M times M is identity:", np.allclose(np.linalg.inv(M) @ M, np.eye(2)))
+print("det of singular S:", round(np.linalg.det(S), 6))
+```
+
+In words: $M$ has determinant $5$ and an inverse that undoes it. The matrix $S$ has determinant $0$. Its columns are parallel, so it squashes the plane onto a line, and there is no inverse. Attempting `np.linalg.inv(S)` raises an error, which is the library saying the same thing.
+
+<Callout type="pitfall">
+The determinant is a poor measure of size for large matrices. Its magnitude can be tiny or huge even for well-conditioned matrices, and computing it by cofactors takes factorial time. Use a factorisation for numerical work, and reserve the determinant for theory and small matrices.
+</Callout>
+
+## Where determinants are used
+
+Determinants give volumes of parallelepipeds (for example, the volume of a tetrahedron is one sixth of a $3\times3$ determinant), test whether a set of vectors is a basis, and appear in the change-of-variables formula in calculus, where the Jacobian determinant tells you how an integral scales under a change of coordinates. The next note uses them to find the directions a matrix leaves unchanged.

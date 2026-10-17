@@ -1,8 +1,88 @@
 ---
 title: "Vectors"
-description: "Definition, vector addition, scalar multiplication, magnitude, dot product."
+description: "A vector as a list of numbers with both a direction and a length, the operations of addition and scaling, and the dot product that measures angle."
 order: 1
 tier: core
+takeaways:
+  - "A **vector** is an ordered list of numbers, such as $\\mathbf{u} = (3, 4)$. Geometrically it is an arrow from the origin: it has a length and a direction."
+  - "**Addition** and **scaling** act componentwise. Adding vectors places them head to tail; scaling by $c$ stretches the arrow by $c$ and flips it if $c$ is negative."
+  - "The **length** (norm) is $\\|\\mathbf{u}\\| = \\sqrt{u_1^2 + u_2^2 + \\cdots}$, the Pythagorean distance from the origin."
+  - "The **dot product** $\\mathbf{u} \\cdot \\mathbf{v} = u_1 v_1 + u_2 v_2 + \\cdots$ gives the angle between two vectors through $\\cos\\theta = \\frac{\\mathbf{u}\\cdot\\mathbf{v}}{\\|\\mathbf{u}\\|\\|\\mathbf{v}\\|}$. Zero dot product means perpendicular."
+  - "Every vector is a **linear combination** of basis vectors. In the plane, $(3, 4) = 3\\,\\mathbf{e}_1 + 4\\,\\mathbf{e}_2$, which is why coordinates are a choice of basis."
+resources:
+  - title: "Vector (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Vector_(mathematics_and_physics)"
+    note: "Vectors as geometric arrows, as lists of numbers, and as abstract objects."
+  - title: "Dot product (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Dot_product"
+    note: "The algebraic and geometric definitions, and their equivalence."
+  - title: "NumPy linear algebra"
+    url: "https://numpy.org/doc/stable/reference/routines.linalg.html"
+    note: "The norm, dot product and matrix routines used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Much of the mathematics behind graphics, data and machine learning starts from one object: a list of numbers. A point on a map, a pixel's colour, a word's embedding and a force acting on a bridge are all vectors. The useful thing about a vector is that it carries two pieces of information at once: how far it reaches and which way it points. This note defines vectors, the two operations that combine them, and the dot product, which turns geometry into arithmetic. Everything later in this section, from matrices to PCA, is built from these pieces.
+
+## Vectors as lists and as arrows
+
+A vector in the plane is a pair of numbers $\mathbf{u} = (u_1, u_2)$. Drawn from the origin, it is an arrow whose tip sits at that point. In three dimensions there is a third number, and in general a vector in $\mathbb{R}^n$ is a list of $n$ numbers. The list view is what a computer stores, and the arrow view is what you picture.
+
+Two vectors are equal when all their components agree. Position does not matter: an arrow can be slid anywhere in the plane without changing it, because a vector records only its displacement.
+
+## Addition and scaling
+
+Addition works componentwise: $(u_1, u_2) + (v_1, v_2) = (u_1 + v_1, u_2 + v_2)$. Geometrically, place $\mathbf{v}$ at the tip of $\mathbf{u}$, and the sum is the arrow from the origin to the new tip. Scaling multiplies every component by a number $c$: $c\mathbf{u} = (cu_1, cu_2)$. For $c > 1$ the arrow lengthens, for $0 < c < 1$ it shortens, and for $c < 0$ it reverses.
+
+A **linear combination** is a sum of scaled vectors, $c_1\mathbf{u} + c_2\mathbf{v}$. Every vector in the plane can be written as a linear combination of two non-parallel vectors, and that idea runs through the whole section.
+
+The script below checks addition, scaling and the length of a vector.
+
+```python
+import numpy as np
+
+u = np.array([3.0, 4.0])
+v = np.array([1.0, -2.0])
+
+print("length of u:", np.linalg.norm(u))
+print("u + v:", u + v)
+print("2.5 * u:", 2.5 * u)
+```
+
+In words: $\mathbf{u} = (3, 4)$ has length $\sqrt{9 + 16} = 5$, the 3-4-5 triangle again. Adding $\mathbf{v}$ gives $(4, 2)$, and scaling by $2.5$ gives $(7.5, 10)$, which is still parallel to $\mathbf{u}$ and two and a half times as long.
+
+## The dot product
+
+The **dot product** multiplies matching components and adds the results: $\mathbf{u}\cdot\mathbf{v} = u_1 v_1 + u_2 v_2$. It is the key link between algebra and angles. The law of cosines applied to the triangle formed by $\mathbf{u}$, $\mathbf{v}$ and $\mathbf{u} - \mathbf{v}$ gives
+
+$$
+\mathbf{u}\cdot\mathbf{v} = \|\mathbf{u}\|\,\|\mathbf{v}\|\cos\theta,
+$$
+
+so the angle $\theta$ between two vectors is determined by their dot product and lengths. Two consequences are worth remembering. If $\mathbf{u}\cdot\mathbf{v} = 0$ the vectors are perpendicular. If $\mathbf{u}\cdot\mathbf{v} > 0$ they point roughly the same way, and if it is negative they point roughly opposite.
+
+```python
+import numpy as np
+
+u = np.array([3.0, 4.0])
+v = np.array([1.0, -2.0])
+w = np.array([-4.0, 3.0])
+
+print("dot product u . v:", np.dot(u, v))
+cos_theta = np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+print("angle between u and v (degrees):", round(np.degrees(np.arccos(cos_theta)), 2))
+print("u . w =", np.dot(u, w))
+```
+
+In words: $\mathbf{u}\cdot\mathbf{v} = 3 - 8 = -5$, which is negative, so the two arrows point into roughly opposite halves of the plane. The angle is about $117°$, consistent with that sign. The vector $\mathbf{w} = (-4, 3)$ is the vector $\mathbf{u}$ rotated by $90°$, and their dot product is zero, so they are perpendicular.
+
+<Callout type="pitfall">
+The dot product of two vectors is a number, not a vector. The cross product, which gives a vector perpendicular to both inputs, exists only in three dimensions. Mixing them up is a common source of errors in physics code.
+</Callout>
+
+## Basis and coordinates
+
+A **basis** is a set of vectors from which every vector can be built as a unique linear combination. The standard basis of the plane is $\mathbf{e}_1 = (1, 0)$ and $\mathbf{e}_2 = (0, 1)$, and the coordinates of $(3, 4)$ are just the coefficients: $3\mathbf{e}_1 + 4\mathbf{e}_2$. Choosing a different basis changes the coordinates but not the vector. That idea returns in the [Matrices as Transformations](../matrices-as-transformations/) note, where a change of basis is a change of view.
+
+## Where vectors appear
+
+A vector is the natural description of anything with both size and direction: velocity, force, a step in gradient descent, the state of a physical system with many numbers. In machine learning, a sentence or an image is turned into a long vector, and similarity between two of them is measured with the dot product, or with the angle derived from it. The rest of this section keeps asking the same question: what happens to vectors when we apply a matrix to them?
