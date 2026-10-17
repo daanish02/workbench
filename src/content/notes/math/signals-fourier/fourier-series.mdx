@@ -1,8 +1,85 @@
 ---
 title: "Fourier series"
-description: "Representing periodic functions as sums of sines and cosines."
+description: "Writing a periodic function as a sum of sines and cosines, the coefficient formulas, and the square wave as a worked example checked numerically."
 order: 1
 tier: core
+takeaways:
+  - "A function with period $2\\pi$ can be written as $f(t) = \\frac{a_0}{2} + \\sum_{k \\ge 1} (a_k\\cos kt + b_k\\sin kt)$. The terms are the harmonics: pure tones at integer multiples of the base frequency."
+  - "The coefficients come from integrals: $a_k = \\frac{1}{\\pi}\\int_{-\\pi}^{\\pi} f(t)\\cos kt\\,dt$ and $b_k = \\frac{1}{\\pi}\\int_{-\\pi}^{\\pi} f(t)\\sin kt\\,dt$. Orthogonality of sines and cosines makes the formulas work."
+  - "The square wave has only odd sine harmonics with coefficients $\\frac{4}{\\pi k}$. Partial sums overshoot near the jumps, the **Gibbs phenomenon**, and the overshoot does not vanish as more terms are added."
+  - "A smooth periodic function has coefficients that shrink quickly, so a few terms capture most of it. A function with jumps has coefficients that shrink slowly."
+resources:
+  - title: "Fourier series (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fourier_series"
+    note: "Definition, convergence, and the coefficient formulas."
+  - title: "Gibbs phenomenon (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gibbs_phenomenon"
+    note: "The overshoot at jump discontinuities."
+  - title: "Orthogonality of trigonometric functions (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Trigonometric_functions#Orthogonality"
+    note: "Why the coefficient formulas pick out one harmonic each."
 ---
 
-_Placeholder. Content not written yet._
+Many signals repeat: a musical note, the voltage in a mains supply, the seasonal pattern in a sales chart. Fourier's idea is that any reasonable repeating signal is a sum of pure sine and cosine waves at integer multiples of a base frequency. Each term is a harmonic, and the list of coefficients is the signal's spectrum. This note states the series, derives the coefficients from orthogonality, and checks the square wave numerically, including the overshoot at its jumps.
+
+## The series
+
+For a function with period $2\pi$,
+
+$$
+f(t) = \frac{a_0}{2} + \sum_{k=1}^{\infty} \left(a_k \cos kt + b_k \sin kt\right).
+$$
+
+The integer multiples $k$ are the harmonics. The coefficient $a_k$ measures how strongly the $k$-th harmonic cosine is present, and $b_k$ does the same for the sine.
+
+## The coefficient formulas
+
+The integrals of $\sin kt \sin jt$, $\cos kt \cos jt$ and $\sin kt \cos jt$ over one period vanish unless $k = j$, which is orthogonality. Multiplying the series by $\cos kt$ or $\sin kt$ and integrating therefore isolates one coefficient:
+
+$$
+a_k = \frac{1}{\pi}\int_{-\pi}^{\pi} f(t)\cos kt\,dt, \qquad b_k = \frac{1}{\pi}\int_{-\pi}^{\pi} f(t)\sin kt\,dt.
+$$
+
+The script below computes $b_1$ for the square wave $f(t) = \operatorname{sign}(\sin t)$ by a midpoint sum. The exact value is $\frac{4}{\pi}$.
+
+```python
+import math
+
+def f(t):
+    return 1.0 if math.sin(t) >= 0 else -1.0
+
+n = 200000
+h = 2 * math.pi / n
+b1 = sum(f(-math.pi + (i + 0.5) * h) * math.sin(-math.pi + (i + 0.5) * h) for i in range(n)) * h / math.pi
+print("numeric b_1:", round(b1, 6), " exact 4/pi:", round(4 / math.pi, 6))  # prints: numeric b_1: 1.27324 exact 4/pi: 1.27324
+```
+
+In words: the numerical and exact values agree to six places. The integral picks out the first sine harmonic because every other harmonic averages to zero against it.
+
+<FourierEpicycles />
+
+## The square wave
+
+The square wave has the series $f(t) = \frac{4}{\pi}\sum_{k\text{ odd}} \frac{\sin kt}{k}$. The script below adds terms up to $k = 15$ and evaluates the partial sums at $t = \frac{\pi}{2}$, where $f = 1$.
+
+```python
+import math
+
+def partial(t, N):
+    return (4 / math.pi) * sum(math.sin(k * t) / k for k in range(1, N + 1, 2))
+
+for N in [1, 3, 7, 15]:
+    print(f"N = {N:>2}: partial sum at pi/2 = {partial(math.pi / 2, N):.6f}")  # prints: N =  1: partial sum at pi/2 = 1.273240
+```
+
+In words: the sum approaches $1$ as terms are added, with the first term alone already close. The partial sums at $t = \frac{\pi}{2}$ here are $1.273$, $0.849$, $0.922$, $0.960$ in order: they overshoot and undershoot as they close in on $1$.
+
+<GibbsPartialSums />
+
+<Callout type="pitfall">
+The partial sums of a square wave overshoot the jump by about nine percent of its height, and adding terms moves the overshoot closer to the jump without shrinking it. Gibbs phenomenon is a property of discontinuities, not a sign of a wrong formula.
+</Callout>
+
+## Why the coefficients matter
+
+The sizes of $a_k$ and $b_k$ are the spectrum of the signal. Filters, compression and noise removal all act by changing particular coefficients. The next note moves from periodic signals to signals that do not repeat, using the same idea with a continuous set of frequencies.

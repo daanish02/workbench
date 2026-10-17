@@ -1,8 +1,93 @@
 ---
 title: "Convolution"
-description: "The operation itself, intuition as \"sliding and summing\"."
+description: "Convolution as sliding one signal across another and summing the overlaps, its use in filtering, and the convolution theorem that turns it into multiplication of spectra."
 order: 3
 tier: core
+takeaways:
+  - "The **convolution** of $f$ and $g$ is $(f * g)(t) = \\int f(\\tau)\\,g(t - \\tau)\\,d\\tau$. Flip one function, slide it along the other, and add up the products at each shift."
+  - "For sequences the sum replaces the integral: $(x * h)[n] = \\sum_m x[m]\\,h[n - m]$. A **filter** is a convolution with its impulse response $h$."
+  - "The **convolution theorem** says the Fourier transform of $f * g$ is the product of the transforms: $\\widehat{f * g} = \\hat f\\,\\hat g$. Convolution in time is multiplication in frequency."
+  - "Convolution is commutative and associative. Its output is longer than either input when the inputs are finite, by the length of the filter minus one."
+resources:
+  - title: "Convolution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Convolution"
+    note: "Definitions, properties and the visual sliding picture."
+  - title: "Convolution theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Convolution_theorem"
+    note: "Why convolution becomes multiplication under the transform."
+  - title: "Moving average (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Moving_average"
+    note: "A simple smoothing filter written as a convolution."
 ---
 
-_Placeholder. Content not written yet._
+Convolution is the rule for how a system responds to an input. A blur, an echo, a smoothing average and the reverb in a room are all convolutions: each output sample is a weighted sum of nearby inputs, with the weights given by the system. Flip one signal, slide it past the other, and add up the overlaps. This note defines convolution for sequences, computes a moving average as a filter, and checks the convolution theorem numerically.
+
+## Sliding and summing
+
+For sequences, $(x * h)[n] = \sum_m x[m]\,h[n - m]$. The script below convolves a short input with a three-tap averaging filter, then prints each output value.
+
+```python
+x = [1, 2, 3, 4, 5]
+h = [1 / 3, 1 / 3, 1 / 3]  # three-point moving average
+y = []
+for n in range(len(x) + len(h) - 1):
+    total = 0.0
+    for m in range(len(x)):
+        if 0 <= n - m < len(h):
+            total += x[m] * h[n - m]
+    y.append(round(total, 4))
+print("output:", y)  # prints: output: [0.3333, 1.0, 2.0, 3.0, 4.0, 3.0, 1.6667]
+```
+
+In words: each interior output is the average of three neighbouring inputs. The output has $5 + 3 - 1 = 7$ values, longer than the input, because the filter spills past both ends. The first value $\frac{1}{3}$ is small because only one input overlaps the filter there.
+
+<ConvolutionVisualizer />
+
+## A filter as a convolution
+
+A moving average is a low-pass filter: it keeps slow changes and reduces fast ones. The script below applies the same filter to a signal with a fast alternating component and measures how much of it survives.
+
+```python
+import math
+
+n = 200
+x = [math.sin(2 * math.pi * 0.01 * t) + 0.5 * math.sin(2 * math.pi * 0.4 * t) for t in range(n)]
+h = [1 / 5] * 5
+y = [sum(h[j] * x[t - j] for j in range(5)) for t in range(4, n)]
+amp_fast_in = max(abs(x[t] - math.sin(2 * math.pi * 0.01 * t)) for t in range(4, n))
+amp_fast_out = max(abs(y[i] - math.sin(2 * math.pi * 0.01 * (i + 4))) for i in range(len(y)))
+print("fast component before filter:", round(amp_fast_in, 3), " after filter:", round(amp_fast_out, 3))  # prints: fast component before filter: 0.476 after filter: 0.125
+```
+
+In words: the five-point average cuts the fast component's error from about $0.48$ to about $0.13$, while the slow sine passes almost unchanged. Filter design is largely the choice of $h$ that does this for the frequencies you care about.
+
+## The convolution theorem
+
+The DFT of a convolution is the product of the DFTs. The check below convolves two short sequences directly and compares the result with the spectrum product, using the same DFT as the previous note.
+
+```python
+import cmath
+
+x = [1.0, 2.0, 3.0, 4.0]
+h = [0.5, -1.0, 0.25, 0.0]
+N = len(x) + len(h) - 1
+direct = [sum(x[m] * h[n - m] for m in range(len(x)) if 0 <= n - m < len(h)) for n in range(N)]
+
+def dft(s, size):
+    s = s + [0.0] * (size - len(s))
+    return [sum(s[n] * cmath.exp(-2j * cmath.pi * k * n / size) for n in range(size)) for k in range(size)]
+
+X, H = dft(x, N), dft(h, N)
+via_spectra = [sum(cmath.exp(2j * cmath.pi * k * n / N) * X[k] * H[k] for k in range(N)) / N for n in range(N)]
+print("max difference, direct vs spectra:", max(abs(direct[n] - via_spectra[n].real) for n in range(N)) < 1e-9)  # prints: max difference, direct vs spectra: True
+```
+
+In words: the direct convolution and the inverse transform of the product of spectra agree to $10^{-9}$. This is why fast convolution uses the FFT: the cost drops from quadratic to nearly linear in the length.
+
+<Callout type="pitfall">
+The convolution theorem applies to periodic (circular) convolution unless you zero-pad. Multiplying two DFTs of length $N$ without padding to $N_1 + N_2 - 1$ gives a wrap-around result, which is a common source of wrong filter outputs.
+</Callout>
+
+## Where it is used
+
+Image blurring and edge detection are convolutions in two dimensions, and convolutional neural networks are built from them. In audio, a room's impulse response convolved with a dry recording gives the reverberant sound you hear.

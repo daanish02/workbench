@@ -1,8 +1,92 @@
 ---
 title: "Fourier transform"
-description: "Moving from periodic to arbitrary functions, frequency-domain intuition."
+description: "From periodic signals to arbitrary ones: the discrete Fourier transform, frequency bins, Parseval's identity, and a sampled cosine checked numerically."
 order: 2
 tier: core
+takeaways:
+  - "The **discrete Fourier transform** (DFT) of $N$ samples $x_n$ is $X_k = \\sum_{n=0}^{N-1} x_n e^{-2\\pi i kn/N}$. Each $X_k$ measures how much the signal correlates with the complex wave at frequency bin $k$."
+  - "The DFT is invertible: $x_n = \\frac{1}{N}\\sum_k X_k e^{2\\pi i kn/N}$. Nothing is lost by moving to the frequency domain, only rearranged."
+  - "**Parseval's identity** says the energy is the same in both domains: $\\sum_n |x_n|^2 = \\frac{1}{N}\\sum_k |X_k|^2$."
+  - "The continuous Fourier transform $\\hat f(\\omega) = \\int f(t)e^{-i\\omega t}\\,dt$ is the limit of the DFT as the sampling becomes fine and the window becomes long. Periodic signals become spikes at their harmonics."
+resources:
+  - title: "Fourier transform (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fourier_transform"
+    note: "The continuous transform, its properties, and conventions."
+  - title: "Discrete Fourier transform (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Discrete_Fourier_transform"
+    note: "The finite version used in practice."
+  - title: "Parseval's theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Parseval%27s_theorem"
+    note: "Energy conservation between time and frequency."
 ---
 
-_Placeholder. Content not written yet._
+The Fourier series handles signals that repeat. Most real signals do not, such as a single spoken word or a pulse from a sensor. The Fourier transform extends the idea: instead of a discrete set of harmonics, it uses a continuum of frequencies. In computers the transform is applied to a finite list of samples, and the discrete Fourier transform does the job. This note defines the DFT, shows it is invertible, checks Parseval's identity, and computes the spectrum of a sampled cosine.
+
+## The discrete Fourier transform
+
+For $N$ samples $x_0, \dots, x_{N-1}$, the DFT is
+
+$$
+X_k = \sum_{n=0}^{N-1} x_n\,e^{-2\pi i\,kn/N}, \qquad k = 0, \dots, N-1.
+$$
+
+The complex exponential is a wave of frequency $k$ cycles per window. The script below computes the DFT directly from the definition for eight samples of a cosine that completes one cycle in the window.
+
+```python
+import cmath
+import math
+
+N = 8
+x = [math.cos(2 * math.pi * n / N) for n in range(N)]
+X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
+print("|X_k| rounded:", [round(abs(v), 6) for v in X])  # prints: |X_k| rounded: [0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0]
+```
+
+In words: the spectrum has two nonzero bins, at $k = 1$ and $k = N - 1 = 7$, each of size $4 = \frac{N}{2}$. A real cosine has positive and negative frequency components, and the second peak is the mirror image of the first.
+
+<SpectrumExplorer />
+
+## Inverting the transform
+
+The inverse formula recovers the samples exactly, so the frequency representation carries the same information as the time samples. The check below rebuilds $x$ from $X$.
+
+```python
+import cmath
+import math
+
+N = 8
+x = [math.cos(2 * math.pi * n / N) + 0.5 * math.sin(2 * math.pi * 3 * n / N) for n in range(N)]
+X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
+back = [sum(X[k] * cmath.exp(2j * math.pi * k * n / N) for k in range(N)) / N for n in range(N)]
+print("max reconstruction error:", max(abs(back[n] - x[n]) for n in range(N)) < 1e-9)  # prints: max reconstruction error: True
+```
+
+In words: the reconstruction matches the original samples to better than $10^{-9}$. The transform is a change of basis, and the sine at frequency $3$ shows up as a pair of bins at $k = 3$ and $k = 5$.
+
+## Parseval's identity
+
+Energy is conserved: the sum of squared samples equals the sum of squared spectrum magnitudes, divided by $N$. The check uses the same signal.
+
+```python
+import cmath
+import math
+
+N = 8
+x = [math.cos(2 * math.pi * n / N) + 0.5 * math.sin(2 * math.pi * 3 * n / N) for n in range(N)]
+X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
+time_energy = sum(v * v for v in x)
+freq_energy = sum(abs(v) ** 2 for v in X) / N
+print("time energy:", round(time_energy, 6), " frequency energy:", round(freq_energy, 6))  # prints: time energy: 5.0 frequency energy: 5.0
+```
+
+In words: both sides give $5$. The spectrum redistributes the energy over frequency bins without creating or destroying any.
+
+<Callout type="pitfall">
+Conventions differ. Some texts put the $\frac{1}{N}$ on the forward transform, others split it, and the sign of the exponent flips between fields. The inverse and Parseval identities change with the convention, so check which one a library or textbook uses before comparing numbers.
+</Callout>
+
+<PulseSpectrum />
+
+## Why the frequency domain is useful
+
+Filtering becomes multiplication of spectra, compression keeps the large coefficients, and differentiation becomes multiplication by $ik$. The next note shows the first of these, convolution, which is the operation that filtering performs in the time domain.

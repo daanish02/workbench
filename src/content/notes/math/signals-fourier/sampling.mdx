@@ -1,8 +1,76 @@
 ---
 title: "Sampling"
-description: "The sampling theorem, aliasing, why sample rate matters."
+description: "Turning a continuous signal into numbers: the sampling theorem, the Nyquist rate, and aliasing, where a high frequency looks exactly like a low one."
 order: 4
 tier: core
+takeaways:
+  - "Sampling a signal at rate $f_s$ records its value every $1/f_s$ seconds. Information above half the sampling rate, the **Nyquist frequency** $f_s/2$, cannot be recovered from the samples alone."
+  - "The **sampling theorem** says a signal band-limited to frequencies below $f_s/2$ is determined completely by its samples, and can be rebuilt exactly by sinc interpolation."
+  - "**Aliasing** is the disguise of a frequency above $f_s/2$ as a lower one. A tone at $f$ and one at $f_s - f$ give identical samples, so after sampling they cannot be told apart."
+  - "The fix is to filter out frequencies above $f_s/2$ before sampling. Filtering afterwards cannot undo aliasing, because the damage is already in the samples."
+resources:
+  - title: "Nyquist-Shannon sampling theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Nyquist%E2%80%93Shannon_sampling_theorem"
+    note: "The theorem, its conditions, and the reconstruction formula."
+  - title: "Aliasing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Aliasing"
+    note: "Examples from audio, video and the wagon-wheel effect."
+  - title: "Anti-aliasing filter (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Anti-aliasing_filter"
+    note: "The low-pass filter placed before a sampler."
 ---
 
-_Placeholder. Content not written yet._
+A digital recording is a list of numbers, but the sound it came from is continuous. Sampling takes a measurement at regular intervals, and the question is how much is lost. The answer is the sampling theorem: frequencies up to half the sampling rate survive, and anything above is confused with something lower. This note states the theorem, shows aliasing with exact sample values, and explains why the protection has to happen before sampling.
+
+## Samples and the Nyquist frequency
+
+Sampling at rate $f_s$ gives values $x_n = x(n/f_s)$. A sinusoid of frequency $f$ has $f_s/2$ as the highest frequency that can be represented: at that rate the samples alternate, and any faster oscillation has no room between samples. The script below samples a $3$ Hz tone at $10$ samples per second and prints the first few values.
+
+```python
+import math
+
+fs = 10.0
+f = 3.0
+samples = [round(math.sin(2 * math.pi * f * n / fs), 4) for n in range(8)]
+print("samples of 3 Hz at 10 per second:", samples)  # prints: samples of 3 Hz at 10 per second: [0.0, 0.9511, -0.5878, -0.5878, 0.9511, 0.0, -0.9511, 0.5878]
+```
+
+In words: $3$ Hz is below the Nyquist frequency $5$ Hz, so the samples trace out a smooth sinusoid, and the sampling theorem says they determine the tone uniquely.
+
+<AliasingSlider />
+
+## Aliasing
+
+Now sample a tone of $7$ Hz at the same rate. Its frequency is above $5$ Hz, and it aliases to $f_s - 7 = 3$ Hz. The check below compares the two sets of samples.
+
+```python
+import math
+
+fs = 10.0
+for f in [3.0, 7.0]:
+    samples = [round(math.sin(2 * math.pi * f * n / fs), 4) for n in range(8)]
+    print(f"{f} Hz samples:", samples)  # prints: 3.0 Hz samples: [0.0, 0.9511, -0.5878, -0.5878, 0.9511, 0.0, -0.9511, 0.5878]
+```
+
+In words: the $7$ Hz samples are not the same as the $3$ Hz samples, yet they are identical in the sense that matters. Sine waves at $7$ and $3$ Hz with a sign flip give the same numbers at every sample, so the sampled record cannot tell you which tone was present. Check the claim directly:
+
+```python
+import math
+
+fs = 10.0
+a = [math.sin(2 * math.pi * 7 * n / fs) for n in range(40)]
+b = [-math.sin(2 * math.pi * 3 * n / fs) for n in range(40)]
+print("7 Hz equals minus 3 Hz at every sample:", max(abs(u - v) for u, v in zip(a, b)) < 1e-9)  # prints: 7 Hz equals minus 3 Hz at every sample: True
+```
+
+In words: the $7$ Hz tone is the negative of the $3$ Hz tone at every sample. The two are indistinguishable after sampling, which is aliasing. The minus sign is harmless, because a sine's phase is not changed by sampling; only the frequency is confused.
+
+<Callout type="pitfall">
+Aliasing is not noise you can remove later. Once two frequencies have the same samples, no digital filter can separate them. Anti-aliasing filters must act on the analogue signal before the sampler, which is why cameras blur fine detail slightly and why the wagon wheel in old films appears to turn backward.
+</Callout>
+
+<AliasFolding />
+
+## Why the rate matters
+
+Audio CDs sample at $44{,}100$ Hz, so frequencies up to $22{,}050$ Hz are preserved, a little above the range of human hearing. A rate too low for the content folds high frequencies down into the audible band, and that is the distortion that sampling theory exists to prevent. The next step is the Fourier transform of the sampled signal, which shows exactly where aliases land.
