@@ -4,7 +4,7 @@ import Figure from '../Figure.astro';
 
 <Figure
   title="Z-test for a coin"
-  caption="The curve is the distribution of the sample proportion if the coin is fair. The shaded tails are the outcomes at least as extreme as the one observed, so their total area is the two-sided p-value. Reject H₀ when the p-value is below 0.05."
+  caption="The curve is the distribution of the sample proportion if the coin is fair. The shaded tails are the outcomes at least as extreme as the one observed, so their total area is the two-sided p-value. Reject H₀ when the p-value is below 0.05. The readout also gives the exact binomial p-value; near the 0.05 line, such as 60 heads in 100, the two can disagree."
 >
   <z-test-explorer>
     <div class="zt-ctl">
@@ -147,8 +147,13 @@ import Figure from '../Figure.astro';
 
       const z = (phat - 0.5) / s;
       const pv = 2 * (1 - Phi(Math.abs(z)));
+      // exact two-sided binomial p-value: total probability of counts at least as far from n/2 (log-space sums)
+      const logC = (k: number) => { let v = 0; for (let i = 1; i <= k; i++) v += Math.log((n - k + i) / i); return v; };
+      let exact = 0;
+      for (let k = 0; k <= n; k++) if (Math.abs(k - n / 2) >= Math.abs(h - n / 2) - 1e-9) exact += Math.exp(logC(k) - n * Math.LN2);
+      exact = Math.min(1, exact);
       this.querySelector('[data-stat]')!.textContent =
-        `p̂ = ${phat.toFixed(2)} · z = ${z.toFixed(2)} · two-sided p = ${pv.toFixed(4)} · ${pv < 0.05 ? 'reject H₀' : 'do not reject H₀'}`;
+        `p̂ = ${phat.toFixed(2)} · z = ${z.toFixed(2)} · normal p = ${pv.toFixed(4)} · exact binomial p = ${exact.toFixed(4)} · ${exact < 0.05 ? 'reject H₀' : 'do not reject H₀'} (exact)`;
     }
   }
   customElements.define('z-test-explorer', ZTestExplorer);

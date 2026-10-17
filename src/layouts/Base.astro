@@ -88,6 +88,70 @@ const tabs = areas.map((a) => ({ id: a.id, title: a.title, href: url(`${a.id}/`)
       </nav>
     </header>
     <slot />
+    <script>
+      // Button switchers in figures: <input type="hidden" data-x value="a" /><span class="choice">
+      // <button data-choice="a">…</button>…</span>. A click sets the hidden input, marks the pressed
+      // button and fires input/change events, so figure code reads it like a <select>.
+      // Auto-play for steppers: <button data-auto-step>Auto</button> presses the figure's own
+      // [data-step-btn] button every 700 ms until it is disabled, nothing changes, a reset or
+      // other control is used, or Auto is pressed again (it reads Pause while running).
+      const running = new Map<HTMLElement, number>();
+      const stop = (btn: HTMLElement) => {
+        clearInterval(running.get(btn));
+        running.delete(btn);
+        btn.textContent = 'Auto';
+        btn.setAttribute('aria-pressed', 'false');
+      };
+      document.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        const auto = target.closest<HTMLButtonElement>('[data-auto-step]');
+        if (!auto) {
+          // any other button in a figure stops its auto-play (a user step, reset or mode change)
+          const fig = target.closest('figure');
+          // (programmatic step clicks from auto-play are not trusted, so they do not stop it)
+          if (fig && target.closest('button') && e.isTrusted) {
+            running.forEach((_, b) => { if (fig.contains(b)) stop(b); });
+          }
+          return;
+        }
+        if (running.has(auto)) return stop(auto);
+        const host = auto.closest('figure')!;
+        const step = host.querySelector<HTMLButtonElement>('[data-step-btn]');
+        if (!step) return;
+        auto.textContent = 'Pause';
+        auto.setAttribute('aria-pressed', 'true');
+        const tick = () => {
+          if (step.disabled) return stop(auto);
+          const before = host.textContent + host.innerHTML.length;
+          step.click();
+          if (step.disabled || host.textContent + host.innerHTML.length === before) stop(auto);
+        };
+        running.set(auto, window.setInterval(tick, 700));
+        tick();
+      });
+      // Toggle buttons: <input type="checkbox" hidden data-x /><button data-toggle aria-pressed>…</button>.
+      // A click flips the hidden checkbox and fires input/change, so figure code reads .checked as before.
+      document.addEventListener('click', (e) => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-toggle]');
+        const box = btn?.previousElementSibling as HTMLInputElement | null;
+        if (!btn || !box || box.type !== 'checkbox') return;
+        box.checked = !box.checked;
+        btn.setAttribute('aria-pressed', String(box.checked));
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      document.addEventListener('click', (e) => {
+        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.choice [data-choice]');
+        if (!btn) return;
+        const group = btn.closest('.choice')!;
+        const input = group.previousElementSibling as HTMLInputElement | null;
+        group.querySelectorAll('[data-choice]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+        if (!input || input.value === btn.dataset.choice) return;
+        input.value = btn.dataset.choice!;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    </script>
   </body>
 </html>
 

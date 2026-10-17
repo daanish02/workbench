@@ -1,60 +1,63 @@
 ---
 import Figure from '../Figure.astro';
-
-// Rectangular pulse of width 1 and height 1 on [−½, ½]: its Fourier transform magnitude is |sin(πf)/(πf)|.
-const sinc = (f: number) => (Math.abs(f) < 1e-9 ? 1 : Math.abs(Math.sin(Math.PI * f) / (Math.PI * f)));
-const X = (f: number) => 30 + ((f + 4) / 8) * 350;
-const Y = (v: number) => 170 - v * 140;
-const pts: string[] = [];
-for (let i = 0; i <= 400; i++) {
-  const f = -4 + (8 * i) / 400;
-  pts.push(`${i ? 'L' : 'M'}${X(f).toFixed(2)},${Y(sinc(f)).toFixed(2)}`);
-}
-const curve = pts.join(' ');
-// the pulse itself, drawn small on the left
-const pulseX0 = 40, pulseX1 = 80, pulseTop = 40;
 ---
 
 <Figure
-  kind="Diagram"
-  title="A pulse and its spectrum"
-  caption="Left: a rectangular pulse of width 1 in time. Right: the magnitude of its Fourier transform, |sin(πf)/(πf)|. The spectrum has a wide central lobe at f = 0 and side lobes that die away slowly. A short pulse is a wide spectrum, and the reverse also holds."
+  title="A shorter pulse has a wider spectrum"
+  caption="Left: a rectangular pulse of width w in time. Right: the magnitude of its Fourier transform, w·|sinc(wξ)|, with the first zeros at ξ = ±1/w. Halve the width and the central lobe doubles in width while its height halves: the time–bandwidth trade-off."
 >
-  <svg class="ps-svg" viewBox="0 0 400 200" role="img" aria-label="Rectangular pulse in time and the sinc-shaped magnitude of its spectrum">
-    <line x1={pulseX0 - 10} y1="170" x2={pulseX1 + 10} y2="170" class="ps-axis"></line>
-    <rect x={pulseX0} y={pulseTop} width={pulseX1 - pulseX0} height={170 - pulseTop} class="ps-pulse"></rect>
-    <text x="60" y="186" class="ps-t">time</text>
-    <line x1="150" y1="170" x2="390" y2="170" class="ps-axis"></line>
-    <line x1="150" y1="20" x2="150" y2="170" class="ps-axis"></line>
-    <path d={curve} class="ps-curve"></path>
-    <text x="270" y="186" class="ps-t">frequency f</text>
-    <text x={X(0)} y="186" class="ps-t">0</text>
-  </svg>
+  <pulse-spectrum>
+    <label class="ps-lbl">pulse width w <input type="range" min="0.25" max="2" step="0.05" value="1" data-w /> <b data-wv>1.00</b></label>
+    <svg class="ps-svg" viewBox="0 0 400 200" role="img" aria-label="Rectangular pulse in time and the sinc-shaped magnitude of its spectrum">
+      <line x1="10" y1="170" x2="130" y2="170" class="ps-axis"></line>
+      <rect data-pulse y="60" height="110" class="ps-pulse"></rect>
+      <text x="55" y="186" class="ps-t">time</text>
+      <line x1="150" y1="170" x2="390" y2="170" class="ps-axis"></line>
+      <line x1="270" y1="20" x2="270" y2="170" class="ps-axis"></line>
+      <path data-curve class="ps-curve"></path>
+      <text x="300" y="186" class="ps-t">frequency ξ</text>
+    </svg>
+    <p class="ps-stat" data-stat></p>
+  </pulse-spectrum>
 </Figure>
 
 <style>
-  .ps-svg {
-    display: block;
-    width: 100%;
-    max-width: 440px;
-    margin: 0 auto;
-  }
-  .ps-axis {
-    stroke: #3c4043;
-    stroke-width: 1;
-  }
-  .ps-pulse {
-    fill: rgba(66, 133, 244, 0.35);
-    stroke: var(--g-blue);
-    stroke-width: 1.5;
-  }
-  .ps-curve {
-    fill: none;
-    stroke: var(--g-yellow);
-    stroke-width: 2;
-  }
-  .ps-t {
-    fill: var(--text-muted);
-    font: 11px var(--font-mono);
-  }
+  .ps-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .ps-lbl input { flex: 1; }
+  .ps-svg { display: block; width: 100%; max-width: 460px; margin: 0 auto; }
+  .ps-axis { stroke: #3c4043; }
+  .ps-pulse { fill: rgba(66, 133, 244, 0.35); stroke: var(--g-blue); }
+  .ps-curve { fill: none; stroke: var(--g-yellow); stroke-width: 2; }
+  .ps-t { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .ps-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
 </style>
+
+<script>
+  const sinc = (u: number) => (Math.abs(u) < 1e-9 ? 1 : Math.sin(Math.PI * u) / (Math.PI * u));
+  class PulseSpectrum extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-w]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const w = +this.querySelector<HTMLInputElement>('[data-w]')!.value;
+      this.querySelector('[data-wv]')!.textContent = w.toFixed(2);
+      // time axis: t in [-1.2, 1.2] over 10..130
+      const tx = (t: number) => 70 + (t / 1.2) * 60;
+      const p = this.querySelector('[data-pulse]')!;
+      p.setAttribute('x', String(tx(-w / 2))); p.setAttribute('width', String(tx(w / 2) - tx(-w / 2)));
+      // frequency axis: xi in [-6, 6] over 150..390, height scaled so w = 2 fills the plot
+      const fx = (xi: number) => 270 + (xi / 6) * 120;
+      const fy = (v: number) => 170 - (v / 2) * 145;
+      let d = '';
+      for (let i = 0; i <= 400; i++) {
+        const xi = -6 + (12 * i) / 400;
+        d += `${i ? 'L' : 'M'}${fx(xi).toFixed(1)},${fy(w * Math.abs(sinc(w * xi))).toFixed(1)}`;
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', d);
+      this.querySelector('[data-stat]')!.textContent =
+        `width ${w.toFixed(2)} in time · first zeros at ξ = ±${(1 / w).toFixed(2)} · peak height ${w.toFixed(2)} · width × lobe half-width = 1`;
+    }
+  }
+  customElements.define('pulse-spectrum', PulseSpectrum);
+</script>

@@ -31,7 +31,9 @@ const hops = [
       }
     </ol>
     <div class="ctl-row">
+      <button class="btn" data-step>Step</button>
       <button class="btn primary" data-play>Play</button>
+      <button class="btn" data-reset>Reset</button>
       <span class="stat" data-dir></span>
     </div>
   </request-trace>
@@ -97,32 +99,46 @@ const hops = [
 <script>
   class RequestTrace extends HTMLElement {
     timer = 0;
+    k = 0;
     connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => (clearInterval(this.timer), this.tick()));
       this.querySelector('[data-play]')!.addEventListener('click', () => this.play());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+    }
+    disconnectedCallback() {
+      clearInterval(this.timer);
+    }
+    items() {
+      return [...this.querySelectorAll<HTMLElement>('[data-hop]')];
+    }
+    path() {
+      // down 0..n-1, then back up n-2..0
+      const n = this.items().length;
+      return [...Array(n).keys(), ...[...Array(n - 1).keys()].reverse()];
+    }
+    reset() {
+      clearInterval(this.timer);
+      this.k = 0;
+      this.items().forEach((li) => li.classList.remove('seen', 'on'));
+      this.querySelector('[data-dir]')!.textContent = '';
+    }
+    tick() {
+      const items = this.items(), path = this.path(), dir = this.querySelector('[data-dir]')!;
+      if (this.k >= path.length) {
+        clearInterval(this.timer);
+        dir.textContent = '✓ saved: the application receives “success”';
+        items.forEach((li) => li.classList.remove('on'));
+        return;
+      }
+      items.forEach((li) => li.classList.remove('on'));
+      items[path[this.k]].classList.add('on', 'seen');
+      dir.textContent = this.k < items.length ? '↓ request travelling down' : '↑ completion travelling up';
+      this.k++;
     }
     play() {
-      clearInterval(this.timer);
-      const items = [...this.querySelectorAll<HTMLElement>('[data-hop]')];
-      const n = items.length;
-      // down 0..n-1, then back up n-2..0
-      const path = [...Array(n).keys(), ...[...Array(n - 1).keys()].reverse()];
-      let k = 0;
-      const dir = this.querySelector('[data-dir]')!;
-      items.forEach((li) => li.classList.remove('seen', 'on'));
-      const tick = () => {
-        if (k >= path.length) {
-          clearInterval(this.timer);
-          dir.textContent = '✓ saved: the application receives “success”';
-          items.forEach((li) => li.classList.remove('on'));
-          return;
-        }
-        items.forEach((li) => li.classList.remove('on'));
-        items[path[k]].classList.add('on', 'seen');
-        dir.textContent = k < n ? '↓ request travelling down' : '↑ completion travelling up';
-        k++;
-      };
-      tick();
-      this.timer = window.setInterval(tick, 750);
+      this.reset();
+      this.tick();
+      this.timer = window.setInterval(() => this.tick(), 750);
     }
   }
   customElements.define('request-trace', RequestTrace);

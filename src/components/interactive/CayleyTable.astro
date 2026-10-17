@@ -3,12 +3,13 @@ import Figure from '../Figure.astro';
 ---
 
 <Figure
-  title="Cayley table of the integers mod n"
-  caption="Each cell is a + b mod n. Row and column 0 show the identity. Inverses are the pairs that give 0. Set n to a prime and every nonzero element has an inverse, which makes ℤₙ a field; for composite n some do not."
+  title="Cayley tables of the integers mod n"
+  caption="Switch between the addition and multiplication tables of ℤₙ. Under +, the identity is 0 and every row contains a 0, so every element has an additive inverse. Under ×, the identity is 1 and a row contains a 1 only when the element has a multiplicative inverse. Set n to a prime and every nonzero row has a 1, which makes ℤₙ a field; for composite n some rows never reach 1."
 >
   <cayley-table>
     <div class="ct-ctl">
       <label>n <input type="range" min="2" max="12" step="1" value="7" data-n /><b data-nv>7</b></label>
+      <div class="ct-ops"><input type="hidden" name="ct-op" data-op value="+" /><span class="choice"><button type="button" class="btn" data-choice="+" aria-pressed="true">+</button><button type="button" class="btn" data-choice="x" aria-pressed="false">×</button></span></div>
     </div>
     <div class="ct-wrap" data-table></div>
     <p class="ct-stat" data-stat></p>
@@ -60,6 +61,15 @@ import Figure from '../Figure.astro';
   .ct-wrap :global(.ct-inv) {
     background: rgba(66, 133, 244, 0.3);
   }
+  .ct-ops {
+    display: flex;
+    gap: 18px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+  .ct-ops input {
+    flex: none;
+  }
   .ct-stat {
     margin: 10px 0 0;
     font: 0.8125rem/1.6 var(--font-mono);
@@ -74,7 +84,7 @@ import Figure from '../Figure.astro';
 
   class CayleyTable extends HTMLElement {
     connectedCallback() {
-      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
       this.draw();
     }
 
@@ -85,12 +95,14 @@ import Figure from '../Figure.astro';
       // an element a has an inverse b when (a + b) mod n = 0 (additive), and a multiplicative inverse when (a·b) mod n = 1
       const addInv = (a: number) => idx.find((b) => (a + b) % n === 0);
       const mulInv = (a: number) => idx.find((b) => b > 0 && (a * b) % n === 1);
-      let html = '<table><tr><th>+</th>' + idx.map((j) => `<th>${j}</th>`).join('') + '</tr>';
+      const mul = this.querySelector<HTMLInputElement>('[data-op]')!.value === 'x';
+      const target = mul ? 1 : 0;
+      let html = `<table><tr><th>${mul ? '×' : '+'}</th>` + idx.map((j) => `<th>${j}</th>`).join('') + '</tr>';
       for (const i of idx) {
         html += `<tr><th>${i}</th>`;
         for (const j of idx) {
-          const v = (i + j) % n;
-          const cls = v === 0 ? ' class="ct-id"' : '';
+          const v = mul ? (i * j) % n : (i + j) % n;
+          const cls = v === target ? ' class="ct-id"' : '';
           html += `<td${cls}>${v}</td>`;
         }
         html += '</tr>';
