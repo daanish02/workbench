@@ -1,7 +1,7 @@
 ---
-title: "Lagrange multipliers"
+title: "Lagrange Multipliers"
 description: "Equality-constrained optimisation through the geometry of gradients: at a constrained optimum the gradient of the objective is parallel to the gradient of the constraint."
-order: 5
+order: 7
 tier: core
 takeaways:
   - "The **Lagrangian** of $\\min f(x)$ subject to $g(x) = 0$ is $L(x, \\lambda) = f(x) - \\lambda g(x)$. Its stationary points are the candidates for constrained optima."
@@ -59,12 +59,30 @@ print("grid nearest point:", tuple(round(c, 3) for c in best), " ray direction:"
 
 In words: the nearest point on the circle lies on the line from the origin to the target, which the gradient condition predicts. The grid search and the ray direction agree to three decimals.
 
+Solving the Lagrange equations symbolically shows the pitfall below in action: they have two solutions.
+
+```python
+import sympy as sp
+
+x, y, lam = sp.symbols("x y lambda", real=True)
+eqs = [2 * (x - 3) - 2 * lam * x, 2 * (y - 1) - 2 * lam * y, x**2 + y**2 - 1]
+for s in sp.solve(eqs, [x, y, lam], dict=True):
+    d2 = (s[x] - 3) ** 2 + (s[y] - 1) ** 2
+    print(f"x = {float(s[x]):+.4f}, y = {float(s[y]):+.4f}, squared distance {float(d2):.4f}")
+# x = +0.9487, y = +0.3162, squared distance 4.6754
+# x = -0.9487, y = -0.3162, squared distance 17.3246
+```
+
+In words: the conditions give the point $(0.949, 0.316)$ toward the target, at squared distance about $4.68$, and the opposite point $(-0.949, -0.316)$, at about $17.32$, the farthest point on the circle. Both are stationary points of the Lagrangian; comparing values picks the minimum. Run it with `uv run --with sympy`.
+
 <Callout type="pitfall">
 The Lagrange conditions are necessary, not sufficient. Solving them gives stationary points that may be maxima, minima or saddles, and some constraint surfaces have points where the constraint gradient vanishes, which the method does not handle. Evaluate every candidate and check the constraint gradient is nonzero at it.
 </Callout>
+
+The figure shows the same alignment for the mirror-image problem: minimise $x + y$ on the curve $xy = c$. The answer, $x = y = \sqrt{c}$, is the product example turned around: there the sum was fixed and the product maximised, here the product is fixed and the sum minimised, and both put the optimum where the two gradients are parallel.
 
 <LagrangeCurve />
 
 ## Several constraints
 
-With several equality constraints $g_i(x) = 0$, each gets its own multiplier and the condition becomes $\nabla f = \sum_i \lambda_i \nabla g_i$. Inequality constraints need the extra conditions of the KKT theorem, which the duality note builds toward.
+With several equality constraints $g_i(x) = 0$, each gets its own multiplier and the condition becomes $\nabla f = \sum_i \lambda_i \nabla g_i$. Inequality constraints need the extra conditions of the KKT theorem, which the [Duality](../duality/) note states.

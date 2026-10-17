@@ -1,5 +1,5 @@
 ---
-title: "Gradient descent"
+title: "Gradient Descent"
 description: "Repeatedly step against the gradient. Step size controls whether the method converges, oscillates or diverges, and ill-conditioned problems converge slowly."
 order: 2
 tier: core
@@ -81,4 +81,27 @@ A step size that looks safe for the steepest direction can still make the slow d
 
 ## Convergence intuition
 
-For a convex function with a Lipschitz gradient, a step size $\eta \le \frac{1}{L}$ makes the objective decrease at every step, and the gap to the minimum shrinks at a rate set by $\kappa$. The next note shows momentum methods that speed up the flat directions, and the one after shows how the step size is chosen in practice.
+For a convex function with a Lipschitz gradient, a step size $\eta \le \frac{1}{L}$ makes the objective decrease at every step, and the gap to the minimum shrinks at a rate set by $\kappa$. In practice the step size is often chosen at each step by a **line search**: start with a large step and halve it until the objective drops by enough. The backtracking rule accepts $\eta$ once $f(x - \eta\nabla f) \le f(x) - c\,\eta\,\|\nabla f\|^2$ for a small constant $c$, such as $10^{-4}$.
+
+```python
+def backtracking(f, grad, x, eta=1.0, c=1e-4, shrink=0.5):
+    g = grad(x)
+    while f(x - eta * g) > f(x) - c * eta * g * g:   # not enough decrease: shrink the step
+        eta *= shrink
+    return eta
+
+f = lambda x: (x - 3) ** 2 + 1
+grad = lambda x: 2 * (x - 3)
+x = 0.0
+for k in range(3):
+    eta = backtracking(f, grad, x)
+    x = x - eta * grad(x)
+    print(f"step {k + 1}: eta = {eta}, x = {x:.4f}")
+# step 1: eta = 0.5, x = 3.0000
+# step 2: eta = 1.0, x = 3.0000
+# step 3: eta = 1.0, x = 3.0000
+```
+
+In words: the first trial step $\eta = 1$ overshoots to $x = 6$ with no decrease, so it is halved to $0.5$, which happens to be the exact step for this quadratic and lands on $3$. The rule needs no knowledge of the curvature. The next note shows momentum methods that speed up the flat directions.
+
+<LineSearch />

@@ -1,13 +1,13 @@
 ---
-title: "Constrained optimization"
+title: "Constrained Optimization"
 description: "Minimising a function over a feasible region defined by equality and inequality constraints, with worked examples checked by grid search."
-order: 4
+order: 6
 tier: core
 takeaways:
   - "A **constrained problem** minimises $f(x)$ subject to equality constraints $g_i(x) = 0$ and inequality constraints $h_j(x) \\le 0$. The **feasible region** is the set of points that satisfy all of them."
   - "The minimum may sit on the boundary of the feasible region, where a constraint is **active**, or in its interior, where the constraints do not matter. The unconstrained minimum is feasible only in the second case."
   - "Projecting a point onto a feasible set gives the nearest feasible point. For a simple set such as a half-plane this projection has a closed form."
-  - "Every constrained problem can be attacked by a penalty, a barrier, or the Lagrangian of the next note. The choice affects how the solution is found, not what it is."
+  - "Every constrained problem can be attacked by a penalty, a barrier, or the Lagrangian of the next note. Exact methods find the same solution; penalty and barrier methods approach it as their weight is pushed to the limit."
 resources:
   - title: "Constrained optimization (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Constrained_optimization"
@@ -61,6 +61,56 @@ Checking that a point satisfies the constraints is part of the answer. Grid sear
 </Callout>
 
 <FeasibleProjection />
+
+## Projection onto a half-plane
+
+For a single linear constraint $\mathbf{a}^\top \mathbf{x} \le b$ the nearest feasible point has a closed form: if $\mathbf{p}$ already satisfies it, keep it; otherwise move straight back along the normal $\mathbf{a}$ until it lands on the boundary,
+
+$$
+\operatorname{proj}(\mathbf{p}) = \mathbf{p} - \frac{\max(0,\ \mathbf{a}^\top \mathbf{p} - b)}{\|\mathbf{a}\|^2}\,\mathbf{a}.
+
+$$
+
+**Projected gradient descent** alternates an ordinary gradient step with this projection, which is the simplest way to keep iterates feasible.
+
+```python
+import numpy as np
+
+a, b = np.array([1.0, 1.0]), 2.0
+proj = lambda p: p - max(0.0, a @ p - b) / (a @ a) * a
+print("projection of (2, 2):", proj(np.array([2.0, 2.0])), " of (0, 1):", proj(np.array([0.0, 1.0])))
+
+x = np.array([-1.0, 0.0])
+for _ in range(50):                     # minimise (x - 2)^2 + (y - 2)^2 subject to x + y <= 2
+    x = proj(x - 0.2 * 2 * (x - 2.0))
+print("projected gradient descent ends at:", x.round(4))
+# projection of (2, 2): [1. 1.]  of (0, 1): [0. 1.]
+# projected gradient descent ends at: [1. 1.]
+```
+
+In words: $(2, 2)$ violates the constraint and moves to $(1, 1)$ on the boundary, while $(0, 1)$ is already feasible and stays. Projected gradient descent from $(-1, 0)$ settles at $(1, 1)$, the answer the grid search found.
+
+## Penalties and library solvers
+
+A **penalty method** replaces the constraint with a cost for violating it, such as $\mu \max(0, x + y - 2)^2$, and minimises the result without constraints. The minimiser approaches the true solution as $\mu$ grows, which is why a penalty gives an approximate answer for any finite weight. Library solvers such as SLSQP handle the constraints exactly:
+
+```python
+import numpy as np
+from scipy.optimize import minimize
+
+f = lambda p: (p[0] - 2) ** 2 + (p[1] - 2) ** 2
+for mu in (1.0, 10.0, 1000.0):
+    res = minimize(lambda p: f(p) + mu * max(0.0, p[0] + p[1] - 2) ** 2, x0=[0.0, 0.0])
+    print(f"penalty mu = {mu:>6}: minimiser {res.x.round(4)}")
+res = minimize(f, x0=[0.0, 0.0], method="SLSQP", constraints=[{"type": "ineq", "fun": lambda p: 2 - p[0] - p[1]}])
+print("SLSQP with the constraint:", res.x.round(4))
+# penalty mu =    1.0: minimiser [1.3333 1.3333]
+# penalty mu =   10.0: minimiser [1.0476 1.0476]
+# penalty mu = 1000.0: minimiser [1.0005 1.0005]
+# SLSQP with the constraint: [1. 1.]
+```
+
+In words: with weight $1$ the penalty solution sits well outside the region, at about $(1.33, 1.33)$; with weight $1000$ it is within a thousandth of $(1, 1)$. SLSQP, given the constraint directly (SciPy's `"ineq"` means the function must stay non-negative), returns $(1, 1)$. Run it with `uv run --with numpy --with scipy`.
 
 ## Active and inactive constraints
 

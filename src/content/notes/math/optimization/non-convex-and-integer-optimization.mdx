@@ -1,7 +1,7 @@
 ---
-title: "Non-convex and integer optimization"
+title: "Non-Convex Optimization"
 description: "Local minima and their dependence on the starting point, and integer problems such as the knapsack, where the greedy answer can be far from optimal."
-order: 9
+order: 10
 tier: advanced
 takeaways:
   - "A **non-convex** function can have several local minima. Gradient descent finds one of them, and which one depends on the starting point."
@@ -46,16 +46,38 @@ In words: the two starts end in different places with different values. The star
 
 ## Global search
 
-Since a descent method cannot escape, practical approaches try many starts and keep the best. The script below does this on a grid of starting points, which is exhaustive for one variable.
+Since a descent method cannot escape its valley, practical approaches try many starts and keep the best. The script below does this on a grid of starting points, which in one variable covers every valley as long as the grid is finer than the valleys are wide.
 
 ```python
+f = lambda x: x ** 4 - 3 * x ** 2 + x
+df = lambda x: 4 * x ** 3 - 6 * x + 1
+
+def descend(x, eta=0.01, steps=5000):
+    for _ in range(steps):
+        x -= eta * df(x)
+    return x
+
 starts = [i / 10 for i in range(-30, 31)]
 results = [(descend(s), s) for s in starts]
 best_x, best_s = min(results, key=lambda r: f(r[0]))
 print("best minimum found:", round(best_x, 4), " from start", best_s, " f =", round(f(best_x), 4))  # prints: best minimum found: -1.3008 from start -3.0 f = -3.5139
 ```
 
-In words: many starts recover the deeper valley near $x = -1.3$, and the best value found is about $-3.51$. This works for one or two variables, but the number of starts needed grows rapidly with dimension.
+In words: many starts recover the deeper valley near $x = -1.3$, and the best value found is about $-3.51$. This works for one or two variables, but the number of starts needed grows rapidly with dimension. Libraries package smarter versions of the same idea:
+
+```python
+from scipy.optimize import basinhopping, differential_evolution
+
+f = lambda x: x[0] ** 4 - 3 * x[0] ** 2 + x[0]
+bh = basinhopping(f, x0=[2.0], niter=100, stepsize=1.5, seed=0)  # jumps of about 1.5 can cross the hump
+de = differential_evolution(f, bounds=[(-3, 3)], seed=0)
+print("basin hopping from x = 2:", bh.x.round(4), round(bh.fun, 4))
+print("differential evolution:", de.x.round(4), round(de.fun, 4))
+# basin hopping from x = 2: [-1.3008] -3.5139
+# differential evolution: [-1.3008] -3.5139
+```
+
+In words: basin hopping starts in the shallow right valley, but random jumps followed by local descent find the deeper left one; differential evolution searches the whole interval with a population. Both report $x \approx -1.30$, $f \approx -3.51$. Neither is guaranteed to find the global minimum in general. Run it with `uv run --with scipy`.
 
 ## Integer problems: the knapsack
 
@@ -64,10 +86,7 @@ A hiker chooses items to carry with a weight limit of $10$. Each item has a valu
 ```python
 from itertools import combinations
 
-items = [(6, 4), (5, 3), (5, 3), (4, 2)]  # (value, weight)
-cap = 10
-
-def greedy():
+def greedy(items, cap):
     order = sorted(items, key=lambda it: it[0] / it[1], reverse=True)
     value, weight = 0, 0
     for v, w in order:
@@ -76,7 +95,7 @@ def greedy():
             weight += w
     return value
 
-def exhaustive():
+def exhaustive(items, cap):
     best = 0
     for r in range(len(items) + 1):
         for combo in combinations(items, r):
@@ -84,23 +103,30 @@ def exhaustive():
                 best = max(best, sum(v for v, _ in combo))
     return best
 
-print("greedy value:", greedy(), " exact value:", exhaustive())  # prints: greedy value: 14 exact value: 16
+items = [(6, 4), (5, 3), (5, 3), (4, 2)]  # (value, weight)
+print("greedy value:", greedy(items, 10), " exact value:", exhaustive(items, 10))  # prints: greedy value: 14 exact value: 16
+
+big_item = [(60, 10), (50, 6), (50, 6)]
+print("greedy value:", greedy(big_item, 10), " exact value:", exhaustive(big_item, 10))  # prints: greedy value: 50 exact value: 60
 ```
 
-In words: greedy takes the light, high-ratio items first and gets $14$. The best choice is the $6/4$ item with both $5/3$ items, value $16$, which fills the capacity exactly. Greedy is fast, but it can miss the best combination.
+In words: in the first instance greedy takes the light, high-ratio items first and gets $14$. The best choice is the $6/4$ item with both $5/3$ items, value $16$, which fills the capacity exactly. The second instance shows the other failure: greedy takes a $50$ item of weight $6$, and the remaining capacity of $4$ fits nothing else, while the single $60$ item, with a lower ratio, is the best choice. Greedy carries no guarantee for integer problems.
 
-The next check shows the other failure: one large item that greedy skips for two smaller ones.
+Exhaustive search is exact but checks $2^n$ subsets. For knapsack specifically, [dynamic programming](../../../cs/algorithms/dynamic-programming/) solves it exactly in $O(nW)$ time for capacity $W$, and general integer programs go to a mixed-integer solver:
 
 ```python
-items = [(60, 10), (50, 6), (50, 6)]  # (value, weight), capacity 10
-cap = 10
-print("greedy value:", greedy(), " exact value:", exhaustive())  # prints: greedy value: 50 exact value: 60
+import numpy as np
+from scipy.optimize import Bounds, LinearConstraint, milp
+
+values, weights = np.array([6, 5, 5, 4]), np.array([4, 3, 3, 2])
+res = milp(-values, constraints=LinearConstraint(weights, 0, 10), integrality=np.ones(4), bounds=Bounds(0, 1))
+print("items taken:", res.x.round().astype(int), " value:", -res.fun)  # prints: items taken: [1 1 1 0] value: 16.0
 ```
 
-In words: greedy takes a $50$ item of weight $6$, and the remaining capacity of $4$ fits nothing else. The single $60$ item, which has a lower ratio, is the best choice. Greedy carries no guarantee for integer problems.
+In words: the solver maximises value by minimising its negative, with each variable forced to be $0$ or $1$, and confirms the best value of $16$. Run with `uv run --with numpy --with scipy`.
 
 <Callout type="pitfall">
-A linear programming relaxation of an integer problem gives an upper bound, but its solution can be fractional and wrong. Rounding it does not give the best integer answer in general. Branch and bound, which the next topics build on, solves integer problems exactly by splitting the search space.
+A linear programming relaxation of an integer problem gives an upper bound, but its solution can be fractional and wrong. Rounding it does not give the best integer answer in general. Branch and bound, the method inside solvers such as `milp`, solves integer problems exactly by splitting the search space and using relaxation bounds to prune it.
 </Callout>
 
 <KnapsackBars />

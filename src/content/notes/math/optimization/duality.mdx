@@ -1,7 +1,7 @@
 ---
 title: "Duality"
 description: "Primal and dual problems for linear programs, weak duality as a bound, strong duality as equality, and why the dual is often easier to solve."
-order: 6
+order: 9
 tier: core
 takeaways:
   - "Every minimisation (the **primal**) has an associated maximisation (the **dual**). For a linear program $\\min c^\\top x$ subject to $Ax \\ge b$, $x \\ge 0$, the dual is $\\max b^\\top y$ subject to $A^\\top y \\le c$, $y \\ge 0$."
@@ -30,7 +30,7 @@ $$
 \min\; x_1 + 2x_2 \quad \text{subject to}\quad x_1 + x_2 \ge 3,\; x_1 \ge 0,\; x_2 \ge 0.
 $$
 
-Attach a weight $y \ge 0$ to the constraint $x_1 + x_2 \ge 3$. The dual is to choose the weight to get the best bound. Since $x_1 + 2x_2 \ge x_1 + x_2$ for $x_2 \ge 0$, the weight must satisfy $y \le 1$ for $x_1$ and $y \le 2$ for $x_2$. The dual is
+Attach a weight $y \ge 0$ to the constraint $x_1 + x_2 \ge 3$. The dual is to choose the weight to get the best bound. The bound is valid only if $y(x_1 + x_2) \le x_1 + 2x_2$ for every $x \ge 0$, which means matching coefficients: $y \le 1$ for $x_1$ and $y \le 2$ for $x_2$. The dual is
 
 $$
 \max\; 3y \quad \text{subject to}\quad y \le 1,\; y \le 2,\; y \ge 0.
@@ -59,22 +59,56 @@ In words: no feasible dual value ever exceeds a feasible primal value. A dual po
 
 ## Strong duality
 
-For this problem both optimal values are $3$. The primal optimum is $x = (3, 0)$ with cost $3$, and the dual optimum is $y = 1$ with value $3$. The script below verifies both by enumerating the corner points of each feasible region.
+For this problem both optimal values are $3$. The primal optimum is $x = (3, 0)$ with cost $3$, and the dual optimum is $y = 1$ with value $3$. The script below solves both problems with `linprog`, and reads the dual price straight from the primal solution.
 
 ```python
-primal_vertices = [(3.0, 0.0), (0.0, 3.0)]
-primal_best = min(x1 + 2 * x2 for x1, x2 in primal_vertices)
-dual_best = max(3 * y for y in [0.0, 1.0])
-print("primal optimum:", primal_best, " dual optimum:", dual_best)  # prints: primal optimum: 3.0 dual optimum: 3.0
+from scipy.optimize import linprog
+
+# primal: min x1 + 2 x2 subject to x1 + x2 >= 3, written as -x1 - x2 <= -3
+primal = linprog(c=[1, 2], A_ub=[[-1, -1]], b_ub=[-3], bounds=[(0, None)] * 2, method="highs")
+# dual: max 3y subject to y <= 1, y <= 2, y >= 0, written as min -3y
+dual = linprog(c=[-3], A_ub=[[1], [1]], b_ub=[1, 2], bounds=[(0, None)], method="highs")
+print("primal optimum:", primal.fun, "at", primal.x, " dual optimum:", -dual.fun, "at", dual.x)
+print("constraint price reported by the primal solver:", -primal.ineqlin.marginals[0])
+# primal optimum: 3.0 at [3. 0.]  dual optimum: 3.0 at [1.]
+# constraint price reported by the primal solver: 1.0
 ```
 
-In words: the two values agree, so there is no gap, and the dual's weight $y = 1$ is the price of the constraint. Relaxing $x_1 + x_2 \ge 3$ to $\ge 3 + \delta$ raises the optimal cost by $\delta$.
+In words: the two values agree, so there is no gap, and the dual's weight $y = 1$ is the price of the constraint. The primal solver reports the same number as the sensitivity of its constraint (its `marginals`, with a sign flip because the constraint was rewritten as $\le$), so solving one problem gives the other's answer too. Tightening $x_1 + x_2 \ge 3$ to $\ge 3 + \delta$ raises the optimal cost by $\delta$.
 
 <Callout type="pitfall">
-Strong duality needs a feasible and bounded problem. If the primal is infeasible, the dual is unbounded, and if the primal is unbounded, the dual is infeasible. Check feasibility of both sides before reading a zero gap as a result.
+Strong duality needs a feasible and bounded problem. If the primal is unbounded, the dual is infeasible, and the reverse holds too. If one side is infeasible, the other is either unbounded or also infeasible. Check feasibility of both sides before reading a zero gap as a result.
 </Callout>
 
 <DualityGap />
+
+<ShadowPrice />
+
+## The KKT conditions
+
+Duality also explains the conditions that characterise an optimum with inequality constraints. For $\min f(x)$ subject to $h_j(x) \le 0$, attach a multiplier $\mu_j \ge 0$ to each constraint. At an optimum of a well-behaved problem (for example, a convex one with a strictly feasible point) there are multipliers satisfying the **Karush–Kuhn–Tucker conditions**:
+
+- **Stationarity:** $\nabla f(x) + \sum_j \mu_j \nabla h_j(x) = 0$.
+- **Primal feasibility:** $h_j(x) \le 0$ for every $j$.
+- **Dual feasibility:** $\mu_j \ge 0$.
+- **Complementary slackness:** $\mu_j h_j(x) = 0$, so a multiplier can be nonzero only on an active constraint.
+
+These are the Lagrange condition plus two rules for inequalities. In the example, writing the constraint as $3 - x_1 - x_2 \le 0$, the constraint is active at $x = (3, 0)$, its multiplier is the dual optimum $y = 1$, and the bound $x_2 \ge 0$ is active with multiplier $1$, since $x_2$ costs $2$ but the price of the constraint covers only $1$ of it.
+
+```python
+import numpy as np
+
+x = np.array([3.0, 0.0])
+grad_f = np.array([1.0, 2.0])
+# constraints written as h(x) <= 0: 3 - x1 - x2, -x1, -x2
+grads_h = np.array([[-1.0, -1.0], [-1.0, 0.0], [0.0, -1.0]])
+h = np.array([3 - x[0] - x[1], -x[0], -x[1]])
+mu = np.array([1.0, 0.0, 1.0])
+print("stationarity:", np.allclose(grad_f + mu @ grads_h, 0))   # prints: stationarity: True
+print("complementary slackness:", np.allclose(mu * h, 0))         # prints: complementary slackness: True
+```
+
+In words: the multipliers $(1, 0, 1)$ balance the objective's gradient exactly, and each one is zero unless its constraint is active. The bound $x_1 \ge 0$ is inactive at $x_1 = 3$, so its multiplier is zero.
 
 ## Why duality is useful
 

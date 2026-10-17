@@ -1,7 +1,7 @@
 ---
-title: "Numerical methods"
+title: "Numerical Methods"
 description: "Newton's method for root-finding and optimisation, its quadratic convergence, and the floating-point pitfalls that break naive implementations."
-order: 8
+order: 5
 tier: optional
 takeaways:
   - "**Newton's method** solves $f(x) = 0$ by $x_{k+1} = x_k - f(x_k)/f'(x_k)$, replacing the function by its tangent line at each step."
@@ -20,7 +20,7 @@ resources:
     note: "How subtraction of close numbers destroys precision."
 ---
 
-Most optimisation methods are iterations that refine a guess, and the question is how fast the guess improves. Newton's method is the fastest common iteration when the function is smooth and the starting point is close enough. Its speed is the reason it appears inside many libraries. Computers do not do exact arithmetic, though, and a method that is correct on paper can fail silently in code. This note covers Newton's method for square roots and minima, checks its convergence, and shows one floating-point trap.
+Most optimisation methods are iterations that refine a guess, and the question is how fast the guess improves. Newton's method is the fastest common iteration when the function is smooth and the starting point is close enough. Its speed is the reason it appears inside many libraries. Computers do not do exact arithmetic, though, and a method that is correct on paper can fail silently in code. This note covers Newton's method for square roots and minima, checks its convergence, and compares it with bisection.
 
 ## Newton's method for roots
 
@@ -78,6 +78,8 @@ In words: bisection needs $34$ steps and Newton's method needs $4$. Newton is mu
 To minimise $f$, find a zero of its gradient. In one dimension this is $x \leftarrow x - f'(x)/f''(x)$. The method finds the minimum of $f(x) = x^4 - 3x^2$ near $x = 2$ in a few steps, since the curvature there is positive.
 
 ```python
+import math
+
 f1 = lambda x: 4 * x ** 3 - 6 * x
 f2 = lambda x: 12 * x ** 2 - 6
 x = 2.0
@@ -88,20 +90,25 @@ print("minimiser after 4 Newton steps:", round(x, 6), " exact sqrt(1.5) =", roun
 
 In words: four steps reach $1.224779$, within $3 \times 10^{-5}$ of the exact minimiser $\sqrt{1.5} = 1.224745$. The update needs the second derivative, which is the cost of the speed.
 
-## Floating-point trap
-
-A computer stores numbers with about sixteen significant digits. Subtracting two numbers that are nearly equal keeps only the digits where they differ, which can be almost none. The script compares a naive and a rearranged computation of $\sqrt{x + 1} - \sqrt{x}$ for large $x$.
+In practice SciPy's root finders wrap these methods with safeguards. `brentq` combines bisection's guarantee with faster steps, and `newton` takes a derivative:
 
 ```python
-import math
+from scipy.optimize import brentq, newton
 
-x = 1e16
-naive = math.sqrt(x + 1) - math.sqrt(x)
-stable = 1 / (math.sqrt(x + 1) + math.sqrt(x))
-print("naive:", naive, " stable:", stable)  # prints: naive: 0.0 stable: 5e-09
+f = lambda x: x * x - 2
+print("brentq on [1, 2]:", brentq(f, 1, 2, xtol=1e-14))
+print("newton from 1.0: ", newton(f, 1.0, fprime=lambda x: 2 * x))
+# brentq on [1, 2]: 1.414213562373095
+# newton from 1.0:  1.4142135623730951
 ```
 
-In words: the exact value is about $5 \times 10^{-9}$. The naive subtraction returns $0$, because $x + 1$ is not representable next to $x = 10^{16}$, so both square roots are equal and the difference is lost entirely. The rearranged form avoids the subtraction and returns $5 \times 10^{-9}$.
+In words: both return $\sqrt 2$ to full precision. `brentq` needs a bracket where the function changes sign, which by the intermediate value theorem guarantees a root, and `newton` needs a good start. Run it with `uv run --with scipy`.
+
+<NewtonBasins />
+
+## Rounding
+
+Iterations also fight rounding error. The [Number Systems](../../foundations/number-systems/) note shows how floats are spaced and why subtracting nearly equal numbers loses digits; a stopping test such as `abs(x - target) > 1e-10` only makes sense when the tolerance is above that spacing.
 
 <Callout type="pitfall">
 Newton's method can fail silently. A poor starting point can send it far away, a zero derivative stops the update, and a nearly flat function gives huge steps. Check that the iterates converge and that the gradient is small at the answer, rather than trusting the last printed value.
@@ -109,4 +116,4 @@ Newton's method can fail silently. A poor starting point can send it far away, a
 
 ## Why it matters
 
-Every solver in optimisation rests on these ideas: iterate, measure the error, and watch for rounding. Quasi-Newton methods approximate the Hessian to avoid computing it, and the next note shows where smooth methods stop being enough.
+Every solver in optimisation rests on these ideas: iterate, measure the error, and watch for rounding. Quasi-Newton methods such as BFGS, the default of `scipy.optimize.minimize`, approximate the Hessian from gradients to avoid computing it. The [Non-Convex Optimization](../non-convex-and-integer-optimization/) note shows where smooth local methods stop being enough.

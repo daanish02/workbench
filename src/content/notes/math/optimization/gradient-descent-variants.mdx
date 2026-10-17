@@ -1,5 +1,5 @@
 ---
-title: "Gradient descent variants"
+title: "Gradient Descent Variants"
 description: "Momentum, RMSProp and Adam: what each one changes about the basic update, which problem it targets, and a comparison on an ill-conditioned function."
 order: 3
 tier: core
@@ -42,10 +42,16 @@ A coordinate with large gradients gets a small effective step, and one with smal
 
 ## Adam
 
-Adam keeps both averages, a first moment $m$ (like momentum) and a second moment $s$ (like RMSProp), and corrects them for starting at zero. The update is
+Adam keeps both averages, a first moment $m$ (like momentum) and a second moment $s$ (like RMSProp), each starting at zero. With $g_k = \nabla f(x_k)$ and $t = k + 1$ the number of steps taken,
 
 $$
-x_{k+1} = x_k - \eta\,\frac{\hat m_{k+1}}{\sqrt{\hat s_{k+1}} + \epsilon}, \qquad \hat m = \frac{m}{1 - \beta_1^{k}}, \quad \hat s = \frac{s}{1 - \beta_2^{k}}.
+m_{k+1} = \beta_1 m_k + (1 - \beta_1)\,g_k, \qquad s_{k+1} = \beta_2 s_k + (1 - \beta_2)\,g_k^2.
+$$
+
+Because both start at zero, early averages are too small, so Adam divides by the missing weight before stepping:
+
+$$
+\hat m_{k+1} = \frac{m_{k+1}}{1 - \beta_1^{t}}, \qquad \hat s_{k+1} = \frac{s_{k+1}}{1 - \beta_2^{t}}, \qquad x_{k+1} = x_k - \eta\,\frac{\hat m_{k+1}}{\sqrt{\hat s_{k+1}} + \epsilon}.
 $$
 
 ## Comparison on an ill-conditioned function
@@ -70,29 +76,29 @@ def gd_init():
     return None
 
 def gd_step(x, y, s):
-        gx, gy = grad(x, y)
-        return x - 0.05 * gx, y - 0.05 * gy, s
+    gx, gy = grad(x, y)
+    return x - 0.05 * gx, y - 0.05 * gy, s
 
 def mom_init():
     return (0.0, 0.0)
 
 def mom_step(x, y, s):
-        gx, gy = grad(x, y)
-        vx, vy = 0.9 * s[0] + gx, 0.9 * s[1] + gy
-        return x - 0.01 * vx, y - 0.01 * vy, (vx, vy)
+    gx, gy = grad(x, y)
+    vx, vy = 0.9 * s[0] + gx, 0.9 * s[1] + gy
+    return x - 0.01 * vx, y - 0.01 * vy, (vx, vy)
 
 def adam_init():
     return (0.0, 0.0, 0.0, 0.0, 0)
 
 def adam_step(x, y, s):
-        mx, my, sx, sy, t = s
-        t += 1
-        gx, gy = grad(x, y)
-        mx, my = 0.9 * mx + 0.1 * gx, 0.9 * my + 0.1 * gy
-        sx, sy = 0.999 * sx + 0.001 * gx * gx, 0.999 * sy + 0.001 * gy * gy
-        mhx, mhy = mx / (1 - 0.9 ** t), my / (1 - 0.9 ** t)
-        shx, shy = sx / (1 - 0.999 ** t), sy / (1 - 0.999 ** t)
-        return x - 0.01 * mhx / (math.sqrt(shx) + 1e-8), y - 0.01 * mhy / (math.sqrt(shy) + 1e-8), (mx, my, sx, sy, t)
+    mx, my, sx, sy, t = s
+    t += 1
+    gx, gy = grad(x, y)
+    mx, my = 0.9 * mx + 0.1 * gx, 0.9 * my + 0.1 * gy
+    sx, sy = 0.999 * sx + 0.001 * gx * gx, 0.999 * sy + 0.001 * gy * gy
+    mhx, mhy = mx / (1 - 0.9 ** t), my / (1 - 0.9 ** t)          # bias correction
+    shx, shy = sx / (1 - 0.999 ** t), sy / (1 - 0.999 ** t)
+    return x - 0.01 * mhx / (math.sqrt(shx) + 1e-8), y - 0.01 * mhy / (math.sqrt(shy) + 1e-8), (mx, my, sx, sy, t)
 
 print("plain gradient descent, steps:", steps_until(gd_init, gd_step))  # prints: plain gradient descent, steps: 66
 print("momentum, steps:", steps_until(mom_init, mom_step))  # prints: momentum, steps: 106
@@ -100,6 +106,26 @@ print("Adam, steps:", steps_until(adam_init, adam_step))  # prints: Adam, steps:
 ```
 
 In words: plain descent wins here, with $66$ steps against $106$ for momentum and $276$ for Adam. That is not a general ranking. The step $0.05$ was chosen by hand for this exact quadratic, the largest that keeps the steep direction stable. Momentum and Adam were given small step sizes, typical of their defaults, and they pay for that on a simple valley. Their advantage shows when a single step size cannot suit every direction, or when the gradients are noisy.
+
+Momentum does win on this valley once it is tuned with the same care. For a quadratic with curvatures between $m$ and $L$, heavy-ball theory gives $\eta = \frac{4}{(\sqrt{L} + \sqrt{m})^2}$ and $\beta = \left(\frac{\sqrt{L} - \sqrt{m}}{\sqrt{L} + \sqrt{m}}\right)^2$. Here $m = 2$ and $L = 20$:
+
+```python
+import math
+
+m, L = 2.0, 20.0
+eta = 4 / (math.sqrt(L) + math.sqrt(m)) ** 2
+beta = ((math.sqrt(L) - math.sqrt(m)) / (math.sqrt(L) + math.sqrt(m))) ** 2
+x, y, vx, vy = 1.0, 1.0, 0.0, 0.0
+for k in range(1, 1000):
+    vx, vy = beta * vx + 2 * x, beta * vy + 20 * y
+    x, y = x - eta * vx, y - eta * vy
+    if math.hypot(x, y) < 1e-3:
+        break
+print(f"tuned momentum (eta = {eta:.3f}, beta = {beta:.3f}): {k} steps")
+# tuned momentum (eta = 0.115, beta = 0.270): 16 steps
+```
+
+In words: with the step and momentum matched to the curvatures, momentum needs $16$ steps against plain descent's $66$. Its rate depends on $\sqrt{\kappa}$ instead of $\kappa$, which is the whole reason momentum exists.
 
 <Callout type="pitfall">
 Adam is not a free upgrade. Its adaptive scaling can settle on a worse solution than plain gradient descent for some problems, and its default settings are tuned for deep networks. Compare variants on your own problem, with the same tuning effort for each.

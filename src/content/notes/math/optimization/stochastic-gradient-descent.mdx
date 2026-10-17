@@ -1,0 +1,112 @@
+---
+title: "Stochastic Gradients"
+description: "Gradient descent on a sample of the data: why a mini-batch gradient is an unbiased but noisy estimate, how its variance falls with batch size, why the step size must shrink to converge, and what the noise costs and buys."
+order: 4
+tier: core
+takeaways:
+  - "A training loss is an average over examples, $L(\\mathbf{w}) = \\frac{1}{N}\\sum_i \\ell_i(\\mathbf{w})$. **Stochastic gradient descent** (SGD) steps along the gradient of a random **mini-batch** instead of all $N$ examples."
+  - "The mini-batch gradient is **unbiased**: its expectation is the full gradient. Its variance falls like $1/B$ for batch size $B$, so its noise falls like $1/\\sqrt{B}$."
+  - "With a constant step size, SGD does not converge to the minimum; it wanders in a noise ball whose size grows with the step and shrinks with the batch."
+  - "Converging needs a **decaying step size**, such as $\\eta_k \\propto 1/k$. The Robbins–Monro conditions $\\sum \\eta_k = \\infty$ and $\\sum \\eta_k^2 < \\infty$ say the steps must add up to infinity but their squares must not."
+  - "SGD wins in practice because one step costs $B$ examples instead of $N$: many cheap noisy steps beat a few exact ones when $N$ is large."
+resources:
+  - title: "Optimization Methods for Large-Scale Machine Learning (Bottou, Curtis and Nocedal)"
+    url: "https://arxiv.org/abs/1606.04838"
+    note: "The standard survey of SGD theory and practice."
+  - title: "Stochastic gradient descent (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Stochastic_gradient_descent"
+    note: "History, the Robbins–Monro conditions and common variants."
+  - title: "A Stochastic Approximation Method (Robbins and Monro, 1951)"
+    url: "https://projecteuclid.org/journals/annals-of-mathematical-statistics/volume-22/issue-3/A-Stochastic-Approximation-Method/10.1214/aoms/1177729586.full"
+    note: "The paper that introduced decaying step sizes for noisy problems."
+---
+
+The [Gradient Descent](../gradient-descent/) note assumed the gradient is exact. In machine learning the loss is an average over millions of training examples, and computing its exact gradient at every step would mean reading the whole dataset each time. Stochastic gradient descent estimates the gradient from a small random sample instead. The estimate is right on average but noisy, and that noise decides how the step size must be chosen. This note works out the mean and variance of the estimate, shows the noise floor of a constant step, and the decaying schedule that removes it. The [Gradient Descent Variants](../gradient-descent-variants/) note's momentum and Adam are built on top of this.
+
+## The mini-batch gradient
+
+A loss that averages over examples has a gradient that averages too:
+
+$$
+L(\mathbf{w}) = \frac{1}{N}\sum_{i=1}^N \ell_i(\mathbf{w}), \qquad \nabla L(\mathbf{w}) = \frac{1}{N}\sum_{i=1}^N \nabla \ell_i(\mathbf{w}).
+
+$$
+
+Pick a mini-batch $\mathcal{B}$ of $B$ examples uniformly at random and use $\mathbf{g} = \frac{1}{B}\sum_{i \in \mathcal{B}} \nabla \ell_i(\mathbf{w})$. By linearity of expectation $E[\mathbf{g}] = \nabla L(\mathbf{w})$: the estimate is **unbiased**. Its variance is the variance of a sample mean, the per-example gradient variance divided by $B$, the same $\sigma^2/n$ rule as in the [Large Numbers](../../probability/law-of-large-numbers/) note.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+N = 10_000
+x = rng.normal(size=N)
+y = 3.0 * x + rng.normal(size=N)              # least-squares fit of y = w x; true w = 3
+grad_i = lambda w, idx: 2 * (w * x[idx] - y[idx]) * x[idx]   # per-example gradient of (w x - y)^2
+
+w = 1.0
+full = grad_i(w, np.arange(N)).mean()
+for B in (1, 10, 100, 1000):
+    est = np.array([grad_i(w, rng.integers(0, N, B)).mean() for _ in range(2000)])
+    print(f"B = {B:>4}: mean of estimates {est.mean():7.3f} (full {full:.3f}), sd {est.std():.3f}")
+# B =    1: mean of estimates  -3.780 (full -3.956), sd 5.561
+# B =   10: mean of estimates  -4.032 (full -3.956), sd 1.855
+# B =  100: mean of estimates  -3.960 (full -3.956), sd 0.588
+# B = 1000: mean of estimates  -3.957 (full -3.956), sd 0.185
+```
+
+In words: at every batch size the estimates average to the full gradient, about $-4$, and their spread falls by about $\sqrt{10} \approx 3.2$ for each tenfold increase in $B$. A batch of $100$ already gives a direction good to roughly a tenth of the gradient's size, at a hundredth of the cost of the full pass.
+
+<SgdNoise />
+
+## A constant step size has a noise floor
+
+Near the minimum the true gradient shrinks to zero, but the noise does not. With a fixed step $\eta$, each update still moves by roughly $\eta$ times the noise, so the iterates stop improving and rattle around the minimum. The size of that rattle grows with $\eta$ and shrinks with $B$.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(1)
+N = 10_000
+x = rng.normal(size=N)
+y = 3.0 * x + rng.normal(size=N)
+w_star = (x @ y) / (x @ x)                     # exact least-squares solution
+
+def sgd(eta, B, steps, decay=False):
+    w, tail = 0.0, []
+    for k in range(1, steps + 1):
+        idx = rng.integers(0, N, B)
+        g = (2 * (w * x[idx] - y[idx]) * x[idx]).mean()
+        w -= (eta / k if decay else eta) * g
+        if k > steps - 500:
+            tail.append(abs(w - w_star))
+    return np.mean(tail)
+
+for eta, B in ((0.1, 1), (0.01, 1), (0.1, 32)):
+    print(f"constant eta = {eta}, B = {B:>2}: average |w - w*| over the last 500 steps = {sgd(eta, B, 5000):.4f}")
+print(f"decaying eta = 0.5 / k, B = 1:  average |w - w*| over the last 500 steps = {sgd(0.5, 1, 5000, decay=True):.4f}")
+# constant eta = 0.1, B =  1: average |w - w*| over the last 500 steps = 0.2513
+# constant eta = 0.01, B =  1: average |w - w*| over the last 500 steps = 0.0889
+# constant eta = 0.1, B = 32: average |w - w*| over the last 500 steps = 0.0441
+# decaying eta = 0.5 / k, B = 1:  average |w - w*| over the last 500 steps = 0.0414
+```
+
+In words: with a constant step the error levels off instead of reaching zero; cutting $\eta$ tenfold or using a batch of $32$ shrinks the floor. A step that decays like $1/k$ keeps shrinking the error, because later steps are too small to undo the progress of earlier ones.
+
+## Why the step must decay, but not too fast
+
+The **Robbins–Monro conditions** say a step schedule converges under noise when
+
+$$
+\sum_{k=1}^{\infty} \eta_k = \infty \quad \text{and} \quad \sum_{k=1}^{\infty} \eta_k^2 < \infty.
+
+$$
+
+In words: the steps must add up to an infinite distance, so the iterates can travel as far as needed, while the squared steps, which control the accumulated noise, must add up to something finite. $\eta_k = c/k$ satisfies both; a constant step fails the second and $c/k^2$ fails the first. Deep learning schedules, such as warm-up followed by cosine or step decay, are practical versions of the same idea; the [Learning Rate Schedules](../../../dl/training-optimization/learning-rate-schedules/) note covers them.
+
+<Callout type="pitfall">
+A batch size and a learning rate are not independent choices. Doubling the batch halves the gradient variance, which allows a larger step; a common heuristic scales the learning rate up with the batch size. Comparing two batch sizes at the same learning rate measures the wrong thing.
+</Callout>
+
+## Why noisy steps win
+
+One full-gradient step costs $N$ example gradients. In the same work, SGD with batch size $B$ takes $N/B$ steps. Early in training, when the iterate is far from the minimum, the noise barely matters and the many cheap steps make far more progress. Near the end the noise dominates, which is when the step decays or the batch grows. The noise may also help on non-convex losses, by bouncing iterates out of sharp, narrow minima, though that effect is still debated.

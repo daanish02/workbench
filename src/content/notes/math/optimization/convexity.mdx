@@ -74,13 +74,26 @@ In words: $12.25 \le 15.17$, and the gap $\frac{35}{12}$ is exactly the variance
 
 ## Local minima are global
 
-If $f$ is convex and $x^\star$ is a local minimum, then no point in the domain does better than $f(x^\star)$. The reason is that the chord from $x^\star$ to any other point cannot dip below the value at $x^\star$. The script searches a grid for the minimum of a convex function with two different starting regions, and gets the same answer each time.
+If $f$ is convex and $x^\star$ is a local minimum, then no point in the domain does better than $f(x^\star)$. The reason is that the chord from $x^\star$ to any other point cannot dip below the value at $x^\star$. The script runs a simple downhill search on a convex function from two starting points, one on each side, and gets the same answer each time.
 
 ```python
 f = lambda x: (x - 1.5) ** 2 + 0.5 * abs(x - 1.5)
-grid = [i / 1000 for i in range(-3000, 3001)]
-best = min(grid, key=f)
-print("global minimiser on the grid:", best, " value:", round(f(best), 4))  # prints: global minimiser on the grid: 1.5 value: 0.0
+
+def descend(x, step=0.5):
+    while step > 1e-9:  # move while it helps, then halve the step
+        if f(x - step) < f(x):
+            x -= step
+        elif f(x + step) < f(x):
+            x += step
+        else:
+            step /= 2
+    return x
+
+for start in (-3.0, 3.0):
+    x = descend(start)
+    print(f"start {start:+.1f}: minimiser {x:.4f}, value {f(x):.4f}")
+# start -3.0: minimiser 1.5000, value 0.0000
+# start +3.0: minimiser 1.5000, value 0.0000
 ```
 
 In words: the minimiser is $1.5$ and the minimum value is $0$. Any downhill search from either side reaches it, since the function has no other valley.
