@@ -1,7 +1,7 @@
 ---
-title: "Sampling"
+title: "Sampling Theorem"
 description: "Turning a continuous signal into numbers: the sampling theorem, the Nyquist rate, and aliasing, where a high frequency looks exactly like a low one."
-order: 4
+order: 3
 tier: core
 takeaways:
   - "Sampling a signal at rate $f_s$ records its value every $1/f_s$ seconds. Information above half the sampling rate, the **Nyquist frequency** $f_s/2$, cannot be recovered from the samples alone."
@@ -24,7 +24,7 @@ A digital recording is a list of numbers, but the sound it came from is continuo
 
 ## Samples and the Nyquist frequency
 
-Sampling at rate $f_s$ gives values $x_n = x(n/f_s)$. A sinusoid of frequency $f$ has $f_s/2$ as the highest frequency that can be represented: at that rate the samples alternate, and any faster oscillation has no room between samples. The script below samples a $3$ Hz tone at $10$ samples per second and prints the first few values.
+Sampling at rate $f_s$ gives values $x_n = x(n/f_s)$. The highest frequency the samples can represent is $f_s/2$, the Nyquist frequency: at that frequency consecutive samples alternate in sign, and any faster oscillation has no room between samples. The script below samples a $3$ Hz tone at $10$ samples per second and prints the first few values.
 
 ```python
 import math
@@ -52,7 +52,7 @@ for f in [3.0, 7.0]:
     print(f"{f} Hz samples:", samples)  # prints: 3.0 Hz samples: [0.0, 0.9511, -0.5878, -0.5878, 0.9511, 0.0, -0.9511, 0.5878]
 ```
 
-In words: the $7$ Hz samples are not the same as the $3$ Hz samples, yet they are identical in the sense that matters. Sine waves at $7$ and $3$ Hz with a sign flip give the same numbers at every sample, so the sampled record cannot tell you which tone was present. Check the claim directly:
+In words: the $7$ Hz samples are exactly the $3$ Hz samples with the sign flipped. A $7$ Hz sine and a sign-flipped $3$ Hz sine give the same numbers at every sample, so the sampled record cannot tell you which tone was present. Check the claim directly:
 
 ```python
 import math
@@ -63,14 +63,39 @@ b = [-math.sin(2 * math.pi * 3 * n / fs) for n in range(40)]
 print("7 Hz equals minus 3 Hz at every sample:", max(abs(u - v) for u, v in zip(a, b)) < 1e-9)  # prints: 7 Hz equals minus 3 Hz at every sample: True
 ```
 
-In words: the $7$ Hz tone is the negative of the $3$ Hz tone at every sample. The two are indistinguishable after sampling, which is aliasing. The minus sign is harmless, because a sine's phase is not changed by sampling; only the frequency is confused.
+In words: the $7$ Hz tone is the negative of the $3$ Hz tone at every sample. The two are indistinguishable after sampling, which is aliasing. The minus sign is a phase shift of $\pi$: the alias comes back phase-reversed. The magnitude spectrum cannot tell the two tones apart, and that is the information aliasing destroys.
 
 <Callout type="pitfall">
-Aliasing is not noise you can remove later. Once two frequencies have the same samples, no digital filter can separate them. Anti-aliasing filters must act on the analogue signal before the sampler, which is why cameras blur fine detail slightly and why the wagon wheel in old films appears to turn backward.
+Aliasing is not noise you can remove later. Once two frequencies have the same samples, no digital filter can separate them. Anti-aliasing filters must act on the analogue signal before the sampler, which is why cameras put a slight optical blur in front of the sensor. The wagon wheel that turns backward in old films is the same effect in time: the frame rate samples the wheel's rotation too slowly, and nothing filtered it first.
 </Callout>
 
 <AliasFolding />
 
+## Rebuilding the signal
+
+The sampling theorem says more than "no information is lost": it gives the reconstruction. A signal band-limited below $f_s/2$ is a sum of shifted **sinc** functions, one per sample,
+
+$$
+x(t) = \sum_n x_n \operatorname{sinc}\big(f_s t - n\big), \qquad \operatorname{sinc}(u) = \frac{\sin \pi u}{\pi u}.
+
+$$
+
+```python
+import numpy as np
+
+fs = 10.0
+n = np.arange(-200, 201)                         # many samples, so the truncated sum is accurate
+samples = np.sin(2 * np.pi * 3 * n / fs)
+t = np.array([0.013, 0.37, 1.24])                # times between the samples
+rebuilt = [np.sum(samples * np.sinc(fs * tt - n)) for tt in t]   # np.sinc is sin(pi u) / (pi u)
+print("rebuilt:", np.round(rebuilt, 4), " true:", np.round(np.sin(2 * np.pi * 3 * t), 4))
+# rebuilt: [ 0.2417  0.6392 -0.9844]  true: [ 0.2426  0.6374 -0.9823]
+```
+
+In words: from samples alone, sinc interpolation recovers the $3$ Hz tone at times between the samples to within about $0.002$; the remaining error comes from cutting the infinite sum off at $401$ samples, and shrinks as more are used. Each sinc is $1$ at its own sample and $0$ at every other, so the sum passes through the samples and fills in the only band-limited curve that fits them. Practical converters use a short, smooth approximation to this sum.
+
+<SincReconstruction />
+
 ## Why the rate matters
 
-Audio CDs sample at $44{,}100$ Hz, so frequencies up to $22{,}050$ Hz are preserved, a little above the range of human hearing. A rate too low for the content folds high frequencies down into the audible band, and that is the distortion that sampling theory exists to prevent. The next step is the Fourier transform of the sampled signal, which shows exactly where aliases land.
+Audio CDs sample at $44{,}100$ Hz, so frequencies up to $22{,}050$ Hz are preserved, a little above the range of human hearing. A rate too low for the content folds high frequencies down into the audible band, and that is the distortion that sampling theory exists to prevent. The spectrum of a sampled signal repeats every $f_s$, so anything above $f_s/2$ folds back into the band below it; the [DFT and FFT](../dft-and-fft/) note computes that spectrum from the samples.

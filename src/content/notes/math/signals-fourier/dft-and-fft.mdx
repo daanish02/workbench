@@ -1,0 +1,167 @@
+---
+title: "DFT and FFT"
+description: "The discrete Fourier transform of a list of samples, its inverse and Parseval's identity, how bins map to hertz, why tones between bins leak and how windows tame it, and the fast Fourier transform that computes it in N log N steps."
+order: 4
+tier: core
+takeaways:
+  - "The **discrete Fourier transform** (DFT) of $N$ samples is $X_k = \\sum_{n=0}^{N-1} x_n e^{-2\\pi i kn/N}$. Bin $k$ measures how much the signal correlates with a wave of $k$ cycles per window."
+  - "The DFT is invertible, $x_n = \\frac{1}{N}\\sum_k X_k e^{2\\pi i kn/N}$, and conserves energy (**Parseval**): $\\sum_n |x_n|^2 = \\frac{1}{N}\\sum_k |X_k|^2$."
+  - "With sample rate $f_s$, bin $k$ is the frequency $k f_s / N$. Resolution is $f_s/N$: a longer window separates closer tones."
+  - "A tone that does not fit a whole number of cycles in the window **leaks** into neighbouring bins. Multiplying by a smooth **window**, such as Hann, trades a wider peak for much lower leakage."
+  - "The **FFT** computes the same numbers in $O(N \\log N)$ instead of $O(N^2)$ by splitting even and odd samples recursively. `numpy.fft` is the tool to use."
+resources:
+  - title: "Discrete Fourier transform (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Discrete_Fourier_transform"
+    note: "Definition, properties and the relation to the continuous transform."
+  - title: "Cooley–Tukey FFT algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cooley%E2%80%93Tukey_FFT_algorithm"
+    note: "The radix-2 algorithm written below, and its variants."
+  - title: "numpy.fft documentation"
+    url: "https://numpy.org/doc/stable/reference/routines.fft.html"
+    note: "fft, ifft, rfft and fftfreq, with the normalisation conventions."
+---
+
+The [Fourier Transform](../fourier-transform/) works on functions defined for all time. A computer has a finite list of samples, taken at the rate discussed in the [Sampling Theorem](../sampling/) note, and the discrete Fourier transform is the version of the transform that acts on such a list. This note defines it, checks that it loses nothing, connects its bins to real frequencies, shows the leakage that appears when a tone falls between bins, and derives the fast algorithm that makes it practical.
+
+## The discrete Fourier transform
+
+For $N$ samples $x_0, \dots, x_{N-1}$, the DFT is
+
+$$
+X_k = \sum_{n=0}^{N-1} x_n\,e^{-2\pi i\,kn/N}, \qquad k = 0, \dots, N-1.
+
+$$
+
+The complex exponential is a wave of frequency $k$ cycles per window. The script below computes the DFT directly from the definition for eight samples of a cosine that completes one cycle in the window, then checks it against NumPy.
+
+```python
+import cmath
+import math
+
+import numpy as np
+
+N = 8
+x = [math.cos(2 * math.pi * n / N) for n in range(N)]
+X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
+print("|X_k| rounded:", [round(abs(v), 6) for v in X])
+print("matches np.fft.fft:", np.allclose(X, np.fft.fft(x)))
+# |X_k| rounded: [0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0]
+# matches np.fft.fft: True
+```
+
+In words: the spectrum has two nonzero bins, at $k = 1$ and $k = N - 1 = 7$, each of size $4 = \frac{N}{2}$. A real cosine has positive and negative frequency components, and the second peak is the mirror image of the first. The hand-written sum and `np.fft.fft` agree.
+
+<SpectrumExplorer />
+
+## Inverse and Parseval
+
+The inverse formula recovers the samples exactly, so the frequency representation carries the same information as the samples, and energy is conserved between the two:
+
+```python
+import numpy as np
+
+N = 8
+n = np.arange(N)
+x = np.cos(2 * np.pi * n / N) + 0.5 * np.sin(2 * np.pi * 3 * n / N)
+X = np.fft.fft(x)
+print("|X_k|:", np.abs(X).round(3))
+print("ifft recovers x:", np.allclose(np.fft.ifft(X).real, x))
+print("time energy:", round(np.sum(x ** 2), 6), " frequency energy:", round(np.sum(np.abs(X) ** 2) / N, 6))
+# |X_k|: [0. 4. 0. 2. 0. 2. 0. 4.]
+# ifft recovers x: True
+# time energy: 5.0  frequency energy: 5.0
+```
+
+In words: the sine at frequency $3$ shows up as the pair of bins $k = 3$ and $k = 5$, of size $0.5 \cdot \frac{N}{2} = 2$, beside the cosine's pair at $1$ and $7$. The inverse returns the samples, and both energies are $5$: the transform is a change of basis that redistributes energy without creating or destroying any.
+
+<Callout type="pitfall">
+Conventions differ. NumPy puts no factor on the forward transform and $\frac{1}{N}$ on the inverse, some texts put $\frac{1}{\sqrt{N}}$ on both, and the sign of the exponent flips between fields. The inverse and Parseval identities change with the convention, so check which one a library or textbook uses before comparing numbers.
+</Callout>
+
+## From bins to hertz
+
+If the samples are taken at rate $f_s$, the window lasts $N/f_s$ seconds, and bin $k$ is the frequency $k f_s / N$. Bins above $N/2$ are the negative frequencies. `np.fft.fftfreq` returns the frequencies, and `np.fft.rfft` returns only the non-negative half for real signals.
+
+```python
+import numpy as np
+
+fs, N = 1000, 500                       # 1 kHz sampling, half a second of data
+t = np.arange(N) / fs
+x = np.sin(2 * np.pi * 50 * t) + 0.3 * np.sin(2 * np.pi * 120 * t)
+spec = np.abs(np.fft.rfft(x))
+freqs = np.fft.rfftfreq(N, d=1 / fs)
+print("resolution:", freqs[1], "Hz")
+print("two strongest bins:", sorted(float(f) for f in freqs[np.argsort(spec)[-2:]]), "Hz")
+# resolution: 2.0 Hz
+# two strongest bins: [50.0, 120.0] Hz
+```
+
+In words: half a second of data gives a resolution of $2$ Hz, and the two strongest bins are $50$ and $120$ Hz, the two tones in the signal. To resolve tones closer than $2$ Hz you need a longer recording, not a faster sample rate.
+
+## Leakage and windows
+
+The DFT treats the window as one period of a repeating signal. A tone with a whole number of cycles in the window repeats seamlessly and lands in one bin. A tone between bins has a jump where the window wraps around, and its energy **leaks** into many bins. Multiplying the samples by a **window** that tapers to zero at both ends, such as the Hann window $w_n = \frac{1}{2}\big(1 - \cos\frac{2\pi n}{N}\big)$, removes the jump.
+
+```python
+import numpy as np
+
+N = 64
+n = np.arange(N)
+for f in (8.0, 8.5):                      # cycles per window: on a bin, then halfway between
+    x = np.cos(2 * np.pi * f * n / N)
+    for name, w in (("rectangular", np.ones(N)), ("Hann", np.hanning(N))):
+        spec = np.abs(np.fft.rfft(x * w))
+        far = spec[20:].max() / spec.max()   # leakage 11 or more bins away, relative to the peak
+        print(f"f = {f} cycles, {name:>11} window: far leakage {20 * np.log10(far + 1e-16):6.1f} dB")
+# f = 8.0 cycles, rectangular window: far leakage -298.7 dB
+# f = 8.0 cycles,        Hann window: far leakage  -78.9 dB
+# f = 8.5 cycles, rectangular window: far leakage  -23.9 dB
+# f = 8.5 cycles,        Hann window: far leakage  -73.2 dB
+```
+
+In words: on a bin, the rectangular window has essentially no leakage. Half a bin off, it leaks energy only about $24$ dB below the peak into bins far from the tone, while the Hann window pushes the far leakage below $-70$ dB, at the price of a peak about two bins wide. Spectrum analysers apply a window by default for this reason.
+
+<LeakageWindow />
+
+## The fast Fourier transform
+
+Computing every $X_k$ from the definition takes $N^2$ multiplications. The **Cooley–Tukey FFT** splits the sum into even and odd samples. Each half is itself a DFT of length $N/2$, and the two are combined with one multiplication per output:
+
+$$
+X_k = E_k + e^{-2\pi i k/N} O_k, \qquad X_{k + N/2} = E_k - e^{-2\pi i k/N} O_k.
+
+$$
+
+Applying the split recursively gives $\log_2 N$ levels of $N$ operations each, $O(N \log N)$ in total.
+
+```python
+import cmath
+import time
+
+import numpy as np
+
+def fft(x):
+    n = len(x)
+    if n == 1:
+        return list(x)
+    even, odd = fft(x[0::2]), fft(x[1::2])          # two half-size transforms
+    tw = [cmath.exp(-2j * cmath.pi * k / n) * odd[k] for k in range(n // 2)]
+    return [even[k] + tw[k] for k in range(n // 2)] + [even[k] - tw[k] for k in range(n // 2)]
+
+def dft(x):
+    n = len(x)
+    return [sum(x[j] * cmath.exp(-2j * cmath.pi * k * j / n) for j in range(n)) for k in range(n)]
+
+x = list(np.random.default_rng(0).normal(size=1024))
+t0 = time.perf_counter(); slow = dft(x); t1 = time.perf_counter(); fast = fft(x); t2 = time.perf_counter()
+print("same result:", np.allclose(slow, fast), np.allclose(fast, np.fft.fft(x)))
+print("FFT at least 10x faster than the definition:", (t1 - t0) > 10 * (t2 - t1))  # timings vary by machine
+# same result: True True
+# FFT at least 10x faster than the definition: True
+```
+
+In words: the recursive FFT gives the same numbers as the definition and as NumPy, and for $1024$ samples it is already well over ten times faster, since $1024^2$ is about a hundred times $1024 \log_2 1024$. NumPy's compiled FFT is faster again. The exact timings depend on the machine; the ratio is the point.
+
+## Why the frequency domain is useful
+
+Filtering becomes multiplication of spectra, compression keeps the large coefficients, and differentiation becomes multiplication by $ik$. The next note shows the first of these, [convolution](../convolution/), which is the operation that filtering performs in the time domain, and which the FFT makes fast.

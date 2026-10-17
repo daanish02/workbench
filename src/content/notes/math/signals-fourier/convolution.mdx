@@ -1,7 +1,7 @@
 ---
 title: "Convolution"
 description: "Convolution as sliding one signal across another and summing the overlaps, its use in filtering, and the convolution theorem that turns it into multiplication of spectra."
-order: 3
+order: 5
 tier: core
 takeaways:
   - "The **convolution** of $f$ and $g$ is $(f * g)(t) = \\int f(\\tau)\\,g(t - \\tau)\\,d\\tau$. Flip one function, slide it along the other, and add up the products at each shift."
@@ -45,47 +45,76 @@ In words: each interior output is the average of three neighbouring inputs. The 
 
 ## A filter as a convolution
 
-A moving average is a low-pass filter: it keeps slow changes and reduces fast ones. The script below applies the same filter to a signal with a fast alternating component and measures how much of it survives.
+A moving average is a low-pass filter: it keeps slow changes and reduces fast ones. The script below filters a slow sine plus a fast one, and measures what is left of each. Each output averages the current sample and the four before it, so the output is centred two samples back, and the comparison accounts for that delay.
 
 ```python
 import math
 
 n = 200
-x = [math.sin(2 * math.pi * 0.01 * t) + 0.5 * math.sin(2 * math.pi * 0.4 * t) for t in range(n)]
+slow = lambda t: math.sin(2 * math.pi * 0.01 * t)
+fast = lambda t: 0.5 * math.sin(2 * math.pi * 0.4 * t)
+x = [slow(t) + fast(t) for t in range(n)]
 h = [1 / 5] * 5
-y = [sum(h[j] * x[t - j] for j in range(5)) for t in range(4, n)]
-amp_fast_in = max(abs(x[t] - math.sin(2 * math.pi * 0.01 * t)) for t in range(4, n))
-amp_fast_out = max(abs(y[i] - math.sin(2 * math.pi * 0.01 * (i + 4))) for i in range(len(y)))
-print("fast component before filter:", round(amp_fast_in, 3), " after filter:", round(amp_fast_out, 3))  # prints: fast component before filter: 0.476 after filter: 0.125
+y = {t: sum(h[j] * x[t - j] for j in range(5)) for t in range(4, n)}
+
+fast_in = max(abs(fast(t)) for t in range(4, n))
+fast_out = max(abs(y[t] - slow(t - 2)) for t in y)  # compare with the slow sine delayed 2 samples
+lag_error = max(abs(y[t] - slow(t)) for t in y)      # what you see if you ignore the delay
+print(f"fast component before: {fast_in:.3f}  after: {fast_out:.3f}  error if the delay is ignored: {lag_error:.3f}")
+# fast component before: 0.476  after: 0.004  error if the delay is ignored: 0.125
 ```
 
-In words: the five-point average cuts the fast component's error from about $0.48$ to about $0.13$, while the slow sine passes almost unchanged. Filter design is largely the choice of $h$ that does this for the frequencies you care about.
+In words: the fast tone almost disappears. At $0.4$ cycles per sample, five consecutive samples cover exactly two full cycles, so they average to zero; that frequency is a null of the five-point average. The small $0.004$ left is the filter's slight smoothing of the slow sine itself. Comparing with the undelayed slow sine instead shows an error of $0.125$, which is the two-sample delay, not surviving noise. Filter design is largely the choice of $h$ that removes the frequencies you do not want, and every causal filter adds a delay you have to account for.
 
 ## The convolution theorem
 
-The DFT of a convolution is the product of the DFTs. The check below convolves two short sequences directly and compares the result with the spectrum product, using the same DFT as the previous note.
+The DFT of a convolution is the product of the DFTs. The check below convolves two short sequences with `np.convolve` and compares the result with the inverse FFT of the product of their spectra, using the FFT of the [DFT and FFT](../dft-and-fft/) note.
 
 ```python
-import cmath
+import numpy as np
+from scipy.signal import fftconvolve
 
-x = [1.0, 2.0, 3.0, 4.0]
-h = [0.5, -1.0, 0.25, 0.0]
-N = len(x) + len(h) - 1
-direct = [sum(x[m] * h[n - m] for m in range(len(x)) if 0 <= n - m < len(h)) for n in range(N)]
-
-def dft(s, size):
-    s = s + [0.0] * (size - len(s))
-    return [sum(s[n] * cmath.exp(-2j * cmath.pi * k * n / size) for n in range(size)) for k in range(size)]
-
-X, H = dft(x, N), dft(h, N)
-via_spectra = [sum(cmath.exp(2j * cmath.pi * k * n / N) * X[k] * H[k] for k in range(N)) / N for n in range(N)]
-print("max difference, direct vs spectra:", max(abs(direct[n] - via_spectra[n].real) for n in range(N)) < 1e-9)  # prints: max difference, direct vs spectra: True
+x = np.array([1.0, 2.0, 3.0, 4.0])
+h = np.array([0.5, -1.0, 0.25])
+N = len(x) + len(h) - 1                         # pad both to the full output length
+direct = np.convolve(x, h)
+via_spectra = np.fft.ifft(np.fft.fft(x, N) * np.fft.fft(h, N)).real
+print("direct:", direct)
+print("via spectra matches:", np.allclose(direct, via_spectra), " scipy fftconvolve matches:", np.allclose(direct, fftconvolve(x, h)))
+# direct: [ 0.5   0.   -0.25 -0.5  -3.25  1.  ]
+# via spectra matches: True  scipy fftconvolve matches: True
 ```
 
-In words: the direct convolution and the inverse transform of the product of spectra agree to $10^{-9}$. This is why fast convolution uses the FFT: the cost drops from quadratic to nearly linear in the length.
+In words: the direct convolution and the inverse transform of the product of spectra agree. This is why fast convolution uses the FFT: two transforms, a pointwise product and an inverse cost $O(N \log N)$ instead of the $O(N^2)$ of sliding and summing, and `scipy.signal.fftconvolve` does exactly that. Run it with `uv run --with numpy --with scipy`.
+
+## The filter's frequency response
+
+The convolution theorem explains what a filter does: it multiplies each frequency by the value of $H$, the transform of $h$, at that frequency. `scipy.signal.freqz` evaluates that **frequency response**. For the five-point moving average it shows the null that removed the fast tone above:
+
+```python
+import numpy as np
+from scipy.signal import freqz
+
+h = np.ones(5) / 5
+for f in (0.01, 0.1, 0.2, 0.4):                 # cycles per sample
+    _, H = freqz(h, worN=[2 * np.pi * f])
+    print(f"f = {f:<4}: gain {abs(H[0]):.3f}")
+# f = 0.01: gain 0.996
+# f = 0.1 : gain 0.647
+# f = 0.2 : gain 0.000
+# f = 0.4 : gain 0.000
+```
+
+In words: the slow tone at $0.01$ cycles per sample passes with gain $0.996$, while $0.2$ and $0.4$, where five samples hold a whole number of cycles, get gain $0$. A moving average is a low-pass filter with zeros at multiples of $1/5$ cycles per sample; better low-pass filters are designed by choosing $h$ so the response is flat where you want to keep signal and near zero where you do not.
+
+<FilterResponse />
 
 <Callout type="pitfall">
 The convolution theorem applies to periodic (circular) convolution unless you zero-pad. Multiplying two DFTs of length $N$ without padding to $N_1 + N_2 - 1$ gives a wrap-around result, which is a common source of wrong filter outputs.
+</Callout>
+
+<Callout type="pitfall">
+In deep learning, a "convolution" layer computes a **cross-correlation**: it slides the kernel without flipping it, $\sum_m x[n + m]\,h[m]$. Because the kernel is learned, the flip does not matter for training, but it matters when you copy weights between a framework and a signal-processing library, or apply the convolution theorem: `np.convolve(x, h)` equals `np.correlate(x, h[::-1], "full")`.
 </Callout>
 
 ## Where it is used

@@ -1,92 +1,86 @@
 ---
-title: "Fourier transform"
-description: "From periodic signals to arbitrary ones: the discrete Fourier transform, frequency bins, Parseval's identity, and a sampled cosine checked numerically."
+title: "Fourier Transform"
+description: "From periodic signals to arbitrary ones: the continuous Fourier transform, the pulse and Gaussian examples, the shift and scaling properties, and the time–bandwidth trade-off."
 order: 2
 tier: core
 takeaways:
-  - "The **discrete Fourier transform** (DFT) of $N$ samples $x_n$ is $X_k = \\sum_{n=0}^{N-1} x_n e^{-2\\pi i kn/N}$. Each $X_k$ measures how much the signal correlates with the complex wave at frequency bin $k$."
-  - "The DFT is invertible: $x_n = \\frac{1}{N}\\sum_k X_k e^{2\\pi i kn/N}$. Nothing is lost by moving to the frequency domain, only rearranged."
-  - "**Parseval's identity** says the energy is the same in both domains: $\\sum_n |x_n|^2 = \\frac{1}{N}\\sum_k |X_k|^2$."
-  - "The continuous Fourier transform $\\hat f(\\omega) = \\int f(t)e^{-i\\omega t}\\,dt$ is the limit of the DFT as the sampling becomes fine and the window becomes long. Periodic signals become spikes at their harmonics."
+  - "The **Fourier transform** $\\hat f(\\xi) = \\int_{-\\infty}^{\\infty} f(t)\\,e^{-2\\pi i \\xi t}\\,dt$ measures how much of each frequency $\\xi$ (in cycles per unit time) a non-repeating signal contains. The inverse rebuilds $f$ from $\\hat f$."
+  - "It is the limit of the Fourier series as the period grows without bound: the harmonics get closer together until they form a continuum."
+  - "A rectangular pulse of width $1$ transforms to the **sinc** $\\frac{\\sin \\pi\\xi}{\\pi\\xi}$; a Gaussian transforms to a Gaussian."
+  - "**Shift** a signal in time and only the phase of its transform changes. **Stretch** it in time by a factor $a$ and its transform squeezes by $a$: short signals have wide spectra, the **time–bandwidth trade-off**."
+  - "Computers work with samples and use the discrete version, covered in the DFT and FFT note."
 resources:
   - title: "Fourier transform (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Fourier_transform"
     note: "The continuous transform, its properties, and conventions."
-  - title: "Discrete Fourier transform (Wikipedia)"
-    url: "https://en.wikipedia.org/wiki/Discrete_Fourier_transform"
-    note: "The finite version used in practice."
-  - title: "Parseval's theorem (Wikipedia)"
-    url: "https://en.wikipedia.org/wiki/Parseval%27s_theorem"
-    note: "Energy conservation between time and frequency."
+  - title: "But what is the Fourier Transform? (3Blue1Brown)"
+    url: "https://www.youtube.com/watch?v=spUNpyF58BY"
+    note: "A visual introduction to the winding picture of the transform."
+  - title: "scipy.integrate.quad"
+    url: "https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.quad.html"
+    note: "The numerical integrator used below to evaluate transforms."
 ---
 
-The Fourier series handles signals that repeat. Most real signals do not, such as a single spoken word or a pulse from a sensor. The Fourier transform extends the idea: instead of a discrete set of harmonics, it uses a continuum of frequencies. In computers the transform is applied to a finite list of samples, and the discrete Fourier transform does the job. This note defines the DFT, shows it is invertible, checks Parseval's identity, and computes the spectrum of a sampled cosine.
+The [Fourier Series](../fourier-series/) handles signals that repeat. Most real signals do not, such as a single spoken word or a pulse from a sensor. The Fourier transform extends the idea: instead of a discrete set of harmonics at multiples of a base frequency, it uses a continuum of frequencies. This note defines the transform, works out two examples that recur everywhere, and states the properties that make it useful: shifting changes only phase, and squeezing in time spreads in frequency.
 
-## The discrete Fourier transform
+## From series to transform
 
-For $N$ samples $x_0, \dots, x_{N-1}$, the DFT is
+A Fourier series of period $T$ uses the frequencies $k/T$. As $T$ grows the spacing $1/T$ shrinks, and in the limit every frequency is allowed. The coefficient of frequency $\xi$ becomes
 
 $$
-X_k = \sum_{n=0}^{N-1} x_n\,e^{-2\pi i\,kn/N}, \qquad k = 0, \dots, N-1.
+\hat f(\xi) = \int_{-\infty}^{\infty} f(t)\,e^{-2\pi i \xi t}\,dt, \qquad f(t) = \int_{-\infty}^{\infty} \hat f(\xi)\,e^{2\pi i \xi t}\,d\xi.
+
 $$
 
-The complex exponential is a wave of frequency $k$ cycles per window. The script below computes the DFT directly from the definition for eight samples of a cosine that completes one cycle in the window.
+In words: multiply the signal by a pure wave of frequency $\xi$ and add up the result; a large value means the signal contains that frequency. The second formula rebuilds the signal from its spectrum, so nothing is lost. Written with $\xi$ in cycles per unit time, as here, the two formulas are symmetric; with angular frequency $\omega = 2\pi\xi$ a factor $\frac{1}{2\pi}$ appears in one of them.
+
+## Two examples
+
+A **rectangular pulse** equal to $1$ on $[-\frac{1}{2}, \frac{1}{2}]$ and $0$ elsewhere has
+
+$$
+\hat f(\xi) = \int_{-1/2}^{1/2} e^{-2\pi i \xi t}\,dt = \frac{\sin \pi\xi}{\pi\xi},
+
+$$
+
+the **sinc** function: a central lobe and side lobes that die away slowly, because the pulse has sharp edges. A **Gaussian** $e^{-\pi t^2}$ is its own transform, $\hat f(\xi) = e^{-\pi \xi^2}$: a smooth signal with no edges has a smooth, fast-decaying spectrum.
 
 ```python
-import cmath
 import math
+from scipy.integrate import quad
 
-N = 8
-x = [math.cos(2 * math.pi * n / N) for n in range(N)]
-X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
-print("|X_k| rounded:", [round(abs(v), 6) for v in X])  # prints: |X_k| rounded: [0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.0]
+def transform(f, xi, lim):
+    # the signals here are even, so the imaginary part vanishes and only the cosine term remains
+    return quad(lambda t: f(t) * math.cos(2 * math.pi * xi * t), -lim, lim, limit=200)[0]
+
+pulse = lambda t: 1.0 if abs(t) <= 0.5 else 0.0
+gauss = lambda t: math.exp(-math.pi * t * t)
+for xi in (0.0, 0.5, 1.5):
+    sinc = 1.0 if xi == 0 else math.sin(math.pi * xi) / (math.pi * xi)
+    print(f"xi = {xi}: pulse {transform(pulse, xi, 0.5):+.5f} (sinc {sinc:+.5f}), "
+          f"Gaussian {transform(gauss, xi, 8):.5f} (exp(-pi xi^2) {math.exp(-math.pi * xi * xi):.5f})")
+# xi = 0.0: pulse +1.00000 (sinc +1.00000), Gaussian 1.00000 (exp(-pi xi^2) 1.00000)
+# xi = 0.5: pulse +0.63662 (sinc +0.63662), Gaussian 0.45594 (exp(-pi xi^2) 0.45594)
+# xi = 1.5: pulse -0.21221 (sinc -0.21221), Gaussian 0.00085 (exp(-pi xi^2) 0.00085)
 ```
 
-In words: the spectrum has two nonzero bins, at $k = 1$ and $k = N - 1 = 7$, each of size $4 = \frac{N}{2}$. A real cosine has positive and negative frequency components, and the second peak is the mirror image of the first.
-
-<SpectrumExplorer />
-
-## Inverting the transform
-
-The inverse formula recovers the samples exactly, so the frequency representation carries the same information as the time samples. The check below rebuilds $x$ from $X$.
-
-```python
-import cmath
-import math
-
-N = 8
-x = [math.cos(2 * math.pi * n / N) + 0.5 * math.sin(2 * math.pi * 3 * n / N) for n in range(N)]
-X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
-back = [sum(X[k] * cmath.exp(2j * math.pi * k * n / N) for k in range(N)) / N for n in range(N)]
-print("max reconstruction error:", max(abs(back[n] - x[n]) for n in range(N)) < 1e-9)  # prints: max reconstruction error: True
-```
-
-In words: the reconstruction matches the original samples to better than $10^{-9}$. The transform is a change of basis, and the sine at frequency $3$ shows up as a pair of bins at $k = 3$ and $k = 5$.
-
-## Parseval's identity
-
-Energy is conserved: the sum of squared samples equals the sum of squared spectrum magnitudes, divided by $N$. The check uses the same signal.
-
-```python
-import cmath
-import math
-
-N = 8
-x = [math.cos(2 * math.pi * n / N) + 0.5 * math.sin(2 * math.pi * 3 * n / N) for n in range(N)]
-X = [sum(x[n] * cmath.exp(-2j * math.pi * k * n / N) for n in range(N)) for k in range(N)]
-time_energy = sum(v * v for v in x)
-freq_energy = sum(abs(v) ** 2 for v in X) / N
-print("time energy:", round(time_energy, 6), " frequency energy:", round(freq_energy, 6))  # prints: time energy: 5.0 frequency energy: 5.0
-```
-
-In words: both sides give $5$. The spectrum redistributes the energy over frequency bins without creating or destroying any.
-
-<Callout type="pitfall">
-Conventions differ. Some texts put the $\frac{1}{N}$ on the forward transform, others split it, and the sign of the exponent flips between fields. The inverse and Parseval identities change with the convention, so check which one a library or textbook uses before comparing numbers.
-</Callout>
+In words: the numerical integrals reproduce the sinc values, including the negative side lobe at $\xi = 1.5$, and the Gaussian values, which fall off far faster. Run it with `uv run --with scipy`.
 
 <PulseSpectrum />
 
+## Shifting and scaling
+
+Two properties do most of the work in practice.
+
+- **Shift.** Delaying a signal by $t_0$ multiplies its transform by $e^{-2\pi i \xi t_0}$. The magnitude $|\hat f(\xi)|$ is unchanged, so a spectrum analyser cannot tell when a sound started, only what it contains.
+- **Scaling.** Squeezing a signal in time, $f(at)$, gives $\frac{1}{|a|}\hat f(\xi / a)$: the spectrum stretches by the same factor. A pulse half as long has a central lobe twice as wide.
+
+The scaling property is the **time–bandwidth trade-off**: a signal cannot be both short in time and narrow in frequency. Its sharpest form is the uncertainty principle, $\sigma_t\,\sigma_\xi \ge \frac{1}{4\pi}$ for the spreads of $|f|^2$ and $|\hat f|^2$, with equality exactly for Gaussians. That is why a short click sounds like every frequency at once, and why identifying a low note needs a longer listening window than a high one.
+
+<Callout type="pitfall">
+Conventions differ. Some texts use angular frequency $\omega$ and put $\frac{1}{2\pi}$ on the inverse, others split it as $\frac{1}{\sqrt{2\pi}}$ on both sides, and the sign of the exponent flips between physics and engineering. Check the convention before comparing formulas or numbers from two sources.
+</Callout>
+
 ## Why the frequency domain is useful
 
-Filtering becomes multiplication of spectra, compression keeps the large coefficients, and differentiation becomes multiplication by $ik$. The next note shows the first of these, convolution, which is the operation that filtering performs in the time domain.
+In the frequency domain, filtering becomes multiplication, differentiation becomes multiplication by $2\pi i\xi$, and convolution becomes a product, as the [Convolution](../convolution/) note shows. A computer samples a signal first, which the [Sampling Theorem](../sampling/) note covers, and then uses the discrete version of the transform in the [DFT and FFT](../dft-and-fft/) note.

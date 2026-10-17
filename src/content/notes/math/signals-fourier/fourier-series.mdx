@@ -1,5 +1,5 @@
 ---
-title: "Fourier series"
+title: "Fourier Series"
 description: "Writing a periodic function as a sum of sines and cosines, the coefficient formulas, and the square wave as a worked example checked numerically."
 order: 1
 tier: core
@@ -34,7 +34,7 @@ The integer multiples $k$ are the harmonics. The coefficient $a_k$ measures how 
 
 ## The coefficient formulas
 
-The integrals of $\sin kt \sin jt$, $\cos kt \cos jt$ and $\sin kt \cos jt$ over one period vanish unless $k = j$, which is orthogonality. Multiplying the series by $\cos kt$ or $\sin kt$ and integrating therefore isolates one coefficient:
+Over one period, $\sin kt \cos jt$ always integrates to zero, and $\sin kt \sin jt$ and $\cos kt \cos jt$ integrate to zero unless $k = j$. That is orthogonality. Multiplying the series by $\cos kt$ or $\sin kt$ and integrating therefore isolates one coefficient:
 
 $$
 a_k = \frac{1}{\pi}\int_{-\pi}^{\pi} f(t)\cos kt\,dt, \qquad b_k = \frac{1}{\pi}\int_{-\pi}^{\pi} f(t)\sin kt\,dt.
@@ -60,7 +60,7 @@ In words: the numerical and exact values agree to six places. The integral picks
 
 ## The square wave
 
-The square wave has the series $f(t) = \frac{4}{\pi}\sum_{k\text{ odd}} \frac{\sin kt}{k}$. The script below adds terms up to $k = 15$ and evaluates the partial sums at $t = \frac{\pi}{2}$, where $f = 1$.
+The square wave has the series $f(t) = \frac{4}{\pi}\sum_{k\text{ odd}} \frac{\sin kt}{k}$. The script below keeps the odd harmonics up to $k = N$ (so $N = 15$ means eight harmonics) and evaluates the partial sums at $t = \frac{\pi}{2}$, where $f = 1$, and near the jump at $t = 0$.
 
 ```python
 import math
@@ -69,10 +69,20 @@ def partial(t, N):
     return (4 / math.pi) * sum(math.sin(k * t) / k for k in range(1, N + 1, 2))
 
 for N in [1, 3, 7, 15]:
-    print(f"N = {N:>2}: partial sum at pi/2 = {partial(math.pi / 2, N):.6f}")  # prints: N =  1: partial sum at pi/2 = 1.273240
+    print(f"N = {N:>2}: partial sum at pi/2 = {partial(math.pi / 2, N):.6f}")
+for N in [15, 63, 255]:
+    peak = max(partial(i * math.pi / (40 * N), N) for i in range(1, 200))   # search just right of the jump
+    print(f"N = {N:>3}: largest value near the jump = {peak:.4f}")
+# N =  1: partial sum at pi/2 = 1.273240
+# N =  3: partial sum at pi/2 = 0.848826
+# N =  7: partial sum at pi/2 = 0.921583
+# N = 15: partial sum at pi/2 = 0.960364
+# N =  15: largest value near the jump = 1.1801
+# N =  63: largest value near the jump = 1.1790
+# N = 255: largest value near the jump = 1.1790
 ```
 
-In words: the sum approaches $1$ as terms are added, with the first term alone already close. The partial sums at $t = \frac{\pi}{2}$ here are $1.273$, $0.849$, $0.922$, $0.960$ in order: they overshoot and undershoot as they close in on $1$.
+In words: at $t = \frac{\pi}{2}$ the partial sums $1.273$, $0.849$, $0.922$, $0.960$ close in on $1$ from alternating sides as harmonics are added. Near the jump the story differs: the largest value of each partial sum stays near $1.18$, about $9\%$ of the jump height of $2$ above the target, however many terms are added. That is the Gibbs phenomenon of the pitfall below.
 
 <GibbsPartialSums />
 
@@ -82,4 +92,4 @@ The partial sums of a square wave overshoot the jump by about nine percent of it
 
 ## Why the coefficients matter
 
-The sizes of $a_k$ and $b_k$ are the spectrum of the signal. Filters, compression and noise removal all act by changing particular coefficients. The next note moves from periodic signals to signals that do not repeat, using the same idea with a continuous set of frequencies.
+The sizes of $a_k$ and $b_k$ are the spectrum of the signal. Filters, compression and noise removal all act by changing particular coefficients. The series is often written more compactly with complex exponentials, $f(t) = \sum_{k=-\infty}^{\infty} c_k e^{ikt}$ with $c_k = \frac{1}{2\pi}\int_{-\pi}^{\pi} f(t) e^{-ikt}\,dt$, using Euler's formula from the [Complex Numbers](../../foundations/complex-numbers/) note; the pair $c_k$, $c_{-k}$ carries the same information as $a_k$, $b_k$. The next note moves from periodic signals to signals that do not repeat, using the same idea with a continuous set of frequencies.
