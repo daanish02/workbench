@@ -1,0 +1,140 @@
+---
+title: "Turing Machines"
+description: "The formal model of computation: a tape, a head, and a finite set of rules."
+order: 4
+tier: core
+takeaways:
+  - "A Turing machine is a finite set of rules plus an **unbounded read-write tape**; each step reads, writes, moves one cell and changes state."
+  - "On any input it either **accepts**, **rejects**, or **runs forever**, and the third outcome is what makes computability subtle."
+  - "Adding tapes, nondeterminism or random access changes speed, not power: they compute the same functions."
+  - "The **Church–Turing thesis**: anything we would call an algorithm can be carried out by a Turing machine."
+  - "A **universal Turing machine** runs other machines given as data, the theoretical root of stored-program computers."
+resources:
+  - title: "Turing Machines (Stanford Encyclopedia of Philosophy)"
+    url: "https://plato.stanford.edu/entries/turing-machine/"
+    note: "Careful history and definitions, including Turing's original 1936 formulation."
+  - title: "Turing machine"
+    url: "https://en.wikipedia.org/wiki/Turing_machine"
+  - title: "Church–Turing thesis"
+    url: "https://en.wikipedia.org/wiki/Church%E2%80%93Turing_thesis"
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+---
+
+A **Turing machine** is a mathematical model of computation that captures the essential mechanics of an algorithm: reading information, changing internal state, modifying memory, and deciding what to do next. Unlike finite automata, which have only finitely many states and no unbounded working memory, a Turing machine has a tape it can read and write, allowing it to perform arbitrarily long computations. Its importance is not that it resembles a modern computer in every engineering detail, but that it provides a precise framework for asking what can be computed at all, and what cannot be computed by any algorithm.
+
+## A machine with rules, state, and memory
+
+A standard deterministic Turing machine consists of a **finite control**, an infinite **tape** divided into cells, and a **read-write head** that moves along the tape. Each cell stores a symbol from a finite tape alphabet. At every step, the machine reads the current symbol, consults its transition rule, writes a symbol, changes state, and moves the head left or right.
+
+One formal representation is:
+
+$$
+M=(Q,\Sigma,\Gamma,\delta,q_0,q_{\text{accept}},q_{\text{reject}})
+$$
+
+where:
+
+- $Q$ is the finite set of states.
+- $\Sigma$ is the input alphabet.
+- $\Gamma$ is the tape alphabet, including the input symbols and a blank symbol.
+- $\delta$ is the transition function.
+- $q_0$ is the initial state.
+- $q_{\text{accept}}$ and $q_{\text{reject}}$ are halting states.
+
+A transition can be written as:
+
+$$
+\delta(q,a)=(q',b,D)
+$$
+
+This means: when the machine is in state $q$ and reads symbol $a$, it writes $b$, changes to state $q'$, and moves in direction $D$, either left or right. As a function, that is $\delta: Q\times\Gamma\rightarrow Q\times\Gamma\times\{L,R\}$.
+
+In words: the whole program is a finite table indexed by (state, symbol under the head), and every entry says what to write, which way to move, and which state comes next.
+
+The transition rules are finite, but the tape provides potentially unbounded memory. A computation proceeds one step at a time until the machine halts or continues forever.
+
+<Callout type="pitfall">
+The infinite tape is an idealization: a real computer has finite physical memory. The model abstracts away physical limits to study what is possible in principle, assuming enough time and storage when a computation requires them.
+</Callout>
+
+## Why the tape changes what can be computed
+
+A finite automaton can remember only which state it occupies. A pushdown automaton adds a stack, which supports nested structures. A Turing machine goes further: it can read, write, revisit, and reorganize information stored on its tape.
+
+This makes it possible to implement general algorithmic procedures. The machine can mark symbols it has already processed, move back to earlier positions, store intermediate results, and use its tape as working memory.
+
+For example, consider deciding whether a string belongs to the language
+
+$$
+L=\{a^n b^n c^n \mid n \ge 0\}
+$$
+
+In words: equal-length blocks of `a`s, then `b`s, then `c`s, such as `abc` or `aabbcc`. No [context-free grammar](../context-free-grammars/) generates this language, because a stack can match only one pair of counts.
+
+A Turing machine handles it by repeated crossing off. It replaces the first unmarked `a` with `X`, scans right to the first unmarked `b` and replaces it with `Y`, scans on to the first unmarked `c` and replaces it with `Z`, then returns to the left. Each pass removes one symbol of each kind. When no `a` remains, it checks that every remaining symbol is already marked: if so it accepts; if an unmarked symbol is left over, or a symbol appears in the wrong place, it rejects.
+
+<TuringTapeSim />
+
+The same strategy, written as a dictionary of rules, runs in a few lines of Python. Counting steps also shows the price of a single sequential tape:
+
+```python
+R, L = +1, -1
+# (state, symbol read) -> (next state, symbol to write, head move). "_" is blank.
+anbncn = {
+    ("q0", "a"): ("q1", "X", R), ("q0", "Y"): ("q4", "Y", R), ("q0", "_"): ("accept", "_", R),
+    ("q1", "a"): ("q1", "a", R), ("q1", "Y"): ("q1", "Y", R), ("q1", "b"): ("q2", "Y", R),
+    ("q2", "b"): ("q2", "b", R), ("q2", "Z"): ("q2", "Z", R), ("q2", "c"): ("q3", "Z", L),
+    ("q3", "a"): ("q3", "a", L), ("q3", "b"): ("q3", "b", L), ("q3", "Y"): ("q3", "Y", L),
+    ("q3", "Z"): ("q3", "Z", L), ("q3", "X"): ("q0", "X", R),
+    ("q4", "Y"): ("q4", "Y", R), ("q4", "Z"): ("q4", "Z", R), ("q4", "_"): ("accept", "_", R),
+}
+
+def run_tm(delta, word, state="q0"):
+    tape = dict(enumerate(word))  # a dict is an unbounded tape: unwritten cells read as blank
+    head = steps = 0
+    while state not in ("accept", "reject"):
+        symbol = tape.get(head, "_")
+        # A missing rule means the machine has nowhere to go: treat it as reject.
+        state, tape[head], move = delta.get((state, symbol), ("reject", symbol, R))
+        head += move
+        steps += 1
+    return state, steps
+
+for w in ["abc", "aabbcc", "aabbc", "aaabbbccc", "a" * 10 + "b" * 10 + "c" * 10]:
+    print(len(w), *run_tm(anbncn, w))
+# 3 accept 8
+# 6 accept 23
+# 5 reject 14
+# 9 accept 46
+# 30 accept 431   <- about n/3 passes of length about n each: quadratic time
+```
+
+## Accept, reject, or run forever
+
+On any input, a Turing machine does one of three things: it halts in $q_{\text{accept}}$, halts in $q_{\text{reject}}$, or never halts at all. That third possibility has no analogue in finite automata, which always stop when the input runs out.
+
+The difference gives two kinds of language:
+
+- A **decider** is a machine that halts on every input. A language is **decidable** if some decider accepts exactly its strings.
+- A language is **recognizable** (recursively enumerable) if some machine accepts exactly its strings, but on strings outside the language that machine may loop forever instead of rejecting.
+
+<Callout type="key">
+Running forever is not the same as rejecting. If you are watching a machine that has not halted yet, you cannot in general tell whether it is about to halt or never will. This gap is the starting point of [computability theory](../computability/) and the halting problem.
+</Callout>
+
+## Variants and the Church–Turing thesis
+
+Many variations of the model have been proposed: multiple tapes, a two-way infinite tape, nondeterministic transitions, random-access memory. Each can be simulated by the standard single-tape machine. The simulation may be slower: a $t$-step multitape computation takes $O(t^2)$ steps on one tape, and the known simulation of nondeterminism takes exponential time. But the set of problems that can be solved at all does not change.
+
+Independent formalisms from the 1930s, including Church's lambda calculus and general recursive functions, also turned out to compute exactly the same functions as Turing machines. This convergence supports the **Church–Turing thesis**: any function that can be computed by an effective, step-by-step procedure can be computed by a Turing machine.
+
+<Callout type="pitfall">
+The Church–Turing thesis is not a theorem. "Effective procedure" is an informal idea, so the thesis cannot be proved; it is a well-tested claim that the formal model captures the informal notion of an algorithm.
+</Callout>
+
+## The universal machine
+
+A Turing machine's rules are finite, so they can be written down as a string and placed on a tape. A **universal Turing machine** takes such a description $\langle M\rangle$ together with an input $w$, and simulates $M$ running on $w$ step by step.
+
+This is the theoretical form of the stored-program computer: a single fixed machine whose behavior is determined by a program held in memory as data. It also makes it possible to ask questions about programs using programs, such as "does $M$ halt on $w$?", which is exactly the question that turns out to have no algorithmic answer.

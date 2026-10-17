@@ -1,0 +1,161 @@
+---
+title: "Regular Expressions"
+description: "The connection between regular expressions and automata."
+order: 2
+tier: core
+takeaways:
+  - "A regular expression denotes a **language**: a whole set of strings, built from choice, concatenation and star."
+  - "**Kleene's theorem**: regular expressions and finite automata describe exactly the same languages."
+  - "Regex → NFA (Thompson's construction) → DFA (subset construction) is how lexers turn patterns into fast scanners."
+  - "Automaton → regex works by **state elimination**: each removed state k becomes paths of the form R_ik (R_kk)* R_kj."
+  - "Backreferences in real regex libraries go beyond regular languages, yet classical regexes cannot even match aⁿbⁿ."
+resources:
+  - title: "Regular Expression Matching Can Be Simple And Fast (Russ Cox)"
+    url: "https://swtch.com/~rsc/regexp/regexp1.html"
+    note: "Thompson NFA simulation versus backtracking engines, with benchmarks."
+  - title: "Thompson's construction"
+    url: "https://en.wikipedia.org/wiki/Thompson%27s_construction"
+  - title: "Kleene's algorithm"
+    url: "https://en.wikipedia.org/wiki/Kleene%27s_algorithm"
+    note: "The automaton-to-regex direction, written as a dynamic program."
+---
+
+Regular expressions and finite automata are two different ways of describing the same class of patterns. A regular expression describes a language symbolically, using operations such as choice, concatenation, and repetition; a finite automaton recognizes that language by processing input through states and transitions. Every classical regular expression can be converted into an equivalent finite automaton, and every finite automaton can be represented by a regular expression. This equivalence connects a compact language for describing patterns with a concrete computational model for recognizing them.
+
+## Regular expressions describe sets of strings
+
+A **regular expression** is a symbolic description of a **language**: a set of strings over an alphabet. Its basic operations build more complex patterns from simpler ones.
+
+Suppose the alphabet is $\Sigma=\{a,b\}$. The fundamental constructions are:
+
+- Choice: $a\mid b$ matches either `a` or `b`.
+- Concatenation: $ab$ matches `a` followed by `b`.
+- Repetition: $a^*$ matches zero or more occurrences of `a`, including the empty string $\varepsilon$.
+
+These operations can be combined. For example,
+
+$$
+(a\mid b)^*abb
+$$
+
+describes every string over $\{a,b\}$ that ends in `abb`. The prefix $(a\mid b)^*$ can match any sequence of `a`s and `b`s, including no symbols at all, while the final `abb` must appear at the end.
+
+<Callout type="key">
+A regular expression does not describe one particular string or one execution path. It describes an entire language. The expression above denotes infinitely many strings, even though its written form is finite.
+</Callout>
+
+## From a regular expression to an automaton
+
+The connection becomes concrete when we build a finite automaton that recognizes the expression's language.
+
+Consider the expression:
+
+$$
+a\mid b
+$$
+
+It describes two possible one-symbol strings. A finite automaton can recognize this language with a start state and an accepting state, using transitions labeled `a` and `b` from the start to the accepting state.
+
+More complex expressions can be built by composing smaller automata. The three basic regular-expression operations correspond to three ways of combining machines:
+
+- **Choice, $R\mid S$.** The machine accepts if either the automaton for $R$ or the automaton for $S$ accepts. An NFA can express this using branching paths, often with epsilon transitions.
+- **Concatenation, $RS$.** The machine recognizes an $R$-string followed by an $S$-string. The component automata are connected so that finishing the first allows processing of the second.
+- **Kleene star, $R^*$.** The machine recognizes zero or more repetitions of $R$. It must allow the empty string and repeated traversal of the component automaton.
+
+These constructions can be implemented using epsilon-NFAs, which allow transitions that consume no input. This is the basis of **Thompson's construction**, a systematic method for turning a regular expression into an NFA.
+
+<RegexThompsonDiagram />
+
+The resulting NFA can then be converted into a DFA using subset construction: each DFA state represents a set of NFA states that could currently be active. The DFA recognizes exactly the same language.
+
+Thus, the conversion pipeline is:
+
+$$
+\text{regular expression} \rightarrow \text{NFA} \rightarrow \text{DFA}
+$$
+
+The intermediate NFA is often easier to construct because branching and repetition map naturally to nondeterministic transitions.
+
+## From an automaton back to a regular expression
+
+The reverse direction is equally important. Given a finite automaton, we can construct a regular expression that describes every string it accepts.
+
+One method is **state elimination**. Imagine representing transitions with regular expressions rather than individual symbols. A transition labeled $R$ means that the machine can move between two states by consuming any string described by $R$.
+
+When eliminating an intermediate state $k$, we must preserve all paths that previously passed through it. If the transition from state $i$ to $k$ is labeled $R_{ik}$, the loop at $k$ is labeled $R_{kk}$, and the transition from $k$ to state $j$ is labeled $R_{kj}$, then the new transition from $i$ to $j$ includes:
+
+$$
+R_{ik}(R_{kk})^*R_{kj}
+$$
+
+This expression describes entering state $k$, looping there zero or more times, and then leaving for state $j$. If there was already a direct transition $R_{ij}$, the two routes are combined by choice:
+
+$$
+R'_{ij} = R_{ij}\ \mid\ R_{ik}(R_{kk})^*R_{kj}
+$$
+
+In words: after deleting $k$, you can still get from $i$ to $j$ either the old direct way, or by doing what used to take you into $k$, looping at $k$ any number of times, and then leaving.
+
+<Callout type="example" title="Eliminating one state">
+Take states 1 (start), 2, and 3 (accepting), with $1 \xrightarrow{a} 2$, a loop $2 \xrightarrow{b} 2$, and $2 \xrightarrow{a} 3$. Eliminating state 2 gives $R_{12}=a$, $R_{22}=b$, $R_{23}=a$, so the new edge is $1 \xrightarrow{ab^*a} 3$. The machine accepts exactly the strings described by $ab^*a$.
+</Callout>
+
+The process is repeated until only a start state and an accepting state remain, with a regular expression describing the strings that connect them. Multiple accepting states can be handled by introducing a new common accepting state.
+
+The resulting expression may be much larger than the original automaton. This does not undermine the equivalence: it shows that a pattern can be represented in different forms, some more compact or easier to reason about than others.
+
+## Why the equivalence matters
+
+The equivalence between regular expressions and finite automata is a fundamental result in formal-language theory, often called **Kleene's theorem**. It says that both formalisms describe exactly the regular languages.
+
+This is useful because each representation has different strengths.
+
+Regular expressions are convenient for specifying patterns concisely, such as token formats, identifiers, and simple validation rules. Automata make the recognition process explicit, allowing predictable state transitions and efficient scanning.
+
+For example, a compiler's lexical analyzer might use regular expressions to specify the patterns for identifiers, numbers, and operators. A lexer generator can convert those specifications into automata that recognize tokens while scanning source code.
+
+There is an important performance distinction: a DFA processes each input symbol through one transition, making recognition linear in input length once the machine has been built. An NFA can be simulated by tracking a set of active states, or converted to a DFA. However, determinization may produce exponentially many states, and a DFA is not always the most compact representation.
+
+<Callout type="pitfall" title="A library regex is not always a regular expression">
+Real-world regex engines also differ. Some use backtracking algorithms with behavior that is not guaranteed to be efficient, and many support features such as backreferences that go beyond classical regular expressions and can recognize patterns that finite automata cannot. Therefore, the equivalence applies to classical regular expressions, not automatically to every feature offered by a modern regex library.
+</Callout>
+
+Python's `re` module shows both sides: a classical pattern behaves exactly like its automaton, while a single backreference lets the engine accept a language no finite automaton can.
+
+```python
+import re
+
+# Classical regex: the language "strings over {a,b} ending in abb".
+ends_abb = re.compile(r"(a|b)*abb")
+for s in ["abb", "babb", "abba", ""]:
+    print(repr(s), bool(ends_abb.fullmatch(s)))
+# 'abb' True
+# 'babb' True
+# 'abba' False
+# '' False
+
+# \1 must repeat whatever group 1 matched, so this accepts a^n b a^n:
+# a non-regular language, matched by backtracking rather than by a DFA.
+mirror = re.compile(r"(a*)b\1")
+print(bool(mirror.fullmatch("aaabaaa")), bool(mirror.fullmatch("aaabaa")))  # True False
+```
+
+## The boundary: what neither can recognize
+
+Because regular expressions and finite automata describe the same languages, they share the same expressive limitations.
+
+Neither can recognize every possible pattern. For instance,
+
+$$
+L=\{a^n b^n \mid n \ge 0\}
+$$
+
+In words: some number of `a`s followed by exactly the same number of `b`s, such as the empty string, `ab`, `aabb`, and `aaabbb`.
+
+No regular expression describes this language, and no finite automaton recognizes it. To check it, a machine must remember how many `a`s it has read, and that count is unbounded. A finite automaton has only finitely many states, so for large enough counts two different values $i \ne j$ must lead to the same state. From then on the machine cannot tell $a^ib^i$ (accept) from $a^jb^i$ (reject). The **pumping lemma** for regular languages makes this argument precise.
+
+Trying to approximate it with a pattern like $a^*b^*$ fails: that also accepts `aab` and `abbb`, because star cannot tie the two repetition counts together.
+
+<Callout type="key">
+Regular languages are exactly the patterns that need only a bounded amount of memory to recognize. Matching counts or nesting, such as balanced parentheses, requires something more powerful: the [context-free grammars](../context-free-grammars/) and their stack-based recognizers.
+</Callout>

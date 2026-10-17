@@ -1,0 +1,188 @@
+---
+title: "Finite Automata"
+description: "DFAs and NFAs: machines that recognize patterns with finite memory."
+order: 1
+tier: core
+takeaways:
+  - "A finite automaton reads input one symbol at a time and remembers **only its current state**: a fixed, finite summary of the past."
+  - "A **DFA** has exactly one move per (state, symbol); an **NFA** may have several or none, and accepts if **any** path ends in an accepting state."
+  - "DFAs and NFAs recognize exactly the same languages, the **regular languages**, via the subset construction."
+  - "The price of determinizing: an n-state NFA can need up to 2ⁿ DFA states."
+  - "Finite memory cannot count without bound, so languages like aⁿbⁿ are **not regular**."
+resources:
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+    note: "Free lectures and notes; the first lectures cover DFAs, NFAs and regular languages."
+  - title: "Deterministic finite automaton"
+    url: "https://en.wikipedia.org/wiki/Deterministic_finite_automaton"
+  - title: "Powerset construction"
+    url: "https://en.wikipedia.org/wiki/Powerset_construction"
+    note: "The NFA-to-DFA conversion, including the 2ⁿ blow-up example."
+  - title: "Pumping lemma for regular languages"
+    url: "https://en.wikipedia.org/wiki/Pumping_lemma_for_regular_languages"
+    note: "The standard tool for proving a language is not regular."
+---
+
+Finite automata are mathematical models of computation that recognize patterns by moving between a finite set of states as they read an input string. Deterministic finite automata (DFAs) have exactly one possible next state for each state and input symbol, while nondeterministic finite automata (NFAs) can have several possible next states. Despite this difference, DFAs and NFAs recognize exactly the same class of languages: the regular languages. Their importance lies in how they represent patterns, not in a difference in what they can recognize.
+
+## A machine that reads symbols and changes state
+
+A **finite automaton** processes an input one symbol at a time. It has a finite set of states, a designated starting state, a set of accepting states, and rules that determine how it moves between states.
+
+Formally, a **DFA** is a five-tuple:
+
+$$
+M=(Q,\Sigma,\delta,q_0,F)
+$$
+
+where:
+
+- $Q$ is a finite set of states.
+- $\Sigma$ is the input alphabet.
+- $\delta$ is the transition function.
+- $q_0$ is the initial state.
+- $F\subseteq Q$ is the set of accepting states.
+
+For a DFA, the transition function is
+
+$$
+\delta:Q\times\Sigma\rightarrow Q
+$$
+
+This means that the current state and next input symbol uniquely determine the next state.
+
+In words: a DFA is a lookup table indexed by (current state, next symbol), plus a start state and a list of states that mean "yes".
+
+<Callout type="key">
+A machine accepts an input if, after consuming the entire string, it ends in an accepting state. Otherwise, it rejects the input. Acceptance depends on the complete input, not merely on whether the machine visits an accepting state along the way.
+</Callout>
+
+For example, imagine a machine that recognizes binary strings containing an even number of `1` symbols. It needs only two states: one representing an even count and one representing an odd count. Reading `1` switches between them, while reading `0` leaves the current state unchanged. The initial state represents zero `1`s, so it is accepting.
+
+The machine does not need to remember the exact count. It remembers only the information relevant to the decision: the count's parity.
+
+## DFAs: one path through the machine
+
+A deterministic finite automaton has exactly one transition for each state and input symbol. As a result, any input string produces one unique computation path.
+
+Consider the even-number-of-`1`s machine. Input `0` loops back to the same state in either case. Input `1` switches between Even and Odd.
+
+<AutomataDfaSim />
+
+For the input `1011`, the machine sees three `1`s and finishes in the Odd state, so it rejects. For `1100`, it sees two `1`s and finishes in the Even state, so it accepts.
+
+The key idea is that a DFA stores a compact summary of the input seen so far. The state represents everything about the past that matters for classifying any possible continuation.
+
+This makes DFAs useful in lexical analysis, protocol validation, pattern recognition, and other systems where the next action must be determined directly from the current state and input.
+
+## NFAs: multiple possible paths
+
+A **nondeterministic finite automaton (NFA)** relaxes the requirement that each state and symbol determine exactly one next state. It may have multiple possible next states or no next state for a particular symbol.
+
+Its transition function is typically defined as
+
+$$
+\delta:Q\times\Sigma\rightarrow\mathcal{P}(Q)
+$$
+
+where $\mathcal{P}(Q)$ is the **power set** of $Q$: the set of all subsets of states. Thus, a transition returns a set of possible next states rather than one state.
+
+In words: the table entry for (state, symbol) is no longer one state but a set of them, possibly empty.
+
+An NFA accepts a string if at least one valid computation path consumes the entire input and ends in an accepting state. It does not require every path to accept.
+
+Some NFAs also permit **epsilon transitions**, written $\varepsilon$, which move between states without consuming an input symbol. These are represented by an extended transition function that also accounts for transitions on $\varepsilon$.
+
+Imagine recognizing binary strings whose third symbol from the end is `1`. An NFA can keep scanning the input while nondeterministically guessing which `1` might be that third-from-last symbol. It then follows a path that consumes exactly two more symbols and accepts if the input ends at the right point.
+
+The machine does not need to know in advance which symbol is third from the end. It explores possible interpretations in parallel, conceptually speaking.
+
+<Callout type="pitfall">
+Nondeterminism here is a mathematical abstraction, not a claim that physical hardware must literally execute every path simultaneously. An implementation can simulate the possible states using a set of active states.
+</Callout>
+
+## Why DFAs and NFAs are equally powerful
+
+NFAs may look more expressive because they can branch into several possible paths. However, every NFA can be converted into an equivalent DFA.
+
+The central idea is to let each DFA state represent a set of NFA states that could currently be active.
+
+Suppose an NFA has states $q_0,q_1,q_2$. A corresponding DFA can have states representing $\{q_0\}$, $\{q_0,q_1\}$, $\{q_1,q_2\}$, and other subsets. When the DFA reads a symbol, it computes all the NFA transitions possible from the current set and combines their destinations into a new set.
+
+For an NFA without epsilon transitions, the construction is:
+
+$$
+\delta_D(S,a)=\bigcup_{q\in S}\delta_N(q,a)
+$$
+
+In words: from a set $S$ of possibly-active NFA states, reading $a$ leads to the set of every state that any member of $S$ could move to on $a$.
+
+The DFA starts in $\{q_0\}$, and a DFA state is accepting if it contains at least one accepting NFA state. If the NFA has epsilon transitions, every set is first expanded with its **epsilon-closure**: all states reachable through $\varepsilon$-moves alone. This procedure is the **subset construction** (or powerset construction).
+
+<AutomataSubsetConstruction />
+
+Equivalence has a price. An NFA with $n$ states has $2^n$ possible subsets, and some languages really need them all. The third-from-the-end NFA above has 4 states, but any DFA for the language needs 8, because it must remember the last three symbols it has seen; for the $k$-th symbol from the end, the DFA needs $2^k$ states while the NFA needs only $k+1$.
+
+<Callout type="key">
+NFAs and DFAs recognize the same languages, but not at the same size: nondeterminism can make a description exponentially more compact.
+</Callout>
+
+## Simulating automata in code
+
+Both kinds of machine are small enough to write directly as dictionaries. Simulating the NFA by tracking a set of active states is exactly the subset construction, performed lazily on the one input being read.
+
+```python
+# A DFA is just a transition table: (state, symbol) -> next state.
+even_ones = {
+    ("even", "0"): "even", ("even", "1"): "odd",
+    ("odd", "0"): "odd",   ("odd", "1"): "even",
+}
+
+def run_dfa(delta, start, accepting, s):
+    state = start
+    for ch in s:
+        state = delta[(state, ch)]   # exactly one move: no choices, no backtracking
+    return state in accepting
+
+print(run_dfa(even_ones, "even", {"even"}, "1011"))  # False
+print(run_dfa(even_ones, "even", {"even"}, "1100"))  # True
+
+# NFA for "third symbol from the end is 1": q0 waits, and on a 1 it may guess "this is the one".
+nfa = {
+    ("q0", "0"): {"q0"}, ("q0", "1"): {"q0", "q1"},
+    ("q1", "0"): {"q2"}, ("q1", "1"): {"q2"},
+    ("q2", "0"): {"q3"}, ("q2", "1"): {"q3"},
+}
+
+def run_nfa(delta, start, accepting, s):
+    active = {start}
+    for ch in s:
+        # Follow every path at once; a missing entry means that path dies.
+        active = set().union(*(delta.get((q, ch), set()) for q in active))
+    return bool(active & accepting)  # accept if ANY path survived to an accepting state
+
+print(run_nfa(nfa, "q0", {"q3"}, "0100"))  # True
+print(run_nfa(nfa, "q0", {"q3"}, "1011"))  # False
+
+def subset_construction(delta, start, alphabet):
+    start_set = frozenset({start})
+    seen, todo = {start_set}, [start_set]
+    while todo:
+        S = todo.pop()
+        for a in alphabet:
+            T = frozenset().union(*(delta.get((q, a), set()) for q in S))
+            if T not in seen:
+                seen.add(T)
+                todo.append(T)
+    return seen
+
+print(len(subset_construction(nfa, "q0", "01")))  # 8: one DFA state per possible "last three symbols"
+```
+
+## The limits of finite memory
+
+A finite automaton's only memory is its current state, and there are finitely many states. That is precisely what makes it fast and predictable, and precisely what limits it.
+
+Consider the language of strings with some number of `a`s followed by the same number of `b`s. After reading $n$ `a`s, the machine must remember $n$ exactly, since the right continuation is $b^n$ and nothing else. Different values of $n$ need different states, so no fixed, finite set of states can handle every $n$. The **pumping lemma** turns this argument into a formal proof technique.
+
+Languages recognizable by finite automata are called **regular languages**. They are the same languages described by [regular expressions](../regular-expressions/). Recognizing nested or counted structure requires more memory, such as the stack used by [context-free grammars](../context-free-grammars/) and pushdown automata.

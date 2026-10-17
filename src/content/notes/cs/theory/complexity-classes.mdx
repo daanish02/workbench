@@ -1,0 +1,156 @@
+---
+title: "Complexity Classes"
+description: "PSPACE, EXP, the polynomial hierarchy, and beyond P vs. NP."
+order: 7
+tier: advanced
+takeaways:
+  - "Complexity classes group decision problems by a **resource bound**: time, space, randomness, parallelism or quantifier alternations."
+  - "Known chain: L ⊆ NL ⊆ P ⊆ NP ⊆ PSPACE ⊆ EXP. Only some steps are proven strict, e.g. P ≠ EXP."
+  - "Space is reusable, time is not: polynomial space can take exponential time, so PSPACE ⊇ NP."
+  - "Exponential is still **decidable**; hard is not the same as impossible."
+  - "A **complete** problem captures a whole class: solve it efficiently and the entire class becomes efficient."
+resources:
+  - title: "Complexity Zoo"
+    url: "https://complexityzoo.net/Complexity_Zoo"
+    note: "Reference catalogue of 500+ classes and the known relations between them."
+  - title: "PSPACE"
+    url: "https://en.wikipedia.org/wiki/PSPACE"
+  - title: "Time hierarchy theorem"
+    url: "https://en.wikipedia.org/wiki/Time_hierarchy_theorem"
+    note: "Why more time provably lets you solve more problems."
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+---
+
+**Complexity theory** classifies computational problems by the resources required to solve them, not merely by whether they are computable. Beyond P and NP lies a hierarchy of classes describing problems that require more time or memory, problems solvable with parallel computation, and problems whose solutions can be verified or discovered using different computational models. The key distinction is between what a machine can solve efficiently, what it can verify efficiently, and what it can solve only with substantially greater resources. These classes help explain the limits of algorithms, the difficulty of optimization, and the theoretical foundations of cryptography.
+
+## The basic hierarchy: P and NP are only the beginning
+
+**Complexity classes** group problems according to resource bounds, usually as a function of input length $n$.
+
+- **P**: decision problems solvable by a deterministic algorithm in polynomial time, such as $O(n^2)$ or $O(n^3)$.
+- **NP**: decision problems for which a proposed yes-answer has a certificate that can be verified in polynomial time. Equivalently, they can be solved by a nondeterministic Turing machine in polynomial time.
+- **co-NP**: problems whose complements belong to NP. Informally, their no-answers have efficiently verifiable certificates.
+
+For example, given a graph and a proposed route, checking whether the route visits every vertex exactly once is efficient. Determining whether any such route exists is the decision version of the Hamiltonian cycle problem, which is NP-complete.
+
+The central unresolved question is whether $P=NP$. We know that
+
+$$
+P\subseteq NP
+$$
+
+but we do not know whether the inclusion is strict. Most researchers suspect that $P\neq NP$, but no proof is known.
+
+Other classes refine the picture. For example, $NP\cap co\text{-}NP$ contains problems whose yes- and no-answers both have efficiently verifiable certificates. Integer factorization is a prominent example of a problem in this intersection, although its exact placement among standard deterministic and randomized time classes remains unresolved.
+
+## Beyond polynomial time: EXP and beyond
+
+The class **EXP**, also called EXPTIME, contains decision problems solvable in deterministic exponential time, such as $2^{n^k}$ for some constant $k$. Exponential growth can make even moderately sized inputs prohibitively expensive.
+
+A useful relationship is:
+
+$$
+P\subsetneq EXP
+$$
+
+This inclusion is known to be strict. The **time hierarchy theorem** proves that giving a computational model substantially more time allows it to solve some problems that a more restricted time bound cannot solve.
+
+The broader hierarchy continues with classes such as $2\text{-}EXP$, which permits double-exponential time, and towers of exponentials at higher levels. These bounds are not just theoretical decoration: some problems involving formal verification, logic, and complex games have very high worst-case complexity.
+
+<Callout type="pitfall">
+It is important not to confuse exponential complexity with undecidability. An EXP problem is still decidable: an algorithm exists that always halts, though it may take exponential time. An undecidable problem has no algorithm that always produces the correct answer and halts on every input.
+</Callout>
+
+## Space complexity: memory defines another hierarchy
+
+Time measures how many computational steps an algorithm takes. **Space complexity** measures how much working memory it uses.
+
+- **PSPACE**: problems solvable using polynomial space, regardless of how much time the algorithm takes.
+- **EXPSPACE**: problems solvable using exponential space.
+- **L**: problems solvable using logarithmic working space.
+- **NL**: problems solvable using nondeterministic logarithmic space.
+
+The relationship between time and space is not simply that one is a substitute for the other. A computation can reuse memory repeatedly, taking a very long time while keeping its memory usage relatively small.
+
+We know that
+
+$$
+P\subseteq PSPACE\subseteq EXP
+$$
+
+The first inclusion is immediate from the fact that a polynomial-time computation can use at most polynomial space. The second follows because a deterministic machine using polynomial space has only exponentially many possible configurations, so if it decides a problem, it cannot need to visit more configurations than that without repeating one.
+
+Whether $P=PSPACE$ remains unknown.
+
+Putting the time and space classes together gives the chain
+
+$$
+L\subseteq NL\subseteq P\subseteq NP\subseteq PSPACE\subseteq EXP
+$$
+
+In words: each class on the left can be solved within the resources of every class to its right. The hierarchy theorems prove $NL\subsetneq PSPACE$ and $P\subsetneq EXP$, so somewhere between $P$ and $EXP$ at least one of these inclusions must be strict, yet no one has proved which.
+
+<ComplexityClassMap />
+
+A classic PSPACE-complete problem is **TQBF**, the problem of deciding whether a fully quantified Boolean formula is true. Unlike ordinary Boolean satisfiability, which asks whether some assignment makes a formula true, TQBF allows alternating existential and universal quantifiers. This captures the difficulty of reasoning through sequences of choices and adversarial responses.
+
+## Parallelism and randomized computation
+
+Not all complexity classes are defined solely by sequential deterministic execution.
+
+**BPP** contains decision problems solvable by randomized polynomial-time algorithms with bounded error probability. Randomization can make some algorithms simpler or faster, but the result is allowed to be wrong with a controlled, small probability.
+
+RP and co-RP impose more specific one-sided error guarantees. In RP, yes-instances are accepted with a sufficiently high probability, while no-instances are never accepted. In co-RP, the analogous guarantee applies to the complement.
+
+**BQP** is the quantum analogue: problems solvable in polynomial time by a quantum computer with bounded error. It includes problems for which quantum algorithms offer important advantages, such as integer factoring via Shor's algorithm.
+
+<Callout type="pitfall" title="Quantum is not a shortcut through NP">
+BQP is not known to contain all of NP, and quantum computers are not known to efficiently solve every NP-complete problem.
+</Callout>
+
+
+Parallel computation leads to classes such as **NC**, which informally captures problems solvable using polynomially many processors and polylogarithmic parallel time. The distinction matters because a task may be computationally manageable sequentially yet difficult to parallelize, or vice versa.
+
+These classes describe different computational resources and error models, rather than simply ranking all problems on one scale.
+
+## The polynomial hierarchy: alternating questions
+
+The **polynomial hierarchy (PH)** extends NP and co-NP through multiple levels of alternating existential and universal quantification.
+
+At the first level are P, NP, and co-NP. Higher levels express increasingly complex patterns of choices. For example, a statement of the form
+
+$$
+\exists x\ \forall y\ \exists z:\ R(x,y,z)
+$$
+
+asks whether there is a choice of $x$ such that, for every $y$, some $z$ makes the efficiently computable predicate $R$ true. If the variables have polynomially bounded lengths, this kind of quantifier structure corresponds to higher levels of PH.
+
+The hierarchy is useful for problems in logic, optimization, and game theory where choices alternate between cooperative and adversarial participants.
+
+It is not known whether PH collapses to a finite level. A collapse would mean that the additional quantifier alternations do not provide greater expressive power under the relevant complexity assumptions. Many complexity-theoretic results suggest that such a collapse would have significant consequences, but the hierarchy's exact structure remains unresolved.
+
+## Completeness: identifying the hardest problems in a class
+
+<Callout type="key">
+A problem is **hard** for a complexity class if every problem in that class can be reduced to it using the permitted kind of reduction. It is **complete** if it is both hard for the class and itself belongs to that class.
+</Callout>
+
+For example, SAT is NP-complete. This means every problem in NP can be transformed into SAT in polynomial time, preserving whether the answer is yes or no.
+
+If an NP-complete problem were shown to have a polynomial-time algorithm, then every problem in NP would have one, establishing $P=NP$. Conversely, if $P\neq NP$, no NP-complete problem can have a polynomial-time algorithm.
+
+Completeness gives a way to compare problems without solving each one independently. Instead of inventing a new algorithmic analysis from scratch, researchers can reduce a known hard problem to the problem under study. This establishes a lower bound on its difficulty, relative to the reduction and complexity assumptions.
+
+## The larger picture
+
+The complexity landscape is not one simple ladder. It is a network of classes defined by time, space, randomness, parallelism, and quantifier structure. Some relationships are proven; others, such as $P$ versus $NP$, remain open.
+
+The most useful conceptual separation is:
+
+- Computability: whether an algorithm exists at all.
+- Complexity: how much time or memory a computation requires.
+- Completeness: whether a problem captures the difficulty of an entire class.
+- Resource models: which computational capabilities are being measured.
+
+This framework helps distinguish a problem that is impossible to decide in general from one that is decidable but prohibitively expensive, and from one that may become practical under a different computational model. It is this distinction—not simply the number of operations in an algorithm—that makes complexity theory a foundation for modern theoretical computer science.

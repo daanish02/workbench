@@ -1,0 +1,138 @@
+---
+title: "Computability"
+description: "The halting problem and undecidability: problems no computer can solve."
+order: 5
+tier: core
+takeaways:
+  - "**Decidable** means some algorithm always halts with the right yes/no answer; **undecidable** means no single algorithm can do that for every input."
+  - "The **halting problem** is undecidable: assume a decider H exists, build D that does the opposite of H's prediction about itself, and D(D) contradicts H."
+  - "Halting is **recognizable** (simulate and wait) but not decidable; its complement is not even recognizable."
+  - "**Reductions** spread undecidability: if solving X would let you solve halting, X is undecidable too."
+  - "**Rice's theorem**: every non-trivial question about what a program computes is undecidable, so practical analyzers must approximate."
+resources:
+  - title: "Computability and Complexity (Stanford Encyclopedia of Philosophy)"
+    url: "https://plato.stanford.edu/entries/computability/"
+  - title: "Halting problem"
+    url: "https://en.wikipedia.org/wiki/Halting_problem"
+  - title: "Rice's theorem"
+    url: "https://en.wikipedia.org/wiki/Rice%27s_theorem"
+    note: "Why all non-trivial semantic properties of programs are undecidable."
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+    note: "The middle third of the course covers decidability, the halting problem and reducibility."
+---
+
+**Computability theory** studies which problems can be solved by an algorithm, regardless of how much time or memory the algorithm requires. Its central distinction is between problems that are merely expensive to solve and problems for which no algorithm can always produce the correct answer and terminate. The halting problem establishes a fundamental limit: no general algorithm can determine whether every arbitrary program will eventually stop. This is not a limitation of current hardware; it follows from the mathematical structure of computation itself.
+
+## What does it mean for a problem to be computable?
+
+A problem is **computable** when an algorithm exists that produces the correct answer for every valid input and finishes after a finite number of steps. For a yes-or-no problem, this means the algorithm must always return either yes or no, correctly.
+
+In the formal model of a [Turing machine](../turing-machines/), such an algorithm is represented by a machine that halts on every input and accepts or rejects according to the correct answer. A problem with such a machine is called **decidable**.
+
+This definition separates three important cases:
+
+- **Decidable**: an algorithm always returns the correct answer and halts.
+- **Recognizable**: an algorithm accepts every positive instance, but may run forever on negative instances.
+- **Undecidable**: no algorithm can correctly decide every instance and halt on all inputs.
+
+<Callout type="pitfall">
+Undecidability does not mean that no individual instance can be solved. Many instances of an undecidable problem have obvious answers. It means that there is no single algorithm that solves all possible instances under the required guarantees.
+</Callout>
+
+Computability also differs from complexity. Complexity theory asks how many resources a computable problem requires. Computability asks whether a terminating algorithm exists in the first place. An algorithm that needs a billion years is still computable in principle; a problem with no general deciding algorithm cannot be solved universally just by adding faster processors.
+
+## The halting problem
+
+The **halting problem** asks whether a given program, when executed on a particular input, eventually stops or continues running forever.
+
+Formally, imagine a function:
+
+$$
+H(P,x)=
+\begin{cases}
+1 & \text{if } P \text{ halts on input } x \\
+0 & \text{if } P \text{ runs forever on input } x
+\end{cases}
+$$
+
+In words: $H$ is a hypothetical program that looks at another program's code and its input, never runs forever itself, and always answers correctly whether that program would stop.
+
+The halting problem is decidable exactly when some algorithm computes $H$ for every pair $(P,x)$. Simply running $P$ on $x$ does not work: if $P$ has not stopped after a million steps, it may stop after the next step, or never. The theorem is that no cleverer method works either.
+
+## Why no halting decider can exist
+
+The proof is by contradiction. Suppose some program `halts(P, x)` computes $H$. Because programs are just text, a program can be given its own source code as input. Use `halts` to build a new program $D$:
+
+1. On input $P$, ask `halts(P, P)`: does $P$ halt when given its own code?
+2. If the answer is yes, loop forever.
+3. If the answer is no, halt immediately.
+
+Now run $D$ on its own source code. If `halts(D, D)` says $D$ halts, then by step 2 $D$ loops forever. If it says $D$ runs forever, then by step 3 $D$ halts. Either way `halts` gave the wrong answer about $D$, so the assumed program cannot exist.
+
+<Callout type="key">
+The contradiction does not depend on how `halts` works. Whatever method it uses, $D$ is built to do the opposite of its prediction about $D$, so every candidate halting decider is wrong on at least one input.
+</Callout>
+
+This is a **diagonalization** argument, the same technique Cantor used to show that the real numbers cannot be listed. Picture every program's behavior on every program-as-input in a table; $D$ is constructed to disagree with the diagonal, so it differs from every row, yet it would have to be one of the rows.
+
+<HaltingDiagonal />
+
+The argument can even be run. Any concrete function claiming to be a halting decider is defeated by the $D$ built from it:
+
+```python
+def make_D(halts):
+    def D(p):
+        if halts(p, p):
+            while True:  # do the opposite of the prediction: loop if it says "halts"
+                pass
+        return "halted"
+    return D
+
+def optimist(program, data):   # a candidate decider: "everything halts"
+    return True
+
+def pessimist(program, data):  # another candidate: "nothing halts"
+    return False
+
+D = make_D(optimist)
+print(optimist(D, D))  # True: claims D(D) halts, but D(D) would loop forever
+
+D = make_D(pessimist)
+print(pessimist(D, D))  # False: claims D(D) runs forever...
+print(D(D))             # halted  ...yet it stops at once
+```
+
+## Recognizable but not decidable
+
+The halting problem is not completely out of reach. Given $(P,x)$, a universal machine can simply run $P$ on $x$ and accept if it ever halts. That procedure accepts every halting pair, so the halting problem is **recognizable**. What it cannot do is reject the non-halting pairs: on those it runs forever.
+
+A language is decidable exactly when both it and its complement are recognizable, since we could run the two recognizers side by side and wait for whichever answers. The halting problem is recognizable but undecidable, so its complement, "$P$ runs forever on $x$", is not even recognizable.
+
+## Reductions: undecidability spreads
+
+Once one problem is known to be undecidable, others follow by **reduction**. To show a problem $X$ is undecidable, show that an algorithm for $X$ could be used to build an algorithm for the halting problem. Since the latter cannot exist, neither can the former.
+
+For example, consider "does program $P$ halt on the empty input?" Given any $(P,x)$, construct a program $P'$ that ignores its own input and runs $P$ on $x$. Then $P'$ halts on the empty input exactly when $P$ halts on $x$, so a decider for the empty-input question would decide halting.
+
+Many natural problems are undecidable in this way:
+
+- Whether two programs compute the same function (program equivalence).
+- Whether a program ever reaches a given line or prints a given value.
+- **Post's correspondence problem**: whether a set of domino-like string pairs can be lined up so the top and bottom strings match.
+- **Hilbert's tenth problem**: whether a polynomial equation with integer coefficients has an integer solution.
+- Whether a context-free grammar is ambiguous.
+
+## Rice's theorem
+
+**Rice's theorem** generalizes the pattern: every non-trivial property of the *function* a program computes is undecidable. "Non-trivial" means some programs have the property and some do not; "of the function" means it depends only on input-output behavior, not on the program's text. Whether a program always returns a sorted list, never divides by zero, or is equivalent to a given specification are all undecidable in general.
+
+Properties of the text itself, such as "does the source contain a `while` loop?", are not covered and are often easy to decide.
+
+## What undecidability means in practice
+
+<Callout type="practice">
+Undecidability does not stop people from building program analyzers; it determines what kind they can be. Type checkers, linters, static analyzers, and termination checkers all answer undecidable questions approximately. They are designed to be sound in one direction (for example, never missing a real bug), at the cost of sometimes answering "don't know" or raising false alarms, or they restrict the language so the question becomes decidable.
+</Callout>
+
+Practical systems also rely on timeouts, resource limits, and restricted languages, such as total functional languages in which every program provably terminates. None of these contradict the theorem: they either give up generality or accept that some answers will be missing or conservative.

@@ -1,0 +1,187 @@
+---
+title: "P vs. NP"
+description: "NP-completeness and the central open question of complexity theory."
+order: 6
+tier: core
+takeaways:
+  - "**P**: decision problems solvable in polynomial time. **NP**: problems whose yes-answers have a certificate checkable in polynomial time."
+  - "P ⊆ NP is known; whether P = NP is the central open question, and most researchers believe P ≠ NP."
+  - "A **polynomial-time reduction** A ≤ₚ B shows B is at least as hard as A."
+  - "**NP-complete** = in NP and NP-hard. One polynomial algorithm for any of them would put all of NP in P."
+  - "NP-complete does not mean hopeless: approximation, heuristics, special cases and SAT solvers handle many real instances."
+resources:
+  - title: "P vs NP (Clay Mathematics Institute)"
+    url: "https://www.claymath.org/millennium/p-vs-np/"
+    note: "The official Millennium Prize problem statement."
+  - title: "P versus NP problem"
+    url: "https://en.wikipedia.org/wiki/P_versus_NP_problem"
+  - title: "Karp's 21 NP-complete problems"
+    url: "https://en.wikipedia.org/wiki/Karp%27s_21_NP-complete_problems"
+    note: "The 1972 paper that showed NP-completeness is everywhere, with its reduction tree."
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+---
+
+The central question of computational complexity is whether problems whose solutions can be checked efficiently can also be solved efficiently. The class P contains problems that computers can solve in polynomial time, while NP contains problems whose proposed solutions can be verified in polynomial time. NP-completeness identifies the hardest problems in NP: if even one NP-complete problem has an efficient algorithm, then every problem in NP does. Whether $P=NP$ remains one of the most important open questions in computer science.
+
+## P: Problems We Can Solve Efficiently
+
+The class **$P$** consists of **decision problems**—problems with yes-or-no answers—that can be solved by a deterministic algorithm in polynomial time.
+
+An algorithm runs in **polynomial time** if its running time is bounded by $O(n^k)$ for some constant $k$, where $n$ measures the input size. Examples include $O(n)$, $O(n^2)$, and $O(n^3)$.
+
+Consider the question: Does a graph contain a path between vertices $s$ and $t$? A breadth-first search can answer this in time proportional to the number of vertices and edges, making it a problem in $P$.
+
+<Callout type="pitfall">
+Polynomial time is treated as the theoretical definition of efficient computation because its growth is generally more manageable than exponential growth, such as $O(2^n)$. This is a useful abstraction, not a guarantee of practical speed: an algorithm running in $O(n^{10})$ may still be unusable for large inputs.
+</Callout>
+
+## NP: Problems Whose Solutions Are Efficient to Verify
+
+**NP** stands for nondeterministic polynomial time. Despite the name, it does not mean “non-polynomial,” nor does it mean that every problem in NP is difficult to solve.
+
+A decision problem belongs to NP if every yes-instance has a **certificate**—a proposed solution—that can be verified in polynomial time. The certificate must also be polynomial in size. Formally, a language $L$ is in NP if there is a polynomial-time verifier $V$ and a polynomial $p$ such that
+
+$$
+x\in L \iff \exists c \text{ with } |c|\le p(|x|) \text{ and } V(x,c)=1
+$$
+
+In words: $x$ is a yes-instance exactly when some short hint $c$ exists that convinces a fast checker, and no hint can convince it when the answer is no.
+
+Consider the Hamiltonian cycle problem: does a graph contain a cycle that visits every vertex exactly once before returning to its start? Finding such a cycle may be difficult, but given a proposed cycle, we can check that each required edge exists and every vertex appears exactly once in polynomial time.
+
+<Callout type="key">
+This distinction between finding and checking is the heart of the P vs. NP question. Verification may be easy even when no efficient method for finding a solution is known.
+</Callout>
+
+<NpVerifySearch />
+
+Every problem in $P$ is also in $NP$, because if a problem can be solved efficiently, its answer can certainly be verified efficiently:
+
+$$
+P \subseteq NP
+$$
+
+The unresolved question is whether this inclusion is strict.
+
+## The P vs. NP Question
+
+The question $P=NP$ asks whether every problem whose solutions can be verified in polynomial time can also be solved in polynomial time.
+
+### If $P=NP$
+
+Every problem in NP has a polynomial-time algorithm. Problems that currently appear to require enormous searches could, in principle, have efficient solutions.
+
+### If $P\ne NP$
+
+Some problems have efficiently verifiable solutions but cannot be solved by any polynomial-time algorithm. Finding a solution can be fundamentally harder than checking one.
+
+For example, imagine a puzzle with millions of possible configurations. A proposed solution might be easy to check, yet discovering a valid configuration could require exploring an enormous search space. The P vs. NP question asks whether problems of this general kind always admit some clever polynomial-time solution, not merely whether brute-force search is slow.
+
+Neither possibility has been proved. The prevailing conjecture among complexity theorists is $P\ne NP$, but it remains unproven.
+
+## NP-Hardness and NP-Completeness
+
+To understand why some problems are considered especially difficult, complexity theory compares problems through polynomial-time reductions.
+
+A **reduction** from problem $A$ to problem $B$ transforms any instance of $A$ into an instance of $B$ in polynomial time, such that solving the transformed instance correctly solves the original one. Informally, $B$ is at least as hard as $A$. Writing the transformation as $f$, this is
+
+$$
+A \le_p B \iff \exists \text{ poly-time } f:\ x\in A \Leftrightarrow f(x)\in B
+$$
+
+In words: any question about $A$ can be translated quickly into a question about $B$ with the same answer, so a fast algorithm for $B$ would immediately give a fast algorithm for $A$.
+
+<NpReductionDiagram />
+
+Two important categories follow:
+
+- **NP-hard**: A problem is NP-hard if every problem in NP can be reduced to it in polynomial time. It is at least as hard as all problems in NP, but it need not itself belong to NP.
+- **NP-complete**: A problem is NP-complete if it is both in NP and NP-hard. Its solutions can be verified in polynomial time, and it is at least as hard as every problem in NP.
+
+The distinction matters. An NP-hard problem might be an optimization problem, or even a problem whose solutions cannot be verified in polynomial time. NP-complete problems, by contrast, are decision problems within NP.
+
+A useful mental model is that NP contains all efficiently verifiable decision problems, while NP-complete problems occupy its hardest end.
+
+## Why One NP-Complete Problem Matters
+
+The defining property of NP-complete problems is that they are connected through polynomial-time reductions. If a polynomial-time algorithm solves one NP-complete problem, then reductions allow every problem in NP to be solved in polynomial time.
+
+The logic is:
+
+1. Suppose an NP-complete problem $C$ has a polynomial-time algorithm.
+2. Every problem $A$ in NP can be reduced to $C$ in polynomial time.
+3. Transforming an instance of $A$ and then solving $C$ takes polynomial time.
+4. Therefore, every problem in NP belongs to $P$, so $P=NP$.
+
+<Callout type="key">
+Conversely, if $P\ne NP$, no NP-complete problem can have a polynomial-time algorithm.
+</Callout>
+
+This is why researchers do not need to solve every difficult problem independently. Establishing an efficient algorithm for one NP-complete problem would resolve the entire P vs. NP question.
+
+## SAT, Traveling Salesperson, and Other Examples
+
+The **Boolean satisfiability problem**, or **SAT**, asks whether there is an assignment of true or false values to Boolean variables that makes a logical formula true. For example,
+
+$$
+(x \lor y)\land(\neg x \lor z)
+$$
+
+is satisfiable if some assignment makes both clauses true.
+
+Checking an assignment is a single pass over the clauses. Finding one by brute force means trying up to $2^n$ assignments for $n$ variables:
+
+```python
+from itertools import product
+
+# (x or y) and (not x or z): each clause is a list of (variable, required value) literals.
+clauses = [[("x", True), ("y", True)], [("x", False), ("z", True)]]
+
+def verify(assignment):
+    # The certificate check: polynomial, one look at each literal.
+    return all(any(assignment[v] == want for v, want in c) for c in clauses)
+
+print(verify({"x": True, "y": False, "z": True}))  # True
+
+def brute_force(variables):
+    tried = 0
+    for values in product([False, True], repeat=len(variables)):
+        tried += 1
+        assignment = dict(zip(variables, values))
+        if verify(assignment):
+            return assignment, tried
+    return None, tried
+
+print(brute_force(["x", "y", "z"]))  # ({'x': False, 'y': True, 'z': False}, 3)
+print(2 ** 50)  # 1125899906842624 assignments to try for just 50 variables
+```
+
+SAT was the first problem proved NP-complete, in the **Cook–Levin theorem**. Many other problems have since been shown NP-complete by reductions from SAT or from other known NP-complete problems.
+
+Other examples include:
+
+- 3-SAT: SAT restricted to formulas whose clauses contain three literals.
+- Clique: Does a graph contain a complete subgraph of at least $k$ vertices?
+- Hamiltonian cycle: Does a graph contain a cycle visiting each vertex exactly once?
+- Traveling salesperson (decision version): Is there a tour visiting every city with total cost at most $B$?
+
+These are decision versions of problems that often arise in practical settings. Their NP-completeness does not mean that every instance is hard, or that no useful algorithms exist. Many instances can be solved quickly using special structure, approximation, heuristics, or exponential algorithms that work well on moderate inputs.
+
+## What NP-Completeness Tells Us in Practice
+
+<Callout type="practice">
+NP-completeness is a guide to algorithm design, not a declaration that a problem is impossible to solve.
+</Callout>
+
+When a problem is shown to be NP-complete, it suggests that a general-purpose polynomial-time exact algorithm is unlikely unless $P=NP$.
+
+The practical response is to change the goal or restrict the problem:
+
+- Use approximation algorithms when a provably near-optimal answer is sufficient.
+- Use heuristics when good solutions matter more than guarantees of optimality.
+- Exploit special cases, such as restricted graph structures or bounded parameters, where efficient algorithms may exist.
+- Use parameterized algorithms when complexity can be controlled by a small parameter, even if the full input is large.
+- Use exact exponential algorithms when input sizes are small enough for them to be practical.
+
+The key distinction is between worst-case complexity and real-world performance. NP-completeness establishes a strong theoretical barrier to efficient exact algorithms for all instances, assuming $P\ne NP$; it does not prevent useful solutions in practice.

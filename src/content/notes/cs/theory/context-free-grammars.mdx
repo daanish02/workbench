@@ -1,0 +1,194 @@
+---
+title: "Context-Free Grammars"
+description: "Recursive structure beyond what regular languages can describe."
+order: 3
+tier: core
+takeaways:
+  - "A **context-free grammar** generates strings by repeatedly rewriting a nonterminal with the right-hand side of one of its rules."
+  - "Recursion is the point: S → aSb pairs every a with a b, giving aⁿbⁿ, which no finite automaton can recognize."
+  - "A **parse tree** records the structure of a derivation; grammar layering (E → T → F) encodes operator precedence."
+  - "A grammar is **ambiguous** if one string has two parse trees, and then its meaning is undefined."
+  - "CFGs are equivalent to **pushdown automata** (finite control + stack), and still cannot express aⁿbⁿcⁿ."
+resources:
+  - title: "Context-free grammar"
+    url: "https://en.wikipedia.org/wiki/Context-free_grammar"
+  - title: "Pushdown automaton"
+    url: "https://en.wikipedia.org/wiki/Pushdown_automaton"
+    note: "The machine model that recognizes exactly the context-free languages."
+  - title: "Chomsky hierarchy"
+    url: "https://en.wikipedia.org/wiki/Chomsky_hierarchy"
+    note: "Where regular, context-free and unrestricted grammars sit relative to each other."
+  - title: "MIT 18.404J Theory of Computation (Sipser)"
+    url: "https://ocw.mit.edu/courses/18-404j-theory-of-computation-fall-2020/"
+---
+
+Context-free grammars describe how strings can be built from recursively nested structures. Unlike regular expressions and finite automata, which recognize patterns using finite state, context-free grammars can express relationships such as balanced parentheses and nested arithmetic expressions. They do this through production rules that replace abstract symbols with sequences of symbols. Their defining strength is recursive structure: a grammar can describe a structure that contains another instance of itself, at arbitrarily great depth.
+
+## Grammars describe how strings are constructed
+
+A **context-free grammar (CFG)** consists of rules that specify how valid strings can be generated. Formally, a grammar is a four-tuple:
+
+$$
+G=(V,\Sigma,P,S)
+$$
+
+where:
+
+- $V$ is a finite set of **nonterminal** symbols, representing abstract structures.
+- $\Sigma$ is a finite set of **terminal** symbols, which appear in the generated strings.
+- $P$ is a set of **production rules**.
+- $S$ is the **start symbol**, from which generation begins.
+
+In words: a grammar is a set of rewrite rules. Start from $S$, keep replacing nonterminals using the rules, and every all-terminal string you can reach is in the language.
+
+Consider the grammar:
+
+$$
+S\rightarrow aSb\mid\varepsilon
+$$
+
+Here, $S$ is a nonterminal, while `a` and `b` are terminals. The rule offers two alternatives: replace $S$ with `aSb`, or replace it with the empty string $\varepsilon$.
+
+Starting from $S$, we can generate strings through repeated substitutions:
+
+$$
+\begin{aligned}
+S &\Rightarrow aSb \\
+  &\Rightarrow aaSbb \\
+  &\Rightarrow aa\varepsilon bb \\
+  &\Rightarrow aabb
+\end{aligned}
+$$
+
+The generated language is
+
+$$
+L=\{a^n b^n \mid n \ge 0\}
+$$
+
+In words: every string made of some number of `a`s followed by exactly the same number of `b`s, including the empty string.
+
+<Callout type="key">
+Each use of $S\rightarrow aSb$ adds one `a` on the left and one `b` on the right at the same time, so the counts can never drift apart. That pairing is exactly what a [finite automaton](../finite-automata/) cannot do: it would need to remember an unbounded count of `a`s.
+</Callout>
+
+The word "context-free" refers to the shape of the rules: the left side of every production is a single nonterminal, so it can be rewritten wherever it appears, regardless of the symbols around it.
+
+## Derivations and parse trees
+
+Each sequence of substitutions is a **derivation**. When there is more than one nonterminal to rewrite, a **leftmost derivation** always replaces the leftmost one first, which gives each derivation a canonical order.
+
+The structure of a derivation is captured by a **parse tree**. The root is the start symbol, each internal node is a nonterminal whose children are the right-hand side of the rule applied to it, and the leaves, read left to right, spell out the generated string.
+
+Parse trees matter because structure carries meaning. Consider a grammar for arithmetic expressions:
+
+$$
+\begin{aligned}
+E &\rightarrow E + T \mid T \\
+T &\rightarrow T * F \mid F \\
+F &\rightarrow (\,E\,) \mid \text{num}
+\end{aligned}
+$$
+
+In words: an expression is a sum of terms, a term is a product of factors, and a factor is a number or a whole expression in parentheses. The recursion through $F\rightarrow(E)$ is what allows parentheses to nest to any depth.
+
+<GrammarParseTree />
+
+Because multiplication is introduced one level below addition, every `*` sits deeper in the tree than any `+` around it, so it is evaluated first. The grammar itself encodes operator precedence, and the left recursion in $E\rightarrow E+T$ makes `1+2+3` group as `(1+2)+3`.
+
+## Ambiguity
+
+A grammar is **ambiguous** if some string has two different parse trees. The simpler-looking grammar
+
+$$
+E\rightarrow E+E \mid E*E \mid \text{num}
+$$
+
+generates the same strings as the layered grammar above, but `2+3*4` has two parse trees: one groups it as `2+(3*4)`, the other as `(2+3)*4`.
+
+<Callout type="pitfall">
+Ambiguity is a property of the grammar, not just of the language. The two trees for `2+3*4` evaluate to 14 and 20, so a compiler built on an ambiguous grammar has no single meaning for the program. Language designers remove ambiguity by layering nonterminals, as with $E$, $T$, $F$, or by stating precedence and associativity rules to the parser generator.
+</Callout>
+
+## Pushdown automata: grammars as machines
+
+Just as regular expressions correspond to finite automata, context-free grammars correspond to **pushdown automata (PDAs)**: finite automata extended with a stack. A language is context-free exactly when some (nondeterministic) PDA recognizes it.
+
+The stack supplies the missing memory, in a restricted form. To recognize $a^nb^n$, a PDA pushes a marker for each `a`, pops one for each `b`, and accepts if the stack is empty exactly when the input ends. Nested structure maps naturally to a stack, because the most recently opened structure is always the first one that must be closed.
+
+## The limits of context-free grammars
+
+A stack can match one count against another, but only in last-in, first-out order. The language
+
+$$
+\{a^n b^n c^n \mid n \ge 0\}
+$$
+
+is not context-free: after the `b`s have been matched against the `a`s by popping, the count is gone and nothing remains to compare with the `c`s. The **pumping lemma for context-free languages** proves this formally. Recognizing it needs a [Turing machine](../turing-machines/), which can read and rewrite its memory freely.
+
+These levels form the **Chomsky hierarchy**:
+
+| Language class | Grammar rules | Recognizing machine | Example |
+| --- | --- | --- | --- |
+| Regular | $A\rightarrow aB$ or $A\rightarrow a$ | Finite automaton | $(a\mid b)^*abb$ |
+| Context-free | $A\rightarrow$ any string | Pushdown automaton | $a^nb^n$, balanced parentheses |
+| Context-sensitive | $\alpha A\beta\rightarrow\alpha\gamma\beta$ | Linear-bounded automaton | $a^nb^nc^n$ |
+| Recursively enumerable | Unrestricted | Turing machine | Halting programs |
+
+Each class strictly contains the one above it.
+
+## Grammars in practice
+
+<Callout type="practice">
+The syntax of nearly every programming language, data format, and protocol message is specified with a context-free grammar, usually written in BNF or EBNF notation. Parser generators such as yacc, Bison, and ANTLR turn such a grammar into a parser automatically.
+</Callout>
+
+General CFG parsing algorithms, such as CYK and Earley, handle any grammar in $O(n^3)$ time. Practical parsers restrict the grammar to deterministic subclasses, such as LL and LR, that can be parsed in linear time. The simplest hand-written approach, **recursive descent**, turns each nonterminal into a function that calls the functions for the symbols on its right-hand side:
+
+```python
+import re
+
+def parse(src):
+    tokens = re.findall(r"\d+|[-+*/()]", src)
+    pos = 0
+
+    def peek():
+        return tokens[pos] if pos < len(tokens) else None
+
+    def eat():
+        nonlocal pos
+        pos += 1
+        return tokens[pos - 1]
+
+    # E -> E + T | T, written as a loop: left recursion would make the function call itself forever.
+    def expr():
+        value = term()
+        while peek() == "+":
+            eat()
+            value += term()
+        return value
+
+    # T -> T * F | F: one level deeper than E, so * binds tighter than +.
+    def term():
+        value = factor()
+        while peek() == "*":
+            eat()
+            value *= factor()
+        return value
+
+    # F -> ( E ) | num: the recursion back to E is what allows arbitrary nesting.
+    def factor():
+        if peek() == "(":
+            eat()
+            value = expr()
+            eat()  # the closing ")"
+            return value
+        return int(eat())
+
+    return expr()
+
+print(parse("2+3*4"))    # 14
+print(parse("(2+3)*4"))  # 20
+```
+
+The call stack of the running parser plays the role of the pushdown automaton's stack: each nested parenthesis is one more pending call to `expr`.
