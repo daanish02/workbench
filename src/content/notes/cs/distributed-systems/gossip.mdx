@@ -1,0 +1,98 @@
+---
+title: "Gossip Protocols"
+description: "Epidemic-style information spreading without a central coordinator."
+order: 10
+tier: core
+takeaways:
+  - "In a **gossip protocol** each node periodically tells a few random peers what it knows; information spreads like an epidemic."
+  - "Spread takes about **log n rounds**: doubling the cluster adds roughly one round, and no node is a bottleneck."
+  - "Gossip is **robust**: no single point of failure, and lost messages are repaired by later rounds."
+  - "It gives **eventual** consistency only, and is used for membership, failure detection and anti-entropy (Cassandra, Consul, Dynamo)."
+resources:
+  - title: "Gossip protocol (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Gossip_protocol"
+  - title: "SWIM: Scalable Weakly-consistent Infection-style Membership"
+    url: "https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf"
+    note: "The failure-detection and membership protocol behind Consul and others."
+  - title: "Epidemic Algorithms for Replicated Database Maintenance"
+    url: "https://www.cs.cornell.edu/home/rvr/papers/flowgossip.pdf"
+    note: "The 1987 Xerox paper that introduced gossip for databases."
+---
+
+How does a cluster of a thousand machines find out that one of them joined, died, or changed a setting? A central server would be a bottleneck and a single point of failure; broadcasting to everyone costs $O(n)$ messages from one sender. **Gossip** (or epidemic) protocols take a different approach, modelled on how rumours or diseases spread: every node periodically picks a few random peers and shares what it knows. No node coordinates anything, yet within a handful of rounds everyone has heard.
+
+## The Basic Mechanism
+
+Every few hundred milliseconds, each node:
+
+1. Picks one or more random peers (the **fanout**).
+2. Exchanges information with them.
+3. Merges what it receives with its own state.
+
+Three exchange styles:
+
+- **Push:** the node sends its news to the peer. Fast at the start, when few nodes know anything.
+- **Pull:** the node asks the peer for news. Fast at the end, when most nodes know and the few that don't ask.
+- **Push-pull:** both directions. Converges fastest, and is the usual choice.
+
+Try it, and watch how the number of rounds changes with the cluster size:
+
+<GossipSpread />
+
+## Why It Takes log n Rounds
+
+Each round, every informed node tells others. Early on the number of informed nodes roughly **doubles** each round (1, 2, 4, 8...), as in any exponential spread. So reaching $n$ nodes takes about $\log_2 n$ rounds, plus a few extra rounds for the last stragglers that random choice happens to miss.
+
+$$\text{rounds} \approx \log_2 n + O(\log\log n)$$
+
+In words: a cluster 1,000 times bigger needs only about 10 more rounds. Measure it:
+
+```python
+import math
+import random
+random.seed(3)
+
+
+def rounds_to_infect(n, fanout):
+    infected = {0}
+    r = 0
+    while len(infected) < n:
+        new = set()
+        for _ in infected:
+            new.update(random.sample(range(n), fanout))   # each informed node tells `fanout` random peers
+        infected |= new
+        r += 1
+    return r
+
+
+for n in (100, 1000, 10000):
+    avg = sum(rounds_to_infect(n, 2) for _ in range(20)) / 20
+    print(f"n={n:>6}: {avg:.1f} rounds (log2 n = {math.log2(n):.1f})")
+# n=   100: 7.2 rounds (log2 n = 6.6)
+# n=  1000: 10.9 rounds (log2 n = 10.0)
+# n= 10000: 13.9 rounds (log2 n = 13.3)
+```
+
+Ten times more nodes costs about three more rounds, and each node still sends the same small, constant amount of traffic per round.
+
+<Callout type="key">
+Gossip trades **speed and certainty** for **scalability and robustness**. Convergence is probabilistic and takes a few rounds, but the load per node does not grow with the cluster, and there is no node whose failure breaks the mechanism.
+</Callout>
+
+## What Gossip Is Used For
+
+- **Membership and failure detection.** Nodes gossip a list of who is alive. In **SWIM**, each node periodically pings a random peer; if no answer, it asks a few others to ping on its behalf (to separate a dead node from a bad link), and spreads confirmed failures by piggybacking on later messages. Used in Consul, Serf and similar tools.
+- **Anti-entropy.** Replicas periodically compare data and repair differences, often by exchanging hash summaries (**Merkle trees**) to find what differs without sending everything. Used by Cassandra and Dynamo (see [Replication](../replication/)).
+- **Aggregation.** Computing a cluster-wide average, sum or count by repeatedly averaging with random peers.
+- **Configuration and metadata spread,** such as a node announcing its token ranges or load.
+
+## Limits
+
+- **Eventual only.** At any instant different nodes may hold different views. There is no guarantee about who knows what *right now*.
+- **Redundant traffic.** The same news is delivered to many nodes repeatedly. Production systems stop spreading an item after it has been received a few times already.
+- **Needs conflict rules.** If two nodes learn contradictory facts, the protocol alone cannot choose; version numbers or [vector clocks](../clocks/) are attached to each item.
+- **Not for decisions.** Gossip cannot make a group *agree* on one value; that is the job of [consensus](../consensus/). The usual split is gossip for the many, loosely accurate facts (who is alive) and consensus for the few critical ones (who is leader).
+
+<Callout type="practice">
+Choose gossip when you need cluster-wide knowledge that can be a little stale, at a scale where central coordination would hurt. Choose consensus when everyone must agree on a single answer.
+</Callout>

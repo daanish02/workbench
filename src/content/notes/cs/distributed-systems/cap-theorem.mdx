@@ -1,0 +1,102 @@
+---
+title: "CAP Theorem"
+description: "Consistency, availability, partition tolerance, and why you can't have all three."
+order: 2
+tier: core
+takeaways:
+  - "When a network **partition** splits a system, it must choose: refuse some requests (**consistency**) or answer from possibly stale data (**availability**)."
+  - "Partitions are not optional in a real network, so the true choice is **CP or AP**, made only while a partition lasts."
+  - "CAP's \"consistency\" means **linearizability** (reads see the latest write), not the \"C\" in ACID."
+  - "**PACELC** adds that even without a partition there is a trade-off between **latency** and consistency."
+resources:
+  - title: "Brewer: CAP Twelve Years Later"
+    url: "https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/"
+    note: "The original author clarifying that \"pick two\" was misleading."
+  - title: "Gilbert and Lynch: the formal proof"
+    url: "https://users.ece.cmu.edu/~adrian/731-sp04/readings/GL-cap.pdf"
+    note: "The 2002 paper that proved the conjecture. Short and readable."
+  - title: "Jepsen: consistency models map"
+    url: "https://jepsen.io/consistency"
+    note: "Where linearizability sits among the other guarantees."
+---
+
+The **CAP theorem** describes a fundamental trade-off for replicated data: when a network partition prevents nodes from communicating, a system cannot guarantee both a consistent answer and an answer to every request. The three properties are **Consistency**, **Availability** and **Partition tolerance**. The common shorthand says a system can have only two of three, but the precise result is narrower: *during a partition*, you must give up one of consistency or availability. Network failures are unavoidable, so the real design question is how the system behaves when communication breaks.
+
+## The Three Properties
+
+- **Consistency** means every successful read returns the most recent successful write, or an error. This is **linearizability** (see [Consistency Models](../consistency-models/)): the system behaves as if there were one copy of the data. It is *not* the same as the "C" in ACID, which means preserving a database's invariants.
+- **Availability** means every request sent to a non-failing node eventually receives a non-error response. The response need not be the newest data; a stale answer still counts as available.
+- **Partition tolerance** means the system keeps operating despite messages being dropped or delayed between groups of nodes. A partition splits the cluster into groups that cannot talk, even though every machine is still running.
+
+## Why a Partition Forces the Choice
+
+Three replicas store a balance of 100. A partition cuts replica C off from A and B. A client writes 50 through A. Another client then reads from C.
+
+C cannot know whether a newer write happened on the other side. It has exactly two options:
+
+- **Answer with 100.** The system stays available, but the answer is stale: consistency is lost.
+- **Refuse (or wait).** The answer is never wrong, but a working node declined a request: availability is lost.
+
+There is no third option. No cleverness inside C can produce information that has not reached it. Try both policies:
+
+<CapExplorer />
+
+Notice that under the consistency-first policy, the majority side (A and B) kept working. Only the isolated minority gave up. That is how real CP systems behave: they stay available to whoever can still form a majority.
+
+<Callout type="key">
+CAP is not a menu where you permanently pick two features. It describes what happens **only during a partition**. In normal operation a system can be both consistent and available; the trade-off is forced when the network fails.
+</Callout>
+
+## Why "Pick Two" Misleads
+
+- **CA** (consistent and available, no partition tolerance) describes a system that assumes the network never fails. For machines connected by a network that is not a real option; a single-node database is "CA" only because it is not distributed.
+- **CP** keeps its consistency guarantee during a partition, and the nodes that cannot confirm the latest state refuse or wait. Examples: systems built on consensus such as etcd and ZooKeeper.
+- **AP** keeps answering during a partition, and reconciles divergent copies afterwards. Examples: Dynamo-style stores such as Cassandra when configured for availability.
+
+A system is not stuck with one label. The same product can behave as CP for payments and AP for a "likes" counter, and many databases let you pick per request.
+
+## What the Choice Looks Like
+
+| Data | Cost of a stale read | Cost of an error | Likely choice |
+| --- | --- | --- | --- |
+| Account balance, inventory count | Overspending, overselling | A retry later | **CP** |
+| Social media feed, view counters | A post shows up seconds late | Blank page, lost engagement | **AP** |
+| Shopping cart | Item briefly missing | Customer cannot add items | **AP**, with merge on reconcile |
+| Distributed lock, leader identity | Two nodes believe they lead | Brief unavailability | **CP** |
+
+The test is simple: ask what costs more, a wrong answer or no answer.
+
+```python
+# Two replicas of one value. During a partition, each can only answer from local state.
+class Replica:
+    def __init__(self, mode):
+        self.value, self.mode = 100, mode      # mode: "CP" or "AP"
+
+    def read(self, partitioned):
+        if partitioned and self.mode == "CP":
+            raise TimeoutError("cannot confirm latest value")   # choose consistency
+        return self.value                                       # choose availability
+
+
+for mode in ("CP", "AP"):
+    a, b = Replica(mode), Replica(mode)
+    a.value = 50                                  # write lands on A; B never hears about it
+    try:
+        print(mode, "-> B returns", b.read(partitioned=True))
+    except TimeoutError as e:
+        print(mode, "-> B refuses:", e)
+# CP -> B refuses: cannot confirm latest value
+# AP -> B returns 100
+```
+
+## Beyond CAP: PACELC
+
+CAP says nothing about the common case when no partition exists. **PACELC** extends it: if there is a **P**artition, choose between **A**vailability and **C**onsistency; **E**lse, when running normally, choose between **L**atency and **C**onsistency.
+
+The second half matters every day. A strongly consistent read may have to contact the leader or a quorum of replicas, which takes extra round trips. A system that reads from the nearest replica is faster but may serve slightly older data, even when nothing is broken.
+
+<Callout type="pitfall">
+CAP's definition of availability is strict ("every non-failing node answers") and its consistency is strict (linearizability). Real products advertise "highly available" and "consistent" loosely, so treat marketing labels as a prompt to ask: *what exactly happens during a partition, and what do stale reads look like?*
+</Callout>
+
+The spectrum between "linearizable" and "eventually consistent" is the subject of the next note, [Consistency Models](../consistency-models/). The mechanics of keeping copies in step are in [Replication](../replication/).

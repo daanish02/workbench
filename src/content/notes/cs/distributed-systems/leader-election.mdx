@@ -1,0 +1,95 @@
+---
+title: "Leader Election"
+description: "How a distributed system picks a coordinator, and what happens when it fails."
+order: 6
+tier: core
+takeaways:
+  - "A **leader** simplifies coordination by giving one node the authority to order writes or assign work; **election** picks it, and re-picks it when it fails."
+  - "Election needs **failure detection**: followers assume the leader is dead after a timeout, which can be wrong."
+  - "**Split brain** (two nodes both acting as leader) is the dangerous failure; majority votes and terms prevent it."
+  - "A paused or partitioned old leader may not know it was replaced: use **fencing tokens** so storage rejects its stale writes."
+resources:
+  - title: "Raft visualisation"
+    url: "https://thesecretlivesofdata.com/raft/"
+    note: "Watch election and re-election step by step."
+  - title: "Martin Kleppmann: How to do distributed locking"
+    url: "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+    note: "Why leases alone are unsafe and how fencing tokens fix it."
+  - title: "Leader election (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Leader_election"
+---
+
+Many distributed designs work far more simply with a **leader**: one node that orders writes, hands out work, or owns a resource, while others follow. **Leader election** is the process by which the group chooses that node, and chooses a new one when it fails. Two properties matter above all: there should be **at most one leader at a time** (safety), and when the leader dies, a new one should appear **quickly** (liveness). The danger is not having no leader for a moment, but having two.
+
+## When Is a Leader Needed
+
+- A database primary that accepts writes (see [Replication](../replication/)).
+- A [consensus](../consensus/) group's coordinator, which orders the log.
+- A scheduler that assigns jobs, so two workers do not run the same job.
+- A single owner of a shared resource, such as a cron-like task that must run once.
+
+## Detecting a Dead Leader
+
+Followers cannot see a crash; they only notice **silence**. The leader sends periodic **heartbeats**, and a follower that hears nothing for a **timeout** starts an election. This is a guess (see [Fault Tolerance](../fault-tolerance/)): the leader may be merely slow, paused, or cut off by the network. A short timeout recovers fast but triggers needless elections; a long one is stable but leaves the system leaderless longer.
+
+## Election Algorithms
+
+**Bully algorithm.** Every node has a numeric ID. A node that suspects the leader sends an election message to all higher IDs; if none reply, it declares itself leader. The highest living ID always wins. Simple, but it assumes reliable failure detection and a stable network, and it does not handle partitions safely.
+
+**Ring algorithm.** Nodes form a logical ring and pass an election message carrying the best ID seen; when it returns to the originator, the highest ID becomes leader. Costs $O(n)$ messages.
+
+**Voting with terms (Raft).** Used in practice today. Time is cut into numbered **terms**. A follower whose timeout fires becomes a **candidate**, increments the term, votes for itself and asks everyone for votes. Each node votes **at most once per term**, so a candidate needs a **majority** to win. Two candidates in the same term can split the vote and no one wins; they simply retry after new **random** timeouts, which makes repeated collisions unlikely.
+
+Watch it happen. Kill the leader and observe a new term begin; then crash enough nodes that no majority exists:
+
+<RaftElection />
+
+<Callout type="key">
+**Terms** order leaders in time, and **majority votes** make sure at most one candidate wins each term. A node that sees a higher term immediately steps down, so a stale leader stops itself as soon as it hears from anyone newer.
+</Callout>
+
+## Split Brain and the Zombie Leader
+
+The worst outcome is **split brain**: two nodes both believe they are leader and accept conflicting writes. It happens when a partition or a long pause makes the old leader look dead while it is in fact alive.
+
+Consider a leader that holds a **lease** (permission to lead until a deadline, renewed by heartbeats). It pauses for ten seconds (a garbage-collection stall, a VM freeze). Its lease expires, a new leader is elected, and then the old one wakes up still convinced it leads, and writes. Majority voting does not stop that write by itself, because the old leader never asked anyone.
+
+The fix is a **fencing token**: each election issues a monotonically increasing number, and the leader attaches it to every request. The storage layer remembers the highest token it has seen and rejects anything older.
+
+```python
+# Fencing tokens: a stale leader's writes are rejected because storage remembers the highest token seen.
+class Storage:
+    def __init__(self):
+        self.max_token = 0
+        self.value = None
+
+    def write(self, token, value):
+        if token < self.max_token:
+            return f"rejected (token {token} < {self.max_token})"
+        self.max_token, self.value = token, value
+        return "ok"
+
+
+s = Storage()
+print("leader #33 writes:", s.write(33, "a"))
+# leader #33 pauses (GC, network); its lease expires; leader #34 is elected
+print("leader #34 writes:", s.write(34, "b"))
+print("leader #33 wakes up and writes:", s.write(33, "stale"))
+print("final value:", s.value)
+# leader #33 writes: ok
+# leader #34 writes: ok
+# leader #33 wakes up and writes: rejected (token 33 < 34)
+# final value: b
+```
+
+<Callout type="pitfall">
+A lock with an expiry time is **not** enough to guarantee exclusive access: clocks drift and processes pause, so a holder can keep acting after its lease ended. The resource being protected must check a fencing token (or the term number) itself.
+</Callout>
+
+## Delegating the Problem
+
+Implementing election correctly is subtle, so most applications do not. They run a small [consensus](../consensus/) cluster (ZooKeeper, etcd, Consul) and use its primitives: create an ephemeral key or hold a lease, and whoever holds it is leader. If the holder dies, the key expires and others compete for it. [Consensus in Practice](../consensus-in-practice/) shows that pattern.
+
+<Callout type="practice">
+Prefer "lease in a consensus store plus fencing tokens" over hand-rolled election. Always ask what the old leader can still do after it has been replaced, and make the answer "nothing".
+</Callout>

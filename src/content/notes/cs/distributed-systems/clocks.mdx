@@ -1,0 +1,133 @@
+---
+title: "Clocks & Time"
+description: "Physical clock drift, Lamport timestamps, and vector clocks."
+order: 8
+tier: core
+takeaways:
+  - "Physical clocks **drift** and are only loosely synchronised, so you cannot order events on different machines by wall-clock time."
+  - "What matters is **causality**: event A **happened before** B if A could have influenced B (same process, or a message links them)."
+  - "A **Lamport clock** is a counter that respects causality: if A happened before B, then L(A) < L(B). The reverse does not hold."
+  - "A **vector clock** keeps one counter per process and can tell **before**, **after** and **concurrent** apart."
+resources:
+  - title: "Lamport: Time, Clocks, and the Ordering of Events"
+    url: "https://lamport.azurewebsites.net/pubs/time-clocks.pdf"
+    note: "The 1978 paper that defined happened-before. Still the best explanation."
+  - title: "Vector clock (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Vector_clock"
+  - title: "Spanner: Google's globally distributed database"
+    url: "https://research.google/pubs/spanner-googles-globally-distributed-database-2/"
+    note: "Uses atomic clocks and GPS (TrueTime) to bound clock uncertainty."
+---
+
+Ordering events seems to need only a clock: whichever happened at the smaller time came first. In a distributed system this fails, because every machine has its own clock and they disagree. Distributed algorithms therefore replace "what time did it happen?" with the question that actually matters, "**could one event have caused the other?**", and track it with **logical clocks**.
+
+## Physical Clocks Drift
+
+A computer's clock is driven by a quartz crystal whose frequency varies with temperature and age. Typical drift is on the order of tens of microseconds per second, which accumulates to several seconds per day if never corrected. **NTP** (Network Time Protocol) periodically adjusts clocks against reference servers, but network delay limits accuracy to roughly milliseconds on the internet and sometimes tens of milliseconds or worse. Clocks can even jump **backwards** when corrected.
+
+Consequences for software:
+
+- Timestamps from two machines cannot be compared to decide which write was "last" without risking silent data loss (the weakness of last-writer-wins in [Replication](../replication/)).
+- Elapsed time should be measured with a **monotonic clock**, which never goes backwards, not with wall-clock time.
+- Lease and timeout logic must allow for clock error (see [Leader Election](../leader-election/)).
+
+Some systems buy better clocks. Google's Spanner uses GPS receivers and atomic clocks to give each timestamp an explicit **uncertainty interval**, and waits out that interval before committing so that timestamps order transactions correctly.
+
+## Happened-Before
+
+Lamport defined a partial order on events, written $a \to b$ ("$a$ happened before $b$"):
+
+1. If $a$ and $b$ occur on the **same process** and $a$ comes first, then $a \to b$.
+2. If $a$ is the **sending** of a message and $b$ is its **receipt**, then $a \to b$.
+3. It is **transitive**: if $a \to b$ and $b \to c$ then $a \to c$.
+
+Two events with no such chain are **concurrent**, written $a \parallel b$: neither could have influenced the other. This is a *partial* order, since concurrent pairs are not ordered at all. And it is physical-time independent: it reflects only what information could have flowed.
+
+## Lamport Clocks
+
+A **Lamport clock** is a single integer counter per process.
+
+- Before each local event or send, increment the counter.
+- Attach the counter to every message.
+- On receive, set the counter to $\max(\text{local}, \text{received}) + 1$.
+
+This guarantees $a \to b \implies L(a) < L(b)$. In words: if one event could have caused another, its number is smaller. The reverse is false: $L(a) < L(b)$ does **not** mean $a \to b$. Two concurrent events get arbitrary numbers, so a Lamport timestamp alone cannot reveal concurrency. Breaking ties by process ID gives a **total order** consistent with causality, which is useful for deterministic ordering (for example in a replicated log) but not for detecting conflicts.
+
+## Vector Clocks
+
+To detect concurrency, keep **one counter per process**. A process $i$'s vector $V$ has an entry $V[j]$ for every process $j$: "the number of events of $j$ that I know about".
+
+- On a local event or send, increment $V[i]$.
+- On receive of a vector $W$, set $V[j] = \max(V[j], W[j])$ for every $j$, then increment $V[i]$.
+
+Compare two vectors $A$ and $B$ entry by entry:
+
+$$A \to B \iff A \le B \text{ (every entry)} \text{ and } A \ne B$$
+
+In words: $A$ happened before $B$ exactly when $B$ already knew everything $A$ knew. If neither vector is $\le$ the other, the events are **concurrent**.
+
+Build a history yourself. Add a message from P0 to P1 and an unrelated event on P2, then click two events:
+
+<VectorClockSim />
+
+```python
+class Proc:
+    def __init__(self, i, n):
+        self.i, self.l, self.v = i, 0, [0] * n
+
+    def local(self):
+        self.l += 1
+        self.v[self.i] += 1
+
+    def send(self):
+        self.local()
+        return self.l, self.v[:]
+
+    def recv(self, msg):
+        l, v = msg
+        self.l = max(self.l, l) + 1                      # Lamport: jump past the sender's clock
+        self.v = [max(a, b) for a, b in zip(self.v, v)]  # vector: merge, then tick own slot
+        self.v[self.i] += 1
+
+
+def compare(a, b):
+    if a == b:
+        return "equal"
+    if all(x <= y for x, y in zip(a, b)):
+        return "before"
+    if all(x >= y for x, y in zip(a, b)):
+        return "after"
+    return "concurrent"
+
+
+p = [Proc(i, 3) for i in range(3)]
+p[0].local()
+m = p[0].send()
+p[1].recv(m)                                           # P0 -> P1
+p[2].local()                                           # P2 acts independently
+print("Lamport:", [q.l for q in p])
+print("vectors:", [q.v for q in p])
+print("P0 send vs P1 recv:", compare(m[1], p[1].v))    # causally ordered
+print("P1 vs P2:", compare(p[1].v, p[2].v))            # Lamport says 3 vs 1, vectors say concurrent
+# Lamport: [2, 3, 1]
+# vectors: [[2, 0, 0], [2, 1, 0], [0, 0, 1]]
+# P0 send vs P1 recv: before
+# P1 vs P2: concurrent
+```
+
+The Lamport clocks say P1's event (3) is "after" P2's (1), implying an order that does not exist. The vectors show the truth: concurrent.
+
+<Callout type="key">
+Lamport clocks give **ordering consistent with causality**; vector clocks give **exact causality**, including detecting concurrency. The price of vector clocks is size: one entry per process.
+</Callout>
+
+## Where They Are Used
+
+- **Conflict detection** in leaderless databases such as Dynamo: if two versions of a key have concurrent vector clocks, both are kept and the application merges them (see [Replication](../replication/)).
+- **Causal consistency:** delivering a message only after the messages it depends on (see [Consistency Models](../consistency-models/)).
+- **Ordering in logs and debugging tools:** distributed tracing uses causal IDs for the same reason (see [Observability](../../software-engineering/observability/)).
+- **Hybrid logical clocks (HLC)** combine a physical timestamp with a logical counter, giving timestamps that are close to real time and still respect causality. Several databases use them.
+
+<Callout type="pitfall">
+Never use `now()` from two machines to decide which update "won". Use a causal mechanism (version vectors, a single leader assigning sequence numbers), or accept explicitly that last-writer-wins can drop a legitimate write.
+</Callout>

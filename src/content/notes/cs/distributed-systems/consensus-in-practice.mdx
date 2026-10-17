@@ -1,0 +1,117 @@
+---
+title: "Consensus in Practice"
+description: "Quorum systems, and the role tools like ZooKeeper and etcd play."
+order: 11
+tier: optional
+takeaways:
+  - "A **quorum** is the minimum number of nodes that must take part in an operation; overlapping quorums are what make decisions stick."
+  - "**Majority quorums** need ⌊N/2⌋ + 1 nodes; with tunable read and write quorums, W + R > N guarantees a read meets the latest write."
+  - "Use an odd cluster size: 4 nodes tolerate no more failures than 3, and cost more."
+  - "**ZooKeeper and etcd** run consensus once so your applications don't have to: configuration, locks, leader election and service discovery."
+resources:
+  - title: "etcd: why etcd"
+    url: "https://etcd.io/docs/latest/learning/why/"
+    note: "What a consensus-backed key-value store is for, and when not to use it."
+  - title: "Apache ZooKeeper overview"
+    url: "https://zookeeper.apache.org/doc/current/zookeeperOver.html"
+    note: "The data model, watches and guarantees."
+  - title: "Quorum (distributed computing) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Quorum_(distributed_computing)"
+---
+
+[Consensus](../consensus/) protocols are intricate, and almost no application should implement one. In practice, engineers meet consensus in two forms: as **quorums**, the voting arithmetic inside replicated databases, and as **coordination services** (ZooKeeper, etcd, Consul), small clusters that run consensus on behalf of larger systems. This note covers both, and the practical rules that follow.
+
+## Quorums
+
+A **quorum** is the minimum number of nodes whose participation is required for an operation to count. The trick that makes it work is **overlap**: if any two quorums must share a node, a later operation always contacts a node that saw the earlier one.
+
+### Majority quorums
+
+The simplest quorum is a strict majority, $\lfloor N/2 \rfloor + 1$ of $N$ nodes. Any two majorities intersect, so two conflicting decisions can never both gather a quorum. Failure tolerance follows:
+
+| Nodes $N$ | Majority needed | Failures tolerated |
+| --- | --- | --- |
+| 1 | 1 | 0 |
+| 2 | 2 | 0 |
+| 3 | 2 | 1 |
+| 4 | 3 | 1 |
+| 5 | 3 | 2 |
+| 7 | 4 | 3 |
+
+<Callout type="pitfall">
+Even-sized clusters are a trap. Going from 3 to 4 nodes tolerates **no extra failure** (still just 1) while adding a node to maintain, and a 2-2 network split leaves **neither** side with a majority. Use 3, 5 or 7.
+</Callout>
+
+### Tunable read and write quorums
+
+Leaderless stores such as Cassandra let you choose how many replicas must acknowledge a write ($W$) and be consulted for a read ($R$) out of $N$. The rule from [Replication](../replication/):
+
+$$W + R > N$$
+
+In words: when the write set and the read set together are larger than the cluster, they must share at least one node, so every read sees the latest acknowledged write. Explore the settings, and click nodes to fail them:
+
+<QuorumGrid />
+
+The knobs trade speed for safety:
+
+- $W=N, R=1$: fast reads, writes blocked by any single failure.
+- $W=1, R=N$: fast writes, reads blocked by any failure.
+- $W=R=\lfloor N/2 \rfloor + 1$: balanced, survives minority failures on both paths. Usual default.
+- $W+R \le N$: fastest and most available, but reads may be stale (eventual consistency).
+
+You can verify the overlap claim exhaustively on small clusters:
+
+```python
+from itertools import combinations
+
+
+def overlaps(n, w, r):
+    nodes = range(n)
+    return all(set(W) & set(R) for W in combinations(nodes, w) for R in combinations(nodes, r))
+
+
+for n, w, r in [(3, 2, 2), (3, 1, 1), (5, 3, 3), (5, 2, 4), (5, 2, 3)]:
+    print(f"n={n} w={w} r={r}: w+r>n is {str(w + r > n):5} -> every read sees the latest write: {overlaps(n, w, r)}")
+# n=3 w=2 r=2: w+r>n is True  -> every read sees the latest write: True
+# n=3 w=1 r=1: w+r>n is False -> every read sees the latest write: False
+# n=5 w=3 r=3: w+r>n is True  -> every read sees the latest write: True
+# n=5 w=2 r=4: w+r>n is True  -> every read sees the latest write: True
+# n=5 w=2 r=3: w+r>n is False -> every read sees the latest write: False
+```
+
+A subtlety: even when the sets overlap, quorums alone do not make a system fully linearizable. Concurrent writes, sloppy quorums (writing to substitute nodes while the real ones are down) and clock-based conflict resolution can all still produce stale reads. Quorum overlap is necessary, not sufficient.
+
+## Coordination Services
+
+Most applications need a few pieces of data that must be right: which node is the leader, what the current configuration is, who holds a lock. Rather than each application implementing consensus, they store that data in a small, strongly consistent cluster:
+
+- **ZooKeeper** (Apache; uses its own protocol, Zab, similar to Raft). Exposes a hierarchical tree of small nodes called **znodes**.
+- **etcd** (uses Raft). A key-value store; Kubernetes keeps all of its cluster state here.
+- **Consul** (Raft for the core, gossip for membership). Adds service discovery and health checks.
+
+They offer a small set of primitives, from which the usual coordination tasks are built:
+
+| Primitive | Used for |
+| --- | --- |
+| **Linearizable reads and writes** of small values | Shared configuration, feature flags |
+| **Ephemeral keys / leases** that vanish when the owner's session dies | Failure detection, leader election, locks |
+| **Watches** (get notified when a key changes) | Reacting to config or membership changes without polling |
+| **Compare-and-swap / transactions** | Safe lock acquisition, unique ID assignment |
+| **Ordered (sequential) keys** | Queues, fair locks |
+
+A leader election with these: every candidate tries to create the same ephemeral key; exactly one succeeds and is leader; the others **watch** the key and race again when it disappears. Combine with a [fencing token](../leader-election/) (the key's revision number) to make stale leaders harmless.
+
+<Callout type="key">
+These services give **strong consistency for small, rarely changed data**. They are *not* general-purpose databases: every write goes through a single leader and a majority round trip, the data set must fit in memory, and they stop accepting writes without a majority (the CP choice from [CAP](../cap-theorem/)).
+</Callout>
+
+## Operating Them
+
+- **Cluster of 3 or 5.** Keep them on separate machines and in separate failure domains (zones), but in the same region: every write waits for a majority round trip.
+- **Keep payloads small and write rates low.** Hundreds of thousands of writes per second are not the use case.
+- **Treat the cluster as critical infrastructure.** Losing a majority halts everything that depends on it, and so it needs monitoring, backups and tested restores.
+- **Clients must handle disconnects.** A session can expire while the client is partitioned; code that assumed it still held a lock must check (this is the zombie-leader problem again).
+
+<Callout type="practice">
+Before adding a coordination service, check whether your database already provides what you need, for instance a row lock or `SELECT ... FOR UPDATE`, or a managed lease primitive. Add ZooKeeper or etcd only when several independent processes truly must agree on something.
+</Callout>

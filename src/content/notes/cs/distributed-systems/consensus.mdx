@@ -1,0 +1,129 @@
+---
+title: "Consensus"
+description: "Paxos and Raft at a conceptual level, and why agreeing on anything across machines is hard."
+order: 5
+tier: core
+takeaways:
+  - "**Consensus** gets several machines to agree on one value (or one ordered log), even when some crash and messages are delayed."
+  - "A correct protocol must be **safe** (never two different decisions) and, when conditions allow, **live** (eventually decides)."
+  - "The **FLP result** shows no deterministic protocol can guarantee both in a fully asynchronous network; real protocols give up guaranteed liveness, never safety."
+  - "**Majority quorums** are the trick: any two majorities overlap, so a new decision always meets the previous one."
+  - "**Raft** was designed to be understandable: elect a leader, replicate a log, commit when a majority has it."
+resources:
+  - title: "The Raft website and paper"
+    url: "https://raft.github.io/"
+    note: "Interactive visualisation, the paper, and implementations in many languages."
+  - title: "Raft: The Secret Lives of Data"
+    url: "https://thesecretlivesofdata.com/raft/"
+    note: "A step-by-step animated walk-through of leader election and log replication."
+  - title: "Lamport: Paxos Made Simple"
+    url: "https://lamport.azurewebsites.net/pubs/paxos-simple.pdf"
+    note: "The author's own short explanation."
+---
+
+**Consensus** is the problem of getting a group of machines to agree on a single value, even though some may crash and messages may be delayed, duplicated or lost. It sounds trivial: ask everyone and count. It is hard because there is no reliable way to know who is alive, and no moment at which everyone sees the same thing. Consensus is nonetheless the foundation of the strongest guarantees in distributed systems: electing a leader, ordering writes so every replica applies them identically, and committing a transaction all reduce to agreeing on something.
+
+## What a Consensus Protocol Must Guarantee
+
+- **Agreement (safety):** no two nodes decide different values.
+- **Validity (safety):** the decided value was proposed by someone, not invented.
+- **Termination (liveness):** every working node eventually decides.
+
+Safety means "nothing bad happens"; liveness means "something good eventually happens". Real protocols treat them differently, for a reason explained next.
+
+## Why It Is Hard: FLP
+
+Imagine two generals who must agree on an attack time using unreliable messengers; no number of confirmations ever makes both certain. In a distributed system the equivalent difficulty is: you cannot distinguish a crashed node from a slow one.
+
+The **FLP impossibility result** (Fischer, Lynch, Paterson, 1985) proves that in a fully asynchronous network, no deterministic protocol can guarantee termination if even one node may crash. In practice this means protocols guarantee **safety always** and **liveness only when the network behaves for long enough** (messages arrive within some unknown bound, which real networks nearly always eventually satisfy). They may stall during bad periods; they never decide wrongly.
+
+## The Key Idea: Majorities Overlap
+
+Require a decision to be accepted by a **majority** (more than half) of $N$ nodes. Any two majorities share at least one node:
+
+$$\left\lfloor \tfrac{N}{2} \right\rfloor + 1 + \left\lfloor \tfrac{N}{2} \right\rfloor + 1 > N$$
+
+In words: two groups that each hold more than half of the nodes cannot be disjoint. So a later round that contacts a majority is guaranteed to hear from at least one node that took part in any earlier decision, and can learn what was decided. It also explains the failure budget: a cluster of $N=2f+1$ nodes tolerates $f$ crashes (5 nodes survive 2).
+
+## Paxos
+
+**Paxos** (Lamport) decides one value using three roles, often played by the same machines: **proposers** suggest values, **acceptors** vote, **learners** find out the result. Each proposal carries a unique, increasing number $n$.
+
+1. **Prepare.** A proposer picks $n$ and asks acceptors to *promise* not to accept anything numbered below $n$. Each reply also reports the highest-numbered value it has already accepted.
+2. **Accept.** If a majority promise, the proposer sends `accept(n, v)`. The value $v$ must be the one from the highest-numbered reply, if any, otherwise the proposer's own. This rule preserves earlier decisions.
+3. **Chosen.** Once a majority accepts, the value is chosen forever.
+
+```python
+# Single-decree Paxos, one process, three acceptors. Two proposers collide; a value still gets chosen once.
+class Acceptor:
+    def __init__(self):
+        self.promised = 0
+        self.accepted = (0, None)
+
+    def prepare(self, n):
+        if n > self.promised:
+            self.promised = n
+            return True, self.accepted
+        return False, None
+
+    def accept(self, n, v):
+        if n >= self.promised:
+            self.promised = n
+            self.accepted = (n, v)
+            return True
+        return False
+
+
+acceptors = [Acceptor() for _ in range(3)]
+majority = 2
+
+
+def propose(n, value):
+    oks = [a.prepare(n) for a in acceptors]
+    granted = [acc for ok, acc in oks if ok]
+    if len(granted) < majority:
+        return f"n={n}: prepare rejected"
+    prior = max(granted, key=lambda a: a[0])           # must adopt the highest value already accepted
+    if prior[1] is not None:
+        value = prior[1]
+    acks = sum(a.accept(n, value) for a in acceptors)
+    return f"n={n}: {'chosen ' + repr(value) if acks >= majority else 'accept rejected'}"
+
+
+print(propose(1, "red"))      # first proposer wins
+print(propose(2, "blue"))     # later proposer is forced to adopt "red"
+print([a.accepted for a in acceptors])
+# n=1: chosen 'red'
+# n=2: chosen 'red'
+# [(2, 'red'), (2, 'red'), (2, 'red')]
+```
+
+Proposer 2 wanted "blue", but the prepare phase revealed "red" was already accepted, so it was obliged to re-propose "red". That is how Paxos keeps the decision stable. Real systems need **Multi-Paxos**, which runs this repeatedly to agree on a whole sequence of values, and which Lamport's papers leave under-specified; this gap is why Paxos has a reputation for being hard to implement.
+
+## Raft
+
+**Raft** solves the same problem but is organised around a strong leader, explicitly to be easier to understand and build.
+
+- **Terms.** Time is divided into numbered terms. Each term has at most one leader.
+- **Leader election.** A follower that hears no heartbeat within a random timeout becomes a candidate, increments the term and requests votes; a majority wins. See [Leader Election](../leader-election/).
+- **Log replication.** Clients send commands to the leader, which appends them to its log and sends them to followers. An entry is **committed** once stored on a majority; the leader then applies it and tells followers to do the same.
+- **Safety rule.** A candidate can win only if its log is at least as up to date as a majority's, so a new leader always holds every committed entry.
+
+Replicating the same ordered log on every node is called a **replicated state machine**: if each node applies the same commands in the same order to the same starting state, they all end up identical. Try it:
+
+<RaftLogDemo />
+
+<Callout type="key">
+Consensus on a **log** is what turns many unreliable machines into one reliable service. Leader election, locks, configuration stores and strongly consistent databases are all built on a replicated log.
+</Callout>
+
+## Costs and Practice
+
+- **Latency:** each decision needs at least one round trip to a majority. Spanning continents makes this tens to hundreds of milliseconds.
+- **Throughput:** everything funnels through the leader.
+- **Availability:** with a majority unreachable, the system stops accepting writes. That is the CP side of [CAP](../cap-theorem/).
+- **Cluster size:** 3 or 5 nodes is typical. More nodes tolerate more failures but make each decision slower.
+
+<Callout type="practice">
+Do not write your own consensus. Use a battle-tested implementation (etcd, ZooKeeper, Consul, or a library such as a Raft package) and let it hold the small, critical data that must be consistent. [Consensus in Practice](../consensus-in-practice/) shows how.
+</Callout>

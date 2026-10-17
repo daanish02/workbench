@@ -1,0 +1,88 @@
+---
+title: "Consistency Models"
+description: "Strong, causal and eventual consistency: what each one actually guarantees."
+order: 3
+tier: core
+takeaways:
+  - "A **consistency model** is a contract about which values a read may return when data is replicated and operations overlap."
+  - "**Linearizable** is the strongest: the system behaves like one copy, and reads never go back in time relative to real time."
+  - "**Causal** consistency keeps cause before effect but lets unrelated writes appear in different orders to different clients."
+  - "**Eventual** consistency promises only that replicas converge if writes stop; it says nothing about what you read meanwhile."
+  - "Stronger models are easier to program against but cost latency and availability; weaker ones are fast and need application care."
+resources:
+  - title: "Jepsen: Consistency Models"
+    url: "https://jepsen.io/consistency"
+    note: "A clickable map of every model and how they relate."
+  - title: "Linearizability (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Linearizability"
+  - title: "Werner Vogels: Eventually Consistent"
+    url: "https://www.allthingsdistributed.com/2008/12/eventually_consistent.html"
+    note: "The classic practical explanation, from Amazon's CTO."
+---
+
+When data is copied to several machines, a read may reach any copy, and copies update at different times. A **consistency model** is the contract between the system and its clients about what reads are allowed to return. Stronger models make a replicated system feel like a single machine, which is easy to program against. Weaker models allow more concurrency and lower latency, and push the work of handling surprising results onto the application. There is no best choice, only a trade-off made per use case.
+
+## The Problem: Overlapping Operations
+
+On one machine, operations happen in some order and every read sees the latest write. With replicas, two clients may read different copies; writes may take time to propagate; operations from different clients overlap in time. A model answers: *given these overlapping operations, which results are legal?*
+
+The examples below use one register $x$ with initial value 0, and write operations as $w(x{=}v)$ and reads as $r \to v$.
+
+## Linearizability: One Copy, Real-Time Order
+
+A system is **linearizable** if every operation appears to take effect instantly at some point between its start and its end, and all clients agree on that order. Consequences:
+
+- Once a write completes, every later read, from any client, sees it (or something newer).
+- Reads never go backwards: if one client sees the new value, no later read sees the old one.
+
+This is what CAP calls "consistency". It is the model that makes locks, leader election and unique-ID allocation easy to get right, and it costs coordination on each operation (typically a round trip to a leader or a quorum).
+
+## Sequential Consistency: One Order, Not Tied to the Clock
+
+**Sequential consistency** drops the real-time requirement. There must exist a single global order of all operations that respects each client's own program order, but it need not match wall-clock time. A read that starts after a write finished may still return the old value, as long as the old value is explainable by *some* legal order.
+
+## Causal Consistency: Cause Before Effect
+
+**Causal consistency** only orders operations that are causally related: if one operation could have influenced another (the same client did them in sequence, or one read a value written by the other), every client must see them in that order. Operations with no causal link, **concurrent** ones, may be seen in different orders by different clients.
+
+Example: Alice posts a question, Bob reads it and posts an answer. Causal consistency guarantees nobody sees Bob's answer without Alice's question. It does not guarantee everyone sees two unrelated posts in the same order. (Detecting causality is the job of [vector clocks](../clocks/).)
+
+## Eventual Consistency and the Session Guarantees
+
+**Eventual consistency** promises one thing: if writes stop, all replicas converge to the same value. Nothing is promised about the interval before that, so a client can read old data, new data, then old data again.
+
+Pure eventual consistency is awkward, so systems often add cheap **session guarantees** for a single client:
+
+- **Read your writes:** after you write, your own reads see it.
+- **Monotonic reads:** once you have seen a value, you never see an older one.
+- **Monotonic writes:** your writes are applied in the order you made them.
+- **Writes follow reads:** a write is ordered after the value you read before making it.
+
+Together these form roughly causal consistency from one client's point of view.
+
+## See What Each Model Allows
+
+Each lane below is a client; boxes are operations laid out in real time. Pick a history and see which models accept it.
+
+<HistoryChecker />
+
+<Callout type="key">
+Each model is a **set of allowed histories**. Linearizable ⊂ sequential ⊂ causal ⊂ eventual: every history a stronger model allows, the weaker ones allow too. A stronger guarantee means fewer surprises, but more coordination on every operation.
+</Callout>
+
+## Choosing a Model
+
+| Model | What you can rely on | Typical cost | Fits |
+| --- | --- | --- | --- |
+| **Linearizable** | Acts like one copy, respects real time | Round trips to leader or quorum, unavailable in minority partitions | Locks, balances, leader election |
+| **Sequential** | One agreed order, may lag the clock | Still needs global ordering | Some replicated state machines |
+| **Causal** | Effects never precede their causes | Track dependencies (metadata) | Comments, chat, collaborative apps |
+| **Eventual** | Replicas converge | Almost none; conflicts need resolving | Counters, caches, DNS, shopping carts |
+
+Two practical remarks. First, "eventual" does not mean "slow": convergence is often milliseconds, but a design must be correct for the worst case. Second, if concurrent writes can conflict, eventual systems need a **conflict-resolution rule**: last-writer-wins (simple, loses data), merging (shopping-cart union), or a CRDT, a data type designed so that merges always converge.
+
+<Callout type="pitfall">
+Do not equate "reads from a replica" with "bug". Reading from replicas is a deliberate trade of consistency for speed. The bug is not knowing which guarantee you chose, and then assuming a stronger one, for example reading your own write from a lagging follower.
+</Callout>
+
+Strong guarantees are usually implemented with [consensus](../consensus/) or by funnelling writes through a leader, as covered in [Replication](../replication/).

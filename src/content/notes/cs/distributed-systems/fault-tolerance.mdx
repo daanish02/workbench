@@ -1,0 +1,118 @@
+---
+title: "Fault Tolerance"
+description: "Failure models, failure detection, and Byzantine faults."
+order: 9
+tier: core
+takeaways:
+  - "A **fault-tolerant** system keeps working correctly despite component failures; the design question is *which* failures and *how many*."
+  - "Failure models range from **crash** (stops) through **omission** (drops messages) to **Byzantine** (behaves arbitrarily or maliciously)."
+  - "A **failure detector** only suspects: a longer timeout means fewer false alarms but slower detection."
+  - "Tolerating f crashes needs 2f+1 replicas with majority voting; tolerating f Byzantine nodes needs 3f+1."
+resources:
+  - title: "Lamport, Shostak, Pease: The Byzantine Generals Problem"
+    url: "https://lamport.azurewebsites.net/pubs/byz.pdf"
+    note: "The original paper; the 3f+1 bound comes from here."
+  - title: "Failure detector (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Failure_detector"
+    note: "Completeness and accuracy, and the Chandra-Toueg classes."
+  - title: "Byzantine fault (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Byzantine_fault"
+---
+
+Components fail: disks die, processes crash, cables are cut, data centres lose power. A **fault-tolerant** system continues to behave correctly (possibly degraded) when some of its parts fail. Tolerance is never absolute. A design specifies a **failure model**, the kinds of faults it can survive, and a budget, how many at once. Beyond the budget, or outside the model, the system may fail, and an honest design says so.
+
+## Failure Models
+
+From most benign to most hostile:
+
+| Model | The faulty node... | Example |
+| --- | --- | --- |
+| **Crash-stop** | Stops forever and never comes back | Power loss, kernel panic |
+| **Crash-recovery** | Stops, then restarts with only its durable state | A reboot that loses memory |
+| **Omission** | Fails to send or receive some messages | Dropped packets, full buffers |
+| **Timing** | Responds, but too late | Overloaded server, long GC pause |
+| **Byzantine** | Does anything: wrong answers, lies, conflicting messages | Bugs, corrupted memory, a compromised node |
+
+Most data-centre systems assume crash-recovery and omission faults, because it makes algorithms far cheaper; Byzantine tolerance is reserved for adversarial settings like blockchains or safety-critical hardware.
+
+## Detecting Failure
+
+You cannot observe a failure directly; you observe the **absence** of messages. A **failure detector** monitors a node by waiting for **heartbeats** (periodic "I am alive" messages) or by **pinging** it. If nothing arrives within a **timeout**, it declares the node suspect.
+
+In an asynchronous network this can never be perfect, because a slow node and a dead node look identical. So detectors are judged on two competing measures:
+
+- **Completeness:** a crashed node is eventually suspected by everyone.
+- **Accuracy:** a healthy node is not suspected.
+
+The timeout tunes the trade-off. Experiment with it: each tick is a heartbeat that arrived late or not at all.
+
+<HeartbeatDetector />
+
+```python
+import random
+random.seed(1)
+# Heartbeat every 1 s. Network jitter delays each one; 2% are lost. A longer timeout means fewer false alarms but slower detection.
+beats = []
+for t in range(1, 10001):
+    if random.random() > 0.02:
+        beats.append(t + random.expovariate(1 / 0.3))      # ~300 ms average delay
+beats.sort()
+gaps = [b - a for a, b in zip(beats, beats[1:])]
+for timeout in (1.2, 1.5, 2.0, 3.0, 5.0):
+    false = sum(g > timeout for g in gaps)
+    print(f"timeout {timeout:>3}s: real crash noticed within {timeout}s, false alarms per 1000 beats: {false / len(gaps) * 1000:.1f}")
+# timeout 1.2s: real crash noticed within 1.2s, false alarms per 1000 beats: 267.2
+# timeout 1.5s: real crash noticed within 1.5s, false alarms per 1000 beats: 109.4
+# timeout 2.0s: real crash noticed within 2.0s, false alarms per 1000 beats: 25.0
+# timeout 3.0s: real crash noticed within 3.0s, false alarms per 1000 beats: 0.9
+# timeout 5.0s: real crash noticed within 5.0s, false alarms per 1000 beats: 0.0
+```
+
+Rather than a fixed timeout, **adaptive** detectors such as the **phi accrual** detector (used in Cassandra and Akka) learn each link's arrival-time distribution and output a continuous *suspicion level*, letting the application choose its own threshold. For large clusters, detection is spread across nodes with [gossip](../gossip/) (the SWIM protocol).
+
+<Callout type="pitfall">
+A false suspicion is not harmless. Declaring a slow node dead may trigger failover while it is still running, leaving two nodes acting on the same role. This is why detection must be paired with [fencing and majority votes](../leader-election/), not trusted on its own.
+</Callout>
+
+## Masking Failures with Redundancy
+
+Tolerance comes from redundancy: more than one of everything that matters.
+
+- **Replication:** several copies of data or service instances (see [Replication](../replication/)).
+- **Failover:** a standby takes over when the active node is suspected dead.
+- **Retry and timeouts:** ask again, but only for **idempotent** operations (see [Distributed Basics](../distributed-basics/)).
+- **Circuit breakers:** after repeated failures, stop calling a dependency for a while, so one broken service does not exhaust the callers' resources.
+- **Isolation (bulkheads):** separate pools and failure domains so trouble stays contained.
+
+How many replicas are enough? For crash faults with majority voting, tolerating $f$ failures needs
+
+$$N \ge 2f + 1$$
+
+In words: after $f$ nodes fail, the remaining $f+1$ still form a majority, so progress and agreement remain possible. Five nodes survive two crashes.
+
+## Byzantine Faults
+
+In the **Byzantine generals problem**, several generals must agree on attack or retreat, but some may be traitors who send different messages to different generals. The question is how many traitors honest generals can overcome.
+
+The answer: a system can tolerate $f$ Byzantine nodes only if
+
+$$N \ge 3f + 1$$
+
+In words: the honest nodes must outnumber faulty ones by enough that, even if $f$ nodes lie and $f$ more honest nodes are unreachable, the remaining honest nodes still form a clear majority. With $f=1$ you need 4 nodes. Crash tolerance needs only 3 because crashed nodes do not lie, so a vote is never *poisoned*, only reduced.
+
+Byzantine fault tolerance (BFT) protocols such as PBFT exist, but they are much slower and more complex than crash-tolerant consensus. They matter where nodes are mutually distrusting (permissionless [blockchains](../blockchain/)) or where hardware faults must be survived (aviation, spacecraft). Inside a single organisation's data centre, you usually assume nodes are buggy but not malicious.
+
+<Callout type="key">
+Pick the **failure model first**. The model decides which algorithm you need and what it costs: crash tolerance needs $2f+1$ nodes, Byzantine tolerance needs $3f+1$ and many more messages.
+</Callout>
+
+## Designing for Failure
+
+- **Assume everything fails** and ask "what happens then?" for each dependency.
+- **Test failures on purpose.** Chaos engineering tools kill instances and inject latency in production-like environments to prove the redundancy works.
+- **Prefer graceful degradation.** Serve cached or reduced results rather than errors where possible.
+- **Watch for correlated failures.** Replicas that share a rack, a power feed, a software version or a bad config all fail together; redundancy only helps against *independent* faults.
+
+<Callout type="practice">
+For every critical dependency write down its failure model, how you detect it, and what the system does while it is down. If the answer to the last question is "unknown", that is the next thing to test.
+</Callout>

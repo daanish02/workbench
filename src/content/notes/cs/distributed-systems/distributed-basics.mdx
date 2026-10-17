@@ -1,0 +1,107 @@
+---
+title: "Distributed Basics"
+description: "No shared memory, no shared clock, and partial failure as the defining challenge."
+order: 1
+tier: core
+takeaways:
+  - "A **distributed system** is several machines that cooperate over a network and appear as one; they share no memory and no clock."
+  - "The defining difficulty is **partial failure**: some parts break while others keep running, and you often cannot tell which."
+  - "A **timeout** proves nothing: the request may have been lost, the server may have crashed, or only the reply may be missing."
+  - "Reliability multiplies along a request path, so many 99.9% parts add up to a noticeably less reliable whole."
+resources:
+  - title: "Fallacies of distributed computing"
+    url: "https://en.wikipedia.org/wiki/Fallacies_of_distributed_computing"
+    note: "The eight wrong assumptions that cause most distributed bugs."
+  - title: "Distributed Systems for Fun and Profit"
+    url: "http://book.mixu.net/distsys/"
+    note: "A short, free book that covers this whole section at a conceptual level."
+  - title: "MIT 6.824 Distributed Systems"
+    url: "https://pdos.csail.mit.edu/6.824/"
+    note: "Lectures, papers and labs from a well-known university course."
+---
+
+A **distributed system** is a collection of independent computers that coordinate by passing messages and present themselves to users as a single system. A web search, a bank's ledger and a multiplayer game are all examples. Machines are added for three reasons: to handle more load than one machine can, to keep working when one machine fails, and to place data close to users. The price is a new class of problems that never occur inside a single computer, because the three things a single program takes for granted (shared memory, a shared clock, and all-or-nothing failure) are gone.
+
+## What You Lose When You Leave One Machine
+
+Inside one process, two functions communicate by reading and writing the same memory, they agree on what time it is, and when the machine dies, everything dies together. Across a network none of this holds.
+
+- **No shared memory.** Machines learn about each other's state only by receiving messages, which can be slow, duplicated, reordered or lost. Nothing a node knows is guaranteed to be current.
+- **No shared clock.** Each machine has its own physical clock, and clocks drift (see [Clocks & Time](../clocks/)). Comparing timestamps from two machines cannot reliably tell you which event happened first.
+- **Partial failure.** A single computer is mostly either working or crashed. In a distributed system, one node can be down, one link slow, one disk full, while the rest work perfectly.
+
+<Callout type="key">
+**Partial failure** is the defining challenge. A program on one machine is *deterministic enough* to reason about; a distributed program must be correct when any subset of its parts may be failing at any moment, and when it cannot even know which.
+</Callout>
+
+## A Timeout Tells You Almost Nothing
+
+Suppose a client asks a payment server to charge a card and then waits. If no reply arrives within the timeout, what happened?
+
+1. The request never reached the server (lost on the network).
+2. The server crashed before doing the work.
+3. The server did the work, but the reply was lost.
+4. The server is just slow, and will finish after the client gave up.
+
+From the client's side these four are **indistinguishable**: it sees silence in each. Yet in cases 3 and 4 the card has been charged, and in cases 1 and 2 it has not. Try each case below, and see what a naive retry does.
+
+<PartialFailureDemo />
+
+This is why retries need care. A retry is safe only if repeating the operation does no harm, a property called **idempotency**. The usual technique is for the client to attach a unique request ID (an **idempotency key**), so the server can recognise a repeat and return its stored answer instead of acting twice. [API Design](../../system-design/api-design/) covers this in practice.
+
+<Callout type="pitfall">
+"No response" is not "it failed". Treating a timeout as a definite failure leads to double charges, duplicate orders and lost updates. Treat it as **unknown**, and design operations so that trying again is safe.
+</Callout>
+
+## Failures Compound
+
+Every extra machine is another thing that can fail, and in a request that must pass through all of them, reliabilities **multiply**:
+
+$$P(\text{success}) = p^{\,n}$$
+
+In words: if every one of $n$ services must work and each works with probability $p$, the chance that all work is $p$ multiplied by itself $n$ times.
+
+```python
+# A request chain through n services, each up with probability p.
+# The end-to-end success rate is p**n: reliability multiplies, it does not average.
+for n in (1, 5, 20, 100):
+    print(f"{n:>3} services at 99.9% each -> {0.999 ** n:.1%} of requests succeed")
+#   1 services at 99.9% each -> 99.9% of requests succeed
+#   5 services at 99.9% each -> 99.5% of requests succeed
+#  20 services at 99.9% each -> 98.0% of requests succeed
+# 100 services at 99.9% each -> 90.5% of requests succeed
+```
+
+A hundred individually excellent components yield a system that fails one request in ten. Distributed design is therefore largely the art of adding **redundancy** and **isolation** so that one failing part does not take the whole down.
+
+## The Fallacies of Distributed Computing
+
+Engineers at Sun Microsystems listed eight assumptions that new distributed programmers make, all false:
+
+1. The network is reliable.
+2. Latency is zero.
+3. Bandwidth is infinite.
+4. The network is secure.
+5. Topology does not change.
+6. There is one administrator.
+7. Transport cost is zero.
+8. The network is homogeneous.
+
+Most of the rest of this section can be read as a response to the first two. Messages get lost, so we need retries, replication and consensus. Latency is real and varies (a round trip inside a data centre takes about half a millisecond; across an ocean, over a hundred), so we cannot treat a remote call like a local function call.
+
+## Why Do It Anyway
+
+Distribution is a cost you pay only when you must. The reasons that justify it:
+
+| Goal | How distribution helps | What it costs |
+| --- | --- | --- |
+| **Scale** | Spread data and load across many machines | Coordination, uneven load |
+| **Availability** | Survive the loss of a machine or a data centre | Replicas that can disagree |
+| **Latency** | Serve users from a nearby location | Keeping distant copies in sync |
+| **Isolation** | A fault stays inside one part | More moving parts to operate |
+
+<Callout type="practice">
+A single well-provisioned machine is simpler, faster and easier to reason about than a cluster. Reach for distribution when a measured limit (load, data size, uptime requirement) demands it, then use the rest of this section to understand what you have bought.
+</Callout>
+
+The next notes build up the theory: what can be guaranteed during a network split ([CAP Theorem](../cap-theorem/)), what "consistent" can mean ([Consistency Models](../consistency-models/)), and how machines copy data and agree on facts ([Replication](../replication/), [Consensus](../consensus/)).

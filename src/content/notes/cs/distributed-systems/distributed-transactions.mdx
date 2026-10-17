@@ -1,0 +1,120 @@
+---
+title: "Distributed Transactions"
+description: "Two-phase commit, three-phase commit, and the saga pattern."
+order: 7
+tier: core
+takeaways:
+  - "A **distributed transaction** changes data on several machines so that **all or none** of the changes take effect."
+  - "**Two-phase commit (2PC)**: prepare (everyone votes), then commit or abort. It is atomic but **blocks** if the coordinator fails after the votes."
+  - "**Three-phase commit** adds a step to avoid blocking, but only works assuming reliable failure detection, so it is rarely used."
+  - "A **saga** replaces one big atomic commit with a chain of local transactions plus **compensating actions** to undo them on failure."
+  - "Sagas give up isolation: intermediate states are visible, so the design must tolerate them."
+resources:
+  - title: "Two-phase commit protocol"
+    url: "https://en.wikipedia.org/wiki/Two-phase_commit_protocol"
+  - title: "Pattern: Saga (microservices.io)"
+    url: "https://microservices.io/patterns/data/saga.html"
+    note: "Choreography vs orchestration, with examples."
+  - title: "Original Sagas paper (Garcia-Molina, Salem)"
+    url: "https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf"
+    note: "The 1987 idea for long-lived transactions."
+---
+
+On a single database, a transaction makes several changes **atomic**: all happen or none (see [Transactions & ACID](../../databases/transactions-and-acid/)). A **distributed transaction** needs the same guarantee when the changes live on several machines: debiting an account in one database and crediting one in another must not end with only one half applied. This is difficult because any participant, and the coordinator, may crash at any moment, and messages may be lost. The protocols below handle that with different trade-offs between strictness and availability.
+
+## The Core Problem: Agreeing to Commit
+
+If each database simply commits on its own, a crash between the two commits leaves the world inconsistent. What is needed is **atomic commitment**: either every participant commits or every participant aborts. Notice that this is a form of consensus, with one difference: any participant can force the outcome to "abort" by voting no.
+
+## Two-Phase Commit (2PC)
+
+A **coordinator** drives the protocol; the databases are **participants**.
+
+1. **Prepare (voting).** The coordinator asks every participant "can you commit?". Each participant does the work, writes it durably to its log, **locks** the affected data, and replies yes or no. A yes is a **binding promise**: from here on the participant must be able to commit if told to.
+2. **Commit or abort (decision).** If all voted yes, the coordinator logs the decision and tells everyone to commit. If any voted no (or timed out), it tells everyone to abort. Participants apply the decision, release locks and acknowledge.
+
+Step through it, including the failure that makes 2PC famous:
+
+<TwoPhaseCommit />
+
+### The blocking problem
+
+After voting yes, a participant has given up its right to decide. If the coordinator then crashes before announcing the outcome, the participant cannot safely commit (someone else might have voted no) or abort (the coordinator might have decided to commit). It must **wait**, holding its locks, until the coordinator recovers. Other transactions touching that data are stuck too.
+
+<Callout type="pitfall">
+2PC guarantees atomicity but not availability: a coordinator crash at the wrong moment can freeze participants indefinitely. The standard mitigation is to make the coordinator itself fault tolerant by replicating it with [consensus](../consensus/), so it effectively never "stays crashed". Google Spanner works this way.
+</Callout>
+
+2PC also makes every transaction as slow as its slowest participant, holds locks across network round trips, and ties all services to one coordinator, which is why it is used inside databases and between a few tightly controlled systems, but rarely across independent microservices.
+
+## Three-Phase Commit (3PC)
+
+**3PC** splits the commit decision into two steps: after the votes there is a **pre-commit** phase telling participants the outcome will be commit, before the final commit. This gives participants enough information to finish on their own if the coordinator disappears, so the protocol does not block.
+
+The catch is its assumptions: it requires a network with bounded delays and accurate failure detection. Under real partitions, different groups of nodes can reach different conclusions, losing atomicity. For that reason it is mostly a textbook step and is rarely deployed; systems that need non-blocking atomic commit use consensus-based commit instead.
+
+## Sagas: Giving Up Atomicity for Availability
+
+Long-running or cross-service operations cannot hold locks on many systems at once. A **saga** breaks the operation into a sequence of **local transactions**, each committing immediately in its own service. Each step has a **compensating action** that semantically undoes it. If step $k$ fails, the saga runs the compensations for steps $k-1, \dots, 1$ in reverse order.
+
+An order flow: reserve stock → create order → charge card → ship. If the card is declined, cancel the order, release the stock.
+
+```python
+# Saga: each step has a compensating action. On failure, run the compensations of finished steps in reverse.
+def run_saga(steps):
+    done = []
+    for name, action, undo in steps:
+        try:
+            action()
+            done.append((name, undo))
+            print("ok      ", name)
+        except Exception as e:
+            print("FAILED  ", name, "-", e)
+            for n, u in reversed(done):
+                u()
+                print("undo    ", n)
+            return False
+    return True
+
+
+def charge_card():
+    raise RuntimeError("card declined")
+
+
+run_saga([
+    ("reserve stock", lambda: None, lambda: None),
+    ("create order", lambda: None, lambda: None),
+    ("charge card", charge_card, lambda: None),
+    ("ship", lambda: None, lambda: None),
+])
+# ok       reserve stock
+# ok       create order
+# FAILED   charge card - card declined
+# undo     create order
+# undo     reserve stock
+```
+
+Two styles organise a saga:
+
+- **Orchestration:** a central orchestrator tells each service what to do next and triggers compensations. Easier to follow and debug.
+- **Choreography:** services react to each other's events with no central controller. Loosely coupled, but the flow is spread across many services.
+
+### What sagas give up
+
+Each local transaction is visible as soon as it commits, so other requests can observe **intermediate states** (stock reserved, order not yet paid). There is no isolation. Sagas therefore need:
+
+- **Idempotent steps and compensations**, since messages are retried (see [Distributed Basics](../distributed-basics/)).
+- Compensations that are *semantic*, not literal rollback: you cannot un-send an email, only send a correction.
+- Designs that tolerate the intermediate states, for example marking an order "pending" until the saga finishes.
+
+## Choosing
+
+| Approach | Atomic? | Isolated? | Weakness | Fits |
+| --- | --- | --- | --- | --- |
+| **2PC** | Yes | Yes (locks) | Blocking, slow, tight coupling | A few trusted databases, inside one system |
+| **3PC** | Yes, if failure detection is perfect | Yes | Unsafe under partitions | Mostly theoretical |
+| **Saga** | Eventually, by compensation | No | Visible intermediate states, must write compensations | Microservices, long business processes |
+
+<Callout type="practice">
+The best distributed transaction is the one you avoid. Put data that must change together in one service or one database (a single-node transaction is cheap), and use sagas only for flows that genuinely cross service boundaries.
+</Callout>

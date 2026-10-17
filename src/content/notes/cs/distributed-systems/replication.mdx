@@ -1,0 +1,140 @@
+---
+title: "Replication"
+description: "Leader-follower, multi-leader and leaderless replication, and the trade-offs of each."
+order: 4
+tier: core
+takeaways:
+  - "**Replication** keeps copies of data on several machines for availability, read capacity and lower latency."
+  - "**Leader-follower**: one node takes writes and streams them to followers. Simple, but followers can lag and a failover can lose acknowledged writes."
+  - "**Multi-leader** accepts writes in several places, which helps multi-region use but creates **write conflicts** that must be resolved."
+  - "**Leaderless** (Dynamo-style) writes to and reads from several nodes; **quorums** (W + R > N) make reads likely to see the latest write."
+  - "**Sync** replication costs latency and availability; **async** replication risks stale reads and lost writes."
+resources:
+  - title: "Designing Data-Intensive Applications, ch. 5"
+    url: "https://dataintensive.net/"
+    note: "The standard treatment of replication, with the lag anomalies in detail."
+  - title: "Dynamo: Amazon's Highly Available Key-value Store"
+    url: "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+    note: "The paper that popularised leaderless replication and quorums."
+  - title: "CRDTs (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type"
+    note: "Data types whose replicas merge without conflicts."
+---
+
+**Replication** means keeping a copy of the same data on several machines. It serves three goals: **availability** (another copy can serve if one machine dies), **read scalability** (more machines can answer reads), and **latency** (a copy near the user answers faster). The hard part is not copying the data once; it is keeping copies in step as the data keeps changing, while machines fail and messages are delayed. Where writes are allowed to enter, and when the client is told a write is "done", define the three main strategies.
+
+(Replication copies the *same* data; splitting *different* data across machines is **sharding**, covered in [Database Scaling](../../system-design/database-scaling/). Real systems use both.)
+
+## Leader-Follower Replication
+
+One node, the **leader** (primary), accepts all writes. It records each change in a log and streams it to **followers** (replicas), which apply changes in the same order. Reads can be served by the leader or, to scale reads, by followers.
+
+### Synchronous, asynchronous, and in between
+
+When does the leader tell the client "write done"?
+
+- **Asynchronous:** immediately, after writing locally. Fast, but if the leader crashes before a follower received the change, that acknowledged write is lost on failover.
+- **Synchronous:** after every follower confirms. Durable, but one slow or dead follower stalls all writes.
+- **Semi-synchronous:** after one follower confirms. A common compromise: the data exists on at least two machines, and a single slow follower does not block.
+
+Run the experiment below: write, read from a follower immediately, then crash the leader under each rule.
+
+<ReplicationLagDemo />
+
+### What lag causes
+
+Because async followers trail the leader, three anomalies appear:
+
+- **Stale reads.** You read from a follower that has not applied the latest write.
+- **Read-your-writes violations.** You update your profile and reload to see the old one. The usual fix: read your own recent writes from the leader.
+- **Time going backwards.** Two reads hit two followers with different lag; the second shows older data. The usual fix: pin a user's reads to one replica.
+
+```python
+import random
+random.seed(7)
+
+
+class Follower:
+    def __init__(self):
+        self.data, self.pending = {}, []            # pending = (arrival_time, key, value)
+
+    def receive(self, t, k, v):
+        self.pending.append((t + random.randint(1, 6), k, v))   # network lag, in ticks
+
+    def tick(self, now):
+        for p in [p for p in self.pending if p[0] <= now]:
+            self.data[p[1]] = p[2]
+            self.pending.remove(p)
+
+
+followers = [Follower(), Follower()]
+leader = {}
+
+
+def write(now, k, v):
+    leader[k] = v                                   # async: ack immediately, replicate in background
+    for f in followers:
+        f.receive(now, k, v)
+
+
+write(0, "bio", "hello")
+for now in range(0, 8):
+    for f in followers:
+        f.tick(now)
+    print(f"t={now}: leader={leader['bio']!r} follower reads =", [f.data.get('bio') for f in followers])
+# t=0: leader='hello' follower reads = [None, None]
+# t=1: leader='hello' follower reads = [None, None]
+# t=2: leader='hello' follower reads = [None, 'hello']
+# t=3: leader='hello' follower reads = ['hello', 'hello']
+```
+
+(Output trimmed after t=3; the remaining ticks repeat the last line.)
+
+<Callout type="key">
+When the leader fails, a follower must be **promoted**. That is a [leader election](../leader-election/), and it is dangerous: if the old leader was only slow, two nodes may both believe they lead (**split brain**), so promotion needs [consensus](../consensus/) or a lease, not a guess.
+</Callout>
+
+## Multi-Leader Replication
+
+With several leaders, each accepts writes locally and replicates them to the others asynchronously. Typical use: one leader per data centre, so users everywhere write to a nearby node, and an offline-capable client (a phone calendar) is effectively a leader too.
+
+The price is **write conflicts**. Two users edit the same record in different regions at the same time; each leader accepts its own write; later they exchange changes and find two different values. Strategies:
+
+- **Avoid them:** route all writes for a given record to the same leader.
+- **Last-writer-wins:** keep the write with the higher timestamp. Simple, but silently discards the other one, and timestamps from different machines are unreliable (see [Clocks & Time](../clocks/)).
+- **Merge:** combine both values (union of cart items), or use a **CRDT**, a data structure designed so concurrent updates merge to the same result everywhere.
+- **Ask the user:** keep both versions and let the application or person resolve it.
+
+## Leaderless Replication and Quorums
+
+In **leaderless** systems (Dynamo, Cassandra, Riak) any replica accepts writes. The client, or a coordinator, sends each write to all $N$ replicas and treats it as successful once $W$ acknowledge. A read asks $R$ replicas and takes the newest version.
+
+If the sets are large enough they must overlap:
+
+$$W + R > N$$
+
+In words: if the nodes that took the write and the nodes asked on read together outnumber the cluster, at least one node is in both, so a read meets a copy of the latest write. ($N=3$, $W=2$, $R=2$ is the common setting.) The details, including what happens when nodes are down, are in [Consensus in Practice](../consensus-in-practice/).
+
+Replicas that missed a write catch up through:
+
+- **Read repair:** when a read sees an out-of-date replica, the reader writes the newer value back to it.
+- **Anti-entropy:** a background process compares replicas and copies missing data (often using hash trees to find differences cheaply; see [Gossip Protocols](../gossip/)).
+- **Hinted handoff:** if a replica is unreachable, another node holds the write temporarily and delivers it later.
+
+Even with quorums, leaderless systems provide weaker guarantees than linearizable ones: concurrent writes, partial failures and clock-based conflict resolution can still produce stale or lost values.
+
+## Comparing the Three
+
+| | Leader-follower | Multi-leader | Leaderless |
+| --- | --- | --- | --- |
+| **Writes go to** | One leader | Any leader | Any replica |
+| **Conflicts** | None (single order) | Yes, must resolve | Yes, must resolve |
+| **Failover** | Needs election | Other leaders keep going | No failover needed |
+| **Best for** | Most applications | Multi-region writes, offline clients | High availability, huge scale |
+| **Typical consistency** | Strong if reading from leader | Eventual | Tunable, eventual by default |
+
+<Callout type="practice">
+Start with leader-follower, which is what PostgreSQL, MySQL, MongoDB and most managed databases use. Accept the added complexity of multi-leader or leaderless only when you need multi-region write latency, offline writes, or availability that a single leader cannot give.
+</Callout>
+
+Replication also quietly fixes nothing about **fault domains**: three replicas on the same rack, power supply or availability zone fail together. Spread them across independent failures.
