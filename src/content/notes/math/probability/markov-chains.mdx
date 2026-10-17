@@ -1,7 +1,7 @@
 ---
-title: "Markov chains"
+title: "Markov Chains"
 description: "States, transition matrices and the Markov property, the evolution of a distribution over time, and stationary distributions reached by repeated multiplication."
-order: 8
+order: 11
 tier: core
 takeaways:
   - "A **Markov chain** moves between states with probabilities that depend only on the current state. This is the **Markov property**: the future given the present does not depend on the past."
@@ -20,7 +20,7 @@ resources:
     note: "The memorylessness condition that defines the chains in this note."
 ---
 
-A Markov chain is a system that hops between a set of states, where each hop depends only on where it is now. Weather models, web browsing, queueing systems and the word-by-word prediction in language models all use this idea. The chain is described by a transition matrix, and the long-run behaviour is found by repeatedly multiplying a probability vector by that matrix. This note sets up the matrix, runs a two-state weather chain, and finds its stationary distribution.
+A Markov chain is a system that hops between a set of states, where each hop depends only on where it is now. Weather models, web browsing, queueing systems and the word-by-word prediction of n-gram language models all use this idea. The chain is described by a transition matrix, and the long-run behaviour is found by repeatedly multiplying a probability vector by that matrix. This note sets up the matrix, runs a two-state weather chain, and finds its stationary distribution.
 
 ## States and the transition matrix
 
@@ -44,7 +44,10 @@ In words: the first row gives tomorrow's chances starting from Sunny, and the se
 Start with certainty, say Sunny today, so $\pi_0 = (1, 0)$. The distribution after one step is $\pi_1 = \pi_0 P$, and after $t$ steps it is $\pi_0 P^t$. The script below applies the matrix repeatedly and prints the probability of Sunny at each step.
 
 ```python
+P = [[0.8, 0.2], [0.4, 0.6]]
+
 def step(pi, P):
+    # one step: new probability of state j sums over every current state i
     return [sum(pi[i] * P[i][j] for i in range(len(pi))) for j in range(len(P[0]))]
 
 pi = [1.0, 0.0]
@@ -63,6 +66,9 @@ In words: after one day the chance of sunshine is $0.8$, as the matrix says. The
 A stationary distribution is a probability vector that the chain leaves unchanged: $\pi P = \pi$. For the two-state chain, write $\pi = (a, 1 - a)$. The condition on the first coordinate is $0.8a + 0.4(1 - a) = a$, which gives $a = \frac{2}{3}$.
 
 ```python
+P = [[0.8, 0.2], [0.4, 0.6]]
+step = lambda pi, P: [sum(pi[i] * P[i][j] for i in range(2)) for j in range(2)]
+
 a = 2 / 3
 pi_star = [a, 1 - a]
 after = step(pi_star, P)
@@ -74,13 +80,20 @@ In words: multiplying $\pi$ by $P$ returns $\pi$, so once the chain reaches this
 The distribution converges to $\pi$ from any start. Starting from Rainy instead of Sunny gives the same limit, which the next check confirms by running a long time.
 
 ```python
-pi = [0.0, 1.0]
-for _ in range(200):
-    pi = step(pi, P)
-print("starting from rainy, after 200 steps:", [round(x, 6) for x in pi])  # prints: starting from rainy, after 200 steps: [0.666667, 0.333333]
+import numpy as np
+
+P = np.array([[0.8, 0.2], [0.4, 0.6]])
+pi = np.array([0.0, 1.0]) @ np.linalg.matrix_power(P, 200)
+print("starting from rainy, after 200 steps:", np.round(pi, 6))  # prints: starting from rainy, after 200 steps: [0.666667 0.333333]
+
+vals, vecs = np.linalg.eig(P.T)  # pi P = pi means pi is a left eigenvector with eigenvalue 1
+stat = np.real(vecs[:, np.argmax(np.real(vals))])
+print("eigenvalues:", np.round(np.real(vals), 4), " stationary:", np.round(stat / stat.sum(), 6))  # prints: eigenvalues: [1. 0.4]  stationary: [0.666667 0.333333]
 ```
 
-In words: the long-run value does not depend on the starting state. This is the behaviour a stationary distribution describes: it is the limit of $\pi_0 P^t$ for every $\pi_0$, provided the chain is irreducible and aperiodic.
+In words: the long-run value does not depend on the starting state. The same vector is the eigenvector of $P^\top$ with eigenvalue $1$, which ties stationary distributions to the [Eigenvalues](../../linear-algebra/eigenvalues-and-eigenvectors/) note. The other eigenvalue, $0.4$, sets the speed: the distance to $\pi$ shrinks by a factor $0.4$ every step.
+
+<MixingRate /> This is the behaviour a stationary distribution describes: it is the limit of $\pi_0 P^t$ for every $\pi_0$, provided the chain is irreducible and aperiodic.
 
 <Callout type="pitfall">
 Convergence needs the chain to mix. A chain that alternates deterministically between two states, with $P = \begin{pmatrix} 0 & 1 \\ 1 & 0 \end{pmatrix}$, has a stationary distribution $(\frac{1}{2}, \frac{1}{2})$, but starting from one state the distribution never settles. Its powers flip back and forth.
@@ -88,4 +101,4 @@ Convergence needs the chain to mix. A chain that alternates deterministically be
 
 ## Where chains are used
 
-Page-ranking, queueing, and Markov chain Monte Carlo methods for sampling from hard distributions all rely on a chain whose stationary distribution is the target. Designing the transition matrix so that its stationary distribution is the one you want is the core technique, and the next note extends the idea beyond finite chains.
+Page-ranking, queueing, and Markov chain Monte Carlo methods for sampling from hard distributions all rely on a chain whose stationary distribution is the target. Designing the transition matrix so that its stationary distribution is the one you want is the core technique, and Markov chain Monte Carlo builds on exactly this.

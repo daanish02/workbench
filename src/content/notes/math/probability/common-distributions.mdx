@@ -1,7 +1,7 @@
 ---
-title: "Common distributions"
+title: "Common Distributions"
 description: "Uniform, binomial, Poisson, normal and exponential distributions: where each comes from, its formula, and the checks that tie them together."
-order: 2
+order: 3
 tier: core
 takeaways:
   - "The **binomial** distribution counts successes in $n$ independent trials with success probability $p$: $P(X = k) = \\binom{n}{k} p^k (1 - p)^{n - k}$."
@@ -58,6 +58,9 @@ The mean and variance are both $\lambda$. The script below checks $P(X = 2)$ for
 ```python
 import math
 
+def binom_pmf(k, n, p):
+    return math.comb(n, k) * p ** k * (1 - p) ** (n - k)
+
 lam = 3
 print("Poisson P(X = 2), lambda = 3:", round(math.exp(-lam) * lam ** 2 / math.factorial(2), 4))  # prints: Poisson P(X = 2), lambda = 3: 0.224
 n = 1000
@@ -74,7 +77,7 @@ $$
 f(x) = \frac{1}{\sigma\sqrt{2\pi}}\,e^{-\frac{(x - \mu)^2}{2\sigma^2}}.
 $$
 
-Its CDF has no elementary formula, so it is written $\Phi$ for the standard case $\mu = 0$, $\sigma = 1$. The function $\Phi$ is available through the error function in Python's `math` module.
+Its CDF has no elementary formula, so it is written $\Phi$ for the standard case $\mu = 0$, $\sigma = 1$. The function $\Phi$ is available through the error function in Python's `math` module, and directly as `statistics.NormalDist().cdf` in the standard library.
 
 ```python
 import math
@@ -96,9 +99,11 @@ The exponential distribution with rate $\lambda$ has density $f(x) = \lambda e^{
 import math
 
 rate = 2
-print("exponential P(X > 1), rate 2:", round(math.exp(-rate * 1), 6))  # prints: exponential P(X > 1), rate 2: 0.135335
+print("exponential P(X > 1), rate 2:", round(math.exp(-rate * 1), 6))
 s, t = 0.5, 1.0
-print("memoryless: P(X > s + t | X > s) =", round(math.exp(-rate * (s + t)) / math.exp(-rate * s), 6), " P(X > t) =", round(math.exp(-rate * t), 6))  # prints: memoryless: P(X > s + t | X > s) = 0.135335  P(X > t) = 0.135335
+print("memoryless: P(X > s + t | X > s) =", round(math.exp(-rate * (s + t)) / math.exp(-rate * s), 6), " P(X > t) =", round(math.exp(-rate * t), 6))
+# exponential P(X > 1), rate 2: 0.135335
+# memoryless: P(X > s + t | X > s) = 0.135335  P(X > t) = 0.135335
 ```
 
 In words: knowing you have already waited half a unit changes nothing about the remaining wait. The two printed values match, which is the memoryless property written as a check.
@@ -119,6 +124,39 @@ Do not model everything as normal. Counts are not normal when they are small or 
 </Callout>
 
 <DistributionExplorer />
+
+## More families
+
+A few more distributions appear constantly in later notes:
+
+| Distribution | Models | Mean | Variance |
+| --- | --- | --- | --- |
+| Geometric$(p)$ | trials up to and including the first success | $\frac{1}{p}$ | $\frac{1 - p}{p^2}$ |
+| Beta$(\alpha, \beta)$ | a probability that is itself uncertain, on $[0, 1]$ | $\frac{\alpha}{\alpha + \beta}$ | $\frac{\alpha\beta}{(\alpha + \beta)^2(\alpha + \beta + 1)}$ |
+| Gamma$(k, \theta)$ | waiting time for the $k$-th event of a Poisson process | $k\theta$ | $k\theta^2$ |
+| Student $t_\nu$ | a standardised mean when $\sigma$ is estimated | $0$ (for $\nu > 1$) | $\frac{\nu}{\nu - 2}$ (for $\nu > 2$) |
+| Chi-square $\chi^2_k$ | a sum of $k$ squared standard normals | $k$ | $2k$ |
+
+The geometric is the discrete cousin of the exponential and is also memoryless. The Beta is the prior of the [Bayesian Inference](../../statistics/bayesian-inference/) note, the $t$ drives the small-sample intervals of [Confidence Intervals](../../statistics/confidence-intervals/), and the [Multivariate Normal](../multivariate-normal/) note extends the normal to vectors.
+
+Every family here is in `scipy.stats` with the same interface, `pmf` or `pdf`, `cdf`, `mean`, `var` and `rvs` for sampling, which makes a good check on the hand formulas above:
+
+```python
+from scipy import stats
+
+print("binomial P(X = 3), n = 10, p = 0.3:", round(stats.binom.pmf(3, 10, 0.3), 4))
+print("Poisson P(X = 2), lambda = 3:", round(stats.poisson.pmf(2, 3), 4))
+print("normal P(-1 < Z < 1):", round(stats.norm.cdf(1) - stats.norm.cdf(-1), 6))
+print("geometric mean and variance, p = 0.25:", stats.geom.mean(0.25), stats.geom.var(0.25))
+print("Beta(8, 4) mean:", round(stats.beta.mean(8, 4), 4), " t(24) variance:", round(stats.t.var(24), 4))
+# binomial P(X = 3), n = 10, p = 0.3: 0.2668
+# Poisson P(X = 2), lambda = 3: 0.224
+# normal P(-1 < Z < 1): 0.682689
+# geometric mean and variance, p = 0.25: 4.0 12.0
+# Beta(8, 4) mean: 0.6667  t(24) variance: 1.0909
+```
+
+In words: SciPy reproduces the binomial, Poisson and normal values computed by hand earlier, and the table's mean $4$ and variance $12$ for a geometric with $p = \frac{1}{4}$. Run it with `uv run --with scipy`.
 
 ## Choosing a distribution
 

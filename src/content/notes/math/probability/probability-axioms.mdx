@@ -1,0 +1,107 @@
+---
+title: "Probability Axioms"
+description: "Sample spaces, events and the three axioms that every probability obeys, the rules derived from them, and independence and conditional independence of events."
+order: 1
+tier: core
+takeaways:
+  - "An experiment has a **sample space** $\\Omega$ of outcomes. An **event** is a set of outcomes, so events combine with the set operations of the Sets note."
+  - "Kolmogorov's three **axioms**: $P(A) \\ge 0$, $P(\\Omega) = 1$, and probabilities of disjoint events add. Every other rule is a consequence."
+  - "Derived rules: $P(A^c) = 1 - P(A)$, $P(\\varnothing) = 0$, and $P(A \\cup B) = P(A) + P(B) - P(A \\cap B)$."
+  - "Events are **independent** when $P(A \\cap B) = P(A)P(B)$: knowing one happened does not change the chance of the other. Independent is not the same as disjoint."
+  - "**Conditional independence** given $C$ can hold when plain independence does not, and the reverse. Naive Bayes and many graphical models rely on it."
+resources:
+  - title: "Probability axioms (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Probability_axioms"
+    note: "Kolmogorov's axioms and their immediate consequences."
+  - title: "Introduction to Probability and Statistics (MIT OpenCourseWare 18.05)"
+    url: "https://ocw.mit.edu/courses/18-05-introduction-to-probability-and-statistics-spring-2022/"
+    note: "Free course notes and problems covering axioms, conditioning and independence."
+  - title: "Conditional independence (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conditional_independence"
+    note: "Definitions with examples where independence and conditional independence differ."
+---
+
+Before random variables, distributions or expected values, probability needs three things: a list of what can happen, a way to name groups of outcomes, and rules for assigning numbers to them. This note sets up those pieces with the vocabulary of [Sets](../../foundations/sets/), states the three axioms that every probability model obeys, derives the rules used everywhere afterwards, and defines independence, the property that makes most calculations tractable.
+
+## Outcomes and events
+
+An experiment has a **sample space** $\Omega$, the set of everything that can happen. Rolling a die gives $\Omega = \{1, 2, 3, 4, 5, 6\}$; flipping two coins gives $\{HH, HT, TH, TT\}$. An **event** is a subset of $\Omega$: "the roll is even" is $\{2, 4, 6\}$. Because events are sets, "A or B" is the union $A \cup B$, "A and B" the intersection $A \cap B$, and "not A" the complement $A^c$.
+
+## The three axioms
+
+A **probability** assigns a number $P(A)$ to each event so that
+
+1. $P(A) \ge 0$ for every event $A$;
+2. $P(\Omega) = 1$;
+3. if $A_1, A_2, \dots$ are pairwise disjoint, $P(A_1 \cup A_2 \cup \cdots) = P(A_1) + P(A_2) + \cdots$.
+
+Everything else follows. Since $A$ and $A^c$ are disjoint and together make $\Omega$, $P(A) + P(A^c) = 1$, so $P(A^c) = 1 - P(A)$, and in particular $P(\varnothing) = 0$. Splitting $A \cup B$ into disjoint pieces gives the **inclusion–exclusion** rule
+
+$$
+P(A \cup B) = P(A) + P(B) - P(A \cap B),
+
+$$
+
+the probability version of the counting rule in the Sets note: the overlap is counted twice, so it is subtracted once. When all outcomes are equally likely, $P(A) = |A| / |\Omega|$, and probability becomes counting, the job of [Combinatorics](../../foundations/combinatorics/).
+
+```python
+from fractions import Fraction
+from itertools import product
+
+omega = list(product(range(1, 7), repeat=2))           # two dice: 36 equally likely outcomes
+P = lambda event: Fraction(sum(1 for w in omega if event(w)), len(omega))
+A = lambda w: w[0] + w[1] == 7                         # the sum is 7
+B = lambda w: w[0] == 6                                # the first die shows 6
+print("P(A) =", P(A), " P(B) =", P(B), " P(A and B) =", P(lambda w: A(w) and B(w)))
+print("P(A or B) =", P(lambda w: A(w) or B(w)), " by inclusion-exclusion:", P(A) + P(B) - P(lambda w: A(w) and B(w)))
+print("P(not A) =", P(lambda w: not A(w)), " = 1 - P(A):", 1 - P(A))
+# P(A) = 1/6  P(B) = 1/6  P(A and B) = 1/36
+# P(A or B) = 11/36  by inclusion-exclusion: 11/36
+# P(not A) = 5/6  = 1 - P(A): 5/6
+```
+
+In words: six of the thirty-six outcomes sum to $7$, six have a first die of $6$, and one, $(6, 1)$, is in both. Counting the union directly gives $\frac{11}{36}$, and inclusion–exclusion gives the same. Exact fractions keep the check free of rounding.
+
+## Independence
+
+Events $A$ and $B$ are **independent** when
+
+$$
+P(A \cap B) = P(A)\,P(B).
+
+$$
+
+In words: learning that $B$ happened leaves the chance of $A$ unchanged, since $P(A \mid B) = P(A \cap B)/P(B) = P(A)$ (conditional probability is developed in the [Bayes' Rule](../bayes-rule/) note). In the dice example, $P(A \cap B) = \frac{1}{36} = \frac{1}{6} \cdot \frac{1}{6}$, so "sum is 7" and "first die is 6" are independent, which is not obvious from the description.
+
+<Callout type="pitfall">
+Independent is not the same as disjoint. Disjoint events with positive probability are never independent: if $A$ happens, $B$ certainly did not, so knowing one tells you everything about the other. Independence is a statement about probabilities, not about the events overlapping.
+</Callout>
+
+## Conditional independence
+
+$A$ and $B$ are **conditionally independent given $C$** when $P(A \cap B \mid C) = P(A \mid C)\,P(B \mid C)$. The two notions do not imply each other. Two symptoms of the same disease are usually dependent, because each makes the disease more likely and so the other more likely, but given the disease status they may be independent. Naive Bayes classifiers assume exactly this: words are independent given the class, though not overall.
+
+```python
+from fractions import Fraction
+from itertools import product
+
+# pick one of two coins at random: coin 0 lands heads with 1/10, coin 1 with 9/10; flip it twice
+outcomes = []
+for coin, f1, f2 in product((0, 1), "HT", "HT"):
+    p = Fraction(9, 10) if coin else Fraction(1, 10)
+    pr = lambda f: p if f == "H" else 1 - p
+    outcomes.append(((coin, f1, f2), Fraction(1, 2) * pr(f1) * pr(f2)))
+P = lambda ev: sum(q for w, q in outcomes if ev(w))
+H1, H2 = (lambda w: w[1] == "H"), (lambda w: w[2] == "H")
+print("P(H1) P(H2) =", P(H1) * P(H2), " P(H1 and H2) =", P(lambda w: H1(w) and H2(w)))
+given = lambda ev: P(lambda w: ev(w) and w[0] == 1) / P(lambda w: w[0] == 1)
+print("given coin 1:", given(H1) * given(H2), "=", given(lambda w: H1(w) and H2(w)))
+# P(H1) P(H2) = 1/4  P(H1 and H2) = 41/100
+# given coin 1: 81/100 = 81/100
+```
+
+In words: overall, a first head makes the biased coin likelier and so a second head likelier: $P(H_1 \cap H_2) = 0.41$, not $0.25$, so the flips are dependent. Once you know which coin is in use, the flips are independent, $0.81 = 0.9 \times 0.9$. A hidden common cause creates dependence; conditioning on it removes it.
+
+## Where the axioms lead
+
+The axioms are short, but every later note depends on them: random variables attach numbers to outcomes, distributions describe the probabilities those numbers inherit, and the limit theorems are statements about events built from infinitely many trials. The [Measure Theory](../measure-theory/) note makes the third axiom precise for infinite sample spaces.

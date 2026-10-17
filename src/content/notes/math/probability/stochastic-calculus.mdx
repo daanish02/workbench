@@ -1,7 +1,7 @@
 ---
-title: "Stochastic calculus"
+title: "Stochastic Calculus"
 description: "Brownian motion as the continuous-time random walk, its scaling and quadratic variation, and Itô's lemma, the chain rule that includes a second-order term."
-order: 11
+order: 13
 tier: advanced
 takeaways:
   - "**Brownian motion** $W_t$ starts at $0$, has independent Gaussian increments, and has $W_t - W_s \\sim N(0, t - s)$. Its paths are continuous but nowhere differentiable."
@@ -29,24 +29,20 @@ Brownian motion is a continuous-time process $W_t$ with three properties: $W_0 =
 The script below simulates $2000$ paths of $W_1$ with $1000$ steps each, using a seed, and checks that $W_1$ has mean $0$ and variance $1$.
 
 ```python
-import math
-import random
+import numpy as np
 
-random.seed(3)
+rng = np.random.default_rng(3)
 steps, paths = 1000, 2000
 dt = 1.0 / steps
-finals = []
-for _ in range(paths):
-    w = 0.0
-    for _ in range(steps):
-        w += random.gauss(0.0, math.sqrt(dt))
-    finals.append(w)
-mean = sum(finals) / paths
-var = sum((x - mean) ** 2 for x in finals) / paths
-print("mean of W_1:", round(mean, 2), " variance of W_1:", round(var, 2))  # prints: mean of W_1: -0.03 variance of W_1: 0.98
+increments = rng.normal(0.0, np.sqrt(dt), size=(paths, steps))  # one row per path
+W = increments.cumsum(axis=1)                                     # W at every time step
+print("mean of W_1:", round(W[:, -1].mean(), 2), " variance of W_1:", round(W[:, -1].var(), 2))
+print("variance of W_0.5:", round(W[:, steps // 2 - 1].var(), 2))
+# mean of W_1: -0.03  variance of W_1: 0.96
+# variance of W_0.5: 0.5
 ```
 
-In words: the endpoint at time $1$ has mean near $0$ and variance near $1$, as the definition requires. The small gaps are sampling error from $2000$ paths. The increments were drawn with standard deviation $\sqrt{\Delta t}$, which is what makes the total variance equal to $t$.
+In words: the endpoint at time $1$ has mean near $0$ and variance near $1$, and halfway, at $t = 0.5$, the variance is about $0.5$: variance grows linearly in time, as the definition requires. Drawing all two million increments in one NumPy call takes a fraction of a second, where a pure-Python loop takes seconds. The small gaps are sampling error from $2000$ paths. The increments were drawn with standard deviation $\sqrt{\Delta t}$, which is what makes the total variance equal to $t$.
 
 ## Quadratic variation
 
@@ -75,25 +71,25 @@ $$
 df(W_t) = f'(W_t)\,dW_t + \frac{1}{2} f''(W_t)\,dt.
 $$
 
-Take $f(w) = w^2$. Then $f' = 2w$ and $f'' = 2$, and the lemma says $d(W_t^2) = 2W_t\,dW_t + dt$. Integrating from $0$ to $t$ gives $E[W_t^2] = t$, which the next check verifies.
+Take $f(w) = w^2$. Then $f' = 2w$ and $f'' = 2$, and the lemma says $d(W_t^2) = 2W_t\,dW_t + dt$. Summed over $[0, 1]$, it says $W_1^2 = \sum 2W_{t_i}\,\Delta W_i + 1$ along a single path, where each term uses the value of $W$ at the start of its step. The ordinary chain rule would drop the $+1$. The check below adds up both sides on one simulated path.
 
 ```python
 import math
 import random
 
 random.seed(3)
-steps, paths = 1000, 4000
+steps = 100000
 dt = 1.0 / steps
-total = 0.0
-for _ in range(paths):
-    w = 0.0
-    for _ in range(steps):
-        w += random.gauss(0.0, math.sqrt(dt))
-    total += w * w
-print("estimate of E[W_1^2]:", round(total / paths, 2), " Itô predicts 1.0")  # prints: estimate of E[W_1^2]: 0.98 Itô predicts 1.0
+w, ito_sum = 0.0, 0.0
+for _ in range(steps):
+    dw = random.gauss(0.0, math.sqrt(dt))
+    ito_sum += 2 * w * dw   # f'(W) dW, with W taken at the start of the step
+    w += dw
+print("W_1^2:", round(w * w, 4), " sum of 2W dW:", round(ito_sum, 4), " difference:", round(w * w - ito_sum, 4))
+# W_1^2: 0.3458  sum of 2W dW: -0.6534  difference: 0.9992
 ```
 
-In words: the simulated mean of $W_1^2$ is $0.98$, close to $1$, matching the Itô term. Without the $\frac{1}{2} f''\,dt$ correction, the calculation would give $E[W_t^2] = 0$, which is wrong. The extra term is the difference between stochastic and ordinary calculus.
+In words: the sum of $2W\,dW$ falls short of $W_1^2$ by about $1$, exactly the $\int_0^1 dt$ term Itô's lemma adds. The ordinary chain rule, $d(W^2) = 2W\,dW$, would predict a difference of $0$. Taking expectations also gives $E[W_t^2] = t$, because the $2W\,dW$ sum has mean zero.
 
 <Callout type="pitfall">
 Do not apply the ordinary chain rule to Brownian motion. Writing $d(W^2) = 2W\,dW$ drops the $dt$ term and gives the wrong expectation. Always use Itô's lemma, which includes the second derivative whenever the path has nonzero quadratic variation.
@@ -101,4 +97,4 @@ Do not apply the ordinary chain rule to Brownian motion. Writing $d(W^2) = 2W\,d
 
 ## Where it is used
 
-Option pricing, interest-rate models and filtering all use stochastic differential equations of the form $dX_t = \mu(X_t)\,dt + \sigma(X_t)\,dW_t$. Itô's lemma is how you find the equation satisfied by a function of such a process, which is the main technique in the finance applications this section points to.
+Option pricing, interest-rate models and filtering all use stochastic differential equations of the form $dX_t = \mu(X_t)\,dt + \sigma(X_t)\,dW_t$. Itô's lemma is how you find the equation satisfied by a function of such a process, and it is the main technique behind the Black–Scholes option pricing model.

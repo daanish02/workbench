@@ -1,7 +1,7 @@
 ---
-title: "Joint and conditional distributions"
+title: "Joint Distributions"
 description: "Joint distributions of several variables, marginals obtained by summing or integrating out, conditional distributions, covariance, and independence."
-order: 5
+order: 6
 tier: core
 takeaways:
   - "The **joint** distribution $p(x, y) = P(X = x, Y = y)$ gives the probability of every pair of values. Its entries sum to $1$."
@@ -47,6 +47,7 @@ In words: each pair has a probability between $0$ and $1$, and the four add to e
 The marginal of $X$ is found by summing the joint over every value of $Y$. Geometrically you sum each row of the table, and the marginal of $Y$ sums each column.
 
 ```python
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
 pX = {x: sum(p for (a, b), p in joint.items() if a == x) for x in (0, 1)}
 pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
 print("marginal of X:", {k: round(v, 4) for k, v in pX.items()}, " marginal of Y:", {k: round(v, 4) for k, v in pY.items()})  # prints: marginal of X: {0: 0.5, 1: 0.5}  marginal of Y: {0: 0.3, 1: 0.7}
@@ -56,14 +57,17 @@ In words: $X$ is $0$ half the time and $1$ half the time, and $Y$ is $1$ seventy
 
 ## Conditional distributions
 
-The conditional distribution of $Y$ given $X = x$ is the row of the joint divided by the marginal: $p(y \mid x) = \frac{p(x, y)}{p_X(x)}$. Conditioning on $Y = 1$ asks for the probability that $X = 1$ within the column $Y = 1$.
+The conditional distribution of one variable given the other is a slice of the joint divided by a marginal. Given $Y = y$, take the column $Y = y$ and divide by its total: $p(x \mid y) = \frac{p(x, y)}{p_Y(y)}$. The check below conditions on $Y = 1$ and asks how likely $X = 1$ is within that column.
 
 ```python
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
+pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
 p_x1_given_y1 = joint[(1, 1)] / pY[1]
-print("P(X = 1 | Y = 1) =", round(p_x1_given_y1, 4))  # prints: P(X = 1 | Y = 1) = 0.4286
+print("P(X = 1 | Y = 1) =", round(p_x1_given_y1, 4))
+# P(X = 1 | Y = 1) = 0.4286
 ```
 
-In words: among the outcomes with $Y = 1$, the column holds $0.4$ and $0.3$, so $X = 1$ carries $\frac{0.3}{0.7} \approx 0.4286$ of the weight. This is Bayes' rule applied to a table.
+In words: among the outcomes with $Y = 1$, the column holds $0.4$ and $0.3$, so $X = 1$ carries $\frac{0.3}{0.7} \approx 0.4286$ of the weight. This is the definition of conditional probability applied to a table.
 
 ## Covariance
 
@@ -74,19 +78,23 @@ $$
 $$
 
 ```python
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
 EX = sum(a * p for (a, b), p in joint.items())
 EY = sum(b * p for (a, b), p in joint.items())
 EXY = sum(a * b * p for (a, b), p in joint.items())
 print("E[X] =", round(EX, 4), " E[Y] =", round(EY, 4), " Cov(X, Y) =", round(EXY - EX * EY, 4))  # prints: E[X] = 0.5  E[Y] = 0.7  Cov(X, Y) = -0.05
 ```
 
-In words: the covariance is $-0.05$, negative, so the variables tend to move in opposite directions. Only the outcome $(1, 1)$ contributes to $E[XY]$, which is why it is so small here.
+In words: the covariance is $-0.05$, negative, so the variables tend to move in opposite directions. Only the outcome $(1, 1)$ contributes to $E[XY] = 0.3$, which is just below $E[X]E[Y] = 0.35$, so the covariance is a small negative number.
 
 ## Independence
 
 $X$ and $Y$ are independent when every entry of the joint factors into the marginals. Test the table at one cell:
 
 ```python
+joint = {(0, 0): 0.1, (0, 1): 0.4, (1, 0): 0.2, (1, 1): 0.3}
+pX = {x: sum(p for (a, b), p in joint.items() if a == x) for x in (0, 1)}
+pY = {y: sum(p for (a, b), p in joint.items() if b == y) for y in (0, 1)}
 print("P(0,0) =", joint[(0, 0)], " vs P(X=0) P(Y=0) =", round(pX[0] * pY[0], 4))  # prints: P(0,0) = 0.1  vs P(X=0) P(Y=0) = 0.15
 print("independent?", all(abs(joint[(x, y)] - pX[x] * pY[y]) < 1e-12 for x in (0, 1) for y in (0, 1)))  # prints: independent? False
 ```

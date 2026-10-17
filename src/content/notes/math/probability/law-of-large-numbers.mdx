@@ -1,7 +1,7 @@
 ---
-title: "Law of large numbers"
+title: "Large Numbers"
 description: "Why averages of repeated independent trials settle near the expected value, the weak and strong forms of the law, and the gambler's fallacy it does not support."
-order: 6
+order: 8
 tier: core
 takeaways:
   - "The **law of large numbers** says the sample mean $\\bar X_n = \\frac{1}{n}\\sum_{i=1}^n X_i$ of independent, identically distributed values gets close to the expected value $\\mu$ as $n$ grows."
@@ -46,39 +46,49 @@ for n in [10, 100, 1000, 100000]:
     print(f"n = {n:>6}: average = {avg:.4f}, error = {abs(avg - 3.5):.4f}")  # prints: n = 10: average = 4.1000, error = 0.6000
 ```
 
-In words: the error is not monotone. It is $0.6$ at $n = 10$, $0.32$ at $n = 100$, and $0.0101$ at $n = 100000$. It can wander at small $n$, but it shrinks overall. The rate matches the spread formula in the next section: the typical error scales like $\sigma / \sqrt{n}$.
+In words: the error is $0.6$ at $n = 10$, $0.32$ at $n = 100$, $0.069$ at $n = 1000$ and $0.0101$ at $n = 100000$. It happens to fall at every printed size here, but it need not: with other seeds it wanders up and down at small $n$ and only shrinks overall. The rate matches the spread formula in the next section: the typical error scales like $\sigma / \sqrt{n}$.
 
 <RunningAverage />
 
 ## Why averages settle
 
-The variance of a die roll is $\frac{35}{12}$. The sample mean of $n$ independent rolls has variance $\frac{\sigma^2}{n}$, so its standard deviation is $\frac{\sigma}{\sqrt{n}}$. The script below checks this against the simulation, using the same seed.
+The variance of a die roll is $\frac{35}{12}$. The sample mean of $n$ independent rolls has variance $\frac{\sigma^2}{n}$, so its standard deviation is $\frac{\sigma}{\sqrt{n}}$. The script below checks this by simulation: it computes many averages of $n$ rolls and measures how much they spread.
 
 ```python
 import math
+import random
+import statistics
 
+random.seed(2024)
 sigma = math.sqrt(35 / 12)
-for n in [100, 10000]:
-    print(f"n = {n}: predicted sd of the mean = {sigma / math.sqrt(n):.4f}")  # prints: n = 100: predicted sd of the mean = 0.1708
-print("predicted sd for n = 10000 is 0.0171")  # prints: predicted sd for n = 10000 is 0.0171
+for n in [100, 1000]:
+    means = [statistics.fmean(random.choices(range(1, 7), k=n)) for _ in range(2000)]
+    print(f"n = {n:>4}: sd of 2000 averages = {statistics.stdev(means):.4f}, predicted sigma/sqrt(n) = {sigma / math.sqrt(n):.4f}")
+# n =  100: sd of 2000 averages = 0.1699, predicted sigma/sqrt(n) = 0.1708
+# n = 1000: sd of 2000 averages = 0.0543, predicted sigma/sqrt(n) = 0.0540
 ```
 
-In words: the averages of a hundred rolls typically sit within about $0.17$ of $3.5$, and of ten thousand rolls within about $0.017$. Each tenfold increase in sample size cuts the typical error by about $\sqrt{10}$, roughly three.
+In words: the measured spread of the averages matches $\sigma/\sqrt{n}$, about $0.17$ for a hundred rolls and about $0.054$ for a thousand. Each tenfold increase in sample size cuts the typical error by about $\sqrt{10}$, roughly three.
 
 ## What the law does not say
 
 A common misreading is that the law forces outcomes to balance. Suppose a coin has landed heads ten times in a row. The law does not predict tails next. The coin has no memory, so the next flip is still fair. What changes with more flips is that the early streak becomes a smaller and smaller part of the average.
 
+The check below simulates a million fair flips, finds every place where five heads in a row have just occurred, and looks at the flip that comes next.
+
 ```python
 import random
 
 random.seed(7)
-flips = [random.random() < 0.5 for _ in range(20)]
-heads_after_10_heads = sum(1 for i in range(10, 19) if flips[i]) / 9
-print("heads share after a run of heads is not forced to balance in 9 flips:", round(heads_after_10_heads, 3))  # prints: heads share after a run of heads is not forced to balance in 9 flips: 0.556
+flips = [random.random() < 0.5 for _ in range(1_000_000)]
+after_streak = [flips[i] for i in range(5, len(flips)) if all(flips[i - 5:i])]
+print("streaks of 5 heads found:", len(after_streak))
+print("share of heads on the next flip:", round(sum(after_streak) / len(after_streak), 3))
+# streaks of 5 heads found: 31444
+# share of heads on the next flip: 0.502
 ```
 
-In words: this check uses a seeded run and does not rely on any streak. The point is that the next flip depends only on its own probability, and the average changes only because new flips are added to the total.
+In words: after tens of thousands of five-head streaks, the next flip is heads about half the time. Nothing pushes it toward tails. The average still settles, but only because the streak becomes a smaller and smaller part of an ever larger total.
 
 <Callout type="pitfall">
 The law of large numbers is about averages over many trials, not about compensation. Believing that a run of bad luck makes a good outcome more likely next is the gambler's fallacy. Independence means the next trial ignores the past, and the average moves only as more trials are added.

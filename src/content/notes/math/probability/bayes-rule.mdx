@@ -1,13 +1,13 @@
 ---
-title: "Bayes' rule"
+title: "Bayes' Rule"
 description: "Conditional probability, the rule itself, and worked examples from medical testing and spam filtering, including the base-rate trap."
-order: 4
+order: 5
 tier: core
 takeaways:
   - "The **conditional probability** $P(A \\mid B) = \\frac{P(A \\cap B)}{P(B)}$ is the chance of $A$ once you know $B$ happened. It is a new probability measure, restricted to the outcomes where $B$ holds."
   - "**Bayes' rule** $P(A \\mid B) = \\frac{P(B \\mid A)\\,P(A)}{P(B)}$ turns the probability of the evidence given a cause into the probability of the cause given the evidence."
   - "The denominator is usually computed by the **law of total probability**: $P(B) = P(B \\mid A)P(A) + P(B \\mid A^c)P(A^c)$."
-  - "The **base rate** $P(A)$ matters. A test that is $90\\%$ accurate can still give mostly false positives when the condition is rare."
+  - "The **base rate** $P(A)$ matters. A test that catches $90\\%$ of cases with a $5\\%$ false-positive rate still gives mostly false positives when the condition affects $1\\%$ of people."
 resources:
   - title: "Bayes' theorem (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Bayes%27_theorem"
@@ -37,14 +37,15 @@ from fractions import Fraction
 
 P_A_and_B = Fraction(1, 6)
 P_B = Fraction(3, 6)
-print("P(4 | even) =", P_A_and_B / P_B, "=", round(float(P_A_and_B / P_B), 4))  # prints: P(4 | even) = 1/3 = 0.3333
+print("P(4 | even) =", P_A_and_B / P_B, "=", round(float(P_A_and_B / P_B), 4))
+# P(4 | even) = 1/3 = 0.3333
 ```
 
 In words: once you know the roll is even, there are three equally likely faces, and one of them is $4$.
 
 ## Bayes' rule
 
-Rearranging the definition twice gives the rule. Both $P(A \cap B)$ and $P(B \cap A)$ equal $P(A)P(B \mid A)$, so
+The definition can be rearranged two ways: $P(A \cap B) = P(A \mid B)\,P(B)$ and also $P(A \cap B) = P(B \mid A)\,P(A)$. Setting the two equal and dividing by $P(B)$ gives the rule:
 
 $$
 P(A \mid B) = \frac{P(B \mid A)\,P(A)}{P(B)}.
@@ -64,8 +65,11 @@ A disease affects $1\%$ of a population. A test detects it with probability $0.9
 prev, sens, fpr = 0.01, 0.90, 0.05
 p_pos = sens * prev + fpr * (1 - prev)
 posterior = sens * prev / p_pos
-print("P(positive) =", round(p_pos, 4), " P(disease | positive) =", round(posterior, 4))  # prints: P(positive) = 0.0585  P(disease | positive) = 0.1538
+print("P(positive) =", round(p_pos, 4), " P(disease | positive) =", round(posterior, 4))
+# P(positive) = 0.0585  P(disease | positive) = 0.1538
 ```
+
+In words: a positive result is rare overall, $5.85\%$ of tests, and only about $15\%$ of those positives come from sick people.
 
 The check below does the same count with a population of ten thousand people, which is often easier to trust than the formula.
 
@@ -94,11 +98,32 @@ A mail filter learns from past mail. Suppose $20\%$ of mail is spam, the word "f
 ```python
 p_spam, p_free_spam, p_free_ham = 0.20, 0.50, 0.02
 p_free = p_free_spam * p_spam + p_free_ham * (1 - p_spam)
-print("P(spam | free) =", round(p_free_spam * p_spam / p_free, 4))  # prints: P(spam | free) = 0.8621
+print("P(spam | free) =", round(p_free_spam * p_spam / p_free, 4))
+# P(spam | free) = 0.8621
 ```
 
 In words: the word is rare in legitimate mail, so its presence shifts the odds sharply toward spam, from $20\%$ to about $86\%$. Real filters combine many such words, which needs the joint and conditional distributions in the next note.
 
 ## Updating
 
-Bayes' rule is an update rule. The posterior from one piece of evidence becomes the prior for the next. Each new test or word multiplies the odds, which is how spam filters and diagnostic systems accumulate evidence. The rule is the same at every step; only the prior changes.
+Bayes' rule is an update rule. The posterior from one piece of evidence becomes the prior for the next. In **odds form** the update is a single multiplication:
+
+$$
+\frac{P(A \mid B)}{P(A^c \mid B)} = \frac{P(B \mid A)}{P(B \mid A^c)} \cdot \frac{P(A)}{P(A^c)},
+
+$$
+
+posterior odds equal the **likelihood ratio** times the prior odds. For the medical test the ratio is $0.90 / 0.05 = 18$, so prior odds of $1:99$ become $18:99$, which is the $0.1538$ found above. When several pieces of evidence are independent given the cause, as a naive Bayes spam filter assumes for words, their likelihood ratios simply multiply.
+
+```python
+prior_odds = 0.01 / 0.99
+lr = 0.90 / 0.05
+post_odds = lr * prior_odds
+print("posterior after one positive:", round(post_odds / (1 + post_odds), 4))  # prints: posterior after one positive: 0.1538
+post_odds *= lr  # a second, independent positive test
+print("posterior after two positives:", round(post_odds / (1 + post_odds), 4))  # prints: posterior after two positives: 0.766
+```
+
+In words: one positive test moves the chance from $1\%$ to about $15\%$; a second independent positive multiplies the odds by $18$ again and moves it to about $77\%$.
+
+<OddsUpdate />

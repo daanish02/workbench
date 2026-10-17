@@ -1,0 +1,100 @@
+---
+title: "Multivariate Normal"
+description: "The normal distribution in several dimensions: the mean vector and covariance matrix, the elliptical contours set by eigenvectors, sampling with a Cholesky factor, and the marginals and conditionals that stay normal."
+order: 7
+tier: core
+takeaways:
+  - "A **multivariate normal** $\\mathcal{N}(\\boldsymbol\\mu, \\Sigma)$ is described by a mean vector and a covariance matrix. Its density is $\\propto \\exp\\big(-\\tfrac{1}{2}(\\mathbf{x} - \\boldsymbol\\mu)^\\top \\Sigma^{-1}(\\mathbf{x} - \\boldsymbol\\mu)\\big)$."
+  - "The contours are ellipses (ellipsoids) whose axes are the eigenvectors of $\\Sigma$, with lengths proportional to the square roots of its eigenvalues."
+  - "To sample, factor $\\Sigma = LL^\\top$ (Cholesky) and set $\\mathbf{x} = \\boldsymbol\\mu + L\\mathbf{z}$ with $\\mathbf{z}$ standard normal. Any linear map of a normal vector is normal."
+  - "**Marginals** are normal: keep the matching block of $\\boldsymbol\\mu$ and $\\Sigma$. **Conditionals** are normal too, with mean shifted along the regression line and variance reduced."
+  - "For jointly normal variables, uncorrelated means independent. That is special to the normal; in general zero covariance does not imply independence."
+resources:
+  - title: "Multivariate normal distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Multivariate_normal_distribution"
+    note: "Density, properties, and the conditional-distribution formulas."
+  - title: "scipy.stats.multivariate_normal"
+    url: "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.multivariate_normal.html"
+    note: "Density, sampling and CDF for the distribution, used below."
+  - title: "Gaussian Processes for Machine Learning, appendix A (Rasmussen and Williams)"
+    url: "https://gaussianprocess.org/gpml/"
+    note: "Free book whose appendix collects the Gaussian identities used in ML."
+---
+
+One normal variable is described by a mean and a variance. Many quantities move together, such as height and weight, or the pixels of an image, and the natural model for a vector of them is the multivariate normal. It is described by a mean vector and a covariance matrix, and nearly every question about it reduces to linear algebra on that matrix. It is the distribution behind Gaussian processes, Kalman filters, linear discriminant analysis and the noise model of least squares. This note builds it from the [Joint Distributions](../joint-and-conditional-distributions/) ideas and the [Quadratic Forms](../../linear-algebra/quadratic-forms/) note.
+
+## Mean vector and covariance matrix
+
+For a random vector $\mathbf{X} = (X_1, \dots, X_d)$, the mean is $\boldsymbol\mu = E[\mathbf{X}]$ and the **covariance matrix** has entries $\Sigma_{ij} = \operatorname{Cov}(X_i, X_j)$: variances on the diagonal, covariances off it. $\Sigma$ is symmetric and positive semidefinite, because $\mathbf{w}^\top \Sigma \mathbf{w}$ is the variance of $\mathbf{w}^\top \mathbf{X}$, which cannot be negative. The multivariate normal with these parameters has density
+
+$$
+f(\mathbf{x}) = \frac{1}{\sqrt{(2\pi)^d \det \Sigma}}\,\exp\!\Big(-\tfrac{1}{2}(\mathbf{x} - \boldsymbol\mu)^\top \Sigma^{-1}(\mathbf{x} - \boldsymbol\mu)\Big).
+
+$$
+
+In words: the density depends on $\mathbf{x}$ only through a quadratic form, the squared **Mahalanobis distance** from the mean. Points at the same Mahalanobis distance share a density value, so the contours are ellipses with axes along the eigenvectors of $\Sigma$ and semi-axes proportional to $\sqrt{\lambda_i}$.
+
+## Sampling with a Cholesky factor
+
+If $\mathbf{z}$ is a vector of independent standard normals and $\Sigma = LL^\top$, then $\mathbf{x} = \boldsymbol\mu + L\mathbf{z}$ has mean $\boldsymbol\mu$ and covariance $L\,I\,L^\top = \Sigma$. Any linear transformation of a normal vector is normal, so this produces exactly $\mathcal{N}(\boldsymbol\mu, \Sigma)$.
+
+```python
+import numpy as np
+from scipy.stats import multivariate_normal
+
+rng = np.random.default_rng(0)
+mu = np.array([1.0, -1.0])
+Sigma = np.array([[2.0, 1.2], [1.2, 1.0]])
+L = np.linalg.cholesky(Sigma)
+X = mu + rng.standard_normal((100_000, 2)) @ L.T       # each row is one sample mu + L z
+print("sample mean:", X.mean(axis=0).round(3))
+print("sample covariance:", np.cov(X.T).round(3).tolist())
+print("density at the mean, formula vs scipy:",
+      round(1 / (2 * np.pi * np.sqrt(np.linalg.det(Sigma))), 5), round(multivariate_normal(mu, Sigma).pdf(mu), 5))
+# sample mean: [ 1.003 -0.999]
+# sample covariance: [[2.009, 1.201], [1.201, 0.998]]
+# density at the mean, formula vs scipy: 0.21268 0.21268
+```
+
+In words: a hundred thousand samples reproduce the mean $(1, -1)$ and the covariance matrix to about two decimal places, and the density at the mean matches `scipy.stats.multivariate_normal`. Run it with `uv run --with numpy --with scipy`.
+
+<GaussianContours />
+
+## Marginals and conditionals
+
+Split $\mathbf{X}$ into two blocks $(\mathbf{X}_a, \mathbf{X}_b)$, with $\boldsymbol\mu$ and $\Sigma$ split to match. The **marginal** of $\mathbf{X}_a$ is $\mathcal{N}(\boldsymbol\mu_a, \Sigma_{aa})$: just drop the other block. The **conditional** of $\mathbf{X}_a$ given $\mathbf{X}_b = \mathbf{x}_b$ is also normal, with
+
+$$
+\boldsymbol\mu_{a \mid b} = \boldsymbol\mu_a + \Sigma_{ab}\Sigma_{bb}^{-1}(\mathbf{x}_b - \boldsymbol\mu_b), \qquad \Sigma_{a \mid b} = \Sigma_{aa} - \Sigma_{ab}\Sigma_{bb}^{-1}\Sigma_{ba}.
+
+$$
+
+In words: observing $\mathbf{x}_b$ moves the mean of $\mathbf{X}_a$ along the regression line, by an amount set by the covariance, and shrinks its variance by the part that $\mathbf{x}_b$ explains. For two variables with correlation $\rho$, the conditional variance is $\sigma_a^2(1 - \rho^2)$.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(1)
+mu = np.array([1.0, -1.0])
+Sigma = np.array([[2.0, 1.2], [1.2, 1.0]])
+X = rng.multivariate_normal(mu, Sigma, size=400_000)
+
+xb = 0.0
+cond_mean = mu[0] + Sigma[0, 1] / Sigma[1, 1] * (xb - mu[1])
+cond_var = Sigma[0, 0] - Sigma[0, 1] ** 2 / Sigma[1, 1]
+near = X[np.abs(X[:, 1] - xb) < 0.02, 0]              # samples whose second coordinate is close to 0
+print(f"formula: mean {cond_mean:.3f}, variance {cond_var:.3f}")
+print(f"samples near X_b = 0: mean {near.mean():.3f}, variance {near.var():.3f}")
+# formula: mean 2.200, variance 0.560
+# samples near X_b = 0: mean 2.206, variance 0.552
+```
+
+In words: among samples whose second coordinate is near $0$, the first coordinate averages about $2.2$ with variance about $0.56$, matching the formulas. Seeing $X_b = 0$, one unit above its mean, raised the expected $X_a$ by $1.2$ and cut its variance from $2$ to $0.56$.
+
+<Callout type="pitfall">
+"Each coordinate is normal" does not make the vector multivariate normal. If $X$ is standard normal and $Y = X$ or $-X$ with a fair coin flip, both are normal and uncorrelated, yet $X + Y$ is zero half the time. The convenient facts above, including "uncorrelated means independent", hold only when the vector is jointly normal.
+</Callout>
+
+## Where it is used
+
+Least squares is maximum likelihood under normal noise. Gaussian processes put a multivariate normal on function values and predict with the conditional formula above. Kalman filters update a normal belief with each measurement, using the same conditioning step. And the eigenvectors of $\Sigma$ are the principal components of the [PCA](../../linear-algebra/principal-component-analysis-pca/) note.
