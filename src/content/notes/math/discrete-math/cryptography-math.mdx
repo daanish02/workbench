@@ -1,8 +1,82 @@
 ---
 title: "Cryptography math"
-description: "RSA's mathematical basis, why modular exponentiation is hard to invert."
+description: "The mathematics of RSA: key generation from two primes, encryption and decryption as modular exponentiation, and why reversing the process is hard without the factors."
 order: 6
 tier: optional
+takeaways:
+  - "**RSA** picks two primes $p$ and $q$, sets $n = pq$ and $\\varphi = (p-1)(q-1)$, then chooses $e$ coprime to $\\varphi$ and $d$ with $ed \\equiv 1 \\pmod \\varphi$. The public key is $(n, e)$ and the private key is $d$."
+  - "Encryption is $c = m^e \\bmod n$ and decryption is $m = c^d \\bmod n$. Euler's theorem shows the two cancel, because $ed \\equiv 1 \\pmod{\\varphi(n)}$."
+  - "Computing $d$ is easy if you know $\\varphi(n)$, and that needs the factors $p$ and $q$. Factoring $n$ is believed hard for large primes, which is the security assumption."
+  - "Toy examples with small primes are for understanding only. Real keys use primes hundreds of digits long and add padding, because raw RSA leaks information."
+resources:
+  - title: "RSA (cryptosystem) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/RSA_(cryptosystem)"
+    note: "Key generation, encryption, decryption, and the security basis."
+  - title: "Modular exponentiation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Modular_exponentiation"
+    note: "Fast computation of large powers modulo n."
+  - title: "Integer factorization (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Integer_factorization"
+    note: "Why factoring is believed hard and the best known methods."
 ---
 
-_Placeholder. Content not written yet._
+Public-key cryptography lets two people who have never met agree on a secret, or let anyone check a signature, using only numbers that are public. RSA, published in 1977, does this with three ingredients from the previous notes: primes, the gcd and modular inverses, and fast modular exponentiation. This note walks through the whole scheme with small numbers, so every step can be checked by hand, and then explains why the scheme is only as strong as the difficulty of factoring.
+
+<RSAKeyFlow />
+
+## Key generation
+
+Choose two primes, say $p = 61$ and $q = 53$. Their product $n = 3233$ is the public modulus. Let $\varphi = (p - 1)(q - 1) = 3120$. Choose $e = 17$, which is coprime to $\varphi$, and find $d$ with $ed \equiv 1 \pmod{\varphi}$. The script below does this.
+
+```python
+from math import gcd
+
+p, q = 61, 53
+n = p * q
+phi = (p - 1) * (q - 1)
+e = 17
+assert gcd(e, phi) == 1
+d = pow(e, -1, phi)
+print("n =", n, " phi =", phi, " d =", d)  # prints: n = 3233 phi = 3120 d = 2753
+print("e * d mod phi =", (e * d) % phi)  # prints: e * d mod phi = 1
+```
+
+In words: the public key is $(3233, 17)$ and the private key is $d = 2753$. The check $17 \cdot 2753 = 46801 = 15 \cdot 3120 + 1$ confirms that $ed \equiv 1 \pmod \varphi$.
+
+## Encryption and decryption
+
+To send the message $m = 65$, compute $c = m^e \bmod n$. The receiver recovers $m = c^d \bmod n$. The script below does both steps with fast modular exponentiation.
+
+```python
+n, e, d = 3233, 17, 2753
+m = 65
+c = pow(m, e, n)
+back = pow(c, d, n)
+print("ciphertext c =", c, " decrypted m =", back)  # prints: ciphertext c = 2790 decrypted m = 65
+```
+
+In words: the message $65$ becomes $2790$ and returns to $65$. Why this works: $c^d = m^{ed}$, and $ed = 1 + k\varphi$, so by Euler's theorem $m^{ed} = m \cdot (m^{\varphi})^k \equiv m \pmod n$, for messages coprime to $n$.
+
+<RSAWalkthrough />
+
+## Why it is hard to break
+
+Anyone can compute $c$ from the public key. Recovering $m$ requires $d$, and computing $d$ requires $\varphi(n)$, which requires $p$ and $q$. Finding $p$ and $q$ from $n$ is factoring. For $n$ with two primes of several hundred digits, the best known factoring methods are far too slow to be practical.
+
+The check below shows the gap in miniature: with $n = 3233$ trial division finds the factors instantly, but the same method would take an impractical time for a modulus of real size.
+
+```python
+n = 3233
+f = next(i for i in range(2, int(n ** 0.5) + 1) if n % i == 0)
+print("smallest factor of 3233:", f, " other factor:", n // f)  # prints: smallest factor of 3233: 53 other factor: 61
+```
+
+In words: trial division breaks the toy key at once. Its running time grows with the smaller prime, so doubling the number of digits in $p$ and $q$ multiplies the work enormously. That is the whole basis of the scheme.
+
+<Callout type="pitfall">
+Textbook RSA is insecure as used directly: the same message always gives the same ciphertext, and small exponents or small messages can be attacked. Real systems use padding such as OAEP, large random primes, and a standard key size. The numbers in this note are for seeing the mechanism, not for protecting anything.
+</Callout>
+
+## Where the mathematics goes next
+
+Key exchange schemes such as Diffie-Hellman rely on the discrete logarithm problem instead of factoring, and elliptic-curve cryptography uses the same idea on a different group. The algebraic structures behind these, groups and fields, are the subject of the abstract algebra note.

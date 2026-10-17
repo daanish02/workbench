@@ -1,8 +1,92 @@
 ---
 title: "Modular arithmetic"
-description: "Clock arithmetic, modular inverses, applications to cryptography."
+description: "Arithmetic on remainders, the clock as a model, modular inverses that exist exactly when the gcd is one, Fermat's little theorem and Euler's totient."
 order: 4
 tier: core
+takeaways:
+  - "$a \\equiv b \\pmod n$ means $n$ divides $a - b$. Addition, subtraction and multiplication respect congruence, so you can reduce intermediate results modulo $n$ at every step."
+  - "A **modular inverse** of $a$ modulo $n$ is an $x$ with $ax \\equiv 1 \\pmod n$. It exists exactly when $\\gcd(a, n) = 1$, and the extended Euclidean algorithm finds it."
+  - "**Fermat's little theorem**: for a prime $p$ and $a$ not divisible by $p$, $a^{p-1} \\equiv 1 \\pmod p$. **Euler's theorem** extends this to any $n$ with $\\varphi(n)$ in place of $p - 1$."
+  - "Modular exponentiation $a^k \\bmod n$ can be computed with about $\\log_2 k$ multiplications. Reversing it, finding $k$ from $a^k$, is the discrete logarithm problem, which is believed hard."
+resources:
+  - title: "Modular arithmetic (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Modular_arithmetic"
+    note: "Congruences, residue classes, and the arithmetic they support."
+  - title: "Modular multiplicative inverse (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Modular_multiplicative_inverse"
+    note: "When inverses exist and how to compute them."
+  - title: "Fermat's little theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fermat%27s_little_theorem"
+    note: "The statement, a proof sketch, and its use in primality testing."
 ---
 
-_Placeholder. Content not written yet._
+Modular arithmetic is arithmetic on a clock. Adding five hours to ten o'clock gives three, not fifteen, because the clock wraps around. The same idea, applied to the integers with a fixed modulus $n$, underlies hash functions, error-detecting codes, random number generators and public-key cryptography. This note sets up congruences, explains when a division is possible, and states the two theorems that make modular exponentiation useful.
+
+## Congruences and the clock
+
+Write $a \equiv b \pmod n$ when $n$ divides $a - b$. Congruence is compatible with addition and multiplication: if $a \equiv a'$ and $b \equiv b'$, then $a + b \equiv a' + b'$ and $ab \equiv a'b'$. So you can reduce modulo $n$ at any step without changing the final answer.
+
+On a clock $n = 12$. The script below checks that reducing early gives the same result as reducing at the end.
+
+```python
+n = 12
+a, b = 10, 7
+print("(10 + 7) mod 12 =", (a + b) % n, " (10 mod 12 + 7 mod 12) mod 12 =", (a % n + b % n) % n)  # prints: (10 + 7) mod 12 = 5 (10 mod 12 + 7 mod 12) mod 12 = 5
+x = 3 * 3 * 3 * 3 * 3
+print("3^5 =", x, " mod 12 =", x % 12, " reduced at each step:", 3)  # prints: 3^5 = 243 mod 12 = 3 reduced at each step: 3
+```
+
+In words: ten hours plus seven hours is five on the clock, whichever way you reduce. The power example shows the same thing: $3^5 = 243 \equiv 3 \pmod{12}$ no matter when the reduction happens.
+
+<ClockModular />
+
+## Modular inverses
+
+Division modulo $n$ means multiplying by an inverse. The inverse of $a$ exists exactly when $\gcd(a, n) = 1$. For $n = 12$, the numbers $5$ and $7$ are invertible, but $4$ and $6$ are not. The check below finds every inverse by brute force.
+
+```python
+from math import gcd
+
+n = 12
+for a in range(1, n):
+    inv = [x for x in range(1, n) if (a * x) % n == 1]
+    print(f"a = {a:>2}: gcd = {gcd(a, n)}, inverse = {inv[0] if inv else 'none'}")  # prints: a =  1: gcd = 1, inverse = 1
+```
+
+In words: $5 \cdot 5 = 25 \equiv 1 \pmod{12}$, so $5$ is its own inverse, and $7 \cdot 7 = 49 \equiv 1$. The numbers with a common factor with $12$ have no inverse, because multiplying them can never reach $1$.
+
+<UnitsTable />
+
+## Fermat's little theorem
+
+For a prime $p$ and $a$ not divisible by $p$, $a^{p-1} \equiv 1 \pmod p$. Equivalently, $a^{p-2}$ is the inverse of $a$. The check below tests this for $p = 13$ and all $a$ from $1$ to $12$.
+
+```python
+p = 13
+print("all a^(p-1) = 1 mod p:", all(pow(a, p - 1, p) == 1 for a in range(1, p)))  # prints: all a^(p-1) = 1 mod p: True
+print("inverse of 5 mod 13 via a^(p-2):", pow(5, p - 2, p), " check 5 * that mod 13 =", (5 * pow(5, p - 2, p)) % p)  # prints: inverse of 5 mod 13 via a^(p-2): 8 check 5 * that mod 13 = 1
+```
+
+In words: every nonzero residue raised to the power $12$ is $1$ modulo $13$, and $8$ is the inverse of $5$ because $40 = 3 \cdot 13 + 1$. The power $a^{p-2}$ gives inverses without the extended Euclidean algorithm, which is useful when $p$ is fixed.
+
+## Euler's totient
+
+For a general modulus, $\varphi(n)$ counts the integers from $1$ to $n$ that are coprime to $n$. Euler's theorem says $a^{\varphi(n)} \equiv 1 \pmod n$ whenever $\gcd(a, n) = 1$.
+
+```python
+from math import gcd
+
+n = 12
+phi = sum(1 for k in range(1, n + 1) if gcd(k, n) == 1)
+print("phi(12) =", phi, " check 5^phi mod 12 =", pow(5, phi, n))  # prints: phi(12) = 4 check 5^phi mod 12 = 1
+```
+
+In words: four numbers up to $12$ are coprime to it, namely $1, 5, 7, 11$. Euler's theorem then says $5^4 \equiv 1 \pmod{12}$, which the check confirms.
+
+<Callout type="pitfall">
+Modular arithmetic does not behave like ordinary division. In $\mathbb{Z}_{12}$, $2 \cdot 6 = 12 \equiv 0$, so two nonzero numbers can multiply to zero. Cancelling a common factor from both sides of a congruence requires that factor to be coprime to the modulus.
+</Callout>
+
+## Why it matters
+
+Fast modular exponentiation, the inverses and the two theorems above are the ingredients of RSA. The cryptography note combines them into a complete scheme with a worked example.

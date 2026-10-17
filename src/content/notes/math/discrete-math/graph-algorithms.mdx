@@ -1,8 +1,128 @@
 ---
 title: "Graph algorithms"
-description: "BFS, DFS, shortest paths and minimum spanning trees, the core graph algorithms."
+description: "Breadth-first and depth-first search, shortest paths with Dijkstra's algorithm, and minimum spanning trees with Kruskal's algorithm, with checks on a small weighted graph."
 order: 2
 tier: core
+takeaways:
+  - "**Breadth-first search** (BFS) explores vertices in rings of increasing distance from the start. On an unweighted graph it gives the shortest number of edges to every reachable vertex."
+  - "**Depth-first search** (DFS) follows one path as far as it goes before backtracking. It is the natural tool for cycle detection, topological ordering and connectivity."
+  - "**Dijkstra's algorithm** finds shortest paths in a graph with non-negative weights by always settling the closest unsettled vertex next. Negative edges break it."
+  - "A **minimum spanning tree** connects all vertices with the least total weight. **Kruskal's algorithm** adds the cheapest edges that do not create a cycle, which a union-find structure checks quickly."
+resources:
+  - title: "Breadth-first search (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Breadth-first_search"
+    note: "The traversal, its queue, and its shortest-path property."
+  - title: "Dijkstra's algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm"
+    note: "The shortest-path algorithm for non-negative weights."
+  - title: "Kruskal's algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Kruskal%27s_algorithm"
+    note: "The minimum spanning tree algorithm and its union-find implementation."
 ---
 
-_Placeholder. Content not written yet._
+Once a problem is a graph, the question becomes which algorithm answers it. Three classics cover most needs: searching a graph systematically, finding shortest routes, and building the cheapest network that connects everything. Each one is short to write and rests on a simple invariant. This note states the algorithms, runs them on a small weighted graph, and checks the results against hand calculations.
+
+## Breadth-first and depth-first search
+
+BFS keeps a queue of vertices to visit. It starts at the source, visits its neighbours, then their neighbours, and so on. Because it visits by rings, the first time it reaches a vertex is along a shortest path in edges.
+
+The script below runs BFS on a small graph and records the hop distance from vertex $0$.
+
+```python
+from collections import deque
+
+adj = {0: [1, 2], 1: [0, 3], 2: [0, 3, 4], 3: [1, 2, 5], 4: [2, 5], 5: [3, 4]}
+
+def bfs(src):
+    dist = {src: 0}
+    q = deque([src])
+    while q:
+        u = q.popleft()
+        for v in adj[u]:
+            if v not in dist:
+                dist[v] = dist[u] + 1
+                q.append(v)
+    return dist
+
+print("hop distances from 0:", bfs(0))  # prints: hop distances from 0: {0: 0, 1: 1, 2: 1, 3: 2, 4: 2, 5: 3}
+```
+
+In words: vertices $1$ and $2$ are one hop away, vertices $3$ and $4$ are two hops away, and vertex $5$ is three hops away. DFS visits the same vertices in a different order and is better when you care about structure rather than distance.
+
+<GraphSearchStepper />
+
+## Shortest paths with Dijkstra
+
+With weights, the hop count is no longer the right measure. Dijkstra's algorithm keeps a priority queue of tentative distances and always settles the vertex with the smallest one. The check below runs it on a weighted graph and compares it with brute-force enumeration of all simple paths.
+
+```python
+import heapq
+
+wadj = {'A': [('B', 4), ('C', 1)], 'B': [('A', 4), ('C', 2), ('D', 5)],
+        'C': [('A', 1), ('B', 2), ('D', 8)], 'D': [('B', 5), ('C', 8)]}
+
+def dijkstra(src):
+    dist = {src: 0}
+    pq = [(0, src)]
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]:
+            continue
+        for v, w in wadj[u]:
+            nd = d + w
+            if nd < dist.get(v, float('inf')):
+                dist[v] = nd
+                heapq.heappush(pq, (nd, v))
+    return dist
+
+print("Dijkstra from A:", dijkstra('A'))  # prints: Dijkstra from A: {'A': 0, 'B': 3, 'C': 1, 'D': 8}
+
+def simple_costs(u, target, seen, cost):
+    # yields the cost of every simple path from u to target
+    if u == target:
+        yield cost
+        return
+    for v, w in wadj[u]:
+        if v not in seen:
+            yield from simple_costs(v, target, seen | {v}, cost + w)
+
+best = min(simple_costs('A', 'D', {'A'}, 0))
+print("brute-force shortest cost from A to D:", best)  # prints: brute-force shortest cost from A to D: 8
+```
+
+In words: Dijkstra reports $A \to C \to B$ at cost $3$ as the way to $B$, and its distance to $D$ is $8$. Checking every simple path from $A$ to $D$ by hand gives the same minimum, $8$, along $A \to C \to B \to D$.
+
+## Minimum spanning trees with Kruskal
+
+A minimum spanning tree (MST) uses $|V| - 1$ edges to connect all vertices with the least total weight. Kruskal's algorithm sorts the edges by weight and adds each edge unless it would close a cycle, which a union-find structure detects.
+
+```python
+edges = [(1, 'A', 'C'), (2, 'B', 'C'), (4, 'A', 'B'), (5, 'B', 'D'), (8, 'C', 'D')]
+parent = {v: v for v in 'ABCD'}
+
+def find(v):
+    while parent[v] != v:
+        v = parent[v]
+    return v
+
+tree, total = [], 0
+for w, u, v in sorted(edges):
+    ru, rv = find(u), find(v)
+    if ru != rv:
+        parent[ru] = rv
+        tree.append((u, v))
+        total += w
+print("MST edges:", tree, " total weight:", total)  # prints: MST edges: [('A', 'C'), ('B', 'C'), ('B', 'D')] total weight: 8
+```
+
+In words: Kruskal keeps the weight-$1$, weight-$2$ and weight-$5$ edges, for a total of $8$. The weight-$4$ edge $A\text{–}B$ is skipped because $A$ and $B$ are already connected through $C$, and the weight-$8$ edge $C\text{–}D$ is skipped for the same reason.
+
+<Callout type="pitfall">
+Dijkstra's guarantee depends on non-negative weights. A single negative edge can make a settled distance wrong later, and the Bellman-Ford algorithm handles that case at higher cost. Also, the shortest path by number of edges and by total weight are different questions.
+</Callout>
+
+<KruskalSteps />
+
+## Choosing the algorithm
+
+Use BFS when every edge counts the same. Use Dijkstra when weights are non-negative and you need a single source. Use Kruskal when you need a cheapest connected network. The choice comes from the question, and the code is a short translation of its invariant.

@@ -1,8 +1,110 @@
 ---
 title: "Number theory"
-description: "Divisibility, primes, greatest common divisor, the Euclidean algorithm."
+description: "Divisibility, primes and factorisation, the greatest common divisor and the Euclidean algorithm, and Bézout's identity, with checks on small integers."
 order: 3
 tier: core
+takeaways:
+  - "$a$ **divides** $b$, written $a \\mid b$, when $b = ak$ for some integer $k$. Every integer greater than $1$ is either prime or a product of primes, and that factorisation is unique up to order."
+  - "The **greatest common divisor** $\\gcd(a, b)$ is the largest integer dividing both. The **Euclidean algorithm** finds it by replacing $(a, b)$ with $(b, a \\bmod b)$ until the remainder is zero."
+  - "**Bézout's identity** says $\\gcd(a, b) = ax + by$ for some integers $x$ and $y$. The extended Euclidean algorithm finds them, and they are the key to modular inverses."
+  - "Primes are infinite and their gaps are irregular. Testing whether a large number is prime is easy, but factoring a large product of two primes is hard, which cryptography relies on."
+resources:
+  - title: "Euclidean algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Euclidean_algorithm"
+    note: "The algorithm, its running time, and the extended version."
+  - title: "Bézout's identity (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/B%C3%A9zout%27s_identity"
+    note: "Integer combinations that produce the gcd."
+  - title: "Fundamental theorem of arithmetic (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fundamental_theorem_of_arithmetic"
+    note: "Unique prime factorisation and why it matters."
 ---
 
-_Placeholder. Content not written yet._
+Number theory studies the integers themselves: which numbers divide which, which are prime, and how to combine them. It sounds like the most elementary part of mathematics, and yet it is the foundation of modern cryptography. The Euclidean algorithm, roughly two thousand years old, is still one of the most useful procedures in computing. This note covers divisibility and primes, the gcd, Bézout's identity, and the factorisation that makes RSA work.
+
+## Divisibility and primes
+
+$a \mid b$ means $b$ is a multiple of $a$. A prime $p > 1$ has no divisors except $1$ and $p$. The sieve of Eratosthenes lists primes by crossing out multiples. The script below finds the primes up to $50$ and checks the count.
+
+```python
+def primes_up_to(n):
+    sieve = [True] * (n + 1)
+    sieve[0:2] = [False, False]
+    for i in range(2, int(n ** 0.5) + 1):
+        if sieve[i]:
+            for j in range(i * i, n + 1, i):
+                sieve[j] = False
+    return [i for i, ok in enumerate(sieve) if ok]
+
+ps = primes_up_to(50)
+print("primes up to 50:", ps)  # prints: primes up to 50: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
+print("count:", len(ps))  # prints: count: 15
+```
+
+In words: there are fifteen primes up to fifty. The fundamental theorem of arithmetic says each integer factors into primes in exactly one way, apart from order. The script below factorises $360$ by trial division.
+
+```python
+def factorise(n):
+    out, d = {}, 2
+    while d * d <= n:
+        while n % d == 0:
+            out[d] = out.get(d, 0) + 1
+            n //= d
+        d += 1
+    if n > 1:
+        out[n] = out.get(n, 0) + 1
+    return out
+
+print("360 =", factorise(360))  # prints: 360 = {2: 3, 3: 2, 5: 1}
+```
+
+In words: $360 = 2^3 \cdot 3^2 \cdot 5$. The exponents are the only information needed to find any divisor, the gcd, or the lcm.
+
+<PrimeSieve />
+
+## The greatest common divisor
+
+The Euclidean algorithm rests on one fact: $\gcd(a, b) = \gcd(b, a \bmod b)$, because any common divisor of $a$ and $b$ also divides $a - qb$. Repeating until the remainder is zero gives the gcd.
+
+```python
+def gcd_steps(a, b):
+    steps = []
+    while b:
+        steps.append((a, b, a % b))
+        a, b = b, a % b
+    return a, steps
+
+g, steps = gcd_steps(240, 46)
+print("gcd(240, 46) =", g, " in", len(steps), "steps")  # prints: gcd(240, 46) = 2 in 5 steps
+for a, b, r in steps:
+    print(f"  {a} = {a // b} * {b} + {r}")  # prints: 240 = 5 * 46 + 10 ...
+```
+
+In words: five divisions are needed, and the remainders run $10$, $6$, $4$, $2$, then $0$, so the gcd is $2$. The algorithm needs only logarithmically many steps in the size of the numbers, which is why it is fast even for very large inputs.
+
+<EuclidStepper />
+
+## Bézout's identity
+
+Running the Euclidean algorithm backward gives integers $x$ and $y$ with $ax + by = \gcd(a, b)$. The extended version tracks the coefficients as it goes.
+
+```python
+def ext_gcd(a, b):
+    if b == 0:
+        return a, 1, 0
+    g, x, y = ext_gcd(b, a % b)
+    return g, y, x - (a // b) * y
+
+g, x, y = ext_gcd(240, 46)
+print("Bezout: 240 *", x, "+ 46 *", y, "=", 240 * x + 46 * y, " gcd =", g)  # prints: Bezout: 240 * -9 + 46 * 47 = 2 gcd = 2
+```
+
+In words: $240 \cdot (-9) + 46 \cdot 47 = 2$. The coefficients can be negative, which is fine. The identity is what turns a gcd into a usable combination, and it is how modular inverses are found in the next note.
+
+<Callout type="pitfall">
+The gcd of two numbers that share no prime factor is $1$, and the numbers are called coprime. Coprimality is not the same as being prime: $8$ and $9$ are coprime but neither is prime.
+</Callout>
+
+## Why primes matter
+
+Testing a number for primality is fast, but factoring a large product of two primes is not known to be fast. That asymmetry is the basis of RSA, which the cryptography note turns into a concrete scheme.

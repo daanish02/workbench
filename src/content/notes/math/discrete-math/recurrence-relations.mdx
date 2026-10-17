@@ -1,8 +1,82 @@
 ---
 title: "Recurrence relations"
-description: "Defining sequences recursively, solving simple recurrences."
+description: "Sequences defined by earlier terms, linear recurrences with constant coefficients, their characteristic equations and closed forms, checked against direct computation."
 order: 5
 tier: core
+takeaways:
+  - "A **recurrence relation** defines each term from earlier ones, such as $a_n = a_{n-1} + a_{n-2}$ with starting values. A **closed form** gives $a_n$ directly as a formula in $n$."
+  - "For a linear recurrence $a_n = c_1 a_{n-1} + c_2 a_{n-2}$ with constant coefficients, try $a_n = r^n$. This leads to the **characteristic equation** $r^2 = c_1 r + c_2$, whose roots give the solution."
+  - "If the characteristic equation has distinct roots $r_1$ and $r_2$, the general solution is $a_n = A r_1^n + B r_2^n$, with $A$ and $B$ fixed by the starting values."
+  - "Recurrences describe algorithms: the running time of divide-and-conquer methods, the number of steps in a loop, and the state of many dynamic systems."
+resources:
+  - title: "Recurrence relation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Recurrence_relation"
+    note: "Definitions, linear recurrences and the characteristic equation."
+  - title: "Fibonacci number (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fibonacci_number"
+    note: "The recurrence, Binet's formula and their history."
+  - title: "Master theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Master_theorem_(analysis_of_algorithms)"
+    note: "Recurrences that describe divide-and-conquer running times."
 ---
 
-_Placeholder. Content not written yet._
+A recurrence defines a sequence by saying how each term is built from the previous ones. Most people meet them first as the Fibonacci numbers, but they describe much more: the cost of an algorithm that splits its input in half, the balance of a savings account with compound interest, or the population of a species with yearly breeding. Solving a recurrence means finding a direct formula, and for linear recurrences with constant coefficients there is a systematic method. This note shows the method on Fibonacci and on a simpler example, and checks each closed form against direct computation.
+
+## Defining a sequence
+
+The Fibonacci sequence starts $F_0 = 0$, $F_1 = 1$ and satisfies $F_n = F_{n-1} + F_{n-2}$. Computing it term by term is easy, and the script below does that for the first ten terms.
+
+```python
+F = [0, 1]
+for n in range(2, 11):
+    F.append(F[-1] + F[-2])
+print("first ten Fibonacci numbers:", F[:10])  # prints: first ten Fibonacci numbers: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+```
+
+In words: each term is the sum of the two before it, and the sequence grows quickly. Computing $F_{100}$ this way takes a hundred steps, but a closed form would give it directly.
+
+<RecurrenceExplorer />
+
+## The characteristic equation
+
+Try a solution of the form $a_n = r^n$ in $a_n = a_{n-1} + a_{n-2}$. Substituting gives $r^2 = r + 1$, the characteristic equation, with roots $r = \frac{1 \pm \sqrt 5}{2}$. The general solution is $F_n = A r_1^n + B r_2^n$, and the starting values $F_0 = 0$, $F_1 = 1$ fix $A$ and $B$. That gives Binet's formula. The check below confirms it for $n$ up to $30$.
+
+```python
+import math
+
+phi = (1 + math.sqrt(5)) / 2
+psi = (1 - math.sqrt(5)) / 2
+binet = lambda n: round((phi ** n - psi ** n) / math.sqrt(5))
+
+F = [0, 1]
+for n in range(2, 31):
+    F.append(F[-1] + F[-2])
+print("Binet matches for n = 0..30:", all(binet(n) == F[n] for n in range(31)))  # prints: Binet matches for n = 0..30: True
+print("F_30 =", F[30])  # prints: F_30 = 832040
+```
+
+In words: the closed form reproduces every term up to $F_{30} = 832040$. The formula uses the two roots of the characteristic equation, and the second root has absolute value less than one, so its contribution vanishes as $n$ grows, which is why $F_n$ is approximately $\phi^n/\sqrt 5$.
+
+## A first-order example
+
+Consider $a_n = 2a_{n-1} + 1$ with $a_0 = 0$. The characteristic root is $2$, and the particular solution for a constant right-hand side is $-1$. The closed form is $a_n = 2^n - 1$, which the next check confirms.
+
+```python
+a = [0]
+for n in range(1, 11):
+    a.append(2 * a[-1] + 1)
+print("recurrence values:", a[:6])  # prints: recurrence values: [0, 1, 3, 7, 15, 31]
+print("closed form 2^n - 1 matches:", all(a[n] == 2 ** n - 1 for n in range(11)))  # prints: closed form 2^n - 1 matches: True
+```
+
+In words: the values $0, 1, 3, 7, 15, 31$ are one less than powers of two, which the closed form makes exact. A loop that doubles a quantity and adds one behaves exactly this way.
+
+<Callout type="pitfall">
+The characteristic equation method applies to linear recurrences with constant coefficients. A recurrence such as $a_n = n a_{n-1}$ has a coefficient that depends on $n$, and a different method is needed. Also, repeated roots need a modified form, with $n r^n$ terms added.
+</Callout>
+
+<RecursionTree />
+
+## Where they appear
+
+The running time of a recursive algorithm usually satisfies a recurrence, such as $T(n) = 2T(n/2) + n$ for merge sort. The master theorem, mentioned in the resources, turns such recurrences into bounds on $T(n)$ without solving them fully.
