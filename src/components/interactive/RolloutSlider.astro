@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Stable buckets: who gets the feature"
+  caption="Each square is a user. Their flag name and user id are hashed with SHA-256 into a bucket from 0 to 99 (the same hash as the Python example in the note), and the feature is on when the bucket is below the percentage. Raise the percentage and only grey squares turn blue, so nobody who had the feature loses it. Change the flag name and the same users are reshuffled, so each rollout is independent."
+>
+  <rollout-slider>
+    <div class="ctl-row">
+      <label class="lbl">Rollout <input type="range" min="0" max="100" value="10" data-pct /> <b data-pctv>10%</b></label>
+    </div>
+    <div class="ctl-row">
+      <label class="lbl">Flag <input type="text" value="new-checkout" data-flag spellcheck="false" /></label>
+    </div>
+    <div class="grid" data-grid></div>
+    <p class="stat" data-stat></p>
+  </rollout-slider>
+</Figure>
+
+<style>
+  .ctl-row {
+    margin-bottom: 10px;
+  }
+  .lbl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    width: 100%;
+  }
+  input[type='range'] {
+    flex: 1;
+    min-width: 120px;
+  }
+  input[type='text'] {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    font: 0.9375rem var(--font-mono);
+    color: var(--text);
+    background: #111;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10px, 1fr));
+    gap: 4px;
+    margin-top: 12px;
+  }
+  .grid :global(.ro-dot) {
+    aspect-ratio: 1;
+    border-radius: 3px;
+    background: #2a2a2a;
+    transition: background 0.2s;
+  }
+  .grid :global(.ro-dot.on) {
+    background: var(--g-blue);
+  }
+  .stat {
+    margin: 12px 0 0;
+    font: 0.875rem var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const USERS = 300;
+
+  // SHA-256 of "flag:user", reduced mod 100 digit by digit. Same bucket as int(digest, 16) % 100 in Python.
+  async function bucket(flag: string, user: string): Promise<number> {
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${flag}:${user}`));
+    let r = 0;
+    for (const b of new Uint8Array(bytes)) r = (r * 256 + b) % 100;
+    return r;
+  }
+
+  class RolloutSlider extends HTMLElement {
+    buckets: number[] = [];
+    pending = 0;
+    connectedCallback() {
+      this.querySelector('[data-pct]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-flag]')!.addEventListener('input', () => this.rehash());
+      const grid = this.querySelector('[data-grid]')!;
+      grid.innerHTML = Array.from({ length: USERS }, () => '<span class="ro-dot"></span>').join('');
+      this.rehash();
+    }
+    async rehash() {
+      const flag = this.querySelector<HTMLInputElement>('[data-flag]')!.value || 'flag';
+      const token = ++this.pending;
+      const next = await Promise.all(Array.from({ length: USERS }, (_, i) => bucket(flag, `user-${i}`)));
+      if (token !== this.pending) return; // a newer flag name has been typed since
+      this.buckets = next;
+      this.draw();
+    }
+    draw() {
+      const pct = +this.querySelector<HTMLInputElement>('[data-pct]')!.value;
+      this.querySelector('[data-pctv]')!.textContent = `${pct}%`;
+      const dots = this.querySelectorAll<HTMLElement>('[data-grid] .ro-dot');
+      let on = 0;
+      dots.forEach((dot, i) => {
+        const enabled = this.buckets.length > 0 && this.buckets[i] < pct;
+        dot.classList.toggle('on', enabled);
+        if (enabled) on++;
+      });
+      this.querySelector('[data-stat]')!.textContent =
+        `enabled for ${on} of ${USERS} users (${((on / USERS) * 100).toFixed(1)}%)`;
+    }
+  }
+  customElements.define('rollout-slider', RolloutSlider);
+</script>

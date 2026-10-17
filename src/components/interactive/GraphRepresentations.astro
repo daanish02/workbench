@@ -1,0 +1,209 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One graph, two representations"
+  caption="Click a vertex. Its neighbours light up in the drawing, its list entry is highlighted, and its row in the matrix shows the same neighbours. The list stores one entry per edge end, so it grows with the edges; the matrix has one cell per pair of vertices, whatever the edge count."
+>
+  <graph-reps>
+    <svg class="gr-svg" viewBox="0 0 380 190" role="img" aria-label="Five vertices A to E joined by six edges">
+      <g data-edges></g>
+      <g data-nodes></g>
+    </svg>
+    <div class="gr-grid">
+      <div>
+        <h4>Adjacency list</h4>
+        <ul class="gr-list" data-list></ul>
+      </div>
+      <div>
+        <h4>Adjacency matrix</h4>
+        <div class="gr-matrix" data-matrix></div>
+      </div>
+    </div>
+    <p class="gr-stat" data-stat></p>
+  </graph-reps>
+</Figure>
+
+<style>
+  .gr-svg {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .gr-svg :global(.gr-edge) {
+    stroke: #5f6368;
+    stroke-width: 2;
+    transition: stroke 0.15s;
+  }
+  .gr-svg :global(.gr-edge.hot) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .gr-svg :global(.gr-node) {
+    cursor: pointer;
+  }
+  .gr-svg :global(.gr-node circle) {
+    fill: #1f1f1f;
+    stroke: #5f6368;
+    stroke-width: 2;
+    transition: fill 0.15s, stroke 0.15s;
+  }
+  .gr-svg :global(.gr-node.sel circle) {
+    fill: var(--g-blue);
+    stroke: var(--g-blue);
+  }
+  .gr-svg :global(.gr-node.nb circle) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .gr-svg :global(.gr-node text) {
+    fill: var(--text);
+    font: 600 14px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .gr-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+    margin-top: 18px;
+  }
+  @media (min-width: 640px) {
+    .gr-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  h4 {
+    margin: 0 0 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .gr-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font: 0.875rem/1.9 var(--font-mono);
+    color: var(--text-muted);
+  }
+  .gr-list :global(li) {
+    padding: 0 8px;
+    border-radius: 6px;
+  }
+  .gr-list :global(li.hot) {
+    background: rgba(251, 188, 4, 0.15);
+    color: var(--text);
+  }
+  .gr-matrix {
+    display: grid;
+    grid-template-columns: repeat(6, auto);
+    gap: 3px;
+    justify-content: start;
+    font: 0.8125rem var(--font-mono);
+  }
+  .gr-matrix :global(span) {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 5px;
+    background: #1a1a1a;
+    color: var(--text-faint);
+  }
+  .gr-matrix :global(span.head) {
+    background: none;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .gr-matrix :global(span.one) {
+    color: var(--text);
+    background: rgba(66, 133, 244, 0.35);
+  }
+  .gr-matrix :global(span.hot) {
+    outline: 2px solid var(--g-yellow);
+    outline-offset: -2px;
+  }
+  .gr-stat {
+    margin: 14px 0 0;
+    font: 0.875rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const V = ['A', 'B', 'C', 'D', 'E'];
+  // undirected edges
+  const E: [string, string][] = [['A', 'B'], ['A', 'C'], ['B', 'D'], ['C', 'D'], ['D', 'E'], ['B', 'E']];
+  const POS: Record<string, [number, number]> = {
+    A: [50, 40],
+    B: [180, 22],
+    C: [50, 150],
+    D: [200, 120],
+    E: [330, 60],
+  };
+
+  const neighbours = (v: string) =>
+    E.filter(([a, b]) => a === v || b === v).map(([a, b]) => (a === v ? b : a)).sort();
+
+  class GraphReps extends HTMLElement {
+    sel: string | null = null;
+
+    connectedCallback() {
+      const edgesG = this.querySelector('[data-edges]')!;
+      edgesG.innerHTML = E.map(([a, b]) => {
+        const [x1, y1] = POS[a];
+        const [x2, y2] = POS[b];
+        return `<line class="gr-edge" data-a="${a}" data-b="${b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"></line>`;
+      }).join('');
+      this.querySelector('[data-nodes]')!.innerHTML = V.map((v) => {
+        const [x, y] = POS[v];
+        return `<g class="gr-node" data-v="${v}"><circle cx="${x}" cy="${y}" r="16"></circle><text x="${x}" y="${y}">${v}</text></g>`;
+      }).join('');
+      this.querySelectorAll<SVGGElement>('[data-v]').forEach((g) =>
+        g.addEventListener('click', () => {
+          const v = g.dataset.v!;
+          this.sel = this.sel === v ? null : v;
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const nb = this.sel ? neighbours(this.sel) : [];
+      this.querySelectorAll<SVGGElement>('[data-v]').forEach((g) => {
+        const v = g.dataset.v!;
+        g.classList.toggle('sel', v === this.sel);
+        g.classList.toggle('nb', nb.includes(v));
+      });
+      this.querySelectorAll<SVGLineElement>('[data-a]').forEach((l) => {
+        const hot = this.sel !== null && (l.dataset.a === this.sel || l.dataset.b === this.sel);
+        l.classList.toggle('hot', hot);
+      });
+
+      // list
+      this.querySelector('[data-list]')!.innerHTML = V.map(
+        (v) =>
+          `<li class="${v === this.sel ? 'hot' : ''}"><b>${v}</b> → ${neighbours(v).join(', ')}</li>`,
+      ).join('');
+
+      // matrix
+      const cell = (r: string, c: string) => {
+        const one = E.some(([a, b]) => (a === r && b === c) || (a === c && b === r));
+        const hot = r === this.sel || c === this.sel ? ' hot' : '';
+        return `<span class="${one ? 'one' : ''}${hot}">${one ? 1 : 0}</span>`;
+      };
+      const head = `<span class="head"></span>` + V.map((c) => `<span class="head">${c}</span>`).join('');
+      const rows = V.map((r) => `<span class="head">${r}</span>` + V.map((c) => cell(r, c)).join('')).join('');
+      this.querySelector('[data-matrix]')!.innerHTML = head + rows;
+
+      const listEntries = E.length * 2;
+      this.querySelector('[data-stat]')!.textContent =
+        `${V.length} vertices, ${E.length} edges: the list holds ${listEntries} entries (2 per edge); the matrix holds ${V.length * V.length} cells.`;
+    }
+  }
+  customElements.define('graph-reps', GraphReps);
+</script>

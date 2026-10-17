@@ -1,0 +1,184 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which versions does a range allow?"
+  caption="Type a range, or pick a preset. Green versions match it, red ones do not. This is a simplified PEP 440: release numbers, ~= and comparison operators, and rc pre-releases. As in pip and uv, pre-releases are skipped unless the range names one."
+>
+  <version-range>
+    <div class="ctl-row">
+      <label class="lbl">Range <input type="text" value=">=1.2,<2.0" data-spec spellcheck="false" /></label>
+    </div>
+    <div class="ctl-row">
+      <button class="btn" data-preset=">=1.2,<2.0">&gt;=1.2,&lt;2.0</button>
+      <button class="btn" data-preset="~=1.4">~=1.4</button>
+      <button class="btn" data-preset="==1.9.3">==1.9.3</button>
+      <button class="btn" data-preset=">=2.0">&gt;=2.0</button>
+      <button class="btn" data-preset=">=2.0rc1">&gt;=2.0rc1</button>
+    </div>
+    <div class="chips" data-list></div>
+    <p class="summary" data-summary></p>
+  </version-range>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .lbl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    width: 100%;
+  }
+  input[type='text'] {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    font: 0.9375rem var(--font-mono);
+    color: var(--text);
+    background: #111;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .chips :global(.vr-chip) {
+    padding: 6px 10px;
+    font: 0.8125rem var(--font-mono);
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+  }
+  .chips :global(.vr-chip.ok) {
+    color: var(--g-green-l);
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.12);
+  }
+  .chips :global(.vr-chip.no) {
+    color: var(--g-red-l);
+    border-color: var(--g-red);
+    background: rgba(234, 67, 53, 0.1);
+  }
+  .chips :global(.vr-chip.bad) {
+    color: var(--text-faint);
+    font-style: italic;
+  }
+  .summary {
+    margin: 12px 0 0;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+</style>
+
+<script>
+  // Sample versions a package might publish.
+  const VERSIONS = ['1.1.9', '1.2.0', '1.4.0', '1.9.3', '2.0.0rc1', '2.0.0', '2.1.0', '2.2.1', '3.0.0'];
+
+  type Ver = { rel: number[]; pre: boolean };
+
+  // Parse "1.4", "2.0.0", "2.0.0rc1"; null if it is not a plain release or rc.
+  function parse(raw: string): Ver | null {
+    const m = raw.trim().match(/^(\d+(?:\.\d+)*)(rc\d+)?$/);
+    if (!m) return null;
+    const rel = m[1].split('.').map(Number);
+    while (rel.length < 3) rel.push(0);
+    return { rel, pre: !!m[2] };
+  }
+
+  // Compare release numbers, then a pre-release sorts before the release it precedes.
+  function cmp(a: Ver, b: Ver): number {
+    const n = Math.max(a.rel.length, b.rel.length);
+    for (let i = 0; i < n; i++) {
+      const x = a.rel[i] ?? 0;
+      const y = b.rel[i] ?? 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    if (a.pre !== b.pre) return a.pre ? -1 : 1;
+    return 0;
+  }
+
+  // ~=1.4 means >=1.4 and below the next release after dropping the last part: <2.0
+  function compatibleUpper(raw: string): Ver {
+    const parts = raw.trim().split('.').map(Number);
+    parts.pop();
+    parts[parts.length - 1] += 1;
+    return parse(parts.join('.'))!;
+  }
+
+  // Returns true/false, or null when the range cannot be read.
+  function allowed(v: Ver, spec: string): boolean | null {
+    const clauses = spec.split(',').map((c) => c.trim()).filter(Boolean);
+    if (clauses.length === 0) return null;
+    if (v.pre && !spec.includes('rc')) return false;
+    for (const clause of clauses) {
+      const m = clause.match(/^(>=|<=|==|!=|~=|>|<)\s*(.+)$/);
+      if (!m) return null;
+      const [, op, raw] = m;
+      const target = parse(raw);
+      if (!target) return null;
+      const c = cmp(v, target);
+      const ok =
+        op === '>=' ? c >= 0 :
+        op === '<=' ? c <= 0 :
+        op === '==' ? c === 0 :
+        op === '!=' ? c !== 0 :
+        op === '>' ? c > 0 :
+        op === '<' ? c < 0 :
+        cmp(v, target) >= 0 && cmp(v, compatibleUpper(raw)) < 0;
+      if (!ok) return false;
+    }
+    return true;
+  }
+
+  class VersionRange extends HTMLElement {
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-spec]')!;
+      input.addEventListener('input', () => this.draw());
+      this.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+        b.addEventListener('click', () => {
+          input.value = b.dataset.preset!;
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+    draw() {
+      const spec = this.querySelector<HTMLInputElement>('[data-spec]')!.value;
+      const list = this.querySelector('[data-list]')!;
+      const summary = this.querySelector('[data-summary]')!;
+      let ok: string[] = [];
+      let unreadable = false;
+
+      list.innerHTML = VERSIONS.map((raw) => {
+        const v = parse(raw)!;
+        const result = allowed(v, spec);
+        if (result === null) unreadable = true;
+        if (result) ok.push(raw);
+        const cls = result === null ? 'bad' : result ? 'ok' : 'no';
+        const note = result === null ? 'range unreadable' : result ? 'allowed' : 'not allowed';
+        return `<span class="vr-chip ${cls}" title="${note}">${raw}</span>`;
+      }).join('');
+
+      if (unreadable) {
+        summary.textContent = 'Range not understood. Use clauses like >=1.2, <2.0, ~=1.4 or ==1.9.3, separated by commas.';
+      } else {
+        const pre = spec.includes('rc') ? '' : ' Pre-releases such as 2.0.0rc1 are skipped unless the range names one.';
+        summary.textContent = `Allowed: ${ok.length ? ok.join(', ') : 'none'}.${pre}`;
+      }
+    }
+  }
+  customElements.define('version-range', VersionRange);
+</script>

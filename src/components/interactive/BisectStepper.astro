@@ -1,0 +1,148 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Bisecting for the first failing prefix"
+  caption="Each cell is a prefix of 1, 2, 3, ... 200. The buggy running total is capped at 1000, so prefixes from length 45 onward are wrong. Step tests the middle of the remaining range and keeps the half that still contains the boundary. A linear scan could need 45 checks; bisection needs about 8."
+>
+  <bisect-stepper>
+    <div class="ctl-row">
+      <button class="btn primary" data-step>Step</button>
+      <button class="btn" data-auto>Auto</button>
+      <button class="btn" data-reset>Reset</button>
+    </div>
+    <div class="cells" data-cells></div>
+    <p class="stat" data-range></p>
+    <p class="stat" data-count></p>
+  </bisect-stepper>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .cells {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8px, 1fr));
+    gap: 2px;
+  }
+  .cells :global(.bs-cell) {
+    height: 18px;
+    border-radius: 2px;
+    background: #2a2a2a;
+    transition: background 0.2s;
+  }
+  .cells :global(.bs-cell.ok) {
+    background: var(--g-green);
+  }
+  .cells :global(.bs-cell.bad) {
+    background: var(--g-red);
+  }
+  .cells :global(.bs-cell.mid) {
+    background: var(--g-yellow);
+    outline: 2px solid var(--text);
+    outline-offset: 1px;
+  }
+  .cells :global(.bs-cell.answer) {
+    outline: 2px solid var(--g-red-l);
+    outline-offset: 1px;
+  }
+  .stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const N = 200;
+  const CAP = 1000;
+
+  // A prefix of length L is wrong when the capped total differs from the true sum.
+  function wrong(length: number): boolean {
+    return (length * (length + 1)) / 2 > CAP;
+  }
+
+  class BisectStepper extends HTMLElement {
+    lo = 0;
+    hi = N;
+    checks = 0;
+    result: number | null = null;
+    checked = new Map<number, boolean>(); // length -> wrong?
+    mid = -1; // length being tested now
+    timer = 0;
+
+    connectedCallback() {
+      this.querySelector('[data-step]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-auto]')!.addEventListener('click', () => this.auto());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      const cells = this.querySelector('[data-cells]')!;
+      cells.innerHTML = Array.from({ length: N }, () => '<span class="bs-cell"></span>').join('');
+      this.reset();
+    }
+    disconnectedCallback() {
+      clearInterval(this.timer);
+    }
+    reset() {
+      clearInterval(this.timer);
+      this.lo = 0;
+      this.hi = N;
+      this.checks = 0;
+      this.result = null;
+      this.checked.clear();
+      this.mid = -1;
+      this.draw();
+    }
+    done() {
+      return this.lo >= this.hi;
+    }
+    step() {
+      if (this.done()) {
+        clearInterval(this.timer);
+        return;
+      }
+      const m = Math.floor((this.lo + this.hi) / 2);
+      const length = m + 1;
+      const isWrong = wrong(length);
+      this.checks++;
+      this.checked.set(length, isWrong);
+      this.mid = length;
+      if (isWrong) this.hi = m;
+      else this.lo = m + 1;
+      if (this.done()) {
+        this.result = this.lo + 1;
+        this.mid = -1;
+        clearInterval(this.timer);
+      }
+      this.draw();
+    }
+    auto() {
+      clearInterval(this.timer);
+      if (this.done()) this.reset();
+      this.timer = window.setInterval(() => this.step(), 600);
+    }
+    draw() {
+      const cells = this.querySelectorAll<HTMLElement>('[data-cells] .bs-cell');
+      cells.forEach((cell, i) => {
+        const length = i + 1;
+        cell.className = 'bs-cell';
+        const state = this.checked.get(length);
+        if (length === this.mid) cell.classList.add('mid');
+        else if (state === true) cell.classList.add('bad');
+        else if (state === false) cell.classList.add('ok');
+        if (this.result !== null && length === this.result) cell.classList.add('answer');
+      });
+      const range = this.done()
+        ? `boundary found between length ${this.lo} (correct) and length ${this.lo + 1} (wrong)`
+        : `remaining range: lengths ${this.lo + 1} to ${this.hi}`;
+      this.querySelector('[data-range]')!.textContent = range;
+      const answer = this.result !== null ? `, first failing prefix length: ${this.result}` : '';
+      this.querySelector('[data-count]')!.textContent = `checks used: ${this.checks}${answer}`;
+    }
+  }
+  customElements.define('bisect-stepper', BisectStepper);
+</script>
