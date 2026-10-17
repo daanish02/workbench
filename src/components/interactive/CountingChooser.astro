@@ -1,0 +1,84 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two questions pick the formula"
+  caption="Choose k items from n kinds. Toggle whether order matters and whether repetition is allowed: the four combinations give the four counting formulas. The list shows every selection (up to 60 of them), so you can see which ones the unordered count merges and which ones repetition adds."
+>
+  <counting-chooser>
+    <div class="cc-ctl">
+      <label class="cc-lbl">n <input type="range" min="2" max="5" step="1" value="4" data-n /> <b data-nv>4</b></label>
+      <label class="cc-lbl">k <input type="range" min="1" max="4" step="1" value="2" data-k /> <b data-kv>2</b></label>
+      <div class="cc-toggles">
+        <span><input type="checkbox" hidden data-order checked /><button type="button" class="btn" data-toggle aria-pressed="true">order matters</button></span>
+        <span><input type="checkbox" hidden data-rep /><button type="button" class="btn" data-toggle aria-pressed="false">repetition allowed</button></span>
+      </div>
+    </div>
+    <p class="cc-formula" data-formula></p>
+    <div class="cc-list" data-list></div>
+  </counting-chooser>
+</Figure>
+
+<style>
+  .cc-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .cc-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .cc-lbl input { flex: 1; }
+  .cc-toggles { display: flex; gap: 18px; flex-wrap: wrap; font-size: 0.875rem; color: var(--text-muted); justify-content: center; }
+  .cc-formula { text-align: center; font: 600 0.95rem var(--font-mono); color: var(--g-yellow-l); margin: 4px 0 10px; }
+  .cc-list { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .cc-list :global(span) {
+    font: 0.8rem var(--font-mono); padding: 2px 6px; border-radius: 6px;
+    background: rgba(66, 133, 244, 0.16); border: 1px solid var(--g-blue); color: var(--g-blue-l);
+  }
+  .cc-list :global(.cc-more) { background: none; border: none; color: var(--text-faint); }
+</style>
+
+<script>
+  const LETTERS = 'ABCDE';
+  const fact = (m: number): number => (m <= 1 ? 1 : m * fact(m - 1));
+  const comb = (a: number, b: number) => (b < 0 || b > a ? 0 : fact(a) / (fact(b) * fact(a - b)));
+
+  function selections(n: number, k: number, order: boolean, rep: boolean) {
+    const out: number[][] = [];
+    const go = (cur: number[]) => {
+      if (cur.length === k) { out.push(cur.slice()); return; }
+      for (let i = 0; i < n; i++) {
+        if (!rep && cur.includes(i)) continue;
+        if (!order && cur.length && i < cur[cur.length - 1]) continue; // keep unordered picks sorted
+        cur.push(i); go(cur); cur.pop();
+      }
+    };
+    go([]);
+    return out;
+  }
+
+  class CountingChooser extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const kIn = this.querySelector<HTMLInputElement>('[data-k]')!;
+      const order = this.querySelector<HTMLInputElement>('[data-order]')!.checked;
+      const rep = this.querySelector<HTMLInputElement>('[data-rep]')!.checked;
+      if (!rep && +kIn.value > n) kIn.value = String(n);
+      const k = +kIn.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      let label: string;
+      let count: number;
+      if (order && !rep) { count = fact(n) / fact(n - k); label = `P(${n}, ${k}) = ${n}!/(${n}−${k})!`; }
+      else if (!order && !rep) { count = comb(n, k); label = `C(${n}, ${k}) = ${n}!/(${k}!·${n - k}!)`; }
+      else if (order && rep) { count = n ** k; label = `n^k = ${n}^${k}`; }
+      else { count = comb(n + k - 1, k); label = `C(n+k−1, k) = C(${n + k - 1}, ${k})`; }
+      const sel = selections(n, k, order, rep);
+      this.querySelector('[data-formula]')!.textContent = `${label} = ${count}   (listed: ${sel.length})`;
+      const shown = sel.slice(0, 60).map((s) => `<span>${s.map((i) => LETTERS[i]).join(order ? '' : '·')}</span>`);
+      if (sel.length > 60) shown.push(`<span class="cc-more">… ${sel.length - 60} more</span>`);
+      this.querySelector('[data-list]')!.innerHTML = shown.join('');
+    }
+  }
+  customElements.define('counting-chooser', CountingChooser);
+</script>

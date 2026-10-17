@@ -1,0 +1,68 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Induction as falling dominoes"
+  caption="Domino n stands for the claim P(n). The base case knocks over the first; the inductive step says each falling domino knocks over the next. Remove the base case, or break the step at one place, and see which claims are left unproved."
+>
+  <induction-dominoes>
+    <div class="id-ctl">
+      <span><input type="checkbox" hidden data-base checked /><button type="button" class="btn" data-toggle aria-pressed="true">base case P(1) proved</button></span>
+      <label class="id-lbl">step fails at k = <input type="range" min="0" max="11" step="1" value="0" data-gap /> <b data-gapv>never</b></label>
+    </div>
+    <svg class="id-svg" viewBox="0 0 360 110" role="img" aria-label="A row of twelve dominoes, fallen or standing">
+      <line x1="10" y1="90" x2="350" y2="90" class="id-floor"></line>
+      <g data-row></g>
+    </svg>
+    <p class="id-stat" data-stat></p>
+  </induction-dominoes>
+</Figure>
+
+<style>
+  .id-ctl { display: grid; gap: 10px; margin-bottom: 12px; font-size: 0.875rem; color: var(--text-muted); }
+  .id-lbl { display: flex; align-items: center; gap: 10px; }
+  .id-lbl input { flex: 1; }
+  .id-svg { display: block; width: 100%; max-width: 480px; margin: 0 auto; }
+  .id-floor { stroke: #3c4043; }
+  .id-svg :global(.id-up) { fill: var(--bg-soft); stroke: var(--text-faint); }
+  .id-svg :global(.id-down) { fill: var(--g-blue); }
+  .id-svg :global(.id-n) { fill: var(--text-faint); font: 0.625rem var(--font-mono); text-anchor: middle; }
+  .id-svg :global(.id-gap) { stroke: var(--g-red); stroke-width: 2; }
+  .id-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const N = 12;
+  class InductionDominoes extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const base = this.querySelector<HTMLInputElement>('[data-base]')!.checked;
+      const gap = +this.querySelector<HTMLInputElement>('[data-gap]')!.value; // P(gap) does not imply P(gap+1)
+      this.querySelector('[data-gapv]')!.textContent = gap ? String(gap) : 'never';
+      let html = '';
+      let falling = base;
+      let proved = 0;
+      for (let n = 1; n <= N; n++) {
+        if (n > 1 && gap === n - 1) falling = false;
+        if (falling) proved = n;
+        const x = 20 + (n - 1) * 27;
+        html += falling
+          ? `<rect class="id-down" x="${x}" y="80" width="24" height="9" rx="1"></rect>`
+          : `<rect class="id-up" x="${x + 8}" y="50" width="9" height="40" rx="1"></rect>`;
+        html += `<text class="id-n" x="${x + 12}" y="104">${n}</text>`;
+        if (gap === n && n < N) html += `<line class="id-gap" x1="${x + 25}" y1="40" x2="${x + 25}" y2="92"></line>`;
+      }
+      this.querySelector('[data-row]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = !base
+        ? 'No base case: nothing falls, so no claim is proved, however good the step is.'
+        : gap
+          ? `Proved P(1) to P(${proved}); the chain breaks after ${gap}, so P(${gap + 1}) onward is unproved.`
+          : `Base case plus an unbroken step: every P(n) falls, here shown up to n = ${N}.`;
+    }
+  }
+  customElements.define('induction-dominoes', InductionDominoes);
+</script>

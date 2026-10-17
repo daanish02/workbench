@@ -1,0 +1,74 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Invertible on which domain?"
+  caption="The curve is y = x². Drag the ends of the domain [a, b]. The horizontal-line test asks whether any output is hit twice. Squaring is injective, and so has an inverse on that domain, exactly when the interval stays on one side of 0."
+>
+  <domain-restrict>
+    <div class="dr-ctl">
+      <label class="dr-lbl">a <input type="range" min="-2" max="2" step="0.1" value="-1.5" data-a /> <b data-av>-1.5</b></label>
+      <label class="dr-lbl">b <input type="range" min="-2" max="2" step="0.1" value="1.5" data-b /> <b data-bv>1.5</b></label>
+    </div>
+    <svg class="dr-svg" viewBox="0 0 320 200" role="img" aria-label="Parabola with a highlighted domain interval">
+      <line x1="20" y1="180" x2="300" y2="180" class="dr-axis"></line>
+      <line x1="160" y1="20" x2="160" y2="185" class="dr-axis"></line>
+      <path data-full class="dr-full"></path>
+      <path data-part class="dr-part"></path>
+      <line data-hline x1="20" x2="300" class="dr-h"></line>
+    </svg>
+    <p class="dr-stat" data-stat></p>
+  </domain-restrict>
+</Figure>
+
+<style>
+  .dr-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .dr-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .dr-lbl input { flex: 1; }
+  .dr-svg { display: block; width: 100%; max-width: 380px; margin: 0 auto; }
+  .dr-axis { stroke: #3c4043; }
+  .dr-full { fill: none; stroke: var(--text-faint); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .dr-part { fill: none; stroke: var(--g-blue); stroke-width: 3; }
+  .dr-h { stroke: var(--g-red); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .dr-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const sx = (x: number) => 160 + x * 65;
+  const sy = (y: number) => 180 - y * 38;
+  const path = (a: number, b: number) => {
+    let d = '';
+    for (let i = 0; i <= 80; i++) {
+      const x = a + ((b - a) * i) / 80;
+      d += `${i ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(x * x).toFixed(1)}`;
+    }
+    return d;
+  };
+  class DomainRestrict extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-full]')!.setAttribute('d', path(-2, 2));
+      this.draw();
+    }
+    draw() {
+      let a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      let b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      if (a > b) [a, b] = [b, a];
+      this.querySelector('[data-av]')!.textContent = a.toFixed(1);
+      this.querySelector('[data-bv]')!.textContent = b.toFixed(1);
+      this.querySelector('[data-part]')!.setAttribute('d', path(a, b));
+      const injective = a >= 0 || b <= 0;
+      // a horizontal line through the larger of the two mirror-image outputs that both lie in [a, b]
+      const both = Math.min(Math.abs(a), Math.abs(b));
+      const h = this.querySelector('[data-hline]')!;
+      const y = injective ? -10 : sy(both * both * 0.8);
+      h.setAttribute('y1', String(y));
+      h.setAttribute('y2', String(y));
+      this.querySelector('[data-stat]')!.textContent = injective
+        ? `On [${a.toFixed(1)}, ${b.toFixed(1)}] every output appears once: injective, so x² has an inverse here (${a >= 0 ? '√y' : '−√y'}).`
+        : `On [${a.toFixed(1)}, ${b.toFixed(1)}] the dashed line meets the curve twice: ±${Math.sqrt(both * both * 0.8).toFixed(2)} share an output, so no inverse.`;
+    }
+  }
+  customElements.define('domain-restrict', DomainRestrict);
+</script>

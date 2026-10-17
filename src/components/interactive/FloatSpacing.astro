@@ -1,0 +1,87 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Floats are spaced unevenly"
+  caption="A toy float format with a few mantissa bits, drawn on the line from 0 to 8. Within each power-of-two band (a binade) the floats are evenly spaced, and the spacing doubles from one band to the next. Move x: it rounds to the nearest float, and the relative error stays about the same size in every band. Real doubles work the same way with 52 mantissa bits."
+>
+  <float-spacing>
+    <div class="fs-ctl">
+      <label class="fs-lbl">mantissa bits <input type="range" min="1" max="4" step="1" value="2" data-bits /> <b data-bitsv>2</b></label>
+      <label class="fs-lbl">x <input type="range" min="0.13" max="7.95" step="0.01" value="0.3" data-x /> <b data-xv>0.30</b></label>
+    </div>
+    <svg class="fs-svg" viewBox="0 0 360 90" role="img" aria-label="Number line from 0 to 8 with float positions as ticks">
+      <line x1="20" y1="50" x2="340" y2="50" class="fs-axis"></line>
+      <g data-bands></g>
+      <g data-ticks></g>
+      <line data-xmark x1="0" y1="24" x2="0" y2="50" class="fs-x"></line>
+      <circle data-near cx="0" cy="50" r="4" class="fs-near"></circle>
+    </svg>
+    <p class="fs-stat" data-stat></p>
+  </float-spacing>
+</Figure>
+
+<style>
+  .fs-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .fs-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  input[type='range'] { flex: 1; }
+  .fs-svg { display: block; width: 100%; max-width: 520px; margin: 0 auto; }
+  .fs-axis { stroke: #3c4043; stroke-width: 1; }
+  .fs-x { stroke: var(--g-yellow); stroke-width: 2; }
+  .fs-near { fill: var(--g-yellow); }
+  .fs-svg :global(.fs-tick) { stroke: var(--g-blue); stroke-width: 1.5; }
+  .fs-svg :global(.fs-band) { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .fs-svg :global(.fs-sep) { stroke: #3c4043; stroke-dasharray: 2 3; }
+  .fs-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const X0 = 20;
+  const W = 320;
+  const MAX = 8;
+  const px = (v: number) => X0 + (v / MAX) * W;
+
+  class FloatSpacing extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    floats(bits: number) {
+      // normal floats 1.m × 2^e for e = -3..2, plus zero
+      const out = [0];
+      for (let e = -3; e <= 2; e++) {
+        for (let m = 0; m < 2 ** bits; m++) out.push((1 + m / 2 ** bits) * 2 ** e);
+      }
+      out.push(MAX);
+      return out;
+    }
+    draw() {
+      const bits = +this.querySelector<HTMLInputElement>('[data-bits]')!.value;
+      const x = +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+      this.querySelector('[data-bitsv]')!.textContent = String(bits);
+      this.querySelector('[data-xv]')!.textContent = x.toFixed(2);
+      const fl = this.floats(bits);
+      this.querySelector('[data-ticks]')!.innerHTML = fl
+        .map((v) => `<line class="fs-tick" x1="${px(v).toFixed(1)}" y1="44" x2="${px(v).toFixed(1)}" y2="56"></line>`)
+        .join('');
+      let bands = '';
+      for (const b of [1, 2, 4]) {
+        bands += `<line class="fs-sep" x1="${px(b)}" y1="30" x2="${px(b)}" y2="70"></line>`;
+        bands += `<text class="fs-band" x="${px(b) + 3}" y="80">${b}</text>`;
+      }
+      this.querySelector('[data-bands]')!.innerHTML = bands;
+      const near = fl.reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a));
+      const xm = this.querySelector('[data-xmark]')!;
+      xm.setAttribute('x1', px(x).toFixed(1));
+      xm.setAttribute('x2', px(x).toFixed(1));
+      this.querySelector('[data-near]')!.setAttribute('cx', px(near).toFixed(1));
+      const e = Math.floor(Math.log2(Math.max(near, x)));
+      const gap = 2 ** (e - bits);
+      const rel = Math.abs(near - x) / x;
+      this.querySelector('[data-stat]')!.textContent =
+        `x = ${x.toFixed(3)} rounds to ${near.toFixed(4)} · gap here = ${gap.toFixed(4)} · relative error = ${(rel * 100).toFixed(2)}% (at most ${(100 / 2 ** (bits + 1)).toFixed(1)}%)`;
+    }
+  }
+  customElements.define('float-spacing', FloatSpacing);
+</script>
