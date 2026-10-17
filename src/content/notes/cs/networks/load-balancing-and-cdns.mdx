@@ -1,0 +1,126 @@
+---
+title: "Load Balancing & CDNs"
+description: "Distributing traffic and caching content closer to users."
+order: 9
+tier: core
+takeaways:
+  - "A **load balancer** spreads requests over a pool of servers and skips unhealthy ones: more capacity and availability, as long as shared dependencies are resilient too."
+  - "A **CDN** keeps copies of cacheable content at **edge locations** near users, cutting latency and origin load."
+  - "A CDN **hit** is served from the edge; a **miss** goes to the origin and is then cached. Freshness is controlled by TTLs, validation and invalidation."
+  - "Load balancing distributes *work*; a CDN reduces *distance and repeated work*. Large sites use both."
+  - "Beware caching personalised responses: a wrong cache key can show one user's data to another."
+resources:
+  - title: "What is a CDN? (Cloudflare Learning)"
+    url: "https://www.cloudflare.com/learning/cdn/what-is-a-cdn/"
+  - title: "What is load balancing? (Cloudflare Learning)"
+    url: "https://www.cloudflare.com/learning/performance/what-is-load-balancing/"
+  - title: "MDN: HTTP caching"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching"
+    note: "The headers that decide how long a cache may reuse a response."
+---
+
+**Load balancing** and **content delivery networks (CDNs)** improve the performance and availability of networked applications by distributing work across servers and locations. A load balancer directs requests to suitable servers so no single machine handles everything. A CDN stores copies of cacheable content near users. The distinction: load balancing distributes **work**, while a CDN reduces **how far data travels** and **how often the origin must rebuild the same response**. They are usually combined in large web services. (The design side of this, algorithms and trade-offs, continues in [Load Balancing Strategies](../../system-design/load-balancing-strategies/).)
+
+## Load Balancing Spreads Requests Across Servers
+
+A website on one server eventually runs out of CPU, memory, bandwidth or connections. One fix is **vertical scaling** (a bigger machine); another is **horizontal scaling**: run several servers and distribute requests among them. A **load balancer** sits in front of the pool and picks a destination for each request or connection.
+
+The servers run the same application. The balancer can route by rules and stop sending traffic to any server that fails a **health check**. Capacity rises because work happens in parallel, and availability rises because one failed server no longer takes the service down.
+
+That does not make an application automatically fault tolerant. If every server depends on the same failed database, or the load balancer itself is a single point of failure, the service still goes down. Shared dependencies need resilience too.
+
+## Algorithms for Choosing a Server
+
+No single policy is best for every workload.
+
+| Strategy | How it works | Useful when |
+| --- | --- | --- |
+| **Round robin** | Requests go to servers in turn | Similar servers, similar request cost |
+| **Weighted round robin** | Bigger servers get proportionally more | Servers differ in capacity |
+| **Least connections** | Prefer the server with fewest active connections | Connection durations vary a lot |
+| **Least response time** | Prefer the fastest-responding server | Responsiveness varies |
+| **Consistent hashing** | A key (user ID, URL) maps to a stable server | Requests benefit from affinity or local state |
+
+Round robin balances the *count* of requests, not their cost: three servers can receive equal counts while one gets all the expensive ones. Least-connections adapts better when long-lived connections reflect load, but can mislead when some connections are far heavier. The goal is not equal numbers but meeting performance and availability targets.
+
+## Health Checks and Session State
+
+A balancer probes backends with a connection, a dedicated health endpoint, or an application-level test, and removes failing ones until they recover.
+
+**Session state** is the other complication. If a user logs in on Server A and the session lives only in A's memory, the next request routed to B will not recognise them. Common fixes:
+
+- **Shared session store:** keep sessions in a shared database or cache.
+- **Stateless tokens:** use signed tokens so any server can verify a request.
+- **Session affinity ("sticky sessions"):** prefer sending a client to the same server, at the cost of flexibility and harder failover.
+
+<Callout type="pitfall">
+A load balancer can spread requests perfectly while the app still breaks because uploaded files, sessions or caches exist on only one server. If servers are not interchangeable, balancing them is not enough.
+</Callout>
+
+## A CDN Caches Content Near Users
+
+A **content delivery network** is a geographically distributed system of servers, often called **edge locations** or **points of presence (PoPs)**. Edges fetch content from the **origin** (or an upstream cache) when needed and serve eligible requests locally while the copy stays valid. A user far from the origin gets an image, script or video segment from a nearby edge instead of crossing an ocean.
+
+The benefit is more than proximity: caching removes repeated work from the origin, and spreading delivery across many edges absorbs traffic spikes and some overload. CDNs are not only for static files; many also offer TLS termination, traffic filtering and dynamic acceleration, although content generated uniquely per request is hard or unsafe to cache.
+
+## Hits, Misses and Expiration
+
+- **Cache hit:** the edge has a valid copy and serves it without contacting the origin.
+- **Cache miss:** the edge has no usable copy, fetches from the origin, and usually stores it for later requests.
+
+The **hit ratio** is the share of requests served from cache. A high ratio lowers origin load, though it does not guarantee low latency: misses, expensive dynamic work and long network paths can still dominate. Try the three regions below, then purge:
+
+<CdnDemo />
+
+A cache's behaviour depends on expiry and validation. HTTP headers such as `Cache-Control`, `Expires` and `ETag` say how long a response can be reused and whether it needs revalidation (see [HTTP](../http/)). The price of caching is **staleness**: if content changes but an old copy is still valid by its policy, users see outdated data. Teams manage this with sensible TTLs, **versioned asset names** (`app.3f9a1c.js`), revalidation, or explicit **invalidation** (purge).
+
+How much cache is enough? Real traffic is skewed: a few objects get most requests, so even a small cache catches a lot:
+
+```python
+import random
+from collections import OrderedDict
+
+random.seed(4)
+# A CDN edge is an LRU cache in front of a slow origin. Popular objects (a few) get most requests.
+objects = list(range(1000))
+weights = [1 / (i + 1) for i in objects]                      # Zipf-like popularity
+requests = random.choices(objects, weights, k=20000)
+
+def hit_ratio(capacity):
+    cache, hits = OrderedDict(), 0
+    for o in requests:
+        if o in cache:
+            hits += 1; cache.move_to_end(o)
+        else:
+            cache[o] = True
+            if len(cache) > capacity: cache.popitem(last=False)
+    return hits / len(requests)
+
+for cap in (10, 50, 200):
+    print(f"edge holds {cap:>3} of 1000 objects -> hit ratio {hit_ratio(cap):.0%}")
+# edge holds  10 of 1000 objects -> hit ratio 21%
+# edge holds  50 of 1000 objects -> hit ratio 46%
+# edge holds 200 of 1000 objects -> hit ratio 69%
+```
+
+This is the same LRU idea as in [Caching Strategies](../../system-design/caching-strategies/) and [Page Replacement](../../operating-systems/page-replacement/): keep what was used recently.
+
+<Callout type="pitfall">
+**Personalised responses** need care. If the cache key ignores cookies, headers or query parameters that change the content, one user's page can be served to another. Mark private responses `Cache-Control: private` or `no-store`.
+</Callout>
+
+## Different Scopes, Complementary Roles
+
+| | Load balancing | CDN |
+| --- | --- | --- |
+| **Goal** | Distribute work across backends | Serve content from near users |
+| **Scope** | A server pool, data centre or region | A worldwide edge network |
+| **Main decision** | Which backend handles this request? | Can a nearby cache serve it? |
+| **Biggest benefit** | Capacity, resilience, even load | Lower latency, less origin traffic |
+| **Main challenge** | Health, uneven work, shared dependencies | Freshness, misses, correct cache keys |
+
+A global service may use both: [DNS](../dns/) or an **anycast** address steers a user to a nearby edge; the edge serves cached content or forwards a miss to the origin; and the origin uses a load balancer to spread dynamic requests across application servers.
+
+<Callout type="key">
+A CDN reduces how many requests **reach** the origin; a load balancer makes sure the ones that do are handled by healthy, suitable backends. They complement rather than replace each other.
+</Callout>

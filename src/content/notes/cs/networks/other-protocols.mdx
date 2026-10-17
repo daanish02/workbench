@@ -1,0 +1,199 @@
+---
+title: "FTP, SMTP, WebSockets"
+description: "Other application protocols, and when you would reach for each."
+order: 10
+tier: optional
+takeaways:
+  - "Choose a protocol by the **communication pattern**: who initiates, whether the connection persists, and whether you are moving data, exchanging messages or announcing an event."
+  - "**SFTP** (over SSH) moves files securely; plain **FTP** sends credentials in the clear and is legacy."
+  - "**SMTP** sends and relays email between servers; clients read mailboxes with **IMAP**."
+  - "**WebSockets** give a persistent two-way channel, replacing polling for live updates; **SSE** is a simpler one-way stream from server to browser."
+  - "**MQTT** is a lightweight publish/subscribe protocol for devices and unreliable links; **SSH** is the encrypted channel for remote login, commands and tunnels."
+  - "A **webhook** is an HTTP callback: the sender POSTs to your URL when an event happens. Verify signatures and handle duplicates."
+resources:
+  - title: "MDN: WebSockets API"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API"
+  - title: "RFC 5321: Simple Mail Transfer Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc5321"
+  - title: "What is a webhook? (Red Hat)"
+    url: "https://www.redhat.com/en/topics/automation/what-is-a-webhook"
+  - title: "MDN: Using server-sent events"
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events"
+  - title: "MQTT.org"
+    url: "https://mqtt.org/"
+    note: "The protocol, its QoS levels and client libraries."
+  - title: "Secure Shell (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Secure_Shell"
+---
+
+Network protocols solve different communication problems. **FTP** transfers files, **SMTP** moves email between mail systems, **WebSockets** support ongoing two-way communication, **SSE** streams updates one way, **MQTT** moves small messages for devices, **SSH** gives secure remote access, and **webhooks** notify another system that an event occurred. The useful distinction is not just how each works but **who starts the conversation, whether the connection stays open, and whether the goal is to transfer data, exchange messages or announce an event**.
+
+## FTP and SFTP: Transferring Files
+
+File-transfer protocols move files between systems, usually with directory listings, uploads, downloads and authentication.
+
+- **FTP:** the traditional protocol, commonly using separate **control** and **data** connections. Standard FTP does **not encrypt** credentials or contents, so it is unsuitable for untrusted networks.
+- **FTPS:** FTP secured with TLS. Keeps FTP's two-connection model, which complicates firewalls.
+- **SFTP:** a *different* protocol that transfers files over **SSH**, encrypted and normally using a single connection. It is not "FTP with security added".
+
+Use SFTP for scheduled exchanges with partners (nightly CSV exports, document delivery, automated imports). Use FTP only where a legacy system forces it, and mitigate the risk.
+
+## SMTP: Sending and Relaying Email
+
+**SMTP** (Simple Mail Transfer Protocol) moves email from clients to mail servers and between servers. It sends and relays; it is not how users browse an inbox.
+
+1. An email client or application **submits** the message.
+2. The sending mail server **accepts and relays** it.
+3. The recipient's mail server **receives** it.
+4. The message sits in the recipient's mailbox, which clients read with **IMAP** (or older POP3).
+
+Applications use SMTP, usually through a mail service provider, for password resets, receipts and alerts. A message is just headers and a body:
+
+```python
+from email.message import EmailMessage
+
+# SMTP carries a message made of headers and a body. This builds one without sending it.
+m = EmailMessage()
+m["From"], m["To"], m["Subject"] = "shop@example.com", "ana@example.org", "Your receipt"
+m.set_content("Thanks for your order.")
+print(m.as_string())
+# From: shop@example.com
+# To: ana@example.org
+# Subject: Your receipt
+# Content-Type: text/plain; charset="utf-8"
+# Content-Transfer-Encoding: 7bit
+# MIME-Version: 1.0
+#
+# Thanks for your order.
+```
+
+SMTP can be secured with TLS, and deliverability depends on anti-abuse records in [DNS](../dns/): **SPF** (which servers may send for a domain), **DKIM** (a signature on the message) and **DMARC** (what to do when those fail). Reach for SMTP when the communication should arrive as email and recipients may be offline.
+
+## WebSockets: Continuous Two-Way Communication
+
+Ordinary HTTP is request/response: if the server has news later, the client must **poll**. A **WebSocket** starts as an HTTP request and then **upgrades** into a persistent, bidirectional channel. After that, either side can send messages whenever it likes without a new request.
+
+Typical uses: live chat and collaborative editing, multiplayer games, real-time dashboards, and anywhere the server pushes frequent updates. Compare what polling and a persistent connection cost for the same three events:
+
+<PollingVsPush />
+
+WebSockets are worth it when communication is frequent or genuinely two-way. They also cost connection management: servers hold many long-lived connections, and clients must handle disconnects, reconnects, and any ordering or delivery guarantees at the application level. For purely server-to-browser updates, [SSE](#sse-one-way-streaming-over-http) is simpler. For mostly independent requests, ordinary HTTP is enough.
+
+## Webhooks: Notifying Another System of an Event
+
+A **webhook** is an event-driven pattern, not a transport protocol like SMTP. When something happens, one application sends an **HTTP request**, usually a POST, to a URL that another application registered. A payment provider, for example, calls the store's URL when a payment succeeds, instead of the store repeatedly asking "has it completed yet?" (**polling**).
+
+Common uses: payment updates, source-control events, build notifications, form submissions, SaaS alerts. Receivers must handle them carefully:
+
+- **Verify authenticity** (a signature or shared secret), since anyone can POST to a public URL.
+- **Respond quickly** (acknowledge, then process in the background).
+- **Be idempotent**: delivery is retried, so the same event can arrive twice (see [Distributed Basics](../../distributed-systems/distributed-basics/)).
+
+If the receiver is down, the sender's retry policy decides whether the event is ever delivered.
+
+<Callout type="pitfall">
+Treating a webhook as proof the event is real, without checking its signature, lets anyone forge a "payment succeeded" call. Verify the signature, and ideally re-fetch the object from the provider's API before acting.
+</Callout>
+
+## SSE: One-Way Streaming over HTTP
+
+**Server-Sent Events (SSE)** let a server push a stream of updates to a browser over a single, long-lived ordinary HTTP response (`Content-Type: text/event-stream`). The browser's built-in `EventSource` API reads it. Unlike a WebSocket, traffic flows **one way only**, server to client, and it is plain HTTP, so it passes through proxies, load balancers and HTTP/2 without special handling.
+
+The wire format is just text: lines of `field: value`, with a blank line ending each event.
+
+```python
+# An SSE stream is plain text over one long-lived HTTP response: "field: value" lines, a blank line ends each event.
+def sse_event(data, event=None, id=None):
+    out = ""
+    if id is not None:
+        out += f"id: {id}\n"             # the browser resends the last id on reconnect so the server can resume
+    if event:
+        out += f"event: {event}\n"
+    out += f"data: {data}\n\n"
+    return out
+
+print(sse_event("build started", id=1), end="")
+print(sse_event('{"percent": 40}', event="progress", id=2), end="")
+# id: 1
+# data: build started
+#
+# id: 2
+# event: progress
+# data: {"percent": 40}
+#
+```
+
+Its strengths are **automatic reconnection** (the browser retries and sends `Last-Event-ID` so the server can resume) and simplicity. Typical uses: live feeds, progress bars, notifications, dashboards, and streaming model output token by token. Reach for a WebSocket instead only if the client must also send frequent messages on the same channel; a normal HTTP request can carry client-to-server data alongside an SSE stream.
+
+## MQTT: Publish/Subscribe for Devices
+
+**MQTT** is a lightweight **publish/subscribe** protocol designed for small devices and unreliable or low-bandwidth networks. Clients do not talk to each other directly. They connect to a **broker**: publishers send messages to a named **topic**, and the broker forwards each message to every client subscribed to that topic. Senders and receivers need not know about, or be online at the same time as, each other.
+
+Topics are hierarchical strings such as `home/kitchen/temperature`. Subscribers can use wildcards: `+` matches exactly one level and `#` matches everything below.
+
+```python
+# MQTT routes by topic. "+" matches one level, "#" matches everything below.
+def matches(pattern, topic):
+    p, t = pattern.split("/"), topic.split("/")
+    for i, part in enumerate(p):
+        if part == "#":
+            return True
+        if i >= len(t) or (part != "+" and part != t[i]):
+            return False
+    return len(p) == len(t)
+
+topic = "home/kitchen/temperature"
+for pattern in ("home/kitchen/temperature", "home/+/temperature", "home/#", "home/kitchen", "office/+/temperature"):
+    print(f"{pattern:<26} matches {topic}? {matches(pattern, topic)}")
+# home/kitchen/temperature   matches home/kitchen/temperature? True
+# home/+/temperature         matches home/kitchen/temperature? True
+# home/#                     matches home/kitchen/temperature? True
+# home/kitchen               matches home/kitchen/temperature? False
+# office/+/temperature       matches home/kitchen/temperature? False
+```
+
+MQTT runs over TCP (optionally with TLS) and has very small headers. It offers three **quality-of-service** levels per message: **0** at most once (fire and forget), **1** at least once (may duplicate), **2** exactly once (most overhead). It also supports **retained** messages (the broker keeps the last value for new subscribers) and a **last will** message sent if a client disconnects unexpectedly. That is why it dominates IoT: sensors, smart-home devices and vehicles publish small readings cheaply, and many consumers listen.
+
+It is a messaging layer for devices, not a replacement for the durable queues of [Message Queues](../../system-design/message-queues/), though the publish/subscribe idea is the same.
+
+## SSH: Secure Remote Access
+
+**SSH** (Secure Shell) provides an encrypted, authenticated channel over an untrusted network. It replaced the plaintext Telnet and rlogin. Its main uses:
+
+- **Remote login and commands:** a shell on another machine, or a single command run remotely.
+- **File transfer:** SFTP and `scp` ride on the same connection.
+- **Tunnelling (port forwarding):** carry other traffic, such as a database connection, through the encrypted channel.
+- **Automation:** Git over SSH, deployment tools and configuration management.
+
+An SSH connection does for a shell what [TLS](../tls/) does for HTTP: the client verifies the **server's host key** (remembered on first use in `known_hosts`), the two sides agree on session keys, and everything after is encrypted and integrity-protected. Users then authenticate with a password or, preferably, a **key pair**: the private key stays on your machine and the server holds the matching public key, so no secret crosses the network.
+
+<Callout type="practice">
+Prefer SSH keys over passwords, disable password login on servers exposed to the Internet, and protect the private key with a passphrase. If SSH warns that a host key **changed**, stop and find out why before continuing: it can mean a reinstalled server, or someone intercepting the connection.
+</Callout>
+
+## Other Protocols Worth Knowing
+
+| Protocol or pattern | What it does | When to use it |
+| --- | --- | --- |
+| **AMQP** | Message-oriented queues and routing | Backend job queues, enterprise messaging |
+| **IMAP / POP3** | Read email from a mailbox | Mail clients syncing or downloading |
+| **QUIC** | Secure multiplexed transport over UDP | HTTP/3, lower setup latency |
+
+Ordinary **HTTP and REST APIs** are covered in [HTTP & HTTPS](../http/) and [API Design](../../system-design/api-design/). These protocols are not mutually exclusive. One application might create an order over a REST API, receive payment updates by webhook, email a receipt via SMTP and process fulfilment through a message queue (see [Message Queues](../../system-design/message-queues/)).
+
+## How to Choose
+
+Start from the communication pattern, not the protocol name.
+
+| Requirement | Typical choice |
+| --- | --- |
+| Send files to another organization on a schedule | SFTP |
+| Deliver a message to someone's inbox | SMTP |
+| Interactive, two-way, low-latency updates | WebSockets |
+| Stream updates server → browser only | SSE |
+| Learn about an event in an external service | Webhook |
+| Fetch or change data on demand | HTTP API |
+| Hand jobs between backend services | Message queue (AMQP and others) |
+| Small telemetry messages from many devices | MQTT |
+
+Protocols encode expectations about timing, direction, persistence and delivery. Choosing the one that matches saves you from building polling, retry and connection handling into the application.

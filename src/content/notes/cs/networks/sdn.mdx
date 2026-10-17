@@ -1,0 +1,123 @@
+---
+title: "Software-Defined Networking"
+description: "Separating the network's control plane from its data plane."
+order: 11
+tier: advanced
+takeaways:
+  - "**SDN** separates the **control plane** (deciding how traffic is handled) from the **data plane** (forwarding packets) and makes the control side programmable."
+  - "A logically central **controller** installs match-action **rules** into switches; the switches forward at line speed and do not consult the controller per packet."
+  - "SDN replaces box-by-box configuration with **policy as software**: one change, applied consistently across the network."
+  - "The controller becomes a critical dependency: use redundancy, authenticated channels and safe rollout."
+  - "SDN is an architecture, not one protocol (OpenFlow is one example); it is often paired with **network virtualization** such as VXLAN."
+resources:
+  - title: "Software-defined networking (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Software-defined_networking"
+  - title: "OpenFlow (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/OpenFlow"
+    note: "The best-known controller-to-switch protocol."
+  - title: "VXLAN (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Virtual_Extensible_LAN"
+    note: "An encapsulation technology used to build virtual networks over shared infrastructure."
+---
+
+**Software-defined networking (SDN)** separates the logic that decides how traffic should be handled from the hardware that forwards packets. Instead of configuring every switch and router independently, an SDN system manages network behaviour through centralized software and programmable interfaces. The key idea is **programmability**: administrators express policy in software, and the infrastructure applies it across many devices.
+
+## Traditional Networking Combines Decisions with Forwarding
+
+In a conventional network each router or switch both **decides** and **forwards**. Routers run routing protocols and build tables (see [Routing](../routing/)); switches learn MAC addresses (see [Link Layer](../link-layer/)). This distributed design is robust and scalable, but managing a big network is hard: administrators configure many devices individually and must keep policies consistent across all of them.
+
+Imagine isolating a company's payment systems from ordinary employee traffic. Without automation, engineers update access rules on many switches, routers and firewalls, and one missed device may leave an unintended path. SDN offers a programmable system that coordinates those changes instead.
+
+## Control Plane and Data Plane
+
+SDN makes a distinction explicit:
+
+- **Control plane:** decides how traffic should be handled: routes, policies, forwarding behaviour.
+- **Data plane:** processes packets and forwards them according to installed rules, at hardware speed.
+
+A typical SDN architecture adds a **controller** that talks to switches through programmable interfaces:
+
+| Layer | Role |
+| --- | --- |
+| **Applications** | Express policies, security rules and traffic goals |
+| **Controller** | Translates policy into rules and coordinates devices |
+| **Switches** | Match packets against rules and forward them |
+
+The controller does not normally inspect every packet. It **installs rules**, and the switches apply them locally. It determines the rules; the switches apply them. Compare the two worlds, and see how many steps one policy change takes in each:
+
+<SdnPlanes />
+
+(This is a conceptual architecture. Real deployments may use several controllers, distributed control software or extra management layers.)
+
+## How SDN Changes Behaviour
+
+Consider a network carrying video calls, web traffic and large file transfers. During congestion the administrator wants voice and video prioritized over bulk transfers. Manually, that means coordinated quality-of-service changes on many devices. With SDN:
+
+1. An administrator defines the policy (prioritize real-time voice).
+2. An SDN application passes it to the controller.
+3. The controller works out which devices need which changes.
+4. It installs or updates forwarding, classification or QoS rules.
+5. Switches apply those rules as packets arrive.
+
+The administrator states the desired outcome and software handles device-level configuration. SDN does not create bandwidth, though: the policy must still fit the physical capacity, and the devices must support the features.
+
+## Match-Action Forwarding
+
+Traditional switches forward by MAC table and routers by IP routing table. SDN-capable devices expose a more flexible **match-action** model. A rule matches packet fields:
+
+- source or destination IP address,
+- source or destination transport port,
+- VLAN or other metadata,
+- protocol or other supported fields,
+
+and applies an action: forward to a port, set a priority, drop, or send to the controller for further handling. The available matches and actions depend on the device. **OpenFlow** is the best-known protocol for a controller to manage switches' **flow tables**, but other SDN systems use other APIs; SDN is an architecture, not a specific protocol.
+
+```python
+# SDN in miniature: the switch only matches and forwards; the controller computes the rules.
+rules = []                                                    # the switch's flow table: (match, action), first match wins
+
+def controller_install(policy):
+    rules.clear()
+    for match, action in policy:
+        rules.append((match, action))
+
+def switch_forward(pkt):
+    for match, action in rules:
+        if all(pkt.get(k) == v for k, v in match.items()):
+            return action
+    return "send to controller"                               # unknown flow: ask the control plane
+
+controller_install([({"dst_port": 443, "src_vlan": "guest"}, "drop"), ({"dst_port": 443}, "forward:2"), ({}, "forward:1")])
+for pkt in ({"dst_port": 443, "src_vlan": "staff"}, {"dst_port": 443, "src_vlan": "guest"}, {"dst_port": 22}):
+    print(pkt, "->", switch_forward(pkt))
+# {'dst_port': 443, 'src_vlan': 'staff'} -> forward:2
+# {'dst_port': 443, 'src_vlan': 'guest'} -> drop
+# {'dst_port': 22} -> forward:1
+```
+
+Programmability also enables **automation**: a system can react to a topology change, update access policies or allocate paths without anyone editing each device.
+
+<Callout type="key">
+SDN moves *decisions* into software while forwarding stays in fast hardware. The controller is **logically** centralized, which does not mean physically one machine.
+</Callout>
+
+## Centralized in Logic, Not Necessarily in Place
+
+A network may present one logical controller while running the control software on several machines for scale and resilience; the point is that policy is coordinated through a programmable system.
+
+That introduces trade-offs. The controller and its channels become critical: if the controller fails, existing rules usually keep forwarding, but new rules cannot be installed and adaptive behaviour stops. A faulty policy pushed everywhere can also break the whole network at once. Production systems therefore use **redundant controllers**, authenticated control channels, access control, monitoring and staged rollouts.
+
+<Callout type="pitfall">
+Centralizing control concentrates risk. A compromised controller, or one bad rule pushed to every switch, has network-wide impact, so protect and test the control plane at least as carefully as the devices.
+</Callout>
+
+## SDN and Network Virtualization
+
+SDN is often paired with **network virtualization**, though they solve different problems:
+
+- **SDN** is about programmable control of forwarding.
+- **Network virtualization** builds logical networks separated from the physical infrastructure.
+
+A cloud provider can give two customers separate private address spaces and security policies on the same physical switches; SDN coordinates the rules that make those virtual networks work. Technologies such as **VXLAN** encapsulate traffic of many logical layer-2 networks inside a shared layer-3 infrastructure. VXLAN is not itself SDN; it is a building block SDN systems use. (Cloud networking builds on this: see [Cloud Computing](../../cloud/service-models/).)
+
+SDN is used in data centres, enterprise networks, cloud platforms, wide-area networks and programmable security. Its main advantage is not that software replaces networking hardware, but that **software can coordinate how the hardware behaves**.

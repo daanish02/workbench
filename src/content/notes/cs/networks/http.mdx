@@ -1,0 +1,162 @@
+---
+title: "HTTP & HTTPS"
+description: "The request/response cycle, methods, status codes, and headers."
+order: 7
+tier: core
+takeaways:
+  - "**HTTP** is a request/response protocol: a request has a **method**, target, headers and optional body; a response has a **status code**, headers and optional body."
+  - "**Safe** methods (GET, HEAD) are read-only; **idempotent** ones (GET, PUT, DELETE) can be repeated harmlessly. POST is neither, so retries need idempotency keys."
+  - "Status classes: **2xx** success, **3xx** redirect, **4xx** client error, **5xx** server error. `200 OK` does not mean the business goal succeeded."
+  - "**HTTPS** is HTTP inside TLS: confidentiality, integrity and server authentication, but not a guarantee the site is honest."
+  - "HTTP is **stateless**; sessions come from cookies or tokens. A fresh HTTPS page load stacks DNS + TCP + TLS round trips before the request."
+resources:
+  - title: "MDN: HTTP"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP"
+    note: "The best practical reference for methods, headers, caching and status codes."
+  - title: "MDN: HTTP response status codes"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status"
+  - title: "RFC 9110: HTTP Semantics"
+    url: "https://www.rfc-editor.org/rfc/rfc9110"
+    note: "The authoritative definition of methods, status codes and headers."
+---
+
+**HTTP** (Hypertext Transfer Protocol) defines how clients and servers exchange web resources through **requests** and **responses**. A browser sends a request describing what it wants to do with a resource, and the server returns a response with a status code, headers and often a body. **HTTPS** is HTTP carried over a connection secured with [TLS](../tls/), which adds encryption, integrity protection and server authentication. HTTP defines the *meaning and structure* of the exchange; HTTPS protects it against interception and tampering.
+
+## The Request/Response Cycle
+
+HTTP is organized around messages, not around the visual act of opening a page. A browser may make dozens of separate requests to load one page: the HTML, stylesheets, scripts, images, fonts and API data.
+
+A request such as:
+
+```
+GET /articles/networking HTTP/1.1
+Host: example.com
+Accept: text/html
+```
+
+might receive:
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Cache-Control: max-age=300
+
+<!doctype html>
+<html>
+  ...
+</html>
+```
+
+The **request line** gives the method, path and version; **headers** add information about the request or response; the **body** carries content when present. This is HTTP/1.1 syntax. HTTP/2 and HTTP/3 keep the same request/response *semantics* but encode messages differently on the wire (binary frames, multiplexed streams).
+
+You can send the same exchange from code:
+
+```python
+import http.client
+
+conn = http.client.HTTPSConnection("example.com", timeout=10)
+conn.request("GET", "/", headers={"Accept": "text/html"})
+r = conn.getresponse()
+print(r.status, r.reason)
+for name, value in list(r.getheaders())[:4]:
+    print(f"{name}: {value}")
+print(r.read(60))
+# 200 OK
+# Date: Sat, 17 Oct 2026 07:28:45 GMT
+# Content-Type: text/html; charset=utf-8
+# Transfer-Encoding: chunked
+# Connection: keep-alive
+# b'<!doctype html><html lang=en><head><meta charset=utf-8><link'
+```
+
+## Methods Describe the Intended Operation
+
+The **method** says what kind of operation is requested; the same URL can support several.
+
+| Method | Intended purpose | Example |
+| --- | --- | --- |
+| `GET` | Retrieve a representation | Load an article |
+| `POST` | Submit data for processing or create a resource | Submit a form |
+| `PUT` | Create or replace a resource at a known target | Replace a profile |
+| `PATCH` | Modify part of a resource | Change one field |
+| `DELETE` | Remove a resource | Delete a saved item |
+| `HEAD` | Headers only, no body | Check metadata |
+| `OPTIONS` | Discover supported options | Inspect allowed methods (CORS preflight) |
+
+Two properties matter for retries, caching and API design:
+
+- **Safe:** read-only semantics from the client's view. `GET` and `HEAD` are safe; a server should not make destructive changes because one arrived.
+- **Idempotent:** repeating the request has the same intended effect as once. `GET`, `HEAD`, `PUT` and `DELETE` are idempotent.
+
+`POST` is neither. If a client submits a payment twice, the server may process it twice unless the application uses an **idempotency key** (see [Distributed Basics](../../distributed-systems/distributed-basics/) and [API Design](../../system-design/api-design/)). A method states *intended* semantics, not a guarantee the server implements them correctly.
+
+## Status Codes Tell the Client What Happened
+
+The first digit of the **status code** gives the class:
+
+| Class | Meaning | Common codes |
+| --- | --- | --- |
+| **1xx** Informational | Exchange continues | `100 Continue` |
+| **2xx** Success | Request handled | `200 OK`, `201 Created`, `204 No Content` |
+| **3xx** Redirection | Further action needed | `301 Moved Permanently`, `302 Found`, `304 Not Modified` |
+| **4xx** Client error | The request is wrong or refused | `400`, `401`, `403`, `404`, `429 Too Many Requests` |
+| **5xx** Server error | The server failed on a valid request | `500`, `502 Bad Gateway`, `503 Service Unavailable` |
+
+A status code is not the whole story. `200 OK` means the HTTP request succeeded, not that the user's broader goal did; an error message can sit inside a 200 body. `401 Unauthorized` really means *unauthenticated* (credentials missing or invalid), while `403 Forbidden` means the server refuses even though it knows who you are (see [Authentication](../../security/authentication/) and [Authorization](../../security/authorization/)). `304 Not Modified` supports caching: the client may reuse its stored copy.
+
+## Headers Carry the Metadata
+
+**Headers** describe content, caching, authentication and negotiation without each application inventing its own envelope.
+
+| Header | Role |
+| --- | --- |
+| `Host` | Target host (needed for HTTP/1.1 virtual hosting) |
+| `Content-Type` | Media type of the body, e.g. `application/json` |
+| `Content-Length` | Body length in bytes |
+| `Accept` | Response formats the client can handle |
+| `Authorization` | Credentials or token |
+| `Cache-Control` | Caching rules |
+| `Cookie` / `Set-Cookie` | Send / store cookies |
+| `Location` | Redirect target (or new resource URL) |
+| `ETag` | Validator for a representation |
+
+An API call:
+
+```
+POST /api/tasks HTTP/1.1
+Host: example.com
+Content-Type: application/json
+Accept: application/json
+
+{"title":"Study HTTP"}
+```
+
+`Content-Type` tells the server how to read the body; `Accept` says which format the client prefers. The server might answer `201 Created` with a `Location` header naming the new resource. A response with `Cache-Control: max-age=300` can be reused from a cache for five minutes, and an `ETag` lets the client **revalidate** (ask "has this changed?") and receive a cheap `304` instead of the whole body.
+
+## HTTPS Protects HTTP in Transit
+
+**HTTPS** uses TLS to provide three properties:
+
+- **Confidentiality:** observers on the network cannot read the contents.
+- **Integrity:** tampering with protected data is detected.
+- **Authentication:** the client can verify the server's identity through certificate validation.
+
+A fresh HTTPS connection proceeds as: (1) resolve the hostname with [DNS](../dns/); (2) open a transport connection, usually TCP; (3) run the TLS handshake, authenticating the server; (4) exchange HTTP messages inside TLS. **HTTP/3** is the exception to the TCP pattern: it runs on QUIC over UDP with TLS 1.3 built in (see [TCP vs. UDP](../tcp-vs-udp/)).
+
+HTTPS does not make a site honest or safe, and it does not hide everything: observers may still see the destination IP, timing, volume and often the hostname.
+
+Those setup steps are why the first request is slower than the rest. Each is at least one round trip, so latency, not bandwidth, dominates a cold connection:
+
+<RequestTimeline />
+
+<Callout type="practice">
+Cut round trips by **reusing connections** (keep-alive, HTTP/2 multiplexing), caching DNS, moving content closer with a [CDN](../load-balancing-and-cdns/), and using HTTP/3. Raising bandwidth does almost nothing for a 3-round-trip setup on a 200 ms link.
+</Callout>
+
+## HTTP Is Stateless; Applications Add State
+
+HTTP's basic model does not require the server to remember earlier requests: each request carries what is needed to interpret it. Applications still need to recognize a user across requests, and do so with **cookies**, session identifiers, tokens and server-side storage. After login, the server may issue a session cookie that the browser sends with each later request.
+
+Statelessness does not mean servers cannot store data; it means the *protocol* does not rely on a persistent conversational state. It is also what lets requests be spread across many servers by a [load balancer](../load-balancing-and-cdns/).
+
+The overall architecture is therefore layered: DNS discovers the address, IP routing moves packets, TCP or QUIC provides transport, TLS protects the connection, and HTTP defines request and response semantics.

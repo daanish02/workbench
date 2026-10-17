@@ -1,0 +1,127 @@
+---
+title: "IP Addressing"
+description: "IPv4, IPv6, CIDR notation, and subnet masks, explained."
+order: 3
+tier: core
+takeaways:
+  - "An **IP address** only makes sense with its **prefix length**: the first *p* bits name the network, the rest name a host in it."
+  - "**IPv4** is 32 bits (about 4.3 billion addresses); **IPv6** is 128 bits, written in hex with `::` shortening."
+  - "**CIDR** `a.b.c.d/p` replaced fixed classes: a /p network holds 2^(32−p) IPv4 addresses (two reserved in ordinary subnets)."
+  - "The **network address** is IP AND mask; two hosts are on the same subnet when their network addresses are equal."
+  - "**Subnetting** borrows host bits to split a block: a /24 becomes four /26s by borrowing 2 bits."
+resources:
+  - title: "Python ipaddress module"
+    url: "https://docs.python.org/3/library/ipaddress.html"
+    note: "The standard-library tool used in the snippets here."
+  - title: "RFC 4632: Classless Inter-domain Routing (CIDR)"
+    url: "https://www.rfc-editor.org/rfc/rfc4632"
+  - title: "Classless Inter-Domain Routing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing"
+    note: "Prefix tables, special ranges and the history."
+---
+
+**IP addressing** gives network interfaces a logical identity that routers can use to move packets across interconnected networks. **Subnetting** divides address space into smaller networks, and **CIDR notation** states exactly how much of an address names the network and how much names the host. The key idea: an IP address is always interpreted together with a **prefix length**. The prefix determines which bits define the network, which addresses belong to it, and whether a destination is local or must be reached through a router.
+
+## An Address Separates Network from Host
+
+An IP address identifies an interface in a network context. Unlike a MAC address (local delivery only, see [Link Layer](../link-layer/)), it supports communication across many networks.
+
+Take `192.168.1.37/24`:
+
+- `192.168.1.37` is the 32-bit IPv4 address.
+- `/24` means the **first 24 bits** are the network prefix.
+- The remaining 8 bits identify a host within that subnet.
+
+Here the network address is `192.168.1.0` and the range is `192.168.1.0` to `192.168.1.255`. The address alone does not reveal the boundary: `192.168.1.37/24` and `192.168.1.37/16` are the same 32 bits interpreted as members of different-sized networks.
+
+## IPv4 and IPv6
+
+**IPv4** uses 32-bit addresses, written as four decimal numbers (0–255), each one byte: `192.168.1.37`. That gives about 4.3 billion addresses, which the Internet has outgrown.
+
+**IPv6** uses 128-bit addresses, written as eight 16-bit hexadecimal groups: `2001:0db8:1234:0000:0000:0000:0000:0025`. Notation shortens it: leading zeros in a group can be dropped, and **one** run of all-zero groups can be replaced by `::`, giving `2001:db8:1234::25`. Using `::` twice would be ambiguous, so it is allowed once. The range `2001:db8::/32` is reserved for documentation.
+
+IPv4 and IPv6 share the idea of prefixes and routing but are distinct protocols; most systems run both during the long transition.
+
+## CIDR Defines the Boundary
+
+**CIDR** (Classless Inter-Domain Routing) writes an address followed by `/` and the prefix length $p$. For IPv4:
+
+$$\text{host bits} = 32 - p, \qquad \text{addresses in the block} = 2^{32-p}$$
+
+In words: every bit you move from host to network halves the block. The IPv6 versions replace 32 with 128.
+
+| Prefix | Network bits | Host bits | IPv4 addresses |
+| --- | --- | --- | --- |
+| `/8` | 8 | 24 | 16,777,216 |
+| `/16` | 16 | 16 | 65,536 |
+| `/24` | 24 | 8 | 256 |
+| `/26` | 26 | 6 | 64 |
+| `/30` | 30 | 2 | 4 |
+| `/32` | 32 | 0 | 1 |
+
+In a conventional IPv4 subnet the first address (the **network address**) and last (the **broadcast address**) are not assigned to hosts, so a /24 offers 254 usable addresses. Exceptions include `/31` point-to-point links and `/32` host routes. IPv6 has no broadcast.
+
+## A Subnet Mask Says the Same Thing in IPv4
+
+A **subnet mask** is the dotted-decimal form of the prefix: network bits all `1`, host bits all `0`. For `/24` it is `255.255.255.0`.
+
+```
+IP address:  11000000.10101000.00000001.00100101
+Subnet mask: 11111111.11111111.11111111.00000000
+             └──────── network ─────────┘└ host ┘
+```
+
+The network address is the bitwise AND of address and mask:
+
+$$\text{network} = \text{IP} \;\text{AND}\; \text{mask}$$
+
+In words: the mask keeps the network bits and zeroes the host bits. Two addresses are on the same subnet exactly when this gives the same result for both. Explore it, and see how a different prefix changes who counts as "local":
+
+<SubnetCalculator />
+
+## Subnetting Divides a Block
+
+Suppose an organization owns `192.168.1.0/24` and wants four equal subnets. Borrowing 2 of the 8 host bits gives $2^2 = 4$ networks, each with prefix `/26` and 6 host bits (64 addresses, 62 usable):
+
+| Subnet | Range |
+| --- | --- |
+| `192.168.1.0/26` | .0 – .63 |
+| `192.168.1.64/26` | .64 – .127 |
+| `192.168.1.128/26` | .128 – .191 |
+| `192.168.1.192/26` | .192 – .255 |
+
+```python
+import ipaddress
+
+net = ipaddress.ip_network("192.168.1.0/24")
+print(net.netmask, net.broadcast_address, net.num_addresses - 2, "usable hosts")
+print("same subnet as .80? ", ipaddress.ip_address("192.168.1.80") in net)
+print("same subnet as 2.80?", ipaddress.ip_address("192.168.2.80") in net)
+
+for s in net.subnets(new_prefix=26):                          # borrow 2 bits: four /26 networks
+    print(s, "->", s[0], "to", s[-1])
+
+print(ipaddress.ip_address("2001:0db8:1234:0000:0000:0000:0000:0025"))   # IPv6 shortened with ::
+# 255.255.255.0 192.168.1.255 254 usable hosts
+# same subnet as .80?  True
+# same subnet as 2.80? False
+# 192.168.1.0/26 -> 192.168.1.0 to 192.168.1.63
+# 192.168.1.64/26 -> 192.168.1.64 to 192.168.1.127
+# 192.168.1.128/26 -> 192.168.1.128 to 192.168.1.191
+# 192.168.1.192/26 -> 192.168.1.192 to 192.168.1.255
+# 2001:db8:1234::25
+```
+
+Subnets are useful for organizing departments, allocating addresses efficiently and setting routing and security boundaries. A subnet boundary alone does not create separation; switches, VLANs, routers and firewall rules decide what traffic may cross.
+
+<Callout type="practice">
+Not every address is routable on the Internet. **Private ranges** (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) are reused inside homes and companies, and **NAT** on the border router rewrites them to a public address. That reuse is a large part of how IPv4 lasted this long.
+</Callout>
+
+## Routers Use Prefixes to Choose Where Packets Go
+
+A host compares the destination with its own address using its prefix. If the destination is in the same subnet, it delivers directly over the local link. If not, it sends the packet to its **default gateway**, a router.
+
+A computer at `192.168.1.37/24` contacting `192.168.1.80` delivers locally; contacting `192.168.2.80`, which lies outside its /24, it hands the packet to the gateway.
+
+Routers also use prefixes in their routing tables and choose the **longest matching prefix**, the most specific route (see [Routing](../routing/)). That lets address blocks be aggregated into larger routes while still allowing more specific exceptions.

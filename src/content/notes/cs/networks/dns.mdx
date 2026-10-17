@@ -1,0 +1,110 @@
+---
+title: "DNS"
+description: "How a domain name becomes an IP address: the resolution chain."
+order: 6
+tier: core
+takeaways:
+  - "**DNS** is a distributed, hierarchical database mapping names to records (mostly IP addresses); no single server knows everything."
+  - "Names are read right to left: **root → TLD (.com) → domain (example.com)**, each level delegating to the next."
+  - "A **recursive resolver** does the walking for the client; root and TLD servers answer with **referrals**, the **authoritative** server gives the real answer."
+  - "Every record has a **TTL**; caching makes DNS fast, and means changes take time to propagate."
+  - "DNS does not prove a site is trustworthy. **DNSSEC** authenticates data; **DoH/DoT** encrypt queries; neither vouches for the destination."
+resources:
+  - title: "What is DNS? (Cloudflare Learning)"
+    url: "https://www.cloudflare.com/learning/dns/what-is-dns/"
+  - title: "How DNS works (comic)"
+    url: "https://howdns.works/"
+    note: "A short, illustrated walk through a lookup."
+  - title: "RFC 1035: Domain Names, Implementation and Specification"
+    url: "https://www.rfc-editor.org/rfc/rfc1035"
+---
+
+**DNS** (the Domain Name System) translates human-readable names into the information computers use to communicate, most often IP addresses. It is a distributed, hierarchical database rather than one central directory. When a browser needs the address for `www.example.com`, it can consult a local cache, ask a **recursive resolver** to find the answer, and rely on **authoritative servers** to provide the record. The key idea: DNS separates the stable name people use from the address a computer needs, and distributes responsibility for maintaining that mapping.
+
+## A Hierarchy of Delegated Responsibility
+
+No DNS server needs to know every domain. Responsibility is divided into **zones**, and a parent zone points resolvers toward the servers responsible for each child.
+
+A name is read right to left. For `www.example.com`:
+
+- `.` is the **root**.
+- `com` is a **top-level domain (TLD)**.
+- `example.com` is a domain beneath it.
+- `www.example.com` is a name inside that domain.
+
+| Level | Knows | Answers with |
+| --- | --- | --- |
+| **Root servers** | Where the TLD servers are | Referral to the `.com` servers |
+| **TLD servers** (`.com`) | Which servers handle each domain | Referral to `example.com`'s name servers |
+| **Authoritative servers** | The records for the zone | The actual record, e.g. an A or AAAA address |
+
+The root does not need to know any website's address, only where the TLD servers are. Delegation is what makes DNS scale: an organization can change its own records without the global database being updated.
+
+## The Resolution Chain
+
+When a user types a name, the browser needs an address before it can connect. A **stub resolver** on the device asks a **recursive resolver** (run by an ISP, an organization or a public DNS provider), which does the work. The sequence:
+
+1. The browser and OS check their **caches**; a valid answer ends the lookup.
+2. The device asks the recursive resolver; if it has no cached answer, it takes responsibility for finding one.
+3. The resolver asks a **root** server and receives a referral to the TLD servers.
+4. The resolver asks a **TLD** server and receives a referral to the domain's authoritative servers.
+5. The resolver asks an **authoritative** server and gets the record (or a statement that it does not exist).
+6. The resolver returns the result and **caches** it for its TTL.
+
+The client asks only one question and gets one final answer; the root, TLD and authoritative queries are made by the resolver. Walk through it, then switch to warm caches:
+
+<DnsResolution />
+
+The chain is a logical model: caches often skip most or all of it, and some setups add extra referrals or indirection. From code, the whole thing is one call:
+
+```python
+import socket
+
+# The OS stub resolver asks your configured recursive resolver and returns every A/AAAA record it gets.
+for family, _, _, _, addr in socket.getaddrinfo("example.com", 443, type=socket.SOCK_STREAM):
+    print(family.name, addr[0])
+# AF_INET 104.20.23.154
+# AF_INET 172.66.147.243      (addresses vary: example.com is served from several)
+```
+
+## Records Describe More Than IP Addresses
+
+DNS stores **typed records**; each type answers a different question.
+
+| Record | Purpose | Example |
+| --- | --- | --- |
+| `A` | Name → IPv4 address | `www.example.com → 192.0.2.10` |
+| `AAAA` | Name → IPv6 address | `www.example.com → 2001:db8::10` |
+| `CNAME` | Alias to another name | `www.example.com → web.example.net` |
+| `MX` | Mail servers for the domain | Incoming email delivery |
+| `NS` | Authoritative name servers for a zone | Delegation |
+| `TXT` | Free text | Domain verification, email policy (SPF/DKIM) |
+| `PTR` | Reverse lookup | IP address → name |
+
+(Addresses above are documentation examples.) A lookup may not return an IP directly: a `CNAME` points to another name that must itself be resolved, and a name may have several A/AAAA records among which the client chooses. DNS also does not connect you to anything; it only supplies information the application then uses to open a connection.
+
+## Caching: Fast, but Answers Age
+
+If every request walked root, TLD and authoritative servers, DNS would add latency and traffic. So resolvers and clients **cache**, and each record carries a **TTL** (time to live) stating how long it may be reused.
+
+If `www.example.com` moves to a new address, a resolver holding an unexpired cached answer keeps returning the old one until the TTL expires. Lowering the TTL speeds up propagation but cannot recall answers already cached. **Negative caching** also stores "this name does not exist", which prevents repeated queries but can delay a newly created record from being seen.
+
+<Callout type="practice">
+Planning a migration? Lower the TTL (say, to 60 s) a day or two **before** the change, make the change, and raise it again afterwards. A long TTL on the old record is the usual reason "DNS hasn't propagated".
+</Callout>
+
+## DNS Finds Servers; It Does Not Vouch for Them
+
+A successful DNS response tells you what the resolver found, not that the destination is safe or healthy. Typical outcomes:
+
+- **NXDOMAIN:** the name does not exist.
+- **No matching record:** the name exists, but not that record type.
+- **Timeout:** the resolver or server is unreachable, overloaded or filtered.
+- **Stale cached answer:** configuration changed but the cache did not.
+- **Manipulated response:** the resolver path or the data was compromised (for example **DNS spoofing**).
+
+**DNSSEC** lets validating resolvers verify cryptographic signatures on DNS data, protecting its authenticity and integrity; it does not encrypt queries. **DNS over HTTPS (DoH)** and **DNS over TLS (DoT)** encrypt queries between client and resolver; they do not prove a domain is trustworthy.
+
+<Callout type="key">
+DNS solves a **naming and discovery** problem only. Routing, transport, TLS and HTTP handle the rest of what happens after the address is found (see [HTTP](../http/)).
+</Callout>

@@ -1,0 +1,121 @@
+---
+title: "TLS"
+description: "How a connection gets encrypted: the handshake at a conceptual level."
+order: 8
+tier: core
+takeaways:
+  - "**TLS** protects a connection against eavesdropping, tampering and impersonation; it is the \"S\" in HTTPS."
+  - "The handshake uses **public-key** cryptography to authenticate the server and agree on a shared secret, then **symmetric** encryption (AES-GCM, ChaCha20) protects the data efficiently."
+  - "A **certificate** binds a public key to a name and is signed by a **CA** the client trusts; the client checks the chain, the hostname and the validity dates."
+  - "**Ephemeral Diffie–Hellman** gives **forward secrecy**: stealing the server's key later does not decrypt recorded sessions."
+  - "TLS protects the channel between its endpoints, not the honesty of the site, and it does not hide the destination IP or traffic volume."
+resources:
+  - title: "The Illustrated TLS 1.3 Connection"
+    url: "https://tls13.xargs.org/"
+    note: "Every byte of a real handshake, annotated."
+  - title: "RFC 8446: TLS 1.3"
+    url: "https://www.rfc-editor.org/rfc/rfc8446"
+  - title: "What is TLS? (Cloudflare Learning)"
+    url: "https://www.cloudflare.com/learning/ssl/transport-layer-security-tls/"
+---
+
+**TLS** (Transport Layer Security) protects communication between two endpoints by establishing shared cryptographic keys and using them to encrypt and authenticate data in transit. It is the security protocol behind HTTPS. The central idea: **public-key cryptography** lets the client establish trust and agree on secrets, and **symmetric cryptography** then uses those secrets to protect the actual data efficiently. **SSL** was TLS's predecessor and is obsolete; modern secure connections use TLS 1.2 or 1.3. (The underlying algorithms are explained in [Cryptography](../../security/cryptography/); the broader picture is in [Network Security](../../security/network-security/).)
+
+## The Problem TLS Solves
+
+A browser connecting to `https://example.com` over an untrusted network faces three threats:
+
+- **Eavesdropping:** an observer should not read the application data.
+- **Tampering:** nobody should modify data in transit without detection.
+- **Impersonation:** the client should be able to verify it is talking to the real server.
+
+Encryption alone does not solve all three. A client with no way to verify identity could set up a perfectly encrypted connection to an attacker. TLS therefore combines encryption with **authentication** and a protocol for establishing session keys.
+
+## The Handshake
+
+Before application data flows, the client and server perform a **handshake**. In TLS 1.3 this takes **one round trip**:
+
+1. **ClientHello:** supported algorithms, a **key share** (the client's public Diffie–Hellman value), and the server name.
+2. **ServerHello:** the chosen parameters and the server's key share. From this point both sides can derive the same keys.
+3. **Server authentication:** the server (already encrypted) sends its **certificate**, a **signature** proving it holds the matching private key, and a MAC over the handshake.
+4. **Client verification:** the client validates the certificate and signature, then sends its own `Finished`.
+5. **Encrypted application data** flows in both directions.
+
+Step through it, and try giving the server a bad certificate:
+
+<TlsHandshake />
+
+This is a conceptual view of a normal TLS 1.3 handshake; exact messages vary and some are encrypted before the handshake completes. You can see the result of a real one from code:
+
+```python
+import socket
+import ssl
+
+ctx = ssl.create_default_context()                            # verifies the chain and the hostname by default
+with socket.create_connection(("example.com", 443), timeout=10) as raw:
+    with ctx.wrap_socket(raw, server_hostname="example.com") as s:     # the handshake runs here
+        print(s.version(), s.cipher()[0])
+        cert = s.getpeercert()
+        print("subject:", dict(x[0] for x in cert["subject"]))
+        print("issuer :", dict(x[0] for x in cert["issuer"])["organizationName"])
+        print("valid until:", cert["notAfter"])
+# TLSv1.3 TLS_AES_256_GCM_SHA384
+# subject: {'commonName': 'example.com'}
+# issuer : SSL Corporation
+# valid until: Dec 25 22:56:35 2026 GMT
+```
+
+## Certificates Establish Identity
+
+A **certificate** binds a public key to a domain name or other identity, and is digitally signed by a **certificate authority (CA)** that the client's OS or browser trusts. To accept a certificate for `example.com`, a client checks that:
+
+- it is valid for **that hostname**,
+- it is within its **validity period** and not revoked,
+- its **chain** of signatures leads to a trusted CA,
+- the server can prove it holds the **private key** (the handshake signature).
+
+The public key is not secret; the private key must stay protected. A certificate does not itself encrypt anything: it authenticates the server and ties its identity to a key. And validation is essential. A client that accepted any certificate could be handed an impostor's, which is exactly what the "wrong name" and "unknown CA" cases in the demo above simulate.
+
+## Key Exchange: Agreeing on a Secret in Public
+
+The client and server need encryption keys without ever sending those keys over the network. Modern TLS uses an **ephemeral Diffie–Hellman** exchange, typically over elliptic curves (ECDHE). Each side picks a temporary private value, publishes a public value, and both combine the other's public value with their own private one:
+
+$$S = g^{ab} \bmod p$$
+
+In words: the client knows $a$ and receives $g^b$; the server knows $b$ and receives $g^a$; both can compute $g^{ab}$, but someone seeing only $g^a$ and $g^b$ cannot feasibly recover it. (This is the Diffie–Hellman idea from [Cryptography](../../security/cryptography/).)
+
+A key-derivation function (HKDF) then turns $S$ and the handshake transcript into separate keys for each direction. The jobs are distinct and deliberately separated:
+
+- the **certificate and signature** establish *who* the server is,
+- the **key exchange** establishes *shared secret material*,
+- **key derivation** produces the *traffic keys*.
+
+## Symmetric Encryption Protects the Data
+
+Public-key operations are good for authentication and key agreement but too slow for bulk data. Once keys exist, TLS uses fast **authenticated encryption** such as AES-GCM or ChaCha20-Poly1305, which provides confidentiality and integrity together:
+
+$$C = \operatorname{Encrypt}(K, N, P, A)$$
+
+where $P$ is the plaintext, $K$ the traffic key, $N$ a nonce (never reused with the same key), $A$ associated data that is authenticated but not encrypted, and $C$ the ciphertext with its authentication tag. In words: the receiver can decrypt and check that nothing was altered; any change makes the tag fail.
+
+The expensive work happens once at connection setup; the negotiated keys then protect all later traffic cheaply.
+
+## Forward Secrecy
+
+Because the Diffie–Hellman values are **ephemeral** (thrown away after the handshake), recorded traffic cannot be decrypted later even if an attacker steals the server's long-term private key. The long-term key only *authenticates* the handshake; it does not protect the session keys. That is **forward secrecy**.
+
+It is not absolute: an attacker who captures live session keys or compromises an endpoint during the session can still read it.
+
+<Callout type="key">
+The order is always: **authenticate the server → agree on shared secrets → derive keys → encrypt with symmetric authenticated encryption.** Each step has a different job; skipping authentication leaves you encrypting to whoever answered.
+</Callout>
+
+## What TLS Protects, and What It Does Not
+
+TLS protects data **between the endpoints that terminate the connection**. For HTTPS that is the browser and the web server (or a proxy or CDN acting as the TLS endpoint). It protects HTTP headers and bodies and detects tampering.
+
+It does not hide everything: observers can usually see the destination IP, timing and volume, and often the hostname (via the SNI field, unless Encrypted Client Hello is used). It also does not make a website trustworthy: a valid certificate shows an identity binding, not that the site is honest, malware-free or free of vulnerabilities.
+
+<Callout type="pitfall">
+Never disable certificate verification (`verify=False`) to "make the error go away". That removes the authentication half of TLS and leaves only encryption to an unverified party, which is exactly what a man-in-the-middle needs.
+</Callout>

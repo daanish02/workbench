@@ -1,0 +1,132 @@
+---
+title: "Network Models"
+description: "OSI vs. TCP/IP layering, and why layering exists at all."
+order: 1
+tier: core
+takeaways:
+  - "**Layering** splits communication into stacked responsibilities, each using the layer below and serving the layer above, so any layer can change without rewriting the rest."
+  - "**OSI** has seven layers and is a teaching vocabulary; **TCP/IP** has four (sometimes five) and describes what the Internet really runs."
+  - "**Encapsulation**: each layer wraps the data it receives with its own header, and the receiver unwraps in reverse."
+  - "Know the units: application **message** → TCP **segment** / UDP **datagram** → IP **packet** → link **frame** → **bits**."
+  - "Layering is a design principle, not a law: TLS, NAT and firewalls all blur the boundaries."
+resources:
+  - title: "Computer Networking: A Top-Down Approach (companion site)"
+    url: "https://gaia.cs.umass.edu/kurose_ross/"
+    note: "Kurose and Ross: the standard textbook, with free lecture videos and interactive applets."
+  - title: "OSI model (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/OSI_model"
+  - title: "Beej's Guide to Network Programming"
+    url: "https://beej.us/guide/bgnet/"
+    note: "Free, practical guide to the socket API sitting on top of these layers."
+---
+
+Network models organize communication into **layers**, so each part of a network system can solve one specific problem without understanding the others. The OSI and TCP/IP models describe this structure at different levels of abstraction: OSI is a seven-layer conceptual framework, while TCP/IP reflects the protocols that actually make the Internet work. The central idea is **separation of responsibilities**: applications communicate across very different networks because each layer relies on a defined service from the layer below and provides one to the layer above.
+
+## Why Networking Needs Layers
+
+Sending a message across a network involves several distinct problems. The application must represent the data, name the destination, move the data across interconnected networks, deliver it across a local link, and finally transmit physical signals.
+
+Without layering, every application would solve all of these itself. A web browser, an email client and a file-transfer program would each need their own addressing, routing, error handling and driver code for network hardware. Changing one mechanism could mean rewriting many applications.
+
+Layering reduces this complexity by defining **interfaces** between responsibilities. An application can use a transport protocol without knowing how routers forward packets. A transport protocol can run over Ethernet, Wi-Fi or fibre without knowing how bits are signalled. This is **abstraction** (see [Abstraction Layers](../../foundations/abstraction-layers/)) applied to communication, and it supports **interoperability**: independently built components work together when they follow the same interfaces.
+
+The trade-off is overhead, and the loss of information that might help another layer decide better. Real systems therefore follow layering as a useful principle, not an absolute rule.
+
+## The OSI Model: Seven Responsibilities
+
+The Open Systems Interconnection (OSI) model divides communication into seven layers. It is mainly a conceptual tool for explaining and diagnosing networks, not a blueprint that every protocol follows.
+
+| # | Layer | Responsibility | Examples |
+| --- | --- | --- | --- |
+| 7 | **Application** | Network services used by applications | HTTP, DNS, SMTP |
+| 6 | **Presentation** | Data representation, encoding, encryption | Serialization, data formats |
+| 5 | **Session** | Managing logical sessions | Session coordination |
+| 4 | **Transport** | Process-to-process delivery, ports, reliability | TCP, UDP |
+| 3 | **Network** | Addressing and routing between networks | IP |
+| 2 | **Data link** | Frames and delivery across one local link | Ethernet, Wi-Fi MAC |
+| 1 | **Physical** | Signals on a medium | Radio, electrical, optical signals |
+
+The layers answer different questions:
+
+- **Application, presentation, session:** what does the application want to say, how is it represented, and how is the exchange organized?
+- **Transport:** which process should receive the data, and what delivery behaviour is needed?
+- **Network:** how does data reach a destination across many interconnected networks?
+- **Data link and physical:** how does data cross the next local connection, and how are bits transmitted?
+
+The upper three layers are useful distinctions, but real Internet software rarely implements them separately. Encryption and sessions are usually handled inside application protocols or libraries.
+
+## TCP/IP: How the Internet Is Actually Built
+
+The TCP/IP model groups the same responsibilities into fewer layers. A common version has four; some textbooks split out a physical layer to make five.
+
+| TCP/IP layer | Responsibility | Examples | OSI equivalent |
+| --- | --- | --- | --- |
+| **Application** | Application protocols and data formats | HTTP, DNS, SMTP, TLS | 7, 6, 5 |
+| **Transport** | Communication between processes | TCP, UDP | 4 |
+| **Internet** | IP addressing and routing | IPv4, IPv6, ICMP | 3 |
+| **Link** | Local delivery and physical transmission | Ethernet, Wi-Fi | 2, 1 |
+
+OSI is better for *explaining* networking; TCP/IP is closer to the *protocol architecture* of the Internet. Neither describes every implementation detail.
+
+## Encapsulation: How Layers Cooperate
+
+Each layer adds the information it needs to do its own job. This is **encapsulation**. A browser's HTTP request is handed to TCP, which prepends a header with ports and sequence numbers; IP prepends source and destination addresses; Ethernet prepends MAC addresses and appends a checksum. The receiver reverses the process, each layer reading and removing only its own header.
+
+<EncapsulationDemo />
+
+The names of the resulting data units are not interchangeable:
+
+- **Message:** application data.
+- **Segment** (TCP) or **datagram** (UDP): a transport-layer unit.
+- **Packet:** the network-layer unit.
+- **Frame:** the link-layer unit sent across one local link.
+- **Bits:** what the physical layer carries.
+
+An Ethernet frame carries an IP packet, which carries a TCP segment, which carries application data. You can see the nesting in real byte counts:
+
+```python
+import struct
+
+# Each layer wraps the payload it is handed with its own header. Only the layer's own header is parsed on the way up.
+http = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+tcp = struct.pack("!HHIIBBHHH", 52814, 443, 1, 0, 5 << 4, 0x18, 65535, 0, 0) + http      # ports, seq, ack, flags...
+ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(tcp), 0, 0, 64, 6, 0,
+                 bytes([10, 0, 0, 5]), bytes([93, 184, 216, 34])) + tcp                    # protocol 6 = TCP
+frame = bytes.fromhex("aabbccddeeff") + bytes.fromhex("112233445566") + struct.pack("!H", 0x0800) + ip   # EtherType 0x0800 = IPv4
+
+print("HTTP data :", len(http), "bytes")
+print("+ TCP     :", len(tcp), "bytes (20-byte header)")
+print("+ IP      :", len(ip), "bytes (20-byte header)")
+print("+ Ethernet:", len(frame), "bytes (14-byte header, FCS added by the NIC)")
+# HTTP data : 37 bytes
+# + TCP     : 57 bytes (20-byte header)
+# + IP      : 77 bytes (20-byte header)
+# + Ethernet: 91 bytes (14-byte header, FCS added by the NIC)
+```
+
+Encapsulation is why the same TCP connection can run over Ethernet or Wi-Fi: TCP only sees the abstractions IP and the link provide.
+
+<Callout type="key">
+Each layer talks (logically) to its **peer** on the other machine, but physically hands data **down** to the layer below. Headers are the messages a layer sends to its peer; everything else is payload it carries blindly.
+</Callout>
+
+## Scope of Each Layer
+
+Local delivery, end-to-end delivery and application meaning are different problems. A laptop sending to a server on another network relies on several layers at once:
+
+- The **link layer** gets a frame to the next hop, often the local router. The frame's destination MAC identifies that next hop, not the final server.
+- The **Internet layer** moves the packet toward the final destination across many networks. Routers replace link-layer headers at each hop.
+- The **transport layer** distinguishes application endpoints using port numbers. TCP can give an ordered, reliable stream; UDP gives independent datagrams.
+- The **application layer** defines what the data means.
+
+These are related but not equivalent. Ethernet does not provide end-to-end delivery; IP does not guarantee arrival; TCP can recover from loss but cannot guarantee that the application understands the message or meets a deadline. A successful TCP connection also does not prove that an HTTP request succeeded: each layer can work while another fails.
+
+<Callout type="practice">
+This is the basis of network troubleshooting: work **up the stack**. Is the cable/Wi-Fi link up (L1/2)? Does the host have an IP and gateway (L3)? Can it reach the port (L4)? Does the application answer correctly (L7)? Each question isolates a layer.
+</Callout>
+
+## Layering Is a Contract, Not a Stack of Boxes
+
+The model is a logical description, not a requirement that each layer be a separate program or device. Implementations combine functions, use cross-layer information and add protocols that fit no layer neatly. TLS sits conceptually between transport and application but is a library inside the application. Network address translation rewrites packet headers at a boundary. Firewalls inspect several layers at once.
+
+Layering also costs something: headers consume bandwidth, layers may duplicate error handling, and strict separation can hide information another layer could use. The goal is not maximum separation but **manageable complexity with independently evolvable parts**.

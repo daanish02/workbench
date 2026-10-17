@@ -1,0 +1,125 @@
+---
+title: "Link Layer"
+description: "MAC addresses, Ethernet, and how a frame actually moves."
+order: 2
+tier: core
+takeaways:
+  - "The **physical layer** turns bits into signals (electrical, light, radio); the **link layer** frames those bits and delivers them across **one** local link."
+  - "A **MAC address** (48 bits) identifies an interface for local delivery; it changes at every routed hop, unlike the end-to-end **IP address**."
+  - "An **Ethernet frame** = destination MAC, source MAC, EtherType, payload (46–1500 bytes), and a CRC-based **FCS** that detects corruption."
+  - "A **switch** learns from *source* MACs and forwards by *destination* MAC; unknown destinations are **flooded**."
+  - "Ethernet detects errors but does not repair or guarantee delivery; higher layers (TCP) do that."
+resources:
+  - title: "Ethernet frame (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Ethernet_frame"
+    note: "Every field, plus VLAN tags and jumbo frames."
+  - title: "MAC address (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/MAC_address"
+  - title: "Network switch (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Network_switch"
+    note: "Learning, forwarding and flooding in more detail."
+---
+
+A network does not send an abstract message directly from one computer to another. It moves bits across a physical medium and organizes them into **frames** that network interfaces can recognize and deliver. The **physical layer** decides how bits become electrical, optical or radio signals; the **data link layer** defines how devices communicate over one local link. **MAC addresses** identify interfaces at this layer, and **Ethernet** defines how frames are built and delivered on Ethernet networks.
+
+## The Physical Layer Turns Bits into Signals
+
+Computers represent information as bits, but a cable or radio channel carries physical signals that a receiver must interpret. Depending on the medium, those are:
+
+- electrical variations in copper cable,
+- light pulses in optical fibre,
+- electromagnetic waves through the air.
+
+The physical layer specifies signalling, timing, frequencies, connectors and rates. Real signals are noisy: distance weakens them and interference distorts them, so encoding schemes are designed to let the receiver reconstruct the bits anyway.
+
+A link's **raw rate** is not the same as useful throughput. A 1 Gbit/s Ethernet link also carries frame headers, inter-frame gaps and other overhead, and higher layers add more, so an application sees less than the line rate.
+
+## A MAC Address Identifies a Link-Layer Interface
+
+A **Media Access Control (MAC) address** identifies a network interface within its local link. A conventional Ethernet MAC is 48 bits, written as six hexadecimal pairs: `3C:52:82:AB:14:09`. The first half is assigned to the manufacturer; the rest identifies the card.
+
+It is easy to confuse MAC and IP addresses:
+
+| | MAC address | IP address |
+| --- | --- | --- |
+| **Layer** | Link | Network |
+| **Purpose** | Delivery on the local link | Identifying endpoints across networks |
+| **Scope** | One link or broadcast domain | End to end |
+| **Changes at each hop?** | Yes, rewritten by every router | No (apart from NAT) |
+
+When a laptop sends a packet to a server on the Internet, the IP packet is addressed to the remote server, but the Ethernet frame leaving the laptop is addressed to the MAC of the **local router**. The router strips that Ethernet header, reads the IP packet, and builds a new frame for the next link. MAC addresses can also be changed or randomized in software, so they are not proof of a device's identity.
+
+## An Ethernet Frame Wraps a Network-Layer Packet
+
+A basic untagged Ethernet II frame has this structure:
+
+| Destination MAC | Source MAC | EtherType | Payload | FCS |
+| :---: | :---: | :---: | :---: | :---: |
+| 6 bytes | 6 bytes | 2 bytes | 46–1500 bytes (usually an IP packet) | 4 bytes (CRC) |
+
+- **Destination / source MAC:** the intended and sending interfaces for this link.
+- **EtherType:** identifies the payload protocol, for example `0x0800` for IPv4 and `0x86DD` for IPv6.
+- **Payload:** the network-layer packet. Short payloads are padded to the 46-byte minimum; 1500 bytes is the standard **MTU**, not the total frame size.
+- **FCS (Frame Check Sequence):** a CRC that lets the receiver detect corruption.
+
+VLAN tags and other extensions add fields; the preamble and inter-frame gap are part of transmission, not the frame's usual byte count. The FCS **detects** corruption but cannot repair it: a receiver that finds a bad FCS simply discards the frame, and recovery, if wanted, comes from a higher layer such as TCP.
+
+```python
+import struct
+import zlib
+
+dst, src = bytes.fromhex("aabbccddeeff"), bytes.fromhex("3c5282ab1409")
+payload = b"hello, link layer".ljust(46, b"\x00")           # Ethernet pads short payloads up to 46 bytes
+header = dst + src + struct.pack("!H", 0x0800)               # destination, source, EtherType (IPv4)
+fcs = zlib.crc32(header + payload)                           # the frame check sequence is a CRC-32
+
+print("source MAC:", ":".join(f"{b:02X}" for b in src))
+print("frame bytes without FCS:", len(header + payload), "+ 4 FCS =", len(header + payload) + 4)
+print(f"FCS: {fcs:08x}")
+corrupt = bytearray(payload); corrupt[3] ^= 0x01             # flip one bit in transit
+print("corrupted frame passes check?", zlib.crc32(header + bytes(corrupt)) == fcs)
+# source MAC: 3C:52:82:AB:14:09
+# frame bytes without FCS: 60 + 4 FCS = 64
+# FCS: 6700b9da
+# corrupted frame passes check? False
+```
+
+## How a Frame Moves Through a Switch
+
+Laptop A sends to laptop B on the same network, both connected to an Ethernet **switch**.
+
+1. **Build.** A's interface puts B's MAC in the destination field and its own in the source field.
+2. **Transmit.** The frame's bits are encoded as signals and sent to the switch.
+3. **Learn.** The switch reads the **source** MAC and records that A is reachable through the port the frame arrived on.
+4. **Look up.** It checks its MAC table for the **destination**. If B is known, the frame goes out that port only.
+5. **Receive.** B's interface accepts a frame addressed to it, checks the FCS and passes the payload up the stack.
+
+If the destination is unknown, the switch **floods** the frame out of every other port in the same VLAN; broadcast frames are flooded too. Everyone else's interface discards it, and when B replies, the switch learns B's port. A switch learns from *sources* and forwards by *destinations*. Try it:
+
+<SwitchLearning />
+
+<Callout type="key">
+A switch needs **no configuration** to work: it learns the topology from the traffic itself. Unicast frames then go only where needed, which is why switched Ethernet replaced shared hubs that repeated every frame to every port.
+</Callout>
+
+## MAC Addresses Only Make Sense on the Local Link
+
+Suppose A wants to reach a server C on a remote network. A sees C is outside its subnet and sends the packet to its **default gateway**. To build the frame it needs the router's MAC address, which it finds with **ARP** (Address Resolution Protocol) on IPv4: it broadcasts "who has 192.168.1.1?" and the router replies with its MAC. IPv6 uses Neighbor Discovery for the same job.
+
+The frame is addressed to the router, not to C. The router strips the Ethernet header, picks a route, and builds a new frame for the next link. This gives three separate questions:
+
+- **MAC:** who receives this frame on the current link?
+- **IP:** where is the packet ultimately going?
+- **Router:** which next hop moves it closer?
+
+It also explains why routers separate **broadcast domains**: a link-layer broadcast does not cross a router as the same frame.
+
+## Collisions, Errors and the Limits of Ethernet
+
+Modern switched Ethernet is **full duplex**: each endpoint can send and receive simultaneously, so collisions are not expected. Older shared Ethernet used **CSMA/CD** (listen before sending, detect collisions, back off randomly) to share one wire; that mechanism is mostly historical now.
+
+Ethernet does not retransmit lost frames or guarantee order. Its job is only to move frames across one link. IP handles routing across networks, and transport protocols such as TCP add end-to-end reliability. Keeping these jobs separate is what lets the design stay simple and fast.
+
+<Callout type="pitfall">
+A frame that fails its FCS is dropped **silently**. A flaky cable shows up not as an error message but as retransmissions, slowness and packet loss higher up the stack. Interface error counters on a switch are the first place to look.
+</Callout>

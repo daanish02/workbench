@@ -1,0 +1,118 @@
+---
+title: "Routing"
+description: "Routing tables, and how a packet finds its way across networks it has never seen."
+order: 4
+tier: core
+takeaways:
+  - "A **router** forwards each packet using only its **routing table**: destination prefix → next hop. Nobody plans the whole journey."
+  - "When several routes match, the **longest prefix** (most specific) wins; `0.0.0.0/0` is the default route."
+  - "At each hop the IP addresses stay the same but the **link-layer frame is rebuilt**, and the **TTL** drops by one to stop loops."
+  - "Routes come from **connected** networks, **static** configuration, or **dynamic protocols**: OSPF inside an organization, BGP between autonomous systems."
+  - "The **control plane** builds routes; the **data plane** forwards packets using them."
+resources:
+  - title: "Routing table (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Routing_table"
+  - title: "What is BGP? (Cloudflare Learning)"
+    url: "https://www.cloudflare.com/learning/security/glossary/what-is-bgp/"
+    note: "How autonomous systems exchange reachability and what happens when it goes wrong."
+  - title: "Longest prefix match (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Longest_prefix_match"
+---
+
+**Routing** lets a packet travel across networks its sender has never seen and need not understand. Each router makes one local decision: given the packet's destination IP address and its routing table, **which next hop should receive it?** Repeating that decision at each network boundary lets the Internet deliver packets across thousands of independently managed networks without any router knowing the whole map. A router rarely plans the entire journey; it picks the best next step among the routes it currently knows.
+
+## A Routing Table Turns Destinations into Next Steps
+
+A **routing table** is a list of rules. A route holds a destination prefix, a next hop or outgoing interface, and sometimes a metric used to choose among alternatives.
+
+| Destination prefix | Next hop | Meaning |
+| --- | --- | --- |
+| `192.168.1.0/24` | directly connected | Devices on the local subnet |
+| `10.20.0.0/16` | `192.168.1.2` | Reach this network through another router |
+| `0.0.0.0/0` | `192.168.1.1` | Default route for everything else |
+
+Prefix lengths come from [IP Addressing](../ip-addressing/): a longer prefix names a narrower range. `0.0.0.0/0` matches every IPv4 destination, so it works as the **default route** when nothing more specific applies (IPv6 uses `::/0`).
+
+## Longest-Prefix Matching
+
+A destination often matches several entries. The router chooses the match with the **longest prefix**, because it is the most specific. Suppose the table holds:
+
+- `10.0.0.0/8` via Router A
+- `10.20.0.0/16` via Router B
+- `10.20.30.0/24` via Router C
+- `0.0.0.0/0` via Router D
+
+For `10.20.30.45`, all four match, but the `/24` is the longest, so Router C is chosen. Try destinations and watch which rows match and which wins:
+
+<LongestPrefixMatch />
+
+```python
+import ipaddress
+
+# A routing table is a list of (prefix, next hop). Forwarding = the longest matching prefix wins.
+table = [("10.0.0.0/8", "Router A"), ("10.20.0.0/16", "Router B"), ("10.20.30.0/24", "Router C"), ("0.0.0.0/0", "Router D")]
+
+def lookup(dst):
+    dst = ipaddress.ip_address(dst)
+    matches = [(ipaddress.ip_network(p), hop) for p, hop in table if dst in ipaddress.ip_network(p)]
+    return max(matches, key=lambda m: m[0].prefixlen)         # longest prefix = most specific
+
+for d in ("10.20.30.45", "10.20.8.12", "10.9.4.2", "8.8.8.8"):
+    net, hop = lookup(d)
+    print(f"{d:>12} -> {hop} via {net}")
+#  10.20.30.45 -> Router C via 10.20.30.0/24
+#   10.20.8.12 -> Router B via 10.20.0.0/16
+#     10.9.4.2 -> Router A via 10.0.0.0/8
+#      8.8.8.8 -> Router D via 0.0.0.0/0
+```
+
+<Callout type="key">
+Longest-prefix match is what lets a big provider advertise one broad route (`10.0.0.0/8`) while a customer inside it announces a more specific one (`10.20.30.0/24`). **Specific beats general** regardless of metric; metrics only choose among routes for the *same* prefix.
+</Callout>
+
+## A Packet Crosses Networks One Hop at a Time
+
+A laptop sending to a web server on another continent knows only its own address, its prefix and a default gateway. It does not know the routers between it and the server. At each router, forwarding is conceptually:
+
+1. Receive the link-layer frame and extract the IP packet.
+2. Look up the destination IP in the forwarding table.
+3. Select an outgoing interface and next-hop router.
+4. Decrease the **TTL** (IPv4) or **Hop Limit** (IPv6) by one.
+5. Wrap the packet in a **new** link-layer frame for the next link.
+
+The TTL stops packets circulating forever if a routing loop exists: when it reaches zero the router discards the packet and typically sends an ICMP "time exceeded" message (this is how `traceroute` discovers each hop). Throughout, the IP source and destination stay the same, while the frame's MAC addresses change at every hop (see [Link Layer](../link-layer/)). The router never needs the final server's MAC address.
+
+## Where Routes Come From
+
+A router needs route information before it can forward toward remote networks. Sources:
+
+- **Connected routes:** created automatically for networks attached to its interfaces.
+- **Static routes:** entered by an administrator. Simple and predictable, but they do not adapt to failures.
+- **Dynamic routes:** learned and updated through **routing protocols**.
+
+The main dynamic protocols solve different problems:
+
+| Protocol | Kind | Scope | Idea |
+| --- | --- | --- | --- |
+| **OSPF** | Link-state | Inside one organization | Routers flood link information, each builds the full map and runs a shortest-path algorithm (Dijkstra, see [Graph Algorithms](../../algorithms/graph-algorithms/)) |
+| **RIP** | Distance-vector | Small networks | Routers tell neighbours "I can reach X in n hops"; simple but slow to converge |
+| **BGP** | Path-vector | Between autonomous systems | Networks advertise reachability and **policy** (business relationships), not just shortest paths |
+
+A home router knows only its LAN and a default route to the ISP. The ISP knows more, and large networks exchange full reachability over BGP. This **hierarchy of local knowledge** is what makes global routing practical.
+
+## Routing Is Best-Effort
+
+Routers exchange reachability, not complete journeys. When a link or router fails, a routing protocol detects the change and computes an alternative; after **convergence**, later packets use the new path. Some packets are lost meanwhile, and not every topology has an alternative.
+
+Routing is also not a delivery guarantee: packets can be dropped for congestion, a missing route, a loop, a filter, or a failed link. It decides where to forward; whether the application receives the data is up to [transport protocols](../tcp-vs-udp/).
+
+It helps to separate two roles:
+
+- The **control plane** builds and updates routing information, often via routing protocols.
+- The **data plane** forwards each packet using the installed entries, at line speed.
+
+That split is made explicit and programmable in [Software-Defined Networking](../sdn/).
+
+<Callout type="pitfall">
+BGP trusts what neighbours advertise. A misconfigured or malicious network announcing prefixes it does not own can attract and black-hole other people's traffic (a **BGP leak or hijack**). Several large outages have started this way.
+</Callout>

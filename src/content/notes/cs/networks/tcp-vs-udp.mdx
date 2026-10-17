@@ -1,0 +1,117 @@
+---
+title: "TCP vs. UDP"
+description: "Reliability, the three-way handshake, and when each is the right choice."
+order: 5
+tier: core
+takeaways:
+  - "**TCP** gives a reliable, ordered **byte stream** (sequence numbers, ACKs, retransmission, flow and congestion control); it costs a handshake round trip and state."
+  - "**UDP** sends independent **datagrams** with no delivery, order or duplicate guarantees: minimal overhead, and the application decides what loss means."
+  - "The **three-way handshake** (SYN, SYN-ACK, ACK) synchronizes sequence numbers before data flows."
+  - "TCP does not preserve message boundaries; UDP does."
+  - "Neither is \"faster\" by default: TCP's head-of-line blocking hurts real-time traffic, and UDP pushes reliability into the application. **QUIC** (HTTP/3) rebuilds TCP's features over UDP."
+resources:
+  - title: "RFC 9293: Transmission Control Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc9293"
+    note: "The current TCP specification."
+  - title: "RFC 768: User Datagram Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc768"
+    note: "Three pages. The entire UDP spec."
+  - title: "RFC 9000: QUIC"
+    url: "https://www.rfc-editor.org/rfc/rfc9000"
+    note: "Reliable multiplexed transport built on UDP."
+---
+
+**TCP** and **UDP** are transport-layer protocols that let applications communicate between processes across an IP network, but they make different trade-offs. TCP provides a reliable, ordered byte stream, recovering from packet loss and hiding retransmissions from the application. UDP sends independent datagrams without built-in guarantees of delivery, order or duplicate suppression. The choice is between built-in delivery guarantees and a simpler, lower-overhead message transport, though real-time performance depends on the application and the network, not just the protocol.
+
+## TCP Turns an Unreliable Network into a Reliable Byte Stream
+
+IP packets can be lost, duplicated, delayed or delivered out of order. TCP handles this so an application can read a continuous sequence of bytes without managing packets. Its main mechanisms:
+
+- **Sequence numbers** give each byte a position, so the receiver can restore the order.
+- **Acknowledgments (ACKs)** tell the sender what has been received.
+- **Retransmission** resends data that appears lost (after a timeout, or after several duplicate ACKs).
+- **Flow control** stops the sender overwhelming the *receiver*: the receiver advertises how much buffer space it has (the **window**).
+- **Congestion control** slows the sender when the *network* shows signs of overload (loss or delay).
+
+Flow control protects the receiver; congestion control protects the network. TCP is a **byte stream**: it does not preserve the boundaries of your writes. If an application sends two messages, the receiver may read them together or in pieces, so applications define their own framing (length prefixes, delimiters).
+
+## The Three-Way Handshake
+
+Before data flows, the endpoints synchronize their initial sequence numbers:
+
+1. **SYN:** the client proposes a connection and sends its initial sequence number $x$.
+2. **SYN-ACK:** the server acknowledges $x+1$ and sends its own number $y$.
+3. **ACK:** the client acknowledges $y+1$.
+
+Afterwards both sides can send data. The handshake does not encrypt anything (that is [TLS](../tls/)'s job) and costs **one round trip** before data can flow, which matters on high-latency links. Both endpoints also keep connection state, which uses memory.
+
+## UDP Sends Datagrams
+
+UDP is much simpler. A datagram carries source and destination **ports**, a length, a checksum and the payload, and UDP hands it to IP. There is no handshake, no retransmission and no reordering, and each datagram is a separate unit, so **message boundaries are preserved**.
+
+That suits applications that want to decide for themselves what to do about loss. A live voice call would rather skip a lost audio packet than wait for a retransmission that arrives too late to play. UDP is not inherently faster, though: it has less machinery, but an application that needs reliability or congestion control must build it, and UDP traffic can still be dropped or delayed. Its checksum detects corruption but guarantees nothing about delivery.
+
+See both on the same unreliable link:
+
+<TcpScenarios />
+
+You can observe the byte-stream-versus-datagram difference with real sockets on one machine:
+
+```python
+import socket
+import time
+
+# TCP is a byte stream: two sends can be read back as one. UDP keeps every datagram separate.
+srv = socket.socket()
+srv.bind(("127.0.0.1", 0))
+srv.listen()
+cli = socket.create_connection(srv.getsockname())             # the three-way handshake happens inside this call
+conn, _ = srv.accept()
+cli.send(b"hello ")
+cli.send(b"world")
+time.sleep(0.2)                                               # let both segments arrive
+print("TCP read:", conn.recv(100))
+
+rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+rx.bind(("127.0.0.1", 0))
+tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+tx.sendto(b"hello ", rx.getsockname())
+tx.sendto(b"world", rx.getsockname())
+time.sleep(0.2)
+print("UDP reads:", rx.recv(100), rx.recv(100))
+# TCP read: b'hello world'
+# UDP reads: b'hello ' b'world'
+```
+
+<Callout type="pitfall">
+Never assume one `send()` equals one `recv()` over TCP. Two writes became one read above. A protocol on TCP must carry its own message boundaries.
+</Callout>
+
+## Side by Side
+
+| Property | TCP | UDP |
+| --- | --- | --- |
+| Model | Connection-oriented byte stream | Connectionless datagrams |
+| Delivery | Reliable while the connection can make progress; reports failure otherwise | No built-in guarantee |
+| Ordering | In order | May arrive out of order |
+| Message boundaries | Not preserved | Preserved |
+| Retransmission | Built in | None |
+| Flow and congestion control | Built in | Application's job |
+| Setup | Three-way handshake | None |
+| Typical use | Web, file transfer, SSH, email | DNS queries, voice/video, games, telemetry |
+
+Neither makes the application immune to failure. TCP can deliver bytes to the peer's transport layer without proving the peer's *application* processed them, and a UDP-based protocol can implement its own acknowledgments.
+
+## Choosing
+
+**Choose TCP** when missing or reordered data would break the task: web pages and APIs over HTTP/1.1 or HTTP/2, file transfers, remote shells, email transport. The application gains from TCP doing loss recovery and ordering.
+
+**Choose UDP** when datagrams and application-controlled timing help: real-time voice, interactive games, some media streaming and telemetry tolerate loss but suffer when old data arrives late.
+
+Modern protocols mix these ideas. **HTTP/3** runs over **QUIC**, which uses UDP but adds reliable streams, congestion control and TLS 1.3. DNS normally uses UDP but falls back to TCP for large answers.
+
+A common myth says UDP is always right for real time and TCP always too slow. TCP's ordered stream suffers **head-of-line blocking**: one missing segment delays later bytes even though they arrived. But UDP alone does not remove latency, congestion or loss; the application must be designed around them.
+
+<Callout type="key">
+The question is not "is reliability desirable?" but **which guarantees are required, who should implement them, and is waiting for missing data worth the delay?**
+</Callout>
