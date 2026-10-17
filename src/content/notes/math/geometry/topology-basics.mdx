@@ -1,8 +1,93 @@
 ---
 title: "Topology basics"
-description: "Continuity, connectedness, the idea of \"shape without distance\"."
+description: "Shape without distance: continuity, connectedness, and the invariants such as the Euler characteristic that tell two shapes apart even when they are stretched."
 order: 7
-tier: advanced
+tier: core
+takeaways:
+  - "**Topology** studies the properties of a shape that survive stretching, bending and twisting, but not tearing or gluing. A coffee cup and a doughnut are topologically the same: each has one hole."
+  - "A function is **continuous** when nearby inputs give nearby outputs. A continuous map that has a continuous inverse is a **homeomorphism**, and two shapes related by one are topologically equivalent."
+  - "A set is **connected** when it cannot be split into two separate pieces. Counting connected components is a simple topological question you can answer with a flood fill."
+  - "The **Euler characteristic** $V - E + F$ is the same, $2$, for every convex polyhedron. It is an invariant: a number that does not change under stretching, so it can tell shapes apart."
+  - "Topology answers questions about the shape of data and of space, not its size. Many modern methods in data analysis start from that same idea."
+resources:
+  - title: "Topology (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Topology"
+    note: "The main ideas, from continuity to the classification of surfaces."
+  - title: "Homeomorphism (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Homeomorphism"
+    note: "The definition of topological equivalence, with examples."
+  - title: "Euler characteristic (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Euler_characteristic"
+    note: "The invariant for polyhedra, surfaces and more general spaces."
 ---
 
-_Placeholder. Content not written yet._
+Geometry measures shape with lengths and angles. Topology asks a coarser question: which shapes can be deformed into one another without cutting or gluing? A rubber sheet can be stretched into a circle, a square or a long strip, and none of these changes its topology. A torus cannot be stretched into a sphere, because the hole cannot disappear without tearing. Topology is the study of these invariants, and it shows up in network design, the analysis of data, and the physics of matter. This note introduces continuity, connectedness and one simple invariant, the Euler characteristic.
+
+## Continuity without distance
+
+A function $f$ is **continuous** when small changes in the input produce small changes in the output. In topology this is stated without measuring distance: the preimage of every open set is open. The practical content is the same. A continuous function can stretch and bend its domain, but it cannot tear it apart, so a connected set stays connected under it.
+
+A **homeomorphism** is a continuous function with a continuous inverse. Two shapes related by a homeomorphism are topologically the same. A circle and a square are homeomorphic, since you can map one onto the other by a continuous stretch. A circle and a figure-eight are not, because the crossing point of the eight cannot be made from a single loop without changing its structure.
+
+## Connectedness
+
+A space is **connected** when it cannot be split into two disjoint non-empty pieces that are each open within it. Informally, you can walk between any two points without leaving the set. A square and a square with a hole in it are both connected: the hole does not separate the outer part from itself. Two blocks that touch only at a corner are not connected, because you cannot step from one to the other through an edge.
+
+On a grid of cells, a useful version of connectedness counts the **connected components**: groups of cells you can reach from one another by moving up, down, left or right. A flood fill from each unvisited cell finds them.
+
+```python
+def components(cells):
+    cells = set(cells)
+    seen, count = set(), 0
+    for start in cells:
+        if start in seen:
+            continue
+        count += 1
+        stack = [start]
+        seen.add(start)
+        while stack:
+            x, y = stack.pop()
+            for nb in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]:
+                if nb in cells and nb not in seen:
+                    seen.add(nb)
+                    stack.append(nb)
+    return count
+
+ring = [(x, y) for x in range(5) for y in range(5) if (x, y) not in {(2, 2)}]
+print("filled 5x5 square:", components([(x, y) for x in range(5) for y in range(5)]), "component")
+print("square with a hole:", components(ring), "component (the hole does not disconnect it)")
+print("two blocks touching only at a corner:", components([(0, 0), (1, 0), (2, 1), (2, 2)]), "components")
+```
+
+In words: the filled square is one component, and the square with a missing centre cell is still one component, since the cells around the hole still connect to each other. The two blocks that meet only at a corner form two components, because the flood fill moves only through shared edges.
+
+<Callout type="pitfall">
+Connectedness on a grid uses edge-adjacency here. Diagonal neighbours are a different choice of connectivity, and it changes the answer. Always say which neighbourhood you mean.
+</Callout>
+
+<ComponentsGrid />
+
+## The Euler characteristic
+
+For a polyhedron with $V$ vertices, $E$ edges and $F$ faces, the number $\chi = V - E + F$ is the **Euler characteristic**. It is the same for every convex polyhedron: $2$. The check below tests this for the four Platonic solids.
+
+```python
+polyhedra = {
+    "tetrahedron": (4, 6, 4),
+    "cube": (8, 12, 6),
+    "octahedron": (6, 12, 8),
+    "dodecahedron": (20, 30, 12),
+}
+for name, (V, E, F) in polyhedra.items():
+    print(f"{name:>12}: V - E + F = {V - E + F}")
+```
+
+In words: every one of the four solids gives $2$. The value does not depend on the number of faces, so a tetrahedron and a dodecahedron have the same invariant even though their shapes are very different. A torus, with one hole, has $\chi = 0$, and a surface with $g$ holes has $\chi = 2 - 2g$. A different value means a different topology, so $\chi$ separates shapes that look alike.
+
+<Callout type="key">
+An invariant tells you when two shapes are *not* topologically equivalent, by giving them different numbers. Matching numbers do not prove equivalence on their own, but a mismatch rules it out.
+</Callout>
+
+## Where topology is used
+
+Topology shows up wherever you need to know the shape of a space without caring about its size. In robotics, the configuration space of a robot arm has a topology that determines whether it can reach every position. In data analysis, the holes in a point cloud (measured by persistent homology) can reveal structure that distance alone misses. In physics, the topology of a material's electronic bands determines whether it conducts on its surface.

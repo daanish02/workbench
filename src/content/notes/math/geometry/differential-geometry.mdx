@@ -1,8 +1,119 @@
 ---
 title: "Differential geometry"
-description: "Curvature, geodesics (deferred until calculus is in place)."
+description: "Curves and surfaces studied with calculus: curvature, the circle that hugs a curve, and geodesics, the shortest paths on a surface."
 order: 6
-tier: advanced
+tier: core
+takeaways:
+  - "**Curvature** $\\kappa$ measures how fast a curve turns away from a straight line. A circle of radius $R$ has $\\kappa = 1/R$; a straight line has $\\kappa = 0$."
+  - "The **circle of curvature** touches the curve at a point and matches its bending there. Its radius is $1/\\kappa$, and its centre lies on the side the curve bends toward."
+  - "For a parametric curve $(x(t), y(t))$, curvature is $\\kappa = |x'y'' - y'x''|\\,(x'^2 + y'^2)^{-3/2}$. It is computed from derivatives, so calculus does the work that geometry used to do by eye."
+  - "A **geodesic** is the locally shortest path on a surface. On a plane it is a straight line; on a sphere it is an arc of a great circle."
+  - "Curvature of a surface, not just a curve, is what distinguishes a sphere from a flat plane. The Euclidean facts in the first note hold only where the surface has zero curvature."
+resources:
+  - title: "Differential geometry of curves (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Differential_geometry_of_curves"
+    note: "Curvature, torsion and the Frenet frame for curves in space."
+  - title: "Geodesic (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Geodesic"
+    note: "Shortest paths on surfaces, with the sphere and the great circles."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "cos, sin, asin and sqrt, used for the curvature and great-circle checks."
 ---
 
-_Placeholder. Content not written yet._
+Calculus describes how things change. Differential geometry applies calculus to shapes: how a curve bends, how a surface curves, and what the shortest path between two points on it looks like. The ideas matter for mapping the Earth, for the trajectories of satellites and aircraft, and for the curved spaces in Einstein's general relativity. This note introduces curvature for curves, the circle of curvature, and geodesics. The [Calculus](../../calculus/) section supplies the derivatives used here, and the [Euclidean Geometry](../euclidean-geometry/) note is the flat case these generalise.
+
+## Curvature of a curve
+
+Walk along a curve at constant speed and watch the direction of your heading. On a straight road the heading never changes. On a tight bend it changes quickly. **Curvature** $\kappa$ is the rate at which the heading turns per unit distance travelled. A circle of radius $R$ turns through $2\pi$ over a length $2\pi R$, so its curvature is $\kappa = 1/R$ everywhere.
+
+For a curve given parametrically as $(x(t), y(t))$, the formula uses the first and second derivatives:
+
+$$\kappa = |x'y'' - y'x''|\,(x'^2 + y'^2)^{-3/2}.$$
+
+The script below checks this against the known answer for a circle of radius $2$. It estimates the derivatives numerically with central differences, so it also shows how the formula can be used without an analytic derivative.
+
+```python
+import math
+
+def curvature(x, y, t, h=1e-4):
+    x1 = (x(t + h) - x(t - h)) / (2 * h)
+    y1 = (y(t + h) - y(t - h)) / (2 * h)
+    x2 = (x(t + h) - 2 * x(t) + x(t - h)) / (h * h)
+    y2 = (y(t + h) - 2 * y(t) + y(t - h)) / (h * h)
+    return abs(x1 * y2 - y1 * x2) / (x1 * x1 + y1 * y1) ** 1.5
+
+R = 2.0
+print("circle radius 2, curvature:",
+      round(curvature(lambda t: R * math.cos(t), lambda t: R * math.sin(t), 0.7), 4),
+      "expected 1/R =", 1 / R)
+```
+
+In words: the numerical curvature is $0.5$, which is $1/R$. The same value comes out at every $t$, because a circle bends the same amount everywhere.
+
+## The ellipse's curvature changes
+
+An ellipse is not a circle, and its curvature varies. Using the formula with $x = a\cos t$ and $y = b\sin t$ gives
+
+$$\kappa = ab\left(a^2\sin^2 t + b^2\cos^2 t\right)^{-3/2}.$$
+
+At the ends of the major axis, $\kappa = a/b^2$, and at the ends of the minor axis, $\kappa = b/a^2$.
+
+The script below checks both ends for $a = 3$ and $b = 1$. The ends of the major axis are the sharp points (curvature $3$), and the flat sides are the minor axis (curvature $\frac{1}{9}$).
+
+```python
+import math
+
+def curvature(x, y, t, h=1e-4):
+    x1 = (x(t + h) - x(t - h)) / (2 * h)
+    y1 = (y(t + h) - y(t - h)) / (2 * h)
+    x2 = (x(t + h) - 2 * x(t) + x(t - h)) / (h * h)
+    y2 = (y(t + h) - 2 * y(t) + y(t - h)) / (h * h)
+    return abs(x1 * y2 - y1 * x2) / (x1 * x1 + y1 * y1) ** 1.5
+
+a, b = 3.0, 1.0
+ex, ey = (lambda t: a * math.cos(t)), (lambda t: b * math.sin(t))
+print("ellipse curvature at (a, 0):", round(curvature(ex, ey, 0.0), 4), "expected a/b^2 =", a / b**2)
+print("ellipse curvature at (0, b):", round(curvature(ex, ey, math.pi / 2), 4), "expected b/a^2 =", round(b / a**2, 4))
+```
+
+In words: the curvature at $(a, 0)$ is $3$, and at $(0, b)$ it is about $0.111$. The ellipse is much more sharply bent at its ends of the long axis, which is why a long thin ellipse looks pointed at its tips.
+
+## The circle of curvature
+
+At any point of a curve there is a circle that matches it most closely: it has the same tangent and the same curvature. This is the **circle of curvature** or osculating circle. Its radius is $1/\kappa$, and its centre lies along the normal to the curve, on the side it bends toward.
+
+Slide along the ellipse below. The dashed circle is the circle of curvature at the point you have chosen. Near the flat sides it is large, and near the tips of the long axis it shrinks to a tight circle.
+
+<CurvatureCircle />
+
+## Geodesics
+
+A **geodesic** is a curve on a surface that is locally the shortest path between nearby points. On a plane, geodesics are straight lines. On a sphere they are great circles, the circles whose centre is the centre of the sphere, such as the equator and the lines of longitude.
+
+Great circles are the shortest routes on Earth. Two cities at the same latitude may look as if the straight line along the latitude is shortest, but the great circle through them is shorter. The script below compares the two for two points at $45°$ north, $90°$ of longitude apart.
+
+```python
+import math
+
+def great_circle(phi1, phi2, lam1, lam2):
+    h = math.sin((phi2 - phi1) / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin((lam2 - lam1) / 2) ** 2
+    return 2 * math.asin(math.sqrt(h))
+
+phi = math.radians(45)
+great = great_circle(phi, phi, 0, math.radians(90))
+parallel = math.radians(90) * math.cos(phi)
+print("great circle length:", round(great, 4), " along the 45 degree parallel:", round(parallel, 4))
+```
+
+In words: the great circle arc is about $1.047$ (one third of a full great circle, which is $\pi/3$), and the arc along the $45°$ parallel is about $1.111$. The shortest route bends toward the pole, which is what geodesics do on a curved surface.
+
+<GreatCircle />
+
+<Callout type="pitfall">
+Geodesics are local shortest paths, not necessarily the global shortest. On a sphere, between two points there is a shorter great-circle arc in one direction and a longer one in the other. Both are geodesics, and only the shorter one is the shortest.
+</Callout>
+
+## Curvature of a surface
+
+The sphere is curved in every direction, and a flat plane is curved in none. Gauss found that the product of the two principal curvatures at a point, the Gaussian curvature, is intrinsic: it can be measured by someone living on the surface, who never sees the surrounding space. That is why a map cannot be flat without distorting distances, and why the triangle angle sum from the first note changes on a sphere. The next steps of this course use these ideas when they describe curved spaces.

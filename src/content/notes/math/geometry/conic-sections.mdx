@@ -1,8 +1,116 @@
 ---
 title: "Conic sections"
-description: "Circle, ellipse, parabola, hyperbola — as slices of a cone and as equations."
+description: "Circles, ellipses, parabolas and hyperbolas as slices of a cone, as equations, and as shapes defined by distances to a focus."
 order: 3
 tier: core
+takeaways:
+  - "Slicing a double cone with a plane gives a **conic section**: a circle, an ellipse, a parabola or a hyperbola, depending on the angle of the plane."
+  - "Each conic is a set of points whose distance to a **focus** is a fixed ratio $e$ of the distance to a **directrix**. The ratio $e$ is the **eccentricity**: $e = 0$ is a circle, $0 < e < 1$ an ellipse, $e = 1$ a parabola, $e > 1$ a hyperbola."
+  - "An ellipse satisfies $\\frac{x^2}{a^2} + \\frac{y^2}{b^2} = 1$ and every point on it has $PF_1 + PF_2 = 2a$, the sum of distances to its two foci."
+  - "A parabola is $y^2 = 4px$, with focus $(p, 0)$. A hyperbola is $\\frac{x^2}{a^2} - \\frac{y^2}{b^2} = 1$, where the difference of distances to the foci is $2a$."
+  - "All conics are degree-two equations in $x$ and $y$. Planets orbit in ellipses, satellite dishes are parabolas, and the shadow of a lamp on a wall can be a hyperbola."
+resources:
+  - title: "Conic section (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conic_section"
+    note: "Definitions from the cone, the focus-directrix form, and the degenerate cases."
+  - title: "Apollonius of Perga, Conics (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Conics_(Apollonius)"
+    note: "The ancient treatise that named the parabola, ellipse and hyperbola."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "sqrt, cos, sin, cosh, sinh and dist, used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+The ancient Greeks cut a cone with a plane and noticed that the edge of the cut is one of four curves. Apollonius wrote about them around 200 BCE, and some eighteen centuries later Kepler found that planets move on ellipses. The same curves appear wherever something is focused: a parabolic mirror brings parallel light to a point, and a planet's orbit is an ellipse with the Sun at one focus. This note defines the four conics, gives their equations, and checks the defining distance properties numerically.
+
+## The cone and the plane
+
+Take a double cone and a plane. If the plane is perpendicular to the axis, the cut is a circle. Tilt it slightly and the cut is an ellipse. Tilt it until it is parallel to one side of the cone and the cut is a parabola. Tilt it more and the plane cuts both nappes of the cone, giving a hyperbola with two separate branches.
+
+The angle of the plane decides the type, and the eccentricity $e$ makes that angle a number. It is the ratio of the distance from any point on the curve to a focus, over its distance to a fixed line called the directrix.
+
+## Focus and directrix
+
+Pick a point $F$ (the focus), a line $D$ (the directrix) and a number $e$. The set of points $P$ with $|PF| = e \cdot \mathrm{dist}(P, D)$ is a conic. The eccentricity sorts them:
+
+| $e$ | Curve |
+| --- | --- |
+| $0$ | circle |
+| $0 < e < 1$ | ellipse |
+| $e = 1$ | parabola |
+| $e > 1$ | hyperbola |
+
+The circle is a limit case: a circle is the set of points at a fixed distance from its centre, and its eccentricity is zero because the focus and centre coincide.
+
+## Ellipse
+
+An ellipse has two foci. Its standard equation is
+
+$$\frac{x^2}{a^2} + \frac{y^2}{b^2} = 1, \qquad a > b > 0,$$
+
+where $a$ is the semi-major axis and $b$ the semi-minor axis. The foci sit at $(\pm c, 0)$ with $c^2 = a^2 - b^2$, and $e = c/a$. The defining property is that the sum of distances to the two foci is constant, equal to $2a$.
+
+The script below takes $a = 5$ and $b = 3$, so $c = 4$ and $e = 0.8$. It then samples 360 points on the ellipse and checks that the distances to the two foci always sum to $2a = 10$.
+
+```python
+import math
+
+a, b = 5.0, 3.0
+c = math.sqrt(a * a - b * b)
+e = c / a
+print("foci at x = ±", c, " eccentricity e =", e)
+
+F1, F2 = (-c, 0.0), (c, 0.0)
+def point_on_ellipse(t):
+    return (a * math.cos(t), b * math.sin(t))
+
+worst = max(abs(math.dist(point_on_ellipse(t), F1) + math.dist(point_on_ellipse(t), F2) - 2 * a)
+            for t in [i * 2 * math.pi / 360 for i in range(360)])
+print("max |PF1 + PF2 - 2a| over 360 points:", f"{worst:.2e}")
+```
+
+In words: the foci are at $\pm 4$, the eccentricity is $0.8$, and the largest deviation of $PF_1 + PF_2$ from $10$ is about $10^{-15}$. That is floating-point rounding, so the constant-sum property holds on the curve.
+
+## Parabola
+
+A parabola has one focus and one directrix. In the standard form $y^2 = 4px$, the focus is $(p, 0)$ and the directrix is $x = -p$. The vertex is at the origin, and the curve opens toward the focus.
+
+The shape of a satellite dish or a headlight reflector follows from this. A ray parallel to the axis hits the curve and reflects through the focus, because the focus is the point where all such reflections meet.
+
+## Hyperbola
+
+A hyperbola has two foci and two branches. Its standard form is $\frac{x^2}{a^2} - \frac{y^2}{b^2} = 1$, with foci at $(\pm c, 0)$ where $c^2 = a^2 + b^2$, and $e = c/a > 1$. The defining property is the opposite of the ellipse's: the difference of distances to the two foci is constant, $|PF_1 - PF_2| = 2a$.
+
+The check below samples points on both branches of a hyperbola with $a = 5$ and $b = 3$, and confirms the difference of distances is $2a = 10$.
+
+```python
+import math
+
+a, b = 5.0, 3.0
+c_h = math.sqrt(a * a + b * b)
+F1h, F2h = (-c_h, 0.0), (c_h, 0.0)
+def point_on_hyperbola(t):
+    return (a * math.cosh(t), b * math.sinh(t))
+
+worst_h = max(abs(abs(math.dist(point_on_hyperbola(t), F1h) - math.dist(point_on_hyperbola(t), F2h)) - 2 * a)
+              for t in [i / 100 for i in range(-300, 301)])
+print("hyperbola error |PF1 - PF2| - 2a:", f"{worst_h:.2e}")
+```
+
+In words: the error is about $7 \times 10^{-15}$, so every sampled point has the constant difference. The right branch is the points closer to the right focus, and the left branch is the mirror image.
+
+The parabola's check is similar. The focus is $(0, 1)$ and the directrix is $y = -1$ for $y = x^2/4$, and every point is equally far from both. The script in the parabola case reports an error of about $4 \times 10^{-16}$.
+
+## Explore the family
+
+Slide the eccentricity below. Watch how the curve changes shape as $e$ crosses $0$, $1$ and $2$. The dots mark the foci where they exist; a parabola has one focus and no second.
+
+<ConicExplorer />
+
+<Callout type="key">
+The four conics are one family. Changing a single number, the eccentricity, moves you from one to the next. This is why a single formula can describe a planet's orbit, a comet's path and a bullet's trajectory, depending on the energy involved.
+</Callout>
+
+## Where conics appear
+
+Planetary orbits are ellipses with the Sun at one focus (Kepler's first law). Telescope and radio dishes are paraboloids, so incoming parallel signals gather at the focus. A cone of light from a lamp cut by a wall gives a conic. The properties above are why these shapes are used on purpose.

@@ -1,8 +1,91 @@
 ---
 title: "Coordinate geometry"
-description: "Distance formula, midpoint, slope, and equations of lines."
+description: "Placing points on a grid so that distance, midpoint, slope and lines become arithmetic, and geometry questions become equations."
 order: 2
 tier: core
+takeaways:
+  - "A point $(x, y)$ is a pair of numbers. The **distance** between two points is $\\sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$, from Pythagoras applied to the horizontal and vertical gaps."
+  - "The **midpoint** is the average of the coordinates: $\\left(\\frac{x_1 + x_2}{2}, \\frac{y_1 + y_2}{2}\\right)$."
+  - "**Slope** $m = \\frac{y_2 - y_1}{x_2 - x_1}$ measures steepness. A line is $y = mx + c$, where $c$ is where it crosses the $y$-axis."
+  - "Two lines with slopes $m_1$ and $m_2$ are perpendicular when $m_1 m_2 = -1$, and parallel when their slopes are equal."
+  - "Once geometry is an equation, a question about intersections becomes solving simultaneous equations, and a question about shapes becomes a question about which points satisfy an equation."
+resources:
+  - title: "Analytic geometry (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Analytic_geometry"
+    note: "The history from Descartes, and the standard formulas."
+  - title: "Cartesian coordinate system (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cartesian_coordinate_system"
+    note: "Axes, quadrants and the extension to three dimensions."
+  - title: "Python math module"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "hypot, isclose and the other functions used below."
 ---
 
-_Placeholder. Content not written yet._
+Euclid's geometry describes shapes in words, and a proof says what must follow from what. René Descartes showed that if you place a point at a pair of numbers, the geometry becomes arithmetic. A line becomes an equation, a circle becomes a quadratic, and a question like "where do these two lines cross?" becomes solving two equations. This note covers distance, midpoints, slopes and lines. The [Conic Sections](../conic-sections/) note follows from here, since the curves there are just equations in $x$ and $y$.
+
+## Distance and midpoint
+
+The horizontal gap between two points is $x_2 - x_1$, and the vertical gap is $y_2 - y_1$. The two gaps form a right triangle with the segment between the points as hypotenuse, so the distance is
+
+$$d = \sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}.$$
+
+The midpoint is the point halfway along the segment, at the average of the coordinates. The script below computes both for two points and then checks that the second point lies on the line through the first with the computed slope.
+
+```python
+import math
+
+def distance(p, q):
+    return math.hypot(q[0] - p[0], q[1] - p[1])
+
+def midpoint(p, q):
+    return ((p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+
+def slope(p, q):
+    return (q[1] - p[1]) / (q[0] - p[0])
+
+A, B = (1, 2), (5, 10)
+print("distance A to B:", distance(A, B))
+print("midpoint:", midpoint(A, B))
+m = slope(A, B)
+print("slope:", m)
+c = A[1] - m * A[0]
+print(f"line: y = {m} x + {c}")
+print("B lies on the line:", math.isclose(B[1], m * B[0] + c))
+```
+
+In words: the distance is $\sqrt{80} \approx 8.94$, the midpoint is $(3, 6)$, and the slope is $2$. Substituting $x = 1$ and $y = 2$ gives $c = 0$, so the line is $y = 2x$, and $B = (5, 10)$ satisfies it.
+
+## Slope and lines
+
+A line is $y = mx + c$. The slope $m$ says how much $y$ changes per unit step in $x$, and $c$ is the intercept. A vertical line has no slope, because $x_2 - x_1 = 0$ makes the formula undefined. Its equation is $x = k$ for a constant $k$.
+
+Two lines meet where their equations agree. For $y = m_1 x + c_1$ and $y = m_2 x + c_2$, setting the two right-hand sides equal gives $x = \frac{c_2 - c_1}{m_1 - m_2}$, provided the slopes differ. Parallel lines have equal slopes and never meet, unless they are the same line.
+
+```python
+m1, c1 = 2, 1
+m2, c2 = -1, 4
+x = (c2 - c1) / (m1 - m2)
+print("intersection of y=2x+1 and y=-x+4:", (x, m1 * x + c1))
+```
+
+In words: the two lines cross at $(1, 3)$. Substituting $x = 1$ into both equations gives $y = 3$ in each, which confirms the crossing point.
+
+## Perpendicular lines
+
+If $m_1$ and $m_2$ are the slopes of two perpendicular lines, $m_1 m_2 = -1$. A slope of $2$ is perpendicular to a slope of $-\frac{1}{2}$, because $2 \cdot (-\frac{1}{2}) = -1$. The reason is a rotation by $90°$: it swaps the horizontal and vertical steps and negates one of them, so the rise over run of the perpendicular is the negative reciprocal.
+
+<LineExplorer />
+
+Drag either point above. The distance, midpoint and line update together, so you can see how changing one point moves the slope, and how a vertical segment has no slope.
+
+<Callout type="pitfall">
+Slope depends on the order of the points only in sign, not value: $(y_2 - y_1)/(x_2 - x_1)$ and $(y_1 - y_2)/(x_1 - x_2)$ are equal. But mixing the order, as in $(y_2 - y_1)/(x_1 - x_2)$, flips the sign. Pick an order and keep it.
+</Callout>
+
+## Geometry as equations
+
+Every shape becomes a set of points that satisfy an equation. A line is the set of points where $ax + by = c$. A circle of radius $r$ centred at the origin is where $x^2 + y^2 = r^2$. Asking whether a shape contains a point becomes substituting its coordinates. Asking whether two shapes meet becomes solving their equations together. This is the idea that later extends to curves in three dimensions and to the sets used in [Sets](../../foundations/sets/).
+
+## Why it matters
+
+Coordinates make computation precise. A computer graphics engine stores every vertex as coordinates and tests intersections with formulas like these. A map is a coordinate system. Even machine learning treats each data point as a point in a high-dimensional coordinate space, where distance and slope generalise directly.

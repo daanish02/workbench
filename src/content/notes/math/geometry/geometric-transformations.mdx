@@ -1,8 +1,143 @@
 ---
 title: "Geometric transformations"
-description: "Translation, rotation, reflection, scaling, composition of transformations."
+description: "Translation, rotation, reflection, scaling and shear, written as matrices, with the rules for composing them and the area each one scales."
 order: 4
 tier: core
+takeaways:
+  - "A transformation moves every point of the plane by a rule. A **linear** transformation, written as a $2 \\times 2$ matrix $M$, sends $(x, y)$ to $M(x, y)$, and it always keeps the origin fixed."
+  - "**Rotation**, **reflection**, **scaling** and **shear** are all linear. Each is a specific matrix, and the matrix's columns say where the unit vectors go."
+  - "**Composition** is matrix multiplication. The order matters: rotating then scaling is generally not the same as scaling then rotating."
+  - "The **determinant** $\\det M = ad - bc$ is the area factor. A negative determinant means the transformation flips orientation."
+  - "**Translation** is not linear, because it moves the origin. Homogeneous coordinates add a third entry so that translation becomes a matrix product too."
+resources:
+  - title: "Transformation matrix (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Transformation_matrix"
+    note: "Rotation, reflection, scaling and shear as matrices, with the 2D and 3D cases."
+  - title: "Affine transformation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Affine_transformation"
+    note: "Translations plus linear maps, and why homogeneous coordinates handle both."
+  - title: "NumPy linear algebra"
+    url: "https://numpy.org/doc/stable/reference/routines.linalg.html"
+    note: "The matrix products and determinants used in the checks below."
 ---
 
-_Placeholder. Content not written yet._
+Every picture on a screen is moved, rotated and scaled before you see it. A game sprite turns, a map pans, a photo is cropped and flipped. Each of these operations is a geometric transformation, and most of them are a matrix multiplication. This note shows the basic transformations as matrices, how to compose them, and what the determinant tells you about what they do to area. The [Linear Algebra](../../linear-algebra/) section develops the matrix side of this in full.
+
+## Transformations as matrices
+
+A linear transformation is a $2 \times 2$ matrix acting on a point:
+
+$$\begin{pmatrix} x' \\ y' \end{pmatrix} = \begin{pmatrix} a & b \\ c & d \end{pmatrix} \begin{pmatrix} x \\ y \end{pmatrix} = \begin{pmatrix} ax + by \\ cx + dy \end{pmatrix}.$$
+
+The first column $(a, c)$ is where the unit vector $(1, 0)$ lands, and the second column $(b, d)$ is where $(0, 1)$ lands. Once you know those two images, the whole transformation follows, because every point is a combination of the two unit vectors.
+
+Here are the standard cases:
+
+| Transformation | Matrix | Effect on the unit square |
+| --- | --- | --- |
+| Rotation by $\theta$ | $\begin{pmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{pmatrix}$ | turns it, keeping its area |
+| Reflection in the $x$-axis | $\begin{pmatrix} 1 & 0 \\ 0 & -1 \end{pmatrix}$ | flips it over the $x$-axis |
+| Scaling by $(s, t)$ | $\begin{pmatrix} s & 0 \\ 0 & t \end{pmatrix}$ | stretches by $s$ and $t$ |
+| Shear | $\begin{pmatrix} 1 & k \\ 0 & 1 \end{pmatrix}$ | slides the top edge sideways |
+
+The script below applies a $90°$ rotation to the unit square, using the rotation matrix with $\theta = \pi/2$. The corners are stored as columns, so one matrix product moves all four at once.
+
+```python
+import math
+import numpy as np
+
+square = np.array([[0, 1, 1, 0], [0, 0, 1, 1]])  # corners as columns
+
+def rotation(theta):
+    return np.array([[math.cos(theta), -math.sin(theta)],
+                     [math.sin(theta),  math.cos(theta)]])
+
+rot90 = np.round(rotation(math.pi / 2), 10)
+print("rotate the unit square 90 degrees:")
+print(np.round(rot90 @ square, 3))
+```
+
+In words: the corners $(0,0)$, $(1,0)$, $(1,1)$, $(0,1)$ go to $(0,0)$, $(0,1)$, $(-1,1)$, $(-1,0)$. The square has turned a quarter-turn anticlockwise about the origin, and its shape and area are unchanged.
+
+## Composition
+
+Applying two transformations one after the other is the product of their matrices. If $S$ scales and $R$ rotates, then "scale, then rotate" is $RS$, and the order of multiplication follows the order of application, from right to left.
+
+Matrix multiplication is not commutative, so the order matters. The check below tests whether a rotation and a scaling commute.
+
+```python
+import math
+import numpy as np
+
+scale = np.array([[2, 0], [0, 3]])
+
+def rotation(theta):
+    return np.array([[math.cos(theta), -math.sin(theta)],
+                     [math.sin(theta),  math.cos(theta)]])
+
+print("rotation and scaling commute?", np.allclose(rotation(0.3) @ scale, scale @ rotation(0.3)))
+```
+
+In words: `False` means the two orders give different results. A rotation followed by a stretch along the axes is not the same as the stretch followed by the rotation, because the stretch axes are fixed in one order and turned in the other.
+
+<TransformGrid />
+
+Set the four entries of the matrix above and watch the grid. The shaded square is the image of the unit square. Try $\begin{pmatrix} 1 & 1 \\ 0 & 1 \end{pmatrix}$ for a shear, and a matrix with a negative determinant to see the orientation flip.
+
+## Area and the determinant
+
+The determinant $\det M = ad - bc$ is the factor by which $M$ scales area. The unit square has area $1$, so its image has area $|\det M|$. A negative determinant means the image is a mirror image of the original, which corresponds to a reflection in the transformation.
+
+The scaling $\begin{pmatrix} 2 & 0 \\ 0 & 3 \end{pmatrix}$ has determinant $6$, so every area is multiplied by $6$. Composing with a rotation keeps the same determinant in absolute value, because rotations preserve area.
+
+```python
+import math
+import numpy as np
+
+scale = np.array([[2, 0], [0, 3]])
+
+def rotation(theta):
+    return np.array([[math.cos(theta), -math.sin(theta)],
+                     [math.sin(theta),  math.cos(theta)]])
+
+print("det of scale:", round(np.linalg.det(scale), 6), "-> area of square x6")
+combo = rotation(math.pi / 2) @ scale
+print("area after composition:", round(abs(np.linalg.det(combo)) * 1.0, 6))
+```
+
+In words: the determinant of the scaling is $6$, and the composed transformation has the same absolute determinant, so its area factor is also $6$. The rotation changed the direction of the stretched shape but not how much area it covers.
+
+## Inverses
+
+A transformation with a nonzero determinant can be undone. Its inverse matrix $M^{-1}$ satisfies $M^{-1}M = I$, the identity, which leaves every point where it is. Inverses are what let you map a point back from a rotated or scaled image to where it started, which graphics code does constantly when it needs to find which texel a screen pixel came from.
+
+```python
+import numpy as np
+
+shear = np.array([[1, 1], [0, 1]])
+print("M^-1 M = I:", np.allclose(np.linalg.inv(shear) @ shear, np.eye(2)))
+```
+
+In words: undoing a shear by its inverse returns the identity, so the two operations cancel.
+
+## Translation and homogeneous coordinates
+
+A translation moves every point by a fixed vector $(t_x, t_y)$. It is not linear, because the origin moves, and a $2 \times 2$ matrix always fixes the origin. The fix is to add a third coordinate: a point $(x, y)$ becomes $(x, y, 1)$, and a translation becomes a $3 \times 3$ matrix
+
+$$\begin{pmatrix} 1 & 0 & t_x \\ 0 & 1 & t_y \\ 0 & 0 & 1 \end{pmatrix}.$$
+
+Now every transformation in this note, including translation, is a matrix product, and any sequence of them is one matrix. Graphics pipelines work this way for that reason.
+
+```python
+import numpy as np
+
+T = np.array([[1, 0, 5], [0, 1, -2], [0, 0, 1]])
+p = np.array([1, 1, 1])
+print("translate (1,1) by (5,-2):", (T @ p)[:2])
+```
+
+In words: the point $(1, 1)$ moves to $(6, -1)$, which is $(1, 1)$ shifted by $(5, -2)$. The extra coordinate is what makes the shift a product, and the last row keeps the third coordinate at $1$.
+
+<Callout type="pitfall">
+Transformations compose right to left. In $RS\,p$ the scaling $S$ acts first, then $R$. Writing the factors in the reverse order describes a different transformation, and the mistake is easy to make when a matrix is written as a chain of named steps.
+</Callout>
