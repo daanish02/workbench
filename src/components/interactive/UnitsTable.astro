@@ -1,0 +1,61 @@
+---
+import Figure from '../Figure.astro';
+
+// Residues mod 12: gcd with 12 and the multiplicative inverse, where one exists.
+const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+const rows = Array.from({ length: 11 }, (_, i) => i + 1).map((a) => {
+  const inv = Array.from({ length: 11 }, (_, i) => i + 1).find((x) => (a * x) % 12 === 1);
+  return { a, g: gcd(a, 12), inv };
+});
+---
+
+<Figure
+  kind="Diagram"
+  title="Which residues mod 12 have an inverse"
+  caption="For each residue a, the gcd with 12 and its inverse mod 12. Only residues with gcd 1 (blue) have an inverse. Residues 2, 3, 4, 6, 8, 9 and 10 share a factor with 12, so multiplying them can never reach 1."
+>
+  <svg class="ut-svg" viewBox="0 0 400 140" role="img" aria-label="Table of residues one to eleven mod 12 with their gcd and inverses">
+    {rows.map((r, i) => {
+      const x = 14 + i * 35;
+      const ok = r.inv !== undefined;
+      return (
+        <g>
+          <rect x={x} y="10" width="31" height="100" rx="4" class={ok ? 'ut-ok' : 'ut-no'}></rect>
+          <text x={x + 15.5} y="26" class="ut-h">{r.a}</text>
+          <text x={x + 15.5} y="60" class="ut-v">{r.g}</text>
+          <text x={x + 15.5} y="98" class="ut-v">{ok ? r.inv : '—'}</text>
+        </g>
+      );
+    })}
+    <text x="200" y="134" text-anchor="middle" class="ut-note">rows: residue a (top), gcd(a, 12) (middle), inverse (bottom)</text>
+  </svg>
+</Figure>
+
+<style>
+  .ut-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ut-ok {
+    fill: rgba(66, 133, 244, 0.3);
+  }
+  .ut-no {
+    fill: #161616;
+  }
+  .ut-h {
+    fill: var(--text);
+    font: 600 12px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ut-v {
+    fill: var(--text-muted);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ut-note {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+</style>

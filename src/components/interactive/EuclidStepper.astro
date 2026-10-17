@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Euclid's algorithm, step by step"
+  caption="Enter two positive integers. Each line is one division with remainder. The last nonzero remainder is the gcd, and the back-substitution gives Bézout coefficients x and y with ax + by = gcd."
+>
+  <euclid-stepper>
+    <div class="es-ctl">
+      <label>a <input type="number" min="1" max="9999" value="240" data-a /></label>
+      <label>b <input type="number" min="1" max="9999" value="46" data-b /></label>
+      <label>show <input type="range" min="0" max="10" step="1" value="10" data-k /><b data-kv>10</b></label>
+    </div>
+    <pre class="es-lines" data-lines></pre>
+    <p class="es-stat" data-stat></p>
+  </euclid-stepper>
+</Figure>
+
+<style>
+  .es-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .es-ctl input[type='number'] {
+    width: 80px;
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .es-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .es-ctl input[type='range'] {
+    width: 120px;
+  }
+  .es-ctl b {
+    color: var(--text);
+    min-width: 1.5em;
+  }
+  .es-lines {
+    margin: 0;
+    min-height: 8em;
+    padding: 10px 12px;
+    background: #111;
+    border: 1px solid #2a2d31;
+    border-radius: 6px;
+    color: var(--text);
+    font: 0.8125rem/1.7 var(--font-mono);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .es-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // extended Euclid: returns [g, x, y] with a*x + b*y = g
+  function extGcd(a: number, b: number): [number, number, number] {
+    if (b === 0) return [a, 1, 0];
+    const [g, x, y] = extGcd(b, a % b);
+    return [g, y, x - Math.floor(a / b) * y];
+  }
+
+  class EuclidStepper extends HTMLElement {
+    connectedCallback() {
+      for (const sel of ['[data-a]', '[data-b]', '[data-k]']) {
+        this.querySelector(sel)!.addEventListener('input', () => this.draw());
+      }
+      this.draw();
+    }
+
+    draw() {
+      const a0 = Math.max(1, Math.floor(+this.querySelector<HTMLInputElement>('[data-a]')!.value || 1));
+      const b0 = Math.max(1, Math.floor(+this.querySelector<HTMLInputElement>('[data-b]')!.value || 1));
+      const kEl = this.querySelector<HTMLInputElement>('[data-k]')!;
+      const k = +kEl.value;
+      this.querySelector('[data-kv]')!.textContent = String(k);
+
+      const lines: string[] = [];
+      let a = a0, b = b0;
+      let steps = 0;
+      while (b) {
+        const q = Math.floor(a / b), r = a % b;
+        steps++;
+        if (steps <= k) lines.push(`${a} = ${q} × ${b} + ${r}`);
+        a = b;
+        b = r;
+      }
+      const [g, x, y] = extGcd(a0, b0);
+      if (k >= steps) lines.push(`remainder 0: gcd = ${g}`);
+      this.querySelector('[data-lines]')!.textContent = lines.join('\n') || 'set show to 1 or more';
+      this.querySelector('[data-stat]')!.textContent =
+        k >= steps
+          ? `${a0} × (${x}) + ${b0} × (${y}) = ${a0 * x + b0 * y} = gcd · ${steps} divisions`
+          : `${steps} divisions in total · drag show to reveal the rest`;
+    }
+  }
+  customElements.define('euclid-stepper', EuclidStepper);
+</script>

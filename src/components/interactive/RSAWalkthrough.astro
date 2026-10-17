@@ -1,0 +1,125 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="RSA with toy primes"
+  caption="Primes 61 and 53 give n = 3233. Reveal the steps one at a time, and change the message to see it encrypted and decrypted. The numbers are far too small to be secure; they only show the mechanism."
+>
+  <rsa-walkthrough>
+    <div class="rw-ctl">
+      <label>message m (0 to 3232) <input type="number" min="0" max="3232" value="65" data-m /></label>
+      <button type="button" data-next>next step</button>
+      <button type="button" data-reset>reset</button>
+    </div>
+    <ol class="rw-steps" data-steps></ol>
+    <p class="rw-stat" data-stat></p>
+  </rsa-walkthrough>
+</Figure>
+
+<style>
+  .rw-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .rw-ctl input {
+    width: 100px;
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .rw-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .rw-steps {
+    margin: 0;
+    padding: 10px 12px 10px 34px;
+    background: #111;
+    border: 1px solid #2a2d31;
+    border-radius: 6px;
+    min-height: 6em;
+    font: 0.8125rem/1.8 var(--font-mono);
+    color: var(--text);
+  }
+  .rw-steps li {
+    padding-left: 4px;
+  }
+  .rw-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const modpow = (b: number, e: number, m: number): number => {
+    let result = 1, base = b % m, exp = e;
+    while (exp > 0) {
+      if (exp & 1) result = (result * base) % m;
+      base = (base * base) % m;
+      exp >>= 1;
+    }
+    return result;
+  };
+  const modinv = (a: number, m: number): number => {
+    // brute force is enough for a modulus this small
+    for (let x = 1; x < m; x++) if ((a * x) % m === 1) return x;
+    return -1;
+  };
+
+  class RSAWalkthrough extends HTMLElement {
+    step = 0;
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.reset());
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        if (this.step < 6) this.step++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+
+    reset() {
+      this.step = 0;
+      this.draw();
+    }
+
+    draw() {
+      const p = 61, q = 53, n = p * q, phi = (p - 1) * (q - 1), e = 17;
+      const d = modinv(e, phi);
+      let m = Math.floor(+this.querySelector<HTMLInputElement>('[data-m]')!.value);
+      m = Math.max(0, Math.min(n - 1, isNaN(m) ? 0 : m));
+      const c = modpow(m, e, n);
+      const back = modpow(c, d, n);
+      const lines = [
+        `choose primes p = ${p}, q = ${q}`,
+        `n = p × q = ${n}`,
+        `φ = (p − 1)(q − 1) = ${phi}`,
+        `public exponent e = ${e} (coprime to φ) · private exponent d = ${d} (e·d ≡ 1 mod φ)`,
+        `encrypt: c = m^e mod n = ${m}^${e} mod ${n} = ${c}`,
+        `decrypt: m = c^d mod n = ${c}^${d} mod ${n} = ${back}`,
+        back === m ? `recovered m = ${back} ✓` : `recovered m = ${back} (mismatch)`,
+      ];
+      const shown = lines.slice(0, this.step).map((l) => `<li>${l}</li>`).join('');
+      this.querySelector('[data-steps]')!.innerHTML = shown || '<li>press next step</li>';
+      this.querySelector('[data-stat]')!.textContent =
+        this.step < 6 ? `step ${this.step} of 6` : `public key (${n}, ${e}) · private key d = ${d}`;
+    }
+  }
+  customElements.define('rsa-walkthrough', RSAWalkthrough);
+</script>

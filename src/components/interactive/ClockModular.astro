@@ -1,0 +1,152 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Clock arithmetic"
+  caption="Pick the modulus n and an operation. The hand points to (a op b) mod n on a clock with n positions. The readout lists which residues have a multiplicative inverse: only those coprime to n."
+>
+  <clock-modular>
+    <div class="cm-ctl">
+      <label>n <input type="range" min="2" max="24" step="1" value="12" data-n /><b data-nv>12</b></label>
+      <label>a <input type="range" min="0" max="23" step="1" value="10" data-a /><b data-av>10</b></label>
+      <label>b <input type="range" min="0" max="23" step="1" value="7" data-b /><b data-bv>7</b></label>
+      <label>op
+        <select data-op>
+          <option value="add">+</option>
+          <option value="mul">×</option>
+        </select>
+      </label>
+    </div>
+    <svg class="cm-svg" viewBox="0 0 240 240" role="img" aria-label="Clock face with n positions and a hand pointing to the result">
+      <circle cx="120" cy="120" r="100" class="cm-face"></circle>
+      <g data-ticks></g>
+      <line data-hand x1="120" y1="120" x2="120" y2="40" class="cm-hand"></line>
+      <circle cx="120" cy="120" r="4" class="cm-hub"></circle>
+    </svg>
+    <p class="cm-stat" data-stat></p>
+  </clock-modular>
+</Figure>
+
+<style>
+  .cm-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+  }
+  .cm-ctl label {
+    flex: 1 1 150px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .cm-ctl input[type='range'] {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .cm-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .cm-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .cm-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .cm-svg {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+  .cm-face {
+    fill: #111;
+    stroke: #3c4043;
+    stroke-width: 1.5;
+  }
+  .cm-svg :global(.cm-tick) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cm-hand {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+    stroke-linecap: round;
+  }
+  .cm-hub {
+    fill: var(--g-yellow);
+  }
+  .cm-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+
+  class ClockModular extends HTMLElement {
+    connectedCallback() {
+      for (const sel of ['[data-n]', '[data-a]', '[data-b]', '[data-op]']) {
+        this.querySelector(sel)!.addEventListener('input', () => this.draw());
+        this.querySelector(sel)!.addEventListener('change', () => this.draw());
+      }
+      this.draw();
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value % n;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value % n;
+      const op = this.querySelector<HTMLSelectElement>('[data-op]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-av]')!.textContent = String(a);
+      this.querySelector('[data-bv]')!.textContent = String(b);
+
+      // tick labels around the clock; position 0 at the top, going clockwise
+      const ticks: string[] = [];
+      for (let k = 0; k < n; k++) {
+        const ang = (2 * Math.PI * k) / n - Math.PI / 2;
+        const x = 120 + Math.cos(ang) * 84;
+        const y = 120 + Math.sin(ang) * 84;
+        ticks.push(`<text class="cm-tick" x="${x.toFixed(2)}" y="${y.toFixed(2)}">${k}</text>`);
+      }
+      this.querySelector('[data-ticks]')!.innerHTML = ticks.join('');
+
+      const raw = op === 'add' ? a + b : a * b;
+      const res = ((raw % n) + n) % n;
+      const ang = (2 * Math.PI * res) / n - Math.PI / 2;
+      const hand = this.querySelector<SVGLineElement>('[data-hand]')!;
+      hand.setAttribute('x2', (120 + Math.cos(ang) * 70).toFixed(2));
+      hand.setAttribute('y2', (120 + Math.sin(ang) * 70).toFixed(2));
+
+      const units: number[] = [];
+      for (let x = 1; x < n; x++) if (gcd(x, n) === 1) units.push(x);
+      const inv = (x: number) => {
+        for (let y = 1; y < n; y++) if ((x * y) % n === 1) return y;
+        return null;
+      };
+      const sym = op === 'add' ? '+' : '×';
+      this.querySelector('[data-stat]')!.textContent =
+        `${a} ${sym} ${b} = ${raw} ≡ ${res} (mod ${n}) · invertible mod ${n}: ${units.join(', ')} · e.g. inverse of ${units[0] ?? 'none'} is ${units[0] !== undefined ? inv(units[0]) : '—'}`;
+    }
+  }
+  customElements.define('clock-modular', ClockModular);
+</script>

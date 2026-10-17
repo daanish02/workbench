@@ -1,0 +1,135 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A recurrence and its closed form"
+  caption="Bars are the terms computed from the recurrence. Dots are the closed form: Binet's formula for Fibonacci, 2ⁿ − 1 for the doubling recurrence. The two always agree, which is what solving the recurrence means."
+>
+  <recurrence-explorer>
+    <div class="re-ctl">
+      <label>recurrence
+        <select data-r>
+          <option value="fib">Fibonacci: aₙ = aₙ₋₁ + aₙ₋₂</option>
+          <option value="dbl">aₙ = 2aₙ₋₁ + 1</option>
+        </select>
+      </label>
+      <label>terms N <input type="range" min="1" max="20" step="1" value="10" data-n /><b data-nv>10</b></label>
+    </div>
+    <svg class="re-svg" viewBox="0 0 400 200" role="img" aria-label="Bars of recurrence terms with dots marking the closed form">
+      <line x1="20" y1="180" x2="390" y2="180" class="re-axis"></line>
+      <g data-bars></g>
+      <g data-dots></g>
+    </svg>
+    <p class="re-stat" data-stat></p>
+  </recurrence-explorer>
+</Figure>
+
+<style>
+  .re-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .re-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .re-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 4px;
+    max-width: 100%;
+  }
+  .re-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .re-ctl input[type='range'] {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+  .re-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .re-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .re-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .re-svg :global(.re-bar) {
+    fill: var(--g-blue);
+    opacity: 0.8;
+  }
+  .re-svg :global(.re-dot) {
+    fill: var(--g-yellow);
+  }
+  .re-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class RecurrenceExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-r]')!.addEventListener('change', () => this.draw());
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const kind = this.querySelector<HTMLSelectElement>('[data-r]')!.value;
+      const N = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(N);
+      const terms: number[] = [];
+      const closed: number[] = [];
+      const phi = (1 + Math.sqrt(5)) / 2;
+      const psi = (1 - Math.sqrt(5)) / 2;
+      if (kind === 'fib') {
+        terms.push(0, 1);
+        for (let n = 2; n <= N; n++) terms.push(terms[n - 1] + terms[n - 2]);
+        for (let n = 0; n <= N; n++) closed.push(Math.round((phi ** n - psi ** n) / Math.sqrt(5)));
+      } else {
+        terms.push(0);
+        for (let n = 1; n <= N; n++) terms.push(2 * terms[n - 1] + 1);
+        for (let n = 0; n <= N; n++) closed.push(2 ** n - 1);
+      }
+      const top = Math.max(...terms.slice(0, N + 1), 1);
+      const toY = (v: number) => 180 - (v / top) * 160;
+      const slot = 370 / (N + 1);
+      let bars = '', dots = '';
+      for (let n = 0; n <= N; n++) {
+        const x = 20 + n * slot;
+        const y = toY(terms[n]);
+        bars += `<rect class="re-bar" x="${(x + slot * 0.15).toFixed(2)}" y="${y.toFixed(2)}" width="${(slot * 0.7).toFixed(2)}" height="${(180 - y).toFixed(2)}"></rect>`;
+        dots += `<circle class="re-dot" cx="${(x + slot / 2).toFixed(2)}" cy="${toY(closed[n]).toFixed(2)}" r="2.5"></circle>`;
+      }
+      this.querySelector('[data-bars]')!.innerHTML = bars;
+      this.querySelector('[data-dots]')!.innerHTML = dots;
+      const agree = terms.slice(0, N + 1).every((v, n) => v === closed[n]);
+      this.querySelector('[data-stat]')!.textContent =
+        `a_${N} = ${terms[N]} · closed form ${closed[N]} · all terms agree: ${agree ? 'yes' : 'no'}`;
+    }
+  }
+  customElements.define('recurrence-explorer', RecurrenceExplorer);
+</script>

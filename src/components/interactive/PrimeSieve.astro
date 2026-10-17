@@ -1,0 +1,55 @@
+---
+import Figure from '../Figure.astro';
+
+// Numbers 1 to 50 in a grid of 10 columns. Primes are filled; composites are dimmed.
+const isPrime = (k: number) => k > 1 && Array.from({ length: Math.max(0, k - 2) }, (_, i) => i + 2).every((d) => k % d !== 0);
+const nums = Array.from({ length: 50 }, (_, i) => i + 1);
+---
+
+<Figure
+  kind="Diagram"
+  title="Primes up to 50"
+  caption="Primes are filled blue; everything else is dimmed. Count the blue cells: there are fifteen, and the sieve of Eratosthenes finds them by crossing out multiples of each prime in turn."
+>
+  <svg class="ps-svg" viewBox="0 0 400 210" role="img" aria-label="Grid of the numbers 1 to 50 with the primes highlighted in blue">
+    {nums.map((k) => {
+      const col = (k - 1) % 10, row = Math.floor((k - 1) / 10);
+      const x = 8 + col * 39, y = 8 + row * 40;
+      return (
+        <g>
+          <rect x={x} y={y} width="34" height="32" rx="4" class={isPrime(k) ? 'ps-p' : 'ps-c'}></rect>
+          <text x={x + 17} y={y + 16} class={isPrime(k) ? 'ps-tp' : 'ps-tc'}>{k}</text>
+        </g>
+      );
+    })}
+  </svg>
+</Figure>
+
+<style>
+  .ps-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ps-p {
+    fill: rgba(66, 133, 244, 0.45);
+    stroke: var(--g-blue);
+  }
+  .ps-c {
+    fill: #161616;
+    stroke: #2a2d31;
+  }
+  .ps-tp {
+    fill: var(--text);
+    font: 600 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .ps-tc {
+    fill: #5f6368;
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+</style>

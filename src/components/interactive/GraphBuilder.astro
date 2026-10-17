@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Build a graph and count degrees"
+  caption="Click an empty spot to add a vertex. Click one vertex and then another to add or remove an edge between them. The readout checks the handshake lemma: the degrees always sum to twice the number of edges."
+>
+  <graph-builder>
+    <div class="gb-ctl">
+      <button type="button" data-clear>clear</button>
+    </div>
+    <svg class="gb-svg" viewBox="0 0 360 260" role="img" aria-label="An editable graph: click to add vertices, click two vertices to join or separate them">
+      <g data-edges></g>
+      <g data-verts></g>
+    </svg>
+    <p class="gb-stat" data-stat></p>
+  </graph-builder>
+</Figure>
+
+<style>
+  .gb-ctl {
+    margin-bottom: 10px;
+  }
+  .gb-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .gb-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    cursor: crosshair;
+    user-select: none;
+  }
+  .gb-svg :global(.gb-edge) {
+    stroke: #5f6368;
+    stroke-width: 2;
+  }
+  .gb-svg :global(.gb-node circle) {
+    fill: #1a1a1a;
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .gb-svg :global(.gb-node.sel circle) {
+    fill: var(--g-yellow);
+    stroke: var(--g-yellow);
+  }
+  .gb-svg :global(.gb-node text) {
+    fill: var(--text);
+    font: 600 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .gb-svg :global(.gb-deg) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .gb-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class GraphBuilder extends HTMLElement {
+    verts: { x: number; y: number }[] = [
+      { x: 80, y: 80 }, { x: 280, y: 80 }, { x: 80, y: 190 }, { x: 280, y: 190 },
+    ];
+    edges = new Set<string>(['0-1', '1-3', '3-2', '2-0']);
+    sel = -1;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('svg')!;
+      svg.addEventListener('click', (e) => {
+        const t = e.target as Element;
+        const node = t.closest('[data-i]');
+        if (node) {
+          const i = +node.getAttribute('data-i')!;
+          if (this.sel < 0) {
+            this.sel = i;
+          } else if (this.sel !== i) {
+            const key = [Math.min(this.sel, i), Math.max(this.sel, i)].join('-');
+            if (this.edges.has(key)) this.edges.delete(key);
+            else this.edges.add(key);
+            this.sel = -1;
+          } else {
+            this.sel = -1;
+          }
+        } else {
+          const p = svg.createSVGPoint();
+          p.x = e.clientX;
+          p.y = e.clientY;
+          const q = p.matrixTransform(svg.getScreenCTM()!.inverse());
+          this.verts.push({ x: Math.max(20, Math.min(340, q.x)), y: Math.max(20, Math.min(240, q.y)) });
+          this.sel = -1;
+        }
+        this.draw();
+      });
+      this.querySelector('[data-clear]')!.addEventListener('click', () => {
+        this.verts = [];
+        this.edges = new Set();
+        this.sel = -1;
+        this.draw();
+      });
+      this.draw();
+    }
+
+    draw() {
+      const deg = this.verts.map(() => 0);
+      let html = '';
+      for (const key of this.edges) {
+        const [a, b] = key.split('-').map(Number);
+        deg[a]++;
+        deg[b]++;
+        html += `<line class="gb-edge" x1="${this.verts[a].x}" y1="${this.verts[a].y}" x2="${this.verts[b].x}" y2="${this.verts[b].y}"></line>`;
+      }
+      this.querySelector('[data-edges]')!.innerHTML = html;
+      this.querySelector('[data-verts]')!.innerHTML = this.verts
+        .map((v, i) => {
+          const cls = i === this.sel ? 'gb-node sel' : 'gb-node';
+          return `<g class="${cls}" data-i="${i}" style="cursor:pointer"><circle cx="${v.x}" cy="${v.y}" r="14"></circle><text x="${v.x}" y="${v.y}">${i}</text><text class="gb-deg" x="${v.x}" y="${v.y + 28}">deg ${deg[i]}</text></g>`;
+        })
+        .join('');
+      const sum = deg.reduce((s, d) => s + d, 0);
+      this.querySelector('[data-stat]')!.textContent =
+        `vertices ${this.verts.length} · edges ${this.edges.size} · degree sum ${sum} = 2 × ${this.edges.size}${sum === 2 * this.edges.size ? ' ✓' : ''}${this.sel >= 0 ? ' · pick a second vertex' : ''}`;
+    }
+  }
+  customElements.define('graph-builder', GraphBuilder);
+</script>

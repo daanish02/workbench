@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Cayley table of the integers mod n"
+  caption="Each cell is a + b mod n. Row and column 0 show the identity. Inverses are the pairs that give 0. Set n to a prime and every nonzero element has an inverse, which makes ℤₙ a field; for composite n some do not."
+>
+  <cayley-table>
+    <div class="ct-ctl">
+      <label>n <input type="range" min="2" max="12" step="1" value="7" data-n /><b data-nv>7</b></label>
+    </div>
+    <div class="ct-wrap" data-table></div>
+    <p class="ct-stat" data-stat></p>
+  </cayley-table>
+</Figure>
+
+<style>
+  .ct-ctl {
+    margin-bottom: 10px;
+  }
+  .ct-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ct-ctl input {
+    flex: 1;
+  }
+  .ct-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ct-wrap {
+    overflow-x: auto;
+  }
+  .ct-wrap :global(table) {
+    border-collapse: collapse;
+    margin: 0 auto;
+    font: 0.75rem var(--font-mono);
+  }
+  .ct-wrap :global(td),
+  .ct-wrap :global(th) {
+    width: 26px;
+    height: 26px;
+    text-align: center;
+    border: 1px solid #2a2d31;
+    color: var(--text);
+  }
+  .ct-wrap :global(th) {
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+  .ct-wrap :global(.ct-id) {
+    background: rgba(251, 188, 4, 0.2);
+  }
+  .ct-wrap :global(.ct-inv) {
+    background: rgba(66, 133, 244, 0.3);
+  }
+  .ct-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const isPrime = (k: number) => k > 1 && Array.from({ length: k - 2 }, (_, i) => i + 2).every((d) => k % d !== 0);
+
+  class CayleyTable extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const idx = Array.from({ length: n }, (_, i) => i);
+      // an element a has an inverse b when (a + b) mod n = 0 (additive), and a multiplicative inverse when (a·b) mod n = 1
+      const addInv = (a: number) => idx.find((b) => (a + b) % n === 0);
+      const mulInv = (a: number) => idx.find((b) => b > 0 && (a * b) % n === 1);
+      let html = '<table><tr><th>+</th>' + idx.map((j) => `<th>${j}</th>`).join('') + '</tr>';
+      for (const i of idx) {
+        html += `<tr><th>${i}</th>`;
+        for (const j of idx) {
+          const v = (i + j) % n;
+          const cls = v === 0 ? ' class="ct-id"' : '';
+          html += `<td${cls}>${v}</td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</table>';
+      this.querySelector('[data-table]')!.innerHTML = html;
+      const units = idx.filter((a) => a > 0 && gcd(a, n) === 1);
+      const allNonzeroInvertible = idx.slice(1).every((a) => mulInv(a) !== undefined);
+      const field = isPrime(n) && allNonzeroInvertible;
+      this.querySelector('[data-stat]')!.textContent =
+        `additive inverses: every element has one (${idx.every((a) => addInv(a) !== undefined) ? 'yes' : 'no'}) · invertible under ×: ${units.join(', ')} · ${field ? 'a field' : 'not a field'}`;
+    }
+  }
+  customElements.define('cayley-table', CayleyTable);
+</script>

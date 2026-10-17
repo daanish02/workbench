@@ -1,0 +1,84 @@
+---
+import Figure from '../Figure.astro';
+
+// Kruskal on the note's graph, edges in weight order. Accepted edges are solid, rejected ones dashed.
+const nodes = { A: [60, 60], B: [340, 60], C: [60, 170], D: [340, 170] } as Record<string, [number, number]>;
+const edges = [
+  { w: 1, u: 'A', v: 'C', accepted: true },
+  { w: 2, u: 'B', v: 'C', accepted: true },
+  { w: 4, u: 'A', v: 'B', accepted: false },
+  { w: 5, u: 'B', v: 'D', accepted: true },
+  { w: 8, u: 'C', v: 'D', accepted: false },
+];
+---
+
+<Figure
+  kind="Diagram"
+  title="Kruskal's algorithm on a weighted graph"
+  caption="Edges are taken in order of weight. Solid edges are accepted because they join two different components; dashed edges are rejected because their ends are already connected. The accepted edges 1, 2 and 5 form the minimum spanning tree, with total weight 8."
+>
+  <svg class="kr-svg" viewBox="0 0 400 230" role="img" aria-label="Four vertices A, B, C, D with weighted edges; accepted edges solid, rejected dashed">
+    {edges.map((e) => {
+      const [x1, y1] = nodes[e.u];
+      const [x2, y2] = nodes[e.v];
+      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+      return (
+        <g>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} class={e.accepted ? 'kr-acc' : 'kr-rej'}></line>
+          <rect x={mx - 14} y={my - 10} width="28" height="18" rx="4" class="kr-lab"></rect>
+          <text x={mx} y={my + 3} class="kr-w">{e.w}</text>
+        </g>
+      );
+    })}
+    {Object.entries(nodes).map(([k, [x, y]]) => (
+      <g>
+        <circle cx={x} cy={y} r="16" class="kr-node"></circle>
+        <text x={x} y={y} class="kr-t">{k}</text>
+      </g>
+    ))}
+    <text x="200" y="222" class="kr-note">accepted: 1, 2, 5 · total 8</text>
+  </svg>
+</Figure>
+
+<style>
+  .kr-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .kr-acc {
+    stroke: var(--g-blue);
+    stroke-width: 3;
+  }
+  .kr-rej {
+    stroke: #5f6368;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .kr-lab {
+    fill: #111;
+    stroke: #3c4043;
+  }
+  .kr-w {
+    fill: var(--g-yellow);
+    font: 600 12px var(--font-mono);
+    text-anchor: middle;
+  }
+  .kr-node {
+    fill: #1a1a1a;
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+  }
+  .kr-t {
+    fill: var(--text);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .kr-note {
+    fill: var(--text-muted);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+  }
+</style>

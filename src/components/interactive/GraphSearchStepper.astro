@@ -1,0 +1,175 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Step through BFS or DFS"
+  caption="The same six-vertex graph from the note. BFS takes vertices from the front of a queue, DFS from the top of a stack. Blue vertices are visited, yellow is the one being processed, and grey is waiting in the frontier."
+>
+  <graph-search-stepper>
+    <div class="gs-ctl">
+      <label><input type="radio" name="gs-mode" value="bfs" checked /> BFS (queue)</label>
+      <label><input type="radio" name="gs-mode" value="dfs" /> DFS (stack)</label>
+      <button type="button" data-step>step</button>
+      <button type="button" data-reset>reset</button>
+    </div>
+    <svg class="gs-svg" viewBox="0 0 400 220" role="img" aria-label="Six-vertex graph with the traversal highlighted step by step">
+      <g data-edges></g>
+      <g data-nodes></g>
+    </svg>
+    <p class="gs-stat" data-stat></p>
+  </graph-search-stepper>
+</Figure>
+
+<style>
+  .gs-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .gs-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .gs-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .gs-svg :global(.gs-edge) {
+    stroke: #5f6368;
+    stroke-width: 1.5;
+  }
+  .gs-svg :global(.gs-node circle) {
+    fill: #1a1a1a;
+    stroke: #5f6368;
+    stroke-width: 1.5;
+  }
+  .gs-svg :global(.gs-node.wait circle) {
+    stroke: #9aa0a6;
+    fill: #2a2d31;
+  }
+  .gs-svg :global(.gs-node.done circle) {
+    stroke: var(--g-blue);
+    fill: rgba(66, 133, 244, 0.25);
+  }
+  .gs-svg :global(.gs-node.cur circle) {
+    stroke: var(--g-yellow);
+    fill: rgba(251, 188, 4, 0.35);
+  }
+  .gs-svg :global(.gs-node text) {
+    fill: var(--text);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .gs-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const adj: Record<number, number[]> = { 0: [1, 2], 1: [0, 3], 2: [0, 3, 4], 3: [1, 2, 5], 4: [2, 5], 5: [3, 4] };
+  const pos: Record<number, [number, number]> = { 0: [60, 60], 1: [150, 40], 2: [150, 170], 3: [250, 60], 4: [250, 180], 5: [340, 120] };
+  const edges: [number, number][] = [];
+  for (const u of Object.keys(adj).map(Number)) for (const v of adj[u]) if (u < v) edges.push([u, v]);
+
+  // precompute the frames: each frame lists visited, the current vertex, and the waiting list
+  function frames(mode: 'bfs' | 'dfs') {
+    const out: { cur: number; visited: number[]; wait: number[]; desc: string }[] = [];
+    const seen = new Set<number>([0]);
+    const visited: number[] = [];
+    const list: number[] = [0];
+    while (list.length) {
+      const cur = mode === 'bfs' ? list.shift()! : list.pop()!;
+      visited.push(cur);
+      const added: number[] = [];
+      for (const v of adj[cur]) {
+        if (!seen.has(v)) {
+          seen.add(v);
+          list.push(v);
+          added.push(v);
+        }
+      }
+      out.push({
+        cur,
+        visited: [...visited],
+        wait: [...list],
+        desc: `${mode === 'bfs' ? 'queue' : 'stack'} ${mode === 'bfs' ? '[' + list.join(', ') + ']' : '[' + list.join(', ') + ']'} · processing ${cur}${added.length ? ' · discovered ' + added.join(', ') : ''}`,
+      });
+    }
+    return out;
+  }
+
+  class GraphSearchStepper extends HTMLElement {
+    frames: ReturnType<typeof frames> = [];
+    i = -1;
+    connectedCallback() {
+      this.querySelectorAll<HTMLInputElement>('input[name="gs-mode"]').forEach((r) =>
+        r.addEventListener('change', () => this.reset())
+      );
+      this.querySelector('[data-step]')!.addEventListener('click', () => {
+        if (this.i < this.frames.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+
+    mode(): 'bfs' | 'dfs' {
+      return this.querySelector<HTMLInputElement>('input[name="gs-mode"]:checked')!.value as 'bfs' | 'dfs';
+    }
+
+    reset() {
+      this.frames = frames(this.mode());
+      this.i = -1;
+      this.draw();
+    }
+
+    draw() {
+      const edgeHtml = edges
+        .map(([u, v]) => `<line x1="${pos[u][0]}" y1="${pos[u][1]}" x2="${pos[v][0]}" y2="${pos[v][1]}" stroke="#5f6368" stroke-width="1.5"></line>`)
+        .join('');
+      this.querySelector('[data-edges]')!.innerHTML = edgeHtml;
+      const f = this.frames[this.i];
+      const nodeHtml = Object.keys(pos)
+        .map(Number)
+        .map((v) => {
+          let cls = 'gs-node';
+          if (f) {
+            if (v === f.cur) cls += ' cur';
+            else if (f.visited.includes(v)) cls += ' done';
+            else if (f.wait.includes(v)) cls += ' wait';
+          }
+          // colours are set as SVG attributes: scoped CSS does not reach injected markup
+          const [fill, stroke] = cls.includes(' cur')
+            ? ['rgba(251,188,4,.35)', '#fbbc04']
+            : cls.includes(' done')
+              ? ['rgba(66,133,244,.25)', '#4285f4']
+              : cls.includes(' wait')
+                ? ['#2a2d31', '#9aa0a6']
+                : ['#1a1a1a', '#5f6368'];
+          return `<g><circle cx="${pos[v][0]}" cy="${pos[v][1]}" r="16" fill="${fill}" stroke="${stroke}" stroke-width="1.5"></circle><text x="${pos[v][0]}" y="${pos[v][1]}" fill="#e8eaed" font-family="JetBrains Mono, monospace" font-size="13" font-weight="600" text-anchor="middle" dominant-baseline="central">${v}</text></g>`;
+        })
+        .join('');
+      this.querySelector('[data-nodes]')!.innerHTML = nodeHtml;
+      this.querySelector('[data-stat]')!.textContent = f
+        ? `step ${this.i + 1} of ${this.frames.length} · ${f.desc}`
+        : `press step to start · order of visits: ${this.frames.map((x) => x.cur).join(' → ')}`;
+    }
+  }
+  customElements.define("graph-search-stepper", GraphSearchStepper);
+</script>
