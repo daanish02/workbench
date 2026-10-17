@@ -1,5 +1,5 @@
 ---
-title: "Modular arithmetic"
+title: "Modular Arithmetic"
 description: "Arithmetic on remainders, the clock as a model, modular inverses that exist exactly when the gcd is one, Fermat's little theorem and Euler's totient."
 order: 4
 tier: core
@@ -33,7 +33,10 @@ n = 12
 a, b = 10, 7
 print("(10 + 7) mod 12 =", (a + b) % n, " (10 mod 12 + 7 mod 12) mod 12 =", (a % n + b % n) % n)  # prints: (10 + 7) mod 12 = 5 (10 mod 12 + 7 mod 12) mod 12 = 5
 x = 3 * 3 * 3 * 3 * 3
-print("3^5 =", x, " mod 12 =", x % 12, " reduced at each step:", 3)  # prints: 3^5 = 243 mod 12 = 3 reduced at each step: 3
+r = 1
+for _ in range(5):
+    r = r * 3 % 12  # reduce after every multiplication
+print("3^5 =", x, " mod 12 =", x % 12, " reduced at each step:", r)  # prints: 3^5 = 243 mod 12 = 3 reduced at each step: 3
 ```
 
 In words: ten hours plus seven hours is five on the clock, whichever way you reduce. The power example shows the same thing: $3^5 = 243 \equiv 3 \pmod{12}$ no matter when the reduction happens.
@@ -68,6 +71,56 @@ print("inverse of 5 mod 13 via a^(p-2):", pow(5, p - 2, p), " check 5 * that mod
 ```
 
 In words: every nonzero residue raised to the power $12$ is $1$ modulo $13$, and $8$ is the inverse of $5$ because $40 = 3 \cdot 13 + 1$. The power $a^{p-2}$ gives inverses without the extended Euclidean algorithm, which is useful when $p$ is fixed.
+
+## Fast modular exponentiation
+
+Computing $a^k \bmod n$ by multiplying $a$ by itself $k$ times is hopeless when $k$ has hundreds of digits. **Square-and-multiply** reads the bits of $k$ instead: squaring the running power doubles the exponent, and multiplying by $a$ adds one. Every intermediate value is reduced mod $n$, so the numbers never grow.
+
+```python
+def power_mod(a, k, n):
+    result, base, steps = 1, a % n, 0
+    while k:
+        if k & 1:                      # this bit of k is set: multiply it in
+            result = result * base % n
+            steps += 1
+        base = base * base % n         # move to the next bit: square
+        steps += 1
+        k >>= 1
+    return result, steps
+
+value, steps = power_mod(7, 560, 561)
+print("7^560 mod 561 =", value, " multiplications:", steps, " built-in pow:", pow(7, 560, 561))
+# 7^560 mod 561 = 1  multiplications: 13  built-in pow: 1
+```
+
+In words: $560$ in binary has ten bits, so the loop squares ten times and multiplies three times, $13$ multiplications instead of $559$. The cost grows with the number of digits of $k$, about $2\log_2 k$ multiplications at most, which is what makes RSA and Diffie–Hellman practical. Python's three-argument `pow` does the same.
+
+<SquareMultiply />
+
+## The Chinese remainder theorem
+
+If $n_1$ and $n_2$ are coprime, the pair of remainders $(x \bmod n_1, x \bmod n_2)$ determines $x \bmod n_1 n_2$, and every pair occurs exactly once. So a system of congruences
+
+$$
+x \equiv a_1 \pmod{n_1}, \qquad x \equiv a_2 \pmod{n_2}
+
+$$
+
+has exactly one solution modulo $n_1 n_2$. The construction uses inverses: $x = a_1 M_1 y_1 + a_2 M_2 y_2$, where $M_1 = n_2$, $M_2 = n_1$, and $y_i$ is the inverse of $M_i$ modulo $n_i$.
+
+```python
+def crt(a1, n1, a2, n2):
+    y1, y2 = pow(n2, -1, n1), pow(n1, -1, n2)   # inverses exist because gcd(n1, n2) = 1
+    return (a1 * n2 * y1 + a2 * n1 * y2) % (n1 * n2)
+
+x = crt(2, 3, 3, 5)
+print("x = 2 mod 3 and x = 3 mod 5 gives x =", x, " check:", x % 3, x % 5)
+print("each x mod 15 has a distinct pair:", len({(x % 3, x % 5) for x in range(15)}) == 15)
+# x = 2 mod 3 and x = 3 mod 5 gives x = 8  check: 2 3
+# each x mod 15 has a distinct pair: True
+```
+
+In words: $8$ leaves remainder $2$ on division by $3$ and $3$ on division by $5$, and it is the only such number below $15$. All fifteen residues give different pairs, which is the theorem. Libraries use this to speed up RSA decryption, by working mod $p$ and mod $q$ separately and combining the results.
 
 ## Euler's totient
 

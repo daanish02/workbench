@@ -1,12 +1,12 @@
 ---
-title: "Abstract algebra"
+title: "Abstract Algebra"
 description: "Groups, rings and fields as sets with operations obeying simple rules, with finite examples where every axiom can be checked by computer."
 order: 7
 tier: advanced
 takeaways:
   - "A **group** is a set with an operation that is associative, has an identity element, and gives every element an inverse. The integers mod $n$ under addition form a group."
   - "A **ring** adds a second operation, multiplication, which is associative and distributes over addition. Integers and polynomials are rings."
-  - "A **field** is a ring in which every nonzero element has a multiplicative inverse. The integers mod a prime $p$ form a field, and the integers mod a composite $n$ do not."
+  - "A **field** is a commutative ring in which every nonzero element has a multiplicative inverse. The integers mod a prime $p$ form a field, and the integers mod a composite $n$ do not."
   - "Abstract algebra explains why the modular arithmetic and RSA constructions work: they depend only on group and field properties, not on the particular numbers."
 resources:
   - title: "Group (mathematics) (Wikipedia)"
@@ -52,6 +52,25 @@ print("composition commutes for all pairs:", all(compose(p, q) == compose(q, p) 
 
 In words: there are six permutations, and they do not commute in general. The group $S_3$ is the smallest non-commutative group, and it appears wherever symmetries are counted.
 
+## Subgroups, cyclic groups and generators
+
+A **subgroup** is a subset that is a group under the same operation. **Lagrange's theorem** says that in a finite group the size of every subgroup divides the size of the group. Taking powers of one element $g$ gives the smallest subgroup containing it, $\{g, g^2, g^3, \dots\}$, and its size is the **order** of $g$. A group is **cyclic** when one element, a **generator**, produces all of it.
+
+The nonzero residues mod a prime under multiplication form a cyclic group. Diffie–Hellman relies on this: it publishes a generator $g$ and works with powers $g^x \bmod p$, and recovering $x$ is the discrete logarithm problem.
+
+```python
+p = 13
+order = {g: next(k for k in range(1, p) if pow(g, k, p) == 1) for g in range(1, p)}
+print("orders of 1..12 mod 13:", order)
+print("every order divides 12:", all(12 % k == 0 for k in order.values()))
+print("generators:", [g for g, k in order.items() if k == 12])
+# orders of 1..12 mod 13: {1: 1, 2: 12, 3: 3, 4: 6, 5: 4, 6: 12, 7: 12, 8: 4, 9: 3, 10: 6, 11: 12, 12: 2}
+# every order divides 12: True
+# generators: [2, 6, 7, 11]
+```
+
+In words: every element's order divides $12$, the size of the group, as Lagrange's theorem requires. Four elements have order $12$, so each of them generates the whole group; $2^1, 2^2, \dots, 2^{12}$ visit every nonzero residue exactly once.
+
 <CayleyTable />
 
 ## Rings and fields
@@ -69,7 +88,7 @@ print("units mod 6:", invertible(6), " all nonzero elements invertible:", len(in
 In words: mod $7$ every nonzero element is invertible, so $\mathbb{Z}_7$ is a field. Mod $6$ only $1$ and $5$ are invertible, so $\mathbb{Z}_6$ is a ring but not a field. Mod $6$ also $2 \cdot 3 = 0$, which a field cannot do.
 
 <Callout type="pitfall">
-Do not assume that a structure is a field because it has addition, multiplication and most of the familiar rules. The decisive property is that every nonzero element has an inverse, and integers mod a composite number usually fail it. That is exactly why the modular inverse in RSA exists only when the gcd condition holds.
+Do not assume that a structure is a field because it has addition, multiplication and most of the familiar rules. The decisive property is that every nonzero element has an inverse, and integers mod a composite number always fail it: $\mathbb{Z}_n$ is a field exactly when $n$ is prime. That is exactly why the modular inverse in RSA exists only when the gcd condition holds.
 </Callout>
 
 ## Why it matters

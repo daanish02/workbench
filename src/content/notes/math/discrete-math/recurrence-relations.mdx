@@ -1,5 +1,5 @@
 ---
-title: "Recurrence relations"
+title: "Recurrence Relations"
 description: "Sequences defined by earlier terms, linear recurrences with constant coefficients, their characteristic equations and closed forms, checked against direct computation."
 order: 5
 tier: core
@@ -77,6 +77,44 @@ The characteristic equation method applies to linear recurrences with constant c
 
 <RecursionTree />
 
+<Callout type="pitfall">
+Binet's formula is exact in real arithmetic but not in floating point. Evaluated with doubles, it returns the wrong Fibonacci number from $n = 71$ on, because $\phi^n$ needs more significant digits than a float holds. Use integers (the loop above, or matrix powers) when exact values matter.
+</Callout>
+
+SymPy solves linear recurrences symbolically and returns the closed form directly:
+
+```python
+import sympy as sp
+
+n = sp.symbols("n", integer=True)
+f = sp.Function("f")
+print(sp.rsolve(f(n) - f(n - 1) - f(n - 2), f(n), {f(0): 0, f(1): 1}))
+print(sp.rsolve(f(n) - 2 * f(n - 1) - 1, f(n), {f(0): 0}))
+# -sqrt(5)*(1/2 - sqrt(5)/2)**n/5 + sqrt(5)*(1/2 + sqrt(5)/2)**n/5
+# 2**n - 1
+```
+
+In words: the first answer is Binet's formula, written with the two roots $\frac{1 \pm \sqrt 5}{2}$, and the second is $2^n - 1$. Run it with `uv run --with sympy`.
+
+## Divide-and-conquer recurrences
+
+The running time of a recursive algorithm usually satisfies a recurrence of a different kind, such as $T(n) = 2T(n/2) + n$ for merge sort. Unrolling it shows the answer: each level of recursion does $n$ work in total, and there are $\log_2 n$ levels, so $T(n) = n\log_2 n$ when $T(1) = 0$ and $n$ is a power of two. The **master theorem** packages this: for $T(n) = aT(n/b) + \Theta(n^c)$, compare $c$ with $\log_b a$. If $c$ is smaller the leaves dominate and $T = \Theta(n^{\log_b a})$; if equal, every level counts and $T = \Theta(n^c \log n)$; if larger, the top level dominates and $T = \Theta(n^c)$.
+
+```python
+import math
+
+def T(n):
+    return 0 if n == 1 else 2 * T(n // 2) + n
+
+for n in (8, 1024, 2 ** 20):
+    print(f"n = {n:>7}: T(n) = {T(n):>8}, n log2 n = {int(n * math.log2(n)):>8}")
+# n =       8: T(n) =       24, n log2 n =       24
+# n =    1024: T(n) =    10240, n log2 n =    10240
+# n = 1048576: T(n) = 20971520, n log2 n = 20971520
+```
+
+In words: for merge sort $a = 2$, $b = 2$ and $c = 1 = \log_2 2$, the middle case, and the recurrence gives exactly $n\log_2 n$ on powers of two. The [Divide and Conquer](../../../cs/algorithms/divide-and-conquer/) note applies the theorem to more algorithms.
+
 ## Where they appear
 
-The running time of a recursive algorithm usually satisfies a recurrence, such as $T(n) = 2T(n/2) + n$ for merge sort. The master theorem, mentioned in the resources, turns such recurrences into bounds on $T(n)$ without solving them fully.
+Recurrences describe running times, the balance of a loan paid in instalments, populations that breed in generations, and the error of iterative methods. The linear ones are solved by the characteristic equation, and the divide-and-conquer ones by the master theorem.
