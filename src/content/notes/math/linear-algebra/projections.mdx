@@ -1,7 +1,7 @@
 ---
 title: "Projections"
 description: "Finding the closest point on a line or subspace to a given vector, the projection matrix that does it, and least squares as the projection of data onto a model."
-order: 7
+order: 9
 tier: core
 takeaways:
   - "The **projection** of $\\mathbf{b}$ onto a line through $\\mathbf{u}$ is $\\frac{\\mathbf{b}\\cdot\\mathbf{u}}{\\mathbf{u}\\cdot\\mathbf{u}}\\mathbf{u}$. It is the point on the line closest to $\\mathbf{b}$."
@@ -88,12 +88,15 @@ A = np.array([[1.0, 0.0],
               [1.0, 2.0]])
 y = np.array([1.0, 2.0, 2.0])
 
-coef = np.linalg.solve(A.T @ A, A.T @ y)
+coef = np.linalg.solve(A.T @ A, A.T @ y)          # the normal equations, as derived
 print("best-fit intercept and slope:", np.round(coef, 4))  # prints: best-fit intercept and slope: [1.1667 0.5 ]
 print("residual is perpendicular to the columns:", np.allclose(A.T @ (y - A @ coef), 0.0))  # prints: residual is perpendicular to the columns: True
+
+coef_lstsq, *_ = np.linalg.lstsq(A, y, rcond=None)  # what to use in practice: no A^T A is formed
+print("lstsq agrees:", np.allclose(coef, coef_lstsq))  # prints: lstsq agrees: True
 ```
 
-In words: the best-fit line is $y = 1.1667 + 0.5x$. The residual of the fit is perpendicular to both columns of $A$, which is exactly the normal equation. No other line gives a smaller total squared error.
+In words: the best-fit line is $y = 1.1667 + 0.5x$. The residual of the fit is perpendicular to both columns of $A$, which is exactly the normal equation. No other line gives a smaller total squared error. `np.linalg.lstsq` returns the same coefficients without forming $A^\top A$. The [Regression](../../statistics/regression/) note uses the same fit to ask statistical questions: how uncertain the slope is, and what the residuals say about the model.
 
 <Callout type="pitfall">
 Solving the normal equations by forming $A^\top A$ squares the condition number, which can lose precision. Real libraries solve least squares with a QR factorisation instead, which is the same projection computed more stably.

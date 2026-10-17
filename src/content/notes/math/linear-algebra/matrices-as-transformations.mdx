@@ -1,5 +1,5 @@
 ---
-title: "Matrices as transformations"
+title: "Matrices as Transformations"
 description: "A matrix as a function that moves vectors, matrix-vector multiplication as a combination of columns, and how matrix products compose transformations."
 order: 2
 tier: core
@@ -21,7 +21,7 @@ resources:
     note: "Matrix products and inverses used in the checks below."
 ---
 
-A matrix looks like a table of numbers, but the more useful view is that it is a machine. Feed it a vector and it returns another vector. The rotations, reflections and stretches in the [Geometric Transformations](../../geometry/geometric-transformations/) note are all matrices, and so is the step that updates a neural network's weights. This note makes that view precise: what it means for a matrix to act on vectors, why the columns carry all the information, and how products of matrices describe sequences of transformations.
+A matrix looks like a table of numbers, but the more useful view is that it is a machine. Feed it a vector and it returns another vector. The rotations, reflections and stretches in the [Geometric Transformations](../../geometry/geometric-transformations/) note are all matrices, and so is each dense layer of a neural network. This note makes that view precise: what it means for a matrix to act on vectors, why the columns carry all the information, and how products of matrices describe sequences of transformations.
 
 ## A matrix acts on vectors
 
@@ -56,8 +56,6 @@ print("linear in scaling:", np.allclose(A @ (3 * x), 3 * (A @ x)))  # prints: li
 
 In words: $A\mathbf{x} = (2 \cdot 1 + 1 \cdot 2,\ 0 \cdot 1 + 3 \cdot 2) = (4, 6)$. The two linearity checks both return `True`, which is what linearity says must happen. A check on a few inputs does not prove linearity in general, but for matrices the rule follows directly from the row-by-row definition of the product.
 
-<TransformGrid />
-
 ## The columns are the story
 
 Read $A\mathbf{x}$ column by column instead of row by row. The product is a linear combination of the columns of $A$, weighted by the entries of $\mathbf{x}$:
@@ -67,7 +65,7 @@ A\mathbf{x} = x_1\,\mathbf{a}_1 + x_2\,\mathbf{a}_2.
 
 $$
 
-This is the most useful view. The column $\mathbf{a}_1$ is where the first basis vector $\mathbf{e}_1$ lands, and $\mathbf{a}_2$ is where $\mathbf{e}_2$ lands. Every other point is a combination of those two, so knowing the two columns determines the entire transformation. A rotation by $90°$ has columns $(0, 1)$ and $(-1, 0)$: the first axis turns to point up, and the second turns to point left.
+This is the most useful view. The column $\mathbf{a}_1$ is where the first basis vector $\mathbf{e}_1$ lands, and $\mathbf{a}_2$ is where $\mathbf{e}_2$ lands. Every other point is a combination of those two, so knowing the two columns determines the entire transformation. A rotation by $90^\circ$ has columns $(0, 1)$ and $(-1, 0)$: the first axis turns to point up, and the second turns to point left.
 
 ```python
 import numpy as np
@@ -81,11 +79,15 @@ print("columns combined:", x[0] * A[:, 0] + x[1] * A[:, 1])  # prints: columns c
 
 In words: the same answer, $(4, 6)$, comes from weighting the columns $(2, 0)$ and $(1, 3)$ by $1$ and $2$. The column view is the one to keep, because it reveals what happens to the basis, which is everything about the transformation.
 
+<ColumnCombination />
+
+The [Geometric Transformations](../../geometry/geometric-transformations/) note shows the same idea acting on the whole plane at once, for rotations, shears and reflections.
+
 ## Products are compositions
 
 If $A$ and $B$ are matrices, the product $AB$ is the matrix that applies $B$ first and then $A$: $(AB)\mathbf{x} = A(B\mathbf{x})$. This is why matrix multiplication is defined the way it is. It is the rule that makes composition of linear maps come out right.
 
-Matrix multiplication is **not commutative** in general. Applying a shear then a rotation is different from applying the rotation then the shear. The check below confirms both facts for a shear-like matrix $A$ and a $90°$ rotation $B$.
+Matrix multiplication is **not commutative** in general. Applying a shear then a rotation is different from applying the rotation then the shear. The check below confirms both facts for a shear-like matrix $A$ and a $90^\circ$ rotation $B$.
 
 ```python
 import numpy as np

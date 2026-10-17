@@ -1,7 +1,7 @@
 ---
 title: "Determinants"
 description: "A single number that tells you how a square matrix scales area or volume, whether it flips orientation, and whether it can be inverted."
-order: 4
+order: 5
 tier: core
 takeaways:
   - "The **determinant** $\\det A$ of a square matrix is a number. For $2 \\times 2$, $\\det\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix} = ad - bc$."
@@ -54,7 +54,7 @@ In words: $\det M = 3 \cdot 2 - 1 \cdot 1 = 5$. The unit square, with area $1$, 
 
 Because the factor is signed, the sign of $\det A$ records orientation. A positive determinant means the transformation preserves the order of the basis vectors (counterclockwise stays counterclockwise). A negative one means it reverses it, as a mirror does. A zero determinant means the image has zero area: the parallelogram collapsed onto a line or a point.
 
-The three effects multiply. Scaling by $s$ in one direction and $t$ in the other gives $\det = st$, so a stretch by $2$ and $3$ scales area by $6$, as in the [Geometric Transformations](../../geometry/geometric-transformations/) note. A rotation has $\det = 1$, because it preserves area.
+Scaling factors multiply under composition. Scaling by $s$ in one direction and $t$ in the other gives $\det = st$, so a stretch by $2$ and $3$ scales area by $6$, as in the [Geometric Transformations](../../geometry/geometric-transformations/) note. A rotation has $\det = 1$, because it preserves area.
 
 ## The 3×3 formula
 
@@ -101,6 +101,30 @@ In words: $M$ has determinant $5$ and an inverse that undoes it. The matrix $S$ 
 <Callout type="pitfall">
 The determinant is a poor measure of size for large matrices. Its magnitude can be tiny or huge even for well-conditioned matrices, and computing it by cofactors takes factorial time. Use a factorisation for numerical work, and reserve the determinant for theory and small matrices.
 </Callout>
+
+## Products and computation
+
+The determinant of a product is the product of the determinants, $\det(AB) = \det A \det B$, because the area factors of two transformations multiply. The same rule is how libraries compute determinants: factor $PA = LU$, and $\det A$ is the product of $U$'s diagonal, with a sign for each row swap. That takes $O(n^3)$ work instead of the $O(n!)$ of cofactor expansion.
+
+```python
+import numpy as np
+from scipy.linalg import lu
+
+M = np.array([[3.0, 1.0], [1.0, 2.0]])
+R = np.array([[0.0, -1.0], [1.0, 0.0]])            # rotation, det 1
+print("det(MR) = det M det R:", np.isclose(np.linalg.det(M @ R), np.linalg.det(M) * np.linalg.det(R)))
+
+N = np.array([[2.0, 0.0, 1.0], [1.0, 3.0, 2.0], [1.0, 1.0, 2.0]])
+P, L, U = lu(N)
+print("product of U's diagonal times det P:", round(np.prod(np.diag(U)) * np.linalg.det(P), 6))
+sign, logdet = np.linalg.slogdet(0.1 * np.eye(400))
+print("det of 0.1 I (400x400) underflows:", np.linalg.det(0.1 * np.eye(400)), " slogdet:", sign, round(logdet, 2))
+# det(MR) = det M det R: True
+# product of U's diagonal times det P: 6.0
+# det of 0.1 I (400x400) underflows: 0.0  slogdet: 1.0 -921.03
+```
+
+In words: the product rule holds, the LU route reproduces the cofactor answer $6$, and the last line shows the pitfall below in action: a perfectly well-conditioned matrix whose determinant, $10^{-400}$, is too small for a float. `slogdet` returns its logarithm instead.
 
 ## Where determinants are used
 

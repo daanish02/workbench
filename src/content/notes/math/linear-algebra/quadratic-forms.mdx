@@ -1,0 +1,106 @@
+---
+title: "Quadratic Forms"
+description: "Expressions xᵀAx, positive definite matrices, how eigenvalues decide whether a quadratic is a bowl, a saddle or a ridge, and where these shapes appear in optimisation, statistics and geometry."
+order: 7
+tier: core
+takeaways:
+  - "A **quadratic form** is $q(\\mathbf{x}) = \\mathbf{x}^\\top A\\mathbf{x}$ for a symmetric matrix $A$. In two variables it is $ax^2 + 2bxy + cy^2$."
+  - "In the eigenvector basis of $A$ the cross terms vanish: $q = \\lambda_1 y_1^2 + \\lambda_2 y_2^2$. The signs of the eigenvalues decide the shape."
+  - "$A$ is **positive definite** when $\\mathbf{x}^\\top A\\mathbf{x} > 0$ for every nonzero $\\mathbf{x}$, equivalently when every eigenvalue is positive. Then $q$ is a bowl with a single minimum."
+  - "Mixed signs give a **saddle**; a zero eigenvalue gives a flat **ridge** direction, and the matrix is only semidefinite."
+  - "Hessians, covariance matrices and the ellipses of conic sections are all quadratic forms. A Cholesky factorisation exists exactly when the matrix is positive definite, which makes it a cheap test."
+resources:
+  - title: "Definite matrix (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Definite_matrix"
+    note: "Equivalent tests for positive definiteness, with examples."
+  - title: "Quadratic form (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Quadratic_form"
+    note: "The general theory, including diagonalisation and Sylvester's law of inertia."
+  - title: "NumPy linalg.eigvalsh"
+    url: "https://numpy.org/doc/stable/reference/generated/numpy.linalg.eigvalsh.html"
+    note: "Eigenvalues of a symmetric matrix, used for the shape test below."
+---
+
+A linear function has a constant slope. The next simplest functions of several variables are quadratics, and they appear wherever a smooth function is examined near a point: the second-order Taylor expansion of a loss, the exponent of a Gaussian density, the equation of an ellipse. Every quadratic in several variables can be written with one symmetric matrix, and the [eigenvalues](../eigenvalues-and-eigenvectors/) of that matrix decide its shape. This note builds that connection and the test for positive definiteness that optimisation and statistics depend on.
+
+## The matrix of a quadratic
+
+A **quadratic form** is $q(\mathbf{x}) = \mathbf{x}^\top A\mathbf{x}$ with $A$ symmetric. In two variables,
+
+$$
+\begin{pmatrix} x & y \end{pmatrix}\begin{pmatrix} a & b \\ b & c \end{pmatrix}\begin{pmatrix} x \\ y \end{pmatrix} = ax^2 + 2bxy + cy^2.
+
+$$
+
+The off-diagonal entry is half the coefficient of $xy$, because it appears twice. Any quadratic expression can be written this way: a non-symmetric $A$ gives the same form as its symmetric part $\frac{1}{2}(A + A^\top)$, so nothing is lost by insisting on symmetry.
+
+## Diagonalising: eigenvalues decide the shape
+
+A symmetric matrix has orthonormal eigenvectors, so $A = Q\Lambda Q^\top$ with $Q$ a rotation. Substituting $\mathbf{y} = Q^\top \mathbf{x}$, the coordinates along the eigenvectors, gives
+
+$$
+q(\mathbf{x}) = \mathbf{y}^\top \Lambda\, \mathbf{y} = \lambda_1 y_1^2 + \lambda_2 y_2^2 + \cdots.
+
+$$
+
+In words: in the right rotated axes a quadratic has no cross terms, only squares weighted by eigenvalues. All positive makes a **bowl** (positive definite), all negative an upside-down bowl (negative definite), mixed signs a **saddle** (indefinite), and a zero eigenvalue a flat **ridge** along its eigenvector (semidefinite).
+
+```python
+import numpy as np
+
+def shape(A):
+    lam = np.linalg.eigvalsh(A)
+    if np.all(lam > 0):
+        return lam, "positive definite: bowl"
+    if np.all(lam < 0):
+        return lam, "negative definite: upside-down bowl"
+    if np.all(lam >= 0) or np.all(lam <= 0):
+        return lam, "semidefinite: ridge"
+    return lam, "indefinite: saddle"
+
+for name, A in [("x^2 + 3y^2", [[1, 0], [0, 3]]), ("x^2 + 4xy + y^2", [[1, 2], [2, 1]]), ("(x + y)^2", [[1, 1], [1, 1]])]:
+    lam, kind = shape(np.array(A, float))
+    print(f"{name:>16}: eigenvalues {lam.round(3)} -> {kind}")
+#       x^2 + 3y^2: eigenvalues [1. 3.] -> positive definite: bowl
+#  x^2 + 4xy + y^2: eigenvalues [-1.  3.] -> indefinite: saddle
+#        (x + y)^2: eigenvalues [0. 2.] -> semidefinite: ridge
+```
+
+In words: $x^2 + 4xy + y^2$ looks like a sum of positive terms, but its eigenvalues are $-1$ and $3$, so it dips below zero along $(1, -1)$: at $(1, -1)$ it equals $1 - 4 + 1 = -2$. The cross term can overpower the squares, and only the eigenvalues settle the question.
+
+<QuadraticShapes />
+
+## Testing positive definiteness
+
+Three equivalent tests are used in practice:
+
+- every eigenvalue is positive;
+- every leading principal minor is positive (for $2 \times 2$: $a > 0$ and $ac - b^2 > 0$), which is **Sylvester's criterion**;
+- a **Cholesky factorisation** $A = GG^\top$ exists.
+
+The last is the cheapest, about $\frac{1}{3}n^3$ operations, and it is how libraries check. NumPy raises an error when the factorisation fails.
+
+```python
+import numpy as np
+
+for A in ([[4.0, 2.0], [2.0, 3.0]], [[1.0, 2.0], [2.0, 1.0]]):
+    try:
+        np.linalg.cholesky(np.array(A))
+        print(A, "-> Cholesky succeeds: positive definite")
+    except np.linalg.LinAlgError:
+        print(A, "-> Cholesky fails: not positive definite")
+# [[4.0, 2.0], [2.0, 3.0]] -> Cholesky succeeds: positive definite
+# [[1.0, 2.0], [2.0, 1.0]] -> Cholesky fails: not positive definite
+```
+
+In words: the first matrix passes ($4 > 0$ and $4 \cdot 3 - 2^2 = 8 > 0$), and the second fails because $1 \cdot 1 - 2^2 < 0$. The [Matrix Decompositions](../matrix-decompositions/) note uses the same factor to solve systems.
+
+<Callout type="pitfall">
+Positive entries do not make a matrix positive definite. $\begin{pmatrix} 1 & 2 \\ 2 & 1 \end{pmatrix}$ has only positive entries and is indefinite. Check eigenvalues, minors or Cholesky, not the signs of the entries.
+</Callout>
+
+## Where quadratic forms appear
+
+- **Optimisation.** Near a critical point a smooth function is $f(\mathbf{x}_0) + \frac{1}{2}\mathbf{h}^\top H \mathbf{h}$, a quadratic form in the step $\mathbf{h}$ with the Hessian $H$. Positive definite means a minimum; the [Jacobians and Hessians](../../calculus/gradients-jacobians-and-hessians/) note uses this test, and the eigenvalue spread sets how fast [gradient descent](../../optimization/gradient-descent/) converges.
+- **Statistics.** A covariance matrix is always positive semidefinite, since $\mathbf{w}^\top \Sigma \mathbf{w}$ is the variance of $\mathbf{w}^\top X$. The [Multivariate Normal](../../probability/multivariate-normal/) density is the exponential of a negative quadratic form.
+- **Geometry.** The level set $\mathbf{x}^\top A\mathbf{x} = 1$ of a positive definite form is an ellipse with axes along the eigenvectors and semi-axes $1/\sqrt{\lambda_i}$; an indefinite form gives a hyperbola, as in the [Conic Sections](../../geometry/conic-sections/) note.

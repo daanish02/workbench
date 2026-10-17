@@ -1,7 +1,7 @@
 ---
-title: "Matrix decompositions"
+title: "Matrix Decompositions"
 description: "Writing a matrix as a product of simpler matrices, LU, QR and Cholesky, so that solving systems, least squares and many other problems become cheap and stable."
-order: 10
+order: 12
 tier: core
 takeaways:
   - "A **decomposition** writes a matrix as a product of simpler ones. Each factor has a shape that makes the next step easy, such as triangular for solving, or orthogonal for stability."
@@ -33,6 +33,7 @@ The check below factors a $2 \times 2$ matrix by hand, then solves a system thro
 
 ```python
 import numpy as np
+from scipy.linalg import solve_triangular
 
 A = np.array([[4.0, 3.0],
               [6.0, 3.0]])
@@ -45,12 +46,31 @@ print("L U reproduces A:", np.allclose(L @ U, A))  # prints: L U reproduces A: T
 print("U is upper triangular:", np.allclose(np.tril(U, -1), 0))  # prints: U is upper triangular: True
 
 b = np.array([1.0, 2.0])
-y = np.linalg.solve(L, b)
-x = np.linalg.solve(U, y)
+y = solve_triangular(L, b, lower=True)   # forward substitution, about n^2 work
+x = solve_triangular(U, y)               # back substitution
 print("solution via LU equals direct solve:", np.allclose(x, np.linalg.solve(A, b)))  # prints: solution via LU equals direct solve: True
 ```
 
 In words: the multiplier $\frac{6}{4} = 1.5$ sits in $L$, and $U$ holds the eliminated rows. The product $LU$ returns $A$, and the two triangular solves give the same answer as a direct solve. The factorisation is the same for any $\mathbf{b}$.
+
+In practice the library factors once, with pivoting, and reuses the factors for every new right-hand side:
+
+```python
+import numpy as np
+from scipy.linalg import lu, lu_factor, lu_solve
+
+A = np.array([[4.0, 3.0], [6.0, 3.0]])
+P, L, U = lu(A)                       # A = P L U; P records the row swap
+print("pivoted L:", L.round(4).tolist(), " P swaps rows:", not np.allclose(P, np.eye(2)))  # prints: pivoted L: [[1.0, 0.0], [0.6667, 1.0]]  P swaps rows: True
+
+factors = lu_factor(A)                # factor once
+for b in ([1.0, 2.0], [0.0, 1.0]):    # then each solve is two cheap triangular passes
+    print("solve for b =", b, "->", lu_solve(factors, b).round(4))
+# solve for b = [1.0, 2.0] -> [ 0.5    -0.3333]
+# solve for b = [0.0, 1.0] -> [ 0.5    -0.6667]
+```
+
+In words: SciPy swaps the rows so the larger entry $6$ is the pivot, which is the partial pivoting of the pitfall above, and the multiplier becomes $\frac{4}{6}$. After one factorisation, each new $\mathbf{b}$ costs only the two triangular solves. Run it with `uv run --with numpy --with scipy`.
 
 <Callout type="pitfall">
 LU without row swaps fails when a pivot is zero, and it can be unstable when a pivot is tiny. Libraries use partial pivoting, which records a permutation $P$ so that $PA = LU$. The idea is the same; the bookkeeping is longer.

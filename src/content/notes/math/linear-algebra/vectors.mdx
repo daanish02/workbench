@@ -76,15 +76,34 @@ print("angle between u and v (degrees):", round(np.degrees(np.arccos(cos_theta))
 print("u . w =", np.dot(u, w))  # prints: u . w = 0.0
 ```
 
-In words: $\mathbf{u}\cdot\mathbf{v} = 3 - 8 = -5$, which is negative, so the two arrows point into roughly opposite halves of the plane. The angle is about $117°$, consistent with that sign. The vector $\mathbf{w} = (-4, 3)$ is the vector $\mathbf{u}$ rotated by $90°$, and their dot product is zero, so they are perpendicular.
+In words: $\mathbf{u}\cdot\mathbf{v} = 3 - 8 = -5$, which is negative, so the two arrows point into roughly opposite halves of the plane. The angle is about $117^\circ$, consistent with that sign. The vector $\mathbf{w} = (-4, 3)$ is the vector $\mathbf{u}$ rotated by $90^\circ$, and their dot product is zero, so they are perpendicular.
 
 <Callout type="pitfall">
 The dot product of two vectors is a number, not a vector. The cross product, which gives a vector perpendicular to both inputs, exists only in three dimensions. Mixing them up is a common source of errors in physics code.
 </Callout>
 
+## Span and independence
+
+The **span** of a set of vectors is every linear combination of them. Two non-parallel vectors in the plane span the whole plane; two parallel ones span only a line. A set is **linearly independent** when no vector in it is a combination of the others, which is the same as saying the only combination that gives the zero vector is the one with all coefficients zero. Independent vectors carry no redundancy: each one adds a new direction to the span.
+
+The rank of the matrix whose columns are the vectors counts the independent directions, so it is a quick test:
+
+```python
+import numpy as np
+
+pair = np.column_stack([[3.0, 4.0], [1.0, -2.0]])
+parallel = np.column_stack([[3.0, 4.0], [-6.0, -8.0]])
+print("rank of (3,4), (1,-2):", np.linalg.matrix_rank(pair), "-> independent, spans the plane")
+print("rank of (3,4), (-6,-8):", np.linalg.matrix_rank(parallel), "-> dependent, spans a line")
+# rank of (3,4), (1,-2): 2 -> independent, spans the plane
+# rank of (3,4), (-6,-8): 1 -> dependent, spans a line
+```
+
+In words: $(3, 4)$ and $(1, -2)$ point in different directions, so the rank is $2$ and together they reach every point of the plane. $(-6, -8)$ is $-2$ times $(3, 4)$, so the second pair has rank $1$ and covers only the line through $(3, 4)$.
+
 ## Basis and coordinates
 
-A **basis** is a set of vectors from which every vector can be built as a unique linear combination. The standard basis of the plane is $\mathbf{e}_1 = (1, 0)$ and $\mathbf{e}_2 = (0, 1)$, and the coordinates of $(3, 4)$ are just the coefficients: $3\mathbf{e}_1 + 4\mathbf{e}_2$. Choosing a different basis changes the coordinates but not the vector. That idea returns in the [Matrices as Transformations](../matrices-as-transformations/) note, where a change of basis is a change of view.
+A **basis** is a linearly independent set that spans the space, so every vector can be built from it as a unique linear combination. The standard basis of the plane is $\mathbf{e}_1 = (1, 0)$ and $\mathbf{e}_2 = (0, 1)$, and the coordinates of $(3, 4)$ are just the coefficients: $3\mathbf{e}_1 + 4\mathbf{e}_2$. Choosing a different basis changes the coordinates but not the vector. That idea returns in the [Matrices as Transformations](../matrices-as-transformations/) note, where a change of basis is a change of view.
 
 ## Where vectors appear
 

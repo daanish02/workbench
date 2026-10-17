@@ -1,13 +1,13 @@
 ---
-title: "Eigenvalues and eigenvectors"
+title: "Eigenvalues and Eigenvectors"
 description: "The directions a matrix only stretches, the characteristic equation that finds them, and why they reveal the long-run behaviour of a transformation."
-order: 5
+order: 6
 tier: core
 takeaways:
   - "An **eigenvector** $\\mathbf{v}$ of $A$ is a nonzero vector that $A$ only scales: $A\\mathbf{v} = \\lambda\\mathbf{v}$. The number $\\lambda$ is the **eigenvalue**, and the direction of $\\mathbf{v}$ is unchanged."
   - "Eigenvalues are the roots of the **characteristic equation** $\\det(A - \\lambda I) = 0$. For a $2 \\times 2$ matrix this is $\\lambda^2 - (\\operatorname{trace} A)\\lambda + \\det A = 0$."
   - "A matrix that stretches along its eigenvectors is easy to understand: repeated application multiplies each eigen-direction by $\\lambda^k$, so the large eigenvalues dominate."
-  - "Some matrices have **no real eigenvectors**. A $90°$ rotation turns every direction, so its eigenvalues are $\\pm i$."
+  - "Some matrices have **no real eigenvectors**. A $90^\\circ$ rotation turns every direction, so its eigenvalues are $\\pm i$."
   - "A **symmetric** matrix always has real eigenvalues and perpendicular eigenvectors. This is why eigenvalues matter so much for covariance matrices, as the PCA note shows."
 resources:
   - title: "Eigenvalues and eigenvectors (Wikipedia)"
@@ -31,8 +31,6 @@ $$
 
 Geometrically, the matrix moves $\mathbf{v}$ along its own line. If $\lambda > 1$ it stretches, if $0 < \lambda < 1$ it shrinks, if $\lambda < 0$ it reverses, and if $\lambda = 0$ it collapses the direction to the origin. Any nonzero multiple of an eigenvector is also an eigenvector with the same eigenvalue, so each eigenvalue comes with a whole line of eigenvectors.
 
-<StaticEigenDirections />
-
 <EigenExplorer />
 
 ## Finding eigenvalues
@@ -53,24 +51,52 @@ import numpy as np
 
 A = np.array([[2.0, 1.0],
               [1.0, 2.0]])
-vals, vecs = np.linalg.eig(A)
-print("eigenvalues:", np.round(vals, 6))  # prints: eigenvalues: [3.+0.j 1.+0.j]
+vals, vecs = np.linalg.eigh(A)  # eigh: for symmetric matrices, real output in ascending order
+print("eigenvalues:", np.round(vals, 6))
 for lam, v in zip(vals, vecs.T):
-    print(f"lambda={lam:.4f}  A v - lambda v max:", f"{np.max(np.abs(A @ v - lam * v)):.1e}")  # prints: lambda=3.0000+0.0000j A v - lambda v max: 0.0e+00 | lambda=1.0000+0.0000j A v - lambda v max: 0.0e+00
+    print(f"lambda={lam:.4f}  A v - lambda v max:", f"{np.max(np.abs(A @ v - lam * v)):.1e}")
 
 tr, det = np.trace(A), np.linalg.det(A)
-print("roots of lambda^2 - tr lambda + det:", np.roots([1, -tr, det]))  # prints: roots of lambda^2 - tr lambda + det: [3. 1.]
+print("roots of lambda^2 - tr lambda + det:", np.roots([1, -tr, det]))
+# eigenvalues: [1. 3.]
+# lambda=1.0000  A v - lambda v max: 0.0e+00
+# lambda=3.0000  A v - lambda v max: 0.0e+00
+# roots of lambda^2 - tr lambda + det: [3. 1.]
 ```
 
-In words: the eigenvalues are $3$ and $1$, and the residuals $A\mathbf{v} - \lambda\mathbf{v}$ are exactly zero for both. The quadratic from the characteristic equation has the same roots. The eigenvectors are $(1, 1)$ for $\lambda = 3$ and $(1, -1)$ for $\lambda = 1$, which are perpendicular because the matrix is symmetric.
+In words: the eigenvalues are $1$ and $3$ (`eigh` lists them in ascending order; the general `np.linalg.eig` works for any square matrix but returns complex numbers and no fixed order), and the residuals $A\mathbf{v} - \lambda\mathbf{v}$ are exactly zero for both. The quadratic from the characteristic equation has the same roots. The eigenvectors are $(1, 1)$ for $\lambda = 3$ and $(1, -1)$ for $\lambda = 1$, which are perpendicular because the matrix is symmetric.
 
 ## Why they matter: powers
 
 If $A$ has eigenvectors $\mathbf{v}_1, \mathbf{v}_2$ that form a basis, any vector is a combination of them, and $A^k$ multiplies each eigen-component by $\lambda^k$. For large $k$ the component with the largest $|\lambda|$ dominates. This is the reason eigenvalues describe the long-run behaviour of repeated transformations, such as population growth or the steady state of a Markov chain.
 
+In matrix form this is **diagonalisation**: with the eigenvectors as the columns of $V$ and the eigenvalues on the diagonal of $D$, $A = VDV^{-1}$, and so $A^k = VD^kV^{-1}$. Powers of a diagonal matrix are just powers of its entries.
+
+The same fact gives the simplest way to find the dominant eigenvector, **power iteration**: multiply any starting vector by $A$ again and again, and rescale. The other components shrink by the ratio $|\lambda_2 / \lambda_1|$ every step.
+
+```python
+import numpy as np
+
+A = np.array([[2.0, 1.0], [1.0, 2.0]])
+v = np.array([1.0, 0.0])
+for k in range(1, 9):
+    v = A @ v
+    v /= np.linalg.norm(v)                  # rescale so the numbers stay finite
+    if k in (1, 2, 4, 8):
+        print(f"step {k}: v = {v.round(4)}, Rayleigh quotient = {v @ A @ v:.5f}")
+# step 1: v = [0.8944 0.4472], Rayleigh quotient = 2.80000
+# step 2: v = [0.7809 0.6247], Rayleigh quotient = 2.97561
+# step 4: v = [0.7158 0.6983], Rayleigh quotient = 2.99970
+# step 8: v = [0.7072 0.707 ], Rayleigh quotient = 3.00000
+```
+
+In words: the vector turns toward $(1, 1)/\sqrt 2$, the eigenvector for $\lambda = 3$, and the Rayleigh quotient $\mathbf{v}^\top A\mathbf{v}$ approaches $3$. The error shrinks by $\frac{1}{3}$ each step, the ratio of the two eigenvalues. Google's original PageRank was computed exactly this way on the web's link matrix.
+
+<PowerIteration />
+
 ## Rotations have none
 
-A rotation by $90°$ maps no direction onto itself, so it has no real eigenvectors. The characteristic equation $\lambda^2 + 1 = 0$ has the complex roots $\pm i$. The check below confirms this, and also shows that a diagonal matrix has its diagonal entries as eigenvalues.
+A rotation by $90^\circ$ maps no direction onto itself, so it has no real eigenvectors. The characteristic equation $\lambda^2 + 1 = 0$ has the complex roots $\pm i$. The check below confirms this, and also shows that a diagonal matrix has its diagonal entries as eigenvalues.
 
 ```python
 import numpy as np

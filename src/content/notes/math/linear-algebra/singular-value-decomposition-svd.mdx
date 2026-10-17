@@ -1,7 +1,7 @@
 ---
-title: "Singular value decomposition (SVD)"
+title: "SVD"
 description: "Every matrix, however ugly, is a rotation, a stretch along perpendicular axes, and another rotation. The singular values measure the stretches, and the largest ones give the best low-rank approximation."
-order: 8
+order: 10
 tier: core
 takeaways:
   - "Every real matrix factors as $A = U\\Sigma V^\\top$, with $U$ and $V$ orthogonal and $\\Sigma$ diagonal with nonnegative entries. Read right to left: rotate, stretch along the axes, rotate."
@@ -64,6 +64,26 @@ print("rank-1 approximation error (spectral norm):", round(np.linalg.norm(A - A1
 ```
 
 In words: dropping the second term costs exactly the second singular value, $2$. An image is a large matrix of pixel values, and most of its singular values are small. Keeping only the largest few gives a close picture at a fraction of the storage, which is how SVD compresses images.
+
+<SvdImage />
+
+A symmetric matrix is the easy case, because its SVD is its eigendecomposition. The SVD earns its name on a matrix that is not square:
+
+```python
+import numpy as np
+
+A = np.array([[3.0, 2.0, 2.0],
+              [2.0, 3.0, -2.0]])            # 2 x 3: no eigenvalues at all
+U, s, Vt = np.linalg.svd(A)
+print("singular values:", s.round(4), " shapes:", U.shape, Vt.shape)
+print("A v1 = s1 u1:", np.allclose(A @ Vt[0], s[0] * U[:, 0]))
+print("pseudo-inverse solves A x = b in least squares:", np.linalg.pinv(A).round(4).tolist())
+# singular values: [5. 3.]  shapes: (2, 2) (3, 3)
+# A v1 = s1 u1: True
+# pseudo-inverse solves A x = b in least squares: [[0.1556, 0.0444], [0.0444, 0.1556], [0.2222, -0.2222]]
+```
+
+In words: a $2 \times 3$ matrix has no eigenvalues, but it has singular values $5$ and $3$: the right singular vector $\mathbf{v}_1$ in $\mathbb{R}^3$ is sent to $5$ times $\mathbf{u}_1$ in $\mathbb{R}^2$. Inverting the nonzero singular values gives the **pseudo-inverse**, `np.linalg.pinv`, which returns the least-squares (and, among those, the shortest) solution of any linear system.
 
 ## Rank from singular values
 

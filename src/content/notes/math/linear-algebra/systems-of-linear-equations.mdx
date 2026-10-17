@@ -1,5 +1,5 @@
 ---
-title: "Systems of linear equations"
+title: "Linear Systems"
 description: "Solving several linear equations at once by Gaussian elimination, reading the answer from row echelon form, and deciding when a solution is unique, missing or infinite."
 order: 3
 tier: core
@@ -7,7 +7,7 @@ takeaways:
   - "A **system of linear equations** is a set of equations in the same unknowns, such as $2x + y = 5$ and $x - y = 1$. Written as $A\\mathbf{x} = \\mathbf{b}$, it asks which inputs a matrix sends to $\\mathbf{b}$."
   - "**Gaussian elimination** solves a system by adding multiples of one equation to another until the unknowns come out one at a time. Each step keeps the same solutions."
   - "The **row echelon form** is the staircase shape elimination produces. It shows the pivots, the free variables, and whether the system is consistent."
-  - "A system has **no solution**, **exactly one**, or **infinitely many**. The rank of $A$ compared with the number of unknowns decides which."
+  - "A system has **no solution**, **exactly one**, or **infinitely many**. The rank of $A$, compared with the rank of $[A \\mid \\mathbf{b}]$ and with the number of unknowns, decides which."
   - "In practice, use a library solver. Elimination is the idea behind it, but production code uses factorisations that are faster and more stable."
 resources:
   - title: "Gaussian elimination (Wikipedia)"
@@ -89,11 +89,49 @@ S = np.array([[1.0, 2.0], [2.0, 4.0]])  # the second equation is twice the first
 print("rank of singular S:", np.linalg.matrix_rank(S))  # prints: rank of singular S: 1
 ```
 
-In words: $A$ has rank $3$, which matches its three unknowns, so the system has exactly one solution. The matrix $S$ has rank $1$, below its two unknowns. Its two equations are the same line, so there are infinitely many solutions, one for each point on that line.
+In words: $A$ has rank $3$, which matches its three unknowns, so the system has exactly one solution. The matrix $S$ has rank $1$, below its two unknowns. Its two rows describe the same line. If the right-hand side is consistent, such as $\mathbf{b} = (3, 6)$, there are infinitely many solutions, one for each point on that line; if not, such as $\mathbf{b} = (3, 7)$, there are none.
 
 <Callout type="pitfall">
 Floating-point elimination can produce a tiny nonzero number where exact arithmetic gives zero. Testing a pivot for equality with zero is unreliable in practice; library routines pick a pivot by size and check the rank with a tolerance.
 </Callout>
+
+## Free variables in practice
+
+The reduced row echelon form makes the pivots and free variables explicit. SymPy computes it in exact arithmetic, which avoids the rounding question in the pitfall above:
+
+```python
+import sympy as sp
+
+M = sp.Matrix([[1, 2, 1, 4], [2, 4, 3, 9], [1, 2, 2, 5]])  # augmented matrix [A | b]
+R, pivots = M.rref()
+print(R.tolist())
+print("pivot columns:", pivots)
+# [[1, 2, 0, 3], [0, 0, 1, 1], [0, 0, 0, 0]]
+# pivot columns: (0, 2)
+```
+
+In words: the pivots sit in columns $0$ and $2$, so $x$ and $z$ are determined and $y$ is free. The rows read $x + 2y = 3$ and $z = 1$, and the zero row says the third equation added nothing new. Every solution is $(3 - 2t, t, 1)$ for some $t$, a line of solutions. Run it with `uv run --with sympy`.
+
+## Conditioning
+
+A system can have a unique solution and still be untrustworthy. When the equations are nearly parallel, a tiny change in $\mathbf{b}$ moves the solution a long way. The **condition number** $\kappa(A) = \|A\|\,\|A^{-1}\|$ measures this: relative errors in $\mathbf{b}$ can be amplified by up to $\kappa$ in the solution, so about $\log_{10} \kappa$ digits are lost.
+
+```python
+import numpy as np
+
+A = np.array([[1.0, 1.0], [1.0, 1.0001]])        # two nearly parallel lines
+b = np.array([2.0, 2.0001])
+x = np.linalg.solve(A, b)
+x2 = np.linalg.solve(A, b + np.array([0.0, 0.0001]))  # nudge b by 1e-4
+print("condition number:", f"{np.linalg.cond(A):.0f}")
+print("solution:", x.round(4), " after nudging b:", x2.round(4) + 0.0)  # + 0.0 turns -0.0 into 0.0
+# condition number: 40002
+# solution: [1. 1.]  after nudging b: [0. 2.]
+```
+
+In words: a change of $0.0001$ in one entry of $\mathbf{b}$ moves the solution from $(1, 1)$ to $(0, 2)$. The condition number, about $4 \times 10^4$, warns of exactly this. A well-conditioned matrix such as the identity has $\kappa = 1$, and the [Hilbert matrix](https://en.wikipedia.org/wiki/Hilbert_matrix) of size $8$ has $\kappa \approx 10^{10}$, which leaves only about six reliable digits in double precision.
+
+<ConditionLines />
 
 ## Cost and practice
 
@@ -101,4 +139,4 @@ Elimination on an $n \times n$ system takes roughly $\frac{2}{3}n^3$ operations,
 
 ## Where systems come from
 
-Balancing chemical equations, fitting a line through data points, finding equilibrium in a network of springs, and the linear equations that a neural network's training step solves approximately all reduce to this problem. Learning to read the echelon form is the fastest way to see whether a model is over- or under-determined.
+Balancing chemical equations, fitting a line through data points, finding equilibrium in a network of springs, and the inner step of Newton-type optimisers all reduce to this problem. Learning to read the echelon form is the fastest way to see whether a model is over- or under-determined. The [Fundamental Subspaces](../fundamental-subspaces/) note describes the full set of solutions in terms of the null space.

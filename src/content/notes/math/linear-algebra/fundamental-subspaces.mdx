@@ -1,0 +1,106 @@
+---
+title: "Fundamental Subspaces"
+description: "The column space, null space, row space and left null space of a matrix, the rank–nullity theorem that links their sizes, and what they say about the solutions of Ax = b."
+order: 4
+tier: core
+takeaways:
+  - "The **column space** $C(A)$ is every output $A\\mathbf{x}$ can reach. $A\\mathbf{x} = \\mathbf{b}$ has a solution exactly when $\\mathbf{b}$ is in it."
+  - "The **null space** $N(A)$ is every $\\mathbf{x}$ with $A\\mathbf{x} = \\mathbf{0}$. If it holds more than the zero vector, solutions are never unique: add any null-space vector to a solution and you get another."
+  - "**Rank–nullity:** for an $m \\times n$ matrix, $\\operatorname{rank} A + \\dim N(A) = n$. Every input direction either survives into the output or is crushed to zero."
+  - "Every solution of $A\\mathbf{x} = \\mathbf{b}$ is one particular solution plus a null-space vector. The solution set is a shifted copy of the null space."
+  - "The **row space** is perpendicular to the null space, and the **left null space** is perpendicular to the column space. Least squares uses the second fact: the residual lies in the left null space."
+resources:
+  - title: "The Four Fundamental Subspaces (Gilbert Strang)"
+    url: "https://web.mit.edu/18.06/www/Essays/newpaper_ver3.pdf"
+    note: "Strang's short paper on the picture behind this note."
+  - title: "Rank–nullity theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Rank%E2%80%93nullity_theorem"
+    note: "Statement, proof and the generalisation to linear maps."
+  - title: "SymPy matrices: nullspace and columnspace"
+    url: "https://docs.sympy.org/latest/modules/matrices/matrices.html"
+    note: "Exact bases for the subspaces, used in the checks below."
+---
+
+The [Linear Systems](../systems-of-linear-equations/) note decided whether $A\mathbf{x} = \mathbf{b}$ has no solution, one, or infinitely many by counting pivots. This note explains those three cases with four subspaces that every matrix carries. Two of them live in the input space and describe which directions $A$ keeps and which it destroys; two live in the output space and describe what $A$ can reach. Their sizes are tied together by one equation, rank–nullity, and their geometry explains least squares.
+
+## The column space: what A can reach
+
+$A\mathbf{x}$ is a combination of the columns of $A$, so the set of all outputs is the span of the columns, the **column space** $C(A)$. Its dimension is the rank. A system $A\mathbf{x} = \mathbf{b}$ is solvable exactly when $\mathbf{b}$ lies in $C(A)$.
+
+## The null space: what A destroys
+
+The **null space** $N(A)$ is the set of inputs sent to zero. It is a subspace: if $A\mathbf{x} = \mathbf{0}$ and $A\mathbf{y} = \mathbf{0}$ then $A(c\mathbf{x} + d\mathbf{y}) = \mathbf{0}$. The null space is what makes solutions non-unique: if $A\mathbf{x}_p = \mathbf{b}$ and $A\mathbf{n} = \mathbf{0}$, then $A(\mathbf{x}_p + \mathbf{n}) = \mathbf{b}$ too.
+
+The script below finds exact bases for both subspaces of a rank-2 matrix with three columns.
+
+```python
+import sympy as sp
+
+A = sp.Matrix([[1, 2, 3], [2, 4, 7], [1, 2, 4]])
+print("rank:", A.rank())
+print("column space basis:", [list(v) for v in A.columnspace()])
+print("null space basis:", [list(v) for v in A.nullspace()])
+n = A.nullspace()[0]
+print("A n =", list(A * n))
+# rank: 2
+# column space basis: [[1, 2, 1], [3, 7, 4]]
+# null space basis: [[-2, 1, 0]]
+# A n = [0, 0, 0]
+```
+
+In words: the second column is twice the first, so only two columns are independent and the rank is $2$. The null space is the line through $(-2, 1, 0)$: taking $-2$ of the first column plus $1$ of the second cancels exactly. Run it with `uv run --with sympy`.
+
+<NullSpaceViz />
+
+## Rank–nullity
+
+For an $m \times n$ matrix,
+
+$$
+\operatorname{rank} A + \dim N(A) = n.
+
+$$
+
+In words: each of the $n$ input directions either survives, contributing to the rank, or is crushed into the null space. In the example $2 + 1 = 3$. The theorem explains the cases from the Linear Systems note at once. If the rank equals $n$, the null space is just $\{\mathbf{0}\}$ and a solution, when one exists, is unique. If the rank is below $n$, there are $n - \operatorname{rank} A$ free directions, and every solvable system has infinitely many solutions.
+
+## The shape of the solution set
+
+Every solution of $A\mathbf{x} = \mathbf{b}$ is one particular solution plus a vector of the null space. The check below finds a particular solution with the pseudo-inverse and confirms that shifting it along the null space keeps it a solution.
+
+```python
+import numpy as np
+
+A = np.array([[1.0, 2.0, 3.0], [2.0, 4.0, 7.0], [1.0, 2.0, 4.0]])
+b = np.array([6.0, 13.0, 7.0])
+xp = np.linalg.pinv(A) @ b                 # one solution (the shortest one)
+n = np.array([-2.0, 1.0, 0.0])             # null-space direction
+for t in (0.0, 1.0, -3.5):
+    x = xp + t * n
+    print(f"t = {t:+.1f}: x = {x.round(3)}, residual = {np.abs(A @ x - b).max():.1e}")
+# t = +0.0: x = [0.6 1.2 1. ], residual = 7.1e-15
+# t = +1.0: x = [-1.4  2.2  1. ], residual = 7.1e-15
+# t = -3.5: x = [ 7.6 -2.3  1. ], residual = 7.1e-15
+```
+
+In words: every point on the line $\mathbf{x}_p + t\,\mathbf{n}$ solves the system, so the solution set is a line, the null space shifted to pass through one solution.
+
+<Callout type="pitfall">
+A numerical rank or null space depends on a tolerance. In floating point a dependent column is rarely exactly dependent, so `np.linalg.matrix_rank` and `scipy.linalg.null_space` treat singular values below a threshold as zero. Exact tools such as SymPy avoid the question for small integer matrices; for measured data, look at the singular values and decide what counts as zero.
+</Callout>
+
+## Row space and left null space
+
+The other two subspaces come from $A^\top$. The **row space** $C(A^\top)$ is the span of the rows, and it is perpendicular to the null space: $A\mathbf{n} = \mathbf{0}$ says that $\mathbf{n}$ has zero dot product with every row. The **left null space** $N(A^\top)$ is perpendicular to the column space.
+
+That second pair is the geometry of least squares. When $\mathbf{b}$ is not in $C(A)$, the best approximation $A\hat{\mathbf{x}}$ is its projection onto $C(A)$, and the residual $\mathbf{b} - A\hat{\mathbf{x}}$ lands in the left null space: $A^\top(\mathbf{b} - A\hat{\mathbf{x}}) = \mathbf{0}$, which is exactly the normal equation of the [Projections](../projections/) note.
+
+| Subspace | Lives in | Dimension | Perpendicular to |
+| --- | --- | --- | --- |
+| Column space $C(A)$ | $\mathbb{R}^m$ | $r$ | left null space |
+| Left null space $N(A^\top)$ | $\mathbb{R}^m$ | $m - r$ | column space |
+| Row space $C(A^\top)$ | $\mathbb{R}^n$ | $r$ | null space |
+| Null space $N(A)$ | $\mathbb{R}^n$ | $n - r$ | row space |
+
+## Where the subspaces appear
+
+The null space of a network's incidence matrix holds its cycles, and the left null space holds its conservation laws. In machine learning, a feature matrix with a non-trivial null space has redundant features, and the coefficients of a linear model are then not unique, which is one reason for regularisation. The [SVD](../singular-value-decomposition-svd/) gives orthonormal bases for all four subspaces at once.
