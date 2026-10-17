@@ -1,0 +1,66 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Square-and-multiply, bit by bit"
+  caption="Compute aᵏ mod n by reading the bits of k from the lowest. Each row squares the running base; a set bit also multiplies it into the result. The count of multiplications grows with the number of bits of k, not with k itself."
+>
+  <square-multiply>
+    <div class="sm-ctl">
+      <label class="sm-lbl">a <input type="number" min="2" max="999" value="7" data-a /></label>
+      <label class="sm-lbl">k <input type="number" min="1" max="100000" value="560" data-k /></label>
+      <label class="sm-lbl">n <input type="number" min="2" max="9999" value="561" data-n /></label>
+    </div>
+    <div class="sm-table" data-table></div>
+    <p class="sm-stat" data-stat></p>
+  </square-multiply>
+</Figure>
+
+<style>
+  .sm-ctl { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .sm-lbl { display: flex; align-items: center; gap: 6px; font-size: 0.875rem; color: var(--text-muted); }
+  .sm-lbl input { width: 6em; background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; font: 0.875rem var(--font-mono); }
+  .sm-table { overflow-x: auto; }
+  .sm-table :global(table) { margin: 0 auto; border-collapse: collapse; font: 0.8rem var(--font-mono); }
+  .sm-table :global(td), .sm-table :global(th) { padding: 3px 10px; text-align: center; border-bottom: 1px solid var(--border); }
+  .sm-table :global(th) { color: var(--text-faint); font-weight: normal; }
+  .sm-table :global(.on) { color: var(--g-green-l); background: rgba(52, 168, 83, 0.12); }
+  .sm-table :global(td:last-child) { color: var(--g-yellow-l); }
+  .sm-table :global(.off) { color: var(--text-faint); }
+  .sm-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class SquareMultiply extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const get = (s: string) => Math.max(1, Math.floor(+this.querySelector<HTMLInputElement>(s)!.value || 1));
+      const a = get('[data-a]');
+      const n = Math.max(2, get('[data-n]'));
+      let k = get('[data-k]');
+      const k0 = k;
+      let base = a % n;
+      let result = 1;
+      let mults = 0;
+      let rows = '<tr><th>bit</th><th>base = a^(2^i)</th><th>result</th></tr>';
+      let i = 0;
+      while (k > 0) {
+        const bit = k & 1;
+        if (bit) { result = (result * base) % n; mults++; }
+        rows += `<tr class="${bit ? 'on' : 'off'}"><td>${bit}</td><td>${base}</td><td>${result}</td></tr>`;
+        k = Math.floor(k / 2);
+        base = (base * base) % n; // square for the next bit (the last one is never used)
+        mults++;
+        i++;
+      }
+      this.querySelector('[data-table]')!.innerHTML = `<table>${rows}</table>`;
+      this.querySelector('[data-stat]')!.textContent =
+        `${a}^${k0} mod ${n} = ${result} · ${i} bits · ${mults} multiplications instead of ${k0 - 1}`;
+    }
+  }
+  customElements.define('square-multiply', SquareMultiply);
+</script>
