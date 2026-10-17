@@ -1,5 +1,5 @@
 ---
-title: "Distribution table"
+title: "Distribution Table"
 description: "The common distributions side by side: support, probability function or density, mean, variance, and when each one is the right model."
 order: 4
 tier: core
@@ -7,6 +7,14 @@ takeaways:
   - "Pick the distribution from how the data arise: yes/no trials give binomial, events at a steady rate give Poisson, sums of many small effects give normal, and waiting times without memory give exponential."
   - "Each row's mean and variance follow from the formula and the rules in the expectation note; you do not need to memorise them if you can derive them."
   - "Discrete rows use a probability mass function; continuous rows use a density, whose values are not probabilities until integrated."
+  - "Every row has a `scipy.stats` object with the same methods (`pmf` or `pdf`, `cdf`, `mean`, `var`, `rvs`), named in the last column."
+resources:
+  - title: "scipy.stats distributions"
+    url: "https://docs.scipy.org/doc/scipy/reference/stats.html"
+    note: "The full list of distributions and their parameterisations."
+  - title: "Univariate Distribution Relationships (Leemis and McQueston)"
+    url: "https://www.math.wm.edu/~leemis/chart/UDR/UDR.html"
+    note: "An interactive chart of how dozens of distributions relate to each other."
 ---
 
 Each row summarises one distribution. The last column links to the note that derives its properties.
@@ -15,15 +23,21 @@ Each row summarises one distribution. The last column links to the note that der
 
 ### Distributions
 
-| Distribution | Support | Mass or density | Mean | Variance | When it fits | Note |
-|---|---|---|---|---|---|---|
-| Bernoulli$(p)$ | $\{0, 1\}$ | $p^x(1-p)^{1-x}$ | $p$ | $p(1-p)$ | one yes/no trial | [Common distributions](/workbench/math/probability/common-distributions/) |
-| Binomial$(n, p)$ | $\{0, \dots, n\}$ | $\binom{n}{k}p^k(1-p)^{n-k}$ | $np$ | $np(1-p)$ | successes in $n$ independent trials | [Common distributions](/workbench/math/probability/common-distributions/) |
-| Geometric$(p)$ | $\{1, 2, \dots\}$ | $(1-p)^{k-1}p$ | $\frac{1}{p}$ | $\frac{1-p}{p^2}$ | trials until the first success | [Expectation and variance](/workbench/math/probability/expectation-and-variance/) |
-| Poisson$(\lambda)$ | $\{0, 1, \dots\}$ | $e^{-\lambda}\frac{\lambda^k}{k!}$ | $\lambda$ | $\lambda$ | events in a window at a steady rate | [Common distributions](/workbench/math/probability/common-distributions/) |
-| Uniform$(a, b)$ | $[a, b]$ | $\frac{1}{b-a}$ | $\frac{a+b}{2}$ | $\frac{(b-a)^2}{12}$ | every value in an interval equally likely | [Common distributions](/workbench/math/probability/common-distributions/) |
-| Exponential$(\lambda)$ | $[0, \infty)$ | $\lambda e^{-\lambda x}$ | $\frac{1}{\lambda}$ | $\frac{1}{\lambda^2}$ | waiting time with no memory | [Common distributions](/workbench/math/probability/common-distributions/) |
-| Normal$(\mu, \sigma^2)$ | $\mathbb{R}$ | $\frac{1}{\sigma\sqrt{2\pi}}e^{-(x-\mu)^2/(2\sigma^2)}$ | $\mu$ | $\sigma^2$ | sums and averages of many small effects | [Central limit theorem](/workbench/math/probability/central-limit-theorem/) |
+| Distribution | Support | Mass or density | Mean | Variance | When it fits | Note | SciPy |
+|---|---|---|---|---|---|---|---|
+| Bernoulli$(p)$ | $\{0, 1\}$ | $p^x(1-p)^{1-x}$ | $p$ | $p(1-p)$ | one yes/no trial | [Common distributions](/workbench/math/probability/common-distributions/) | `bernoulli(p)` |
+| Categorical$(\mathbf{p})$ | $\{1, \dots, K\}$ | $p_k$ | — | — | one draw from $K$ labelled outcomes, such as a classifier's prediction | [Cross-entropy](/workbench/math/information-theory/cross-entropy/) | `multinomial(1, p)` |
+| Binomial$(n, p)$ | $\{0, \dots, n\}$ | $\binom{n}{k}p^k(1-p)^{n-k}$ | $np$ | $np(1-p)$ | successes in $n$ independent trials | [Common distributions](/workbench/math/probability/common-distributions/) | `binom(n, p)` |
+| Geometric$(p)$ | $\{1, 2, \dots\}$ | $(1-p)^{k-1}p$ | $\frac{1}{p}$ | $\frac{1-p}{p^2}$ | trials until the first success | [Common distributions](/workbench/math/probability/common-distributions/) | `geom(p)` |
+| Poisson$(\lambda)$ | $\{0, 1, \dots\}$ | $e^{-\lambda}\frac{\lambda^k}{k!}$ | $\lambda$ | $\lambda$ | events in a window at a steady rate | [Common distributions](/workbench/math/probability/common-distributions/) | `poisson(lam)` |
+| Uniform$(a, b)$ | $[a, b]$ | $\frac{1}{b-a}$ | $\frac{a+b}{2}$ | $\frac{(b-a)^2}{12}$ | every value in an interval equally likely | [Common distributions](/workbench/math/probability/common-distributions/) | `uniform(a, b - a)` |
+| Exponential$(\lambda)$ | $[0, \infty)$ | $\lambda e^{-\lambda x}$ | $\frac{1}{\lambda}$ | $\frac{1}{\lambda^2}$ | waiting time with no memory | [Common distributions](/workbench/math/probability/common-distributions/) | `expon(scale=1/lam)` |
+| Gamma$(k, \theta)$ | $(0, \infty)$ | $\frac{x^{k-1}e^{-x/\theta}}{\Gamma(k)\theta^k}$ | $k\theta$ | $k\theta^2$ | waiting time for the $k$-th Poisson event | [Common distributions](/workbench/math/probability/common-distributions/) | `gamma(k, scale=theta)` |
+| Beta$(\alpha, \beta)$ | $[0, 1]$ | $\frac{x^{\alpha-1}(1-x)^{\beta-1}}{B(\alpha, \beta)}$ | $\frac{\alpha}{\alpha+\beta}$ | $\frac{\alpha\beta}{(\alpha+\beta)^2(\alpha+\beta+1)}$ | an uncertain probability; the conjugate prior of the binomial | [Bayesian inference](/workbench/math/statistics/bayesian-inference/) | `beta(a, b)` |
+| Normal$(\mu, \sigma^2)$ | $\mathbb{R}$ | $\frac{1}{\sigma\sqrt{2\pi}}e^{-(x-\mu)^2/(2\sigma^2)}$ | $\mu$ | $\sigma^2$ | sums and averages of many small effects | [Central limit theorem](/workbench/math/probability/central-limit-theorem/) | `norm(mu, sigma)` |
+| Student $t_\nu$ | $\mathbb{R}$ | $\propto \left(1 + \frac{x^2}{\nu}\right)^{-(\nu+1)/2}$ | $0$ ($\nu > 1$) | $\frac{\nu}{\nu - 2}$ ($\nu > 2$) | a mean standardised by an estimated standard deviation | [Confidence intervals](/workbench/math/statistics/confidence-intervals/) | `t(nu)` |
+| Chi-square $\chi^2_k$ | $[0, \infty)$ | Gamma$(k/2, 2)$ | $k$ | $2k$ | a sum of $k$ squared standard normals | [Common distributions](/workbench/math/probability/common-distributions/) | `chi2(k)` |
+| Multivariate normal | $\mathbb{R}^d$ | $\propto e^{-\frac{1}{2}(\mathbf{x}-\boldsymbol\mu)^\top\Sigma^{-1}(\mathbf{x}-\boldsymbol\mu)}$ | $\boldsymbol\mu$ | $\Sigma$ | jointly normal vectors, such as correlated measurements | [Multivariate normal](/workbench/math/probability/multivariate-normal/) | `multivariate_normal(mu, Sigma)` |
 
 ## Useful facts
 
