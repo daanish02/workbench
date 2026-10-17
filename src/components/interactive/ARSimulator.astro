@@ -1,0 +1,130 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="AR(1) series and its autocorrelation"
+  caption="Top: a simulated series x_t = φ x_(t−1) + noise. Bottom: the sample autocorrelation at lags 1 to 10 (blue) against the theory φ^k (yellow dots). Positive φ makes the series drift slowly; negative φ makes it flip sign each step."
+>
+  <ar-simulator>
+    <div class="ar-ctl">
+      <label>φ <input type="range" min="-0.95" max="0.95" step="0.05" value="0.8" data-phi /><b data-pv>0.80</b></label>
+    </div>
+    <svg class="ar-svg" viewBox="0 0 400 280" role="img" aria-label="Simulated AR one series above a bar chart of its autocorrelations">
+      <line x1="20" y1="72" x2="390" y2="72" class="ar-axis"></line>
+      <path data-series class="ar-series"></path>
+      <line x1="20" y1="215" x2="390" y2="215" class="ar-axis"></line>
+      <g data-bars></g>
+      <g data-theory></g>
+    </svg>
+    <p class="ar-stat" data-stat></p>
+  </ar-simulator>
+</Figure>
+
+<style>
+  .ar-ctl {
+    margin-bottom: 10px;
+  }
+  .ar-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ar-ctl input {
+    flex: 1;
+  }
+  .ar-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ar-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ar-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ar-series {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 1.2;
+  }
+  .ar-svg :global(.ar-bar) {
+    fill: var(--g-blue);
+    opacity: 0.8;
+  }
+  .ar-svg :global(.ar-theory) {
+    fill: var(--g-yellow);
+  }
+  .ar-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+  // the same noise is reused for every φ, so changing φ only changes the dynamics
+  const r0 = rng(14);
+  const noise = Array.from({ length: 400 }, () => gauss(r0));
+
+  const acf = (x: number[], k: number) => {
+    const n = x.length;
+    const m = x.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let t = 0; t < n; t++) den += (x[t] - m) ** 2;
+    for (let t = 0; t < n - k; t++) num += (x[t] - m) * (x[t + k] - m);
+    return num / den;
+  };
+
+  class ARSimulator extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-phi]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const phi = +this.querySelector<HTMLInputElement>('[data-phi]')!.value;
+      this.querySelector('[data-pv]')!.textContent = phi.toFixed(2);
+      const x: number[] = [0];
+      for (let t = 1; t < 400; t++) x.push(phi * x[t - 1] + noise[t]);
+      const tail = x.slice(50); // drop the start-up period
+      const scale = Math.max(1e-9, ...tail.map((v) => Math.abs(v)));
+      // series panel: y from 60 (top) to 20... centred on 40, half-height 35
+      const pts = tail.map((v, i) => `${i ? 'L' : 'M'}${(20 + (i / (tail.length - 1)) * 370).toFixed(2)},${(40 - (v / scale) * 30).toFixed(2)}`);
+      this.querySelector('[data-series]')!.setAttribute('d', pts.join(' '));
+
+      // acf panel: lags 1..10, baseline at y = 215, 55 px for |value| = 1
+      const bars: string[] = [];
+      const dots: string[] = [];
+      for (let k = 1; k <= 10; k++) {
+        const cx = 20 + (k - 0.5) * 37;
+        const s = acf(tail, k);
+        const h = Math.abs(s) * 55;
+        bars.push(`<rect class="ar-bar" x="${(cx - 10).toFixed(2)}" y="${(s >= 0 ? 215 - h : 215).toFixed(2)}" width="20" height="${h.toFixed(2)}"></rect>`);
+        const ty = 215 - Math.pow(phi, k) * 55;
+        dots.push(`<circle class="ar-theory" cx="${cx.toFixed(2)}" cy="${ty.toFixed(2)}" r="3"></circle>`);
+      }
+      this.querySelector('[data-bars]')!.innerHTML = bars.join('');
+      this.querySelector('[data-theory]')!.innerHTML = dots.join('');
+      this.querySelector('[data-stat]')!.textContent =
+        `lag 1: sample ${acf(tail, 1).toFixed(3)}, theory φ = ${phi.toFixed(3)} · lag 2: sample ${acf(tail, 2).toFixed(3)}, theory φ² = ${(phi * phi).toFixed(3)}`;
+    }
+  }
+  customElements.define('ar-simulator', ARSimulator);
+</script>

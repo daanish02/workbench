@@ -1,0 +1,67 @@
+---
+import Figure from '../Figure.astro';
+
+// Success rates from the kidney stone study. Treatment A wins in each stone size but loses overall.
+const groups = [
+  { label: 'small stones', a: 81 / 87, b: 234 / 270 },
+  { label: 'large stones', a: 192 / 263, b: 55 / 80 },
+  { label: 'overall', a: 273 / 350, b: 289 / 350 },
+];
+const base = 180;
+const H = 140;
+const bar = (x: number, v: number, cls: string) => ({ x, h: v * H, cls, v });
+---
+
+<Figure
+  kind="Diagram"
+  title="Simpson's paradox in the kidney stone data"
+  caption="Success rates for treatments A (blue) and B (yellow). Within each stone size A is higher, yet overall B is higher, because A was given more often to the harder large-stone cases."
+>
+  <svg class="sp-svg" viewBox="0 0 400 230" role="img" aria-label="Grouped bars: A beats B in both stone sizes but loses overall">
+    <line x1="20" y1={base} x2="390" y2={base} class="sp-axis"></line>
+    {groups.map((g, i) => {
+      const gx = 40 + i * 120;
+      const bars = [bar(gx, g.a, 'sp-a'), bar(gx + 36, g.b, 'sp-b')];
+      return (
+        <g>
+          {bars.map((b) => (
+            <g>
+              <rect x={b.x} y={base - b.h} width="32" height={b.h} class={b.cls}></rect>
+              <text x={b.x + 16} y={base - b.h - 5} class="sp-v">{(b.v * 100).toFixed(1)}%</text>
+            </g>
+          ))}
+          <text x={gx + 34} y={base + 18} class="sp-l">{g.label}</text>
+        </g>
+      );
+    })}
+  </svg>
+</Figure>
+
+<style>
+  .sp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .sp-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .sp-a {
+    fill: var(--g-blue);
+  }
+  .sp-b {
+    fill: var(--g-yellow);
+  }
+  .sp-v {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .sp-l {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+</style>

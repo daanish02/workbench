@@ -1,0 +1,122 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Random versus biased sampling"
+  caption="A population of 400 people, 40% of whom support the policy (blue). The outlined region is the group a survey can reach, where 60% support it. A random sample draws from everyone; a biased sample draws only from the reachable group. Compare the estimates with the true 40%."
+>
+  <sampling-bias>
+    <div class="sb-ctl">
+      <button type="button" data-rand>random sample of 50</button>
+      <button type="button" data-bias>biased sample of 50</button>
+    </div>
+    <svg class="sb-svg" viewBox="0 0 400 400" role="img" aria-label="Grid of 400 people, support shown in blue, with the reachable group outlined">
+      <rect x="4" y="4" width="392" height="196" class="sb-reach"></rect>
+      <g data-cells></g>
+    </svg>
+    <p class="sb-stat" data-stat></p>
+  </sampling-bias>
+</Figure>
+
+<style>
+  .sb-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sb-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .sb-svg {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+  .sb-reach {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+  }
+  .sb-svg :global(.sb-yes) {
+    fill: var(--g-blue);
+    opacity: 0.85;
+  }
+  .sb-svg :global(.sb-no) {
+    fill: #3c4043;
+  }
+  .sb-svg :global(.sb-picked) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .sb-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  // 400 people on a 20 x 20 grid. Cells 0..199 are reachable and hold 120 supporters (60%).
+  // Cells 200..399 are not reachable and hold 40 supporters (20%). Total support = 160 of 400 = 40%.
+  const support: boolean[] = [];
+  for (let i = 0; i < 400; i++) {
+    support.push(i < 200 ? i < 120 : i < 240);
+  }
+
+  class SamplingBias extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-rand]')!.addEventListener('click', () => this.run(0, 400));
+      this.querySelector('[data-bias]')!.addEventListener('click', () => this.run(0, 200));
+      this.draw([]);
+      this.querySelector('[data-stat]')!.textContent = 'true support = 160 / 400 = 0.400 · press a button to draw 50 people';
+    }
+
+    run(from: number, to: number) {
+      const r = rng(Math.floor(Math.random() * 1e9));
+      const idx = Array.from({ length: to - from }, (_, i) => from + i);
+      for (let i = idx.length - 1; i > 0; i--) {
+        const j = Math.floor(r() * (i + 1));
+        [idx[i], idx[j]] = [idx[j], idx[i]];
+      }
+      const picked = idx.slice(0, 50);
+      this.draw(picked);
+      const est = picked.filter((i) => support[i]).length / picked.length;
+      const label = to === 400 ? 'random sample' : 'biased sample';
+      this.querySelector('[data-stat]')!.textContent =
+        `${label}: estimate ${est.toFixed(3)} · true support 0.400 · ${Math.abs(est - 0.4) < 0.05 ? 'close to the truth' : 'far from the truth'}`;
+    }
+
+    draw(picked: number[]) {
+      const set = new Set(picked);
+      const cell = 19;
+      const html = support
+        .map((yes, i) => {
+          const x = (i % 20) * 19.6 + 4;
+          const y = Math.floor(i / 20) * 19.6 + 4;
+          const cls = `${yes ? 'sb-yes' : 'sb-no'}${set.has(i) ? ' sb-picked' : ''}`;
+          return `<rect class="${cls}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${cell}" height="${cell}" rx="2"></rect>`;
+        })
+        .join('');
+      this.querySelector('[data-cells]')!.innerHTML = html;
+    }
+  }
+  customElements.define('sampling-bias', SamplingBias);
+</script>

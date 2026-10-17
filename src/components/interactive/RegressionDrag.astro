@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Drag the points, watch the fit"
+  caption="Drag any point. The blue line is the least squares fit, the vertical segments are the residuals, and the readout updates the slope, intercept and R-squared. Moving one far-away point can change the line a lot."
+>
+  <regression-drag>
+    <svg class="rd-svg" viewBox="0 0 400 240" role="img" aria-label="Scatter plot of draggable points with the least squares line and residual segments">
+      <line x1="30" y1="220" x2="390" y2="220" class="rd-axis"></line>
+      <line x1="30" y1="20" x2="30" y2="220" class="rd-axis"></line>
+      <g data-res></g>
+      <line data-fit class="rd-fit"></line>
+      <g data-pts></g>
+    </svg>
+    <p class="rd-stat" data-stat></p>
+  </regression-drag>
+</Figure>
+
+<style>
+  .rd-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+    touch-action: none;
+    user-select: none;
+  }
+  .rd-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .rd-fit {
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .rd-svg :global(.rd-res) {
+    stroke: var(--g-red);
+    stroke-width: 1;
+    opacity: 0.7;
+  }
+  .rd-svg :global(.rd-pt) {
+    fill: var(--g-yellow);
+    stroke: #1a1a1a;
+    stroke-width: 1;
+    cursor: grab;
+  }
+  .rd-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class RegressionDrag extends HTMLElement {
+    // data coordinates: x and y in [0, 10]
+    pts: { x: number; y: number }[] = [
+      { x: 1, y: 2.5 }, { x: 2, y: 3.8 }, { x: 3, y: 4.2 }, { x: 4, y: 5.9 },
+      { x: 5, y: 6.1 }, { x: 6, y: 7.4 }, { x: 7, y: 7.8 }, { x: 8, y: 9.1 },
+    ];
+    active = -1;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('svg')!;
+      svg.addEventListener('pointerdown', (e) => {
+        const i = (e.target as Element).getAttribute('data-i');
+        if (i === null) return;
+        this.active = +i;
+        svg.setPointerCapture(e.pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (this.active < 0) return;
+        const m = svg.getScreenCTM();
+        if (!m) return;
+        const p = svg.createSVGPoint();
+        p.x = e.clientX;
+        p.y = e.clientY;
+        const q = p.matrixTransform(m.inverse());
+        const x = Math.min(10, Math.max(0, (q.x - 30) / 36));
+        const y = Math.min(10, Math.max(0, (220 - q.y) / 20));
+        this.pts[this.active] = { x, y };
+        this.draw();
+      });
+      const stop = () => (this.active = -1);
+      svg.addEventListener('pointerup', stop);
+      svg.addEventListener('pointercancel', stop);
+      this.draw();
+    }
+
+    draw() {
+      const px = (x: number) => 30 + x * 36;
+      const py = (y: number) => 220 - y * 20;
+      const n = this.pts.length;
+      const mx = this.pts.reduce((s, p) => s + p.x, 0) / n;
+      const my = this.pts.reduce((s, p) => s + p.y, 0) / n;
+      const sxy = this.pts.reduce((s, p) => s + (p.x - mx) * (p.y - my), 0);
+      const sxx = this.pts.reduce((s, p) => s + (p.x - mx) ** 2, 0);
+      const slope = sxx === 0 ? 0 : sxy / sxx;
+      const intercept = my - slope * mx;
+      const ssRes = this.pts.reduce((s, p) => s + (p.y - (intercept + slope * p.x)) ** 2, 0);
+      const ssTot = this.pts.reduce((s, p) => s + (p.y - my) ** 2, 0);
+      const r2 = ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+
+      this.querySelector('[data-res]')!.innerHTML = this.pts
+        .map((p) => {
+          const fy = intercept + slope * p.x;
+          return `<line class="rd-res" x1="${px(p.x).toFixed(2)}" y1="${py(p.y).toFixed(2)}" x2="${px(p.x).toFixed(2)}" y2="${py(Math.min(10, Math.max(0, fy))).toFixed(2)}"></line>`;
+        })
+        .join('');
+      const fit = this.querySelector<SVGLineElement>('[data-fit]')!;
+      fit.setAttribute('x1', String(px(0)));
+      fit.setAttribute('x2', String(px(10)));
+      fit.setAttribute('y1', py(intercept).toFixed(2));
+      fit.setAttribute('y2', py(intercept + slope * 10).toFixed(2));
+      this.querySelector('[data-pts]')!.innerHTML = this.pts
+        .map((p, i) => `<circle class="rd-pt" data-i="${i}" cx="${px(p.x).toFixed(2)}" cy="${py(p.y).toFixed(2)}" r="6"></circle>`)
+        .join('');
+      this.querySelector('[data-stat]')!.textContent =
+        `slope = ${slope.toFixed(3)} · intercept = ${intercept.toFixed(3)} · R² = ${r2.toFixed(3)}`;
+    }
+  }
+  customElements.define('regression-drag', RegressionDrag);
+</script>

@@ -1,0 +1,155 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Bootstrap distribution"
+  caption="The sample has 30 values. Each bootstrap resample draws 30 values with replacement, and its statistic goes into the histogram. Switch between the mean and the median, and watch the spread of the bootstrap distribution. The yellow line is the statistic of the original sample."
+>
+  <bootstrap-resample>
+    <div class="br-ctl">
+      <label>statistic
+        <select data-s>
+          <option value="mean">mean</option>
+          <option value="median">median</option>
+        </select>
+      </label>
+      <label>resamples B <input type="range" min="100" max="5000" step="100" value="1000" data-b /><b data-bv>1000</b></label>
+    </div>
+    <svg class="br-svg" viewBox="0 0 400 200" role="img" aria-label="Histogram of bootstrap statistics with the original statistic marked">
+      <line x1="20" y1="170" x2="390" y2="170" class="br-axis"></line>
+      <g data-bars></g>
+      <line data-orig x1="0" y1="10" x2="0" y2="170" class="br-orig"></line>
+    </svg>
+    <p class="br-stat" data-stat></p>
+  </bootstrap-resample>
+</Figure>
+
+<style>
+  .br-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .br-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .br-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .br-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .br-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .br-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .br-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .br-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .br-svg :global(.br-bar) {
+    fill: var(--g-blue);
+    opacity: 0.8;
+  }
+  .br-orig {
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+  .br-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  // fixed sample: exponential with mean 4, generated once with a seed
+  const base = rng(5);
+  const sample: number[] = Array.from({ length: 30 }, () => -4 * Math.log(1 - base()));
+
+  const stat = (xs: number[], kind: string) => {
+    if (kind === 'mean') return xs.reduce((a, b) => a + b, 0) / xs.length;
+    const s = [...xs].sort((a, b) => a - b);
+    const m = s.length / 2;
+    return s.length % 2 ? s[Math.floor(m)] : (s[m - 1] + s[m]) / 2;
+  };
+
+  class BootstrapResample extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-s]')!.addEventListener('change', () => this.draw());
+      this.querySelector('[data-b]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const kind = this.querySelector<HTMLSelectElement>('[data-s]')!.value;
+      const B = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      this.querySelector('[data-bv]')!.textContent = String(B);
+      const r = rng(11);
+      const stats: number[] = [];
+      for (let b = 0; b < B; b++) {
+        const re = Array.from({ length: sample.length }, () => sample[Math.floor(r() * sample.length)]);
+        stats.push(stat(re, kind));
+      }
+      const lo = Math.min(...stats), hi = Math.max(...stats);
+      const bins = 30;
+      const counts = new Array(bins).fill(0);
+      for (const s of stats) {
+        const i = Math.min(bins - 1, Math.floor(((s - lo) / (hi - lo || 1)) * bins));
+        counts[i]++;
+      }
+      const top = Math.max(...counts);
+      const X0 = 20, W = 370, Y0 = 170, H = 150;
+      this.querySelector('[data-bars]')!.innerHTML = counts
+        .map((c, i) => {
+          const h = (c / top) * H;
+          return `<rect class="br-bar" x="${(X0 + (i / bins) * W + 1).toFixed(2)}" y="${(Y0 - h).toFixed(2)}" width="${(W / bins - 2).toFixed(2)}" height="${h.toFixed(2)}"></rect>`;
+        })
+        .join('');
+      const orig = stat(sample, kind);
+      const xo = X0 + ((orig - lo) / (hi - lo || 1)) * W;
+      const ol = this.querySelector<SVGLineElement>('[data-orig]')!;
+      ol.setAttribute('x1', xo.toFixed(2));
+      ol.setAttribute('x2', xo.toFixed(2));
+      const mean = stats.reduce((a, b) => a + b, 0) / B;
+      const se = Math.sqrt(stats.reduce((a, b) => a + (b - mean) ** 2, 0) / (B - 1));
+      const sorted = [...stats].sort((a, b) => a - b);
+      const ciLo = sorted[Math.floor(0.025 * B)], ciHi = sorted[Math.floor(0.975 * B)];
+      this.querySelector('[data-stat]')!.textContent =
+        `${kind} of sample = ${orig.toFixed(2)} · bootstrap SE = ${se.toFixed(3)} · 95% percentile interval ${ciLo.toFixed(2)} to ${ciHi.toFixed(2)}`;
+    }
+  }
+  customElements.define('bootstrap-resample', BootstrapResample);
+</script>

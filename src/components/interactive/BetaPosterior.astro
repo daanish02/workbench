@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Beta prior and posterior"
+  caption="The dashed curve is the Beta prior on the heads probability θ. The solid curve is the posterior after k heads in n flips, which is Beta(α + k, β + n − k). Watch how more data narrows the posterior and pulls it toward k/n."
+>
+  <beta-posterior>
+    <div class="bp-ctl">
+      <label>α₀ <input type="range" min="0.5" max="10" step="0.5" value="1" data-a /><b data-av>1.0</b></label>
+      <label>β₀ <input type="range" min="0.5" max="10" step="0.5" value="1" data-b /><b data-bv>1.0</b></label>
+      <label>k <input type="range" min="0" max="30" step="1" value="7" data-k /><b data-kv>7</b></label>
+      <label>n <input type="range" min="1" max="30" step="1" value="10" data-n /><b data-nv>10</b></label>
+    </div>
+    <svg class="bp-svg" viewBox="0 0 400 200" role="img" aria-label="Prior and posterior density curves over θ from 0 to 1">
+      <line x1="30" y1="170" x2="390" y2="170" class="bp-axis"></line>
+      <line x1="30" y1="10" x2="30" y2="170" class="bp-axis"></line>
+      <path data-prior class="bp-prior"></path>
+      <path data-post class="bp-post"></path>
+      <text x="30" y="186" class="bp-t">0</text>
+      <text x="390" y="186" class="bp-t bp-end">1</text>
+    </svg>
+    <p class="bp-stat" data-stat></p>
+  </beta-posterior>
+</Figure>
+
+<style>
+  .bp-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .bp-ctl label {
+    flex: 1 1 160px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .bp-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .bp-ctl b {
+    min-width: 2.2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .bp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .bp-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .bp-prior {
+    fill: none;
+    stroke: #9aa0a6;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .bp-post {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .bp-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .bp-end {
+    text-anchor: end;
+  }
+  .bp-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // log-gamma by the Lanczos approximation
+  function lgamma(z: number): number {
+    const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61503916999385, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+    if (z < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * z))) - lgamma(1 - z);
+    const zz = z - 1;
+    let x = c[0];
+    for (let i = 1; i < 9; i++) x += c[i] / (zz + i);
+    const t = zz + 7.5;
+    return 0.5 * Math.log(2 * Math.PI) + (zz + 0.5) * Math.log(t) - t + Math.log(x);
+  }
+  const lnBeta = (a: number, b: number) => lgamma(a) + lgamma(b) - lgamma(a + b);
+  const betaPdf = (t: number, a: number, b: number) => Math.exp((a - 1) * Math.log(t) + (b - 1) * Math.log(1 - t) - lnBeta(a, b));
+
+  class BetaPosterior extends HTMLElement {
+    connectedCallback() {
+      for (const sel of ['[data-a]', '[data-b]', '[data-k]', '[data-n]']) {
+        this.querySelector(sel)!.addEventListener('input', () => this.draw());
+      }
+      this.draw();
+    }
+
+    draw() {
+      const a0 = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b0 = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      const nEl = this.querySelector<HTMLInputElement>('[data-n]')!;
+      const kEl = this.querySelector<HTMLInputElement>('[data-k]')!;
+      const n = +nEl.value;
+      kEl.max = String(n);
+      if (+kEl.value > n) kEl.value = String(n);
+      const k = +kEl.value;
+      this.querySelector('[data-av]')!.textContent = a0.toFixed(1);
+      this.querySelector('[data-bv]')!.textContent = b0.toFixed(1);
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      this.querySelector('[data-nv]')!.textContent = String(n);
+
+      const a1 = a0 + k, b1 = b0 + n - k;
+      const grid: number[] = [];
+      for (let i = 1; i < 200; i++) grid.push(i / 200);
+      const pr = grid.map((t) => betaPdf(t, a0, b0));
+      const po = grid.map((t) => betaPdf(t, a1, b1));
+      const top = Math.max(...pr, ...po);
+      const X0 = 30, W = 360, Y0 = 170, H = 150;
+      const path = (ys: number[]) => {
+        const pts = grid.map((t, i) => `${i ? 'L' : 'M'}${(X0 + t * W).toFixed(2)},${(Y0 - (ys[i] / top) * H).toFixed(2)}`);
+        return pts.join(' ');
+      };
+      this.querySelector('[data-prior]')!.setAttribute('d', path(pr));
+      this.querySelector('[data-post]')!.setAttribute('d', `${path(po)} L${X0 + W},${Y0} L${X0},${Y0} Z`);
+      const postMean = a1 / (a1 + b1);
+      this.querySelector('[data-stat]')!.textContent =
+        `posterior Beta(${a1.toFixed(1)}, ${b1.toFixed(1)}) · posterior mean ${postMean.toFixed(3)} · MLE k/n ${(k / n).toFixed(3)}`;
+    }
+  }
+  customElements.define('beta-posterior', BetaPosterior);
+</script>

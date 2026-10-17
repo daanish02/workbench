@@ -1,0 +1,63 @@
+---
+import Figure from '../Figure.astro';
+
+// Worst-case 95% margin of error for a proportion, against sample size: 1.96 * sqrt(0.25 / n).
+const xOf = (n: number) => 30 + (n / 2000) * 350;
+const yOf = (m: number) => 200 - (m / 10) * 170;
+const pts: string[] = [];
+for (let n = 50; n <= 2000; n += 25) {
+  const m = 100 * 1.96 * Math.sqrt(0.25 / n);
+  pts.push(`${pts.length ? 'L' : 'M'}${xOf(n).toFixed(2)},${yOf(m).toFixed(2)}`);
+}
+const marks = [400, 1068].map((n) => ({ n, m: 100 * 1.96 * Math.sqrt(0.25 / n) }));
+---
+
+<Figure
+  kind="Diagram"
+  title="Margin of error against sample size"
+  caption="The worst-case 95% margin of error for a proportion, in percentage points. It falls with the square root of n: quadrupling the sample halves the margin. Marked points: n = 400 gives ±4.9 points, and n = 1068 gives ±3.0 points."
+>
+  <svg class="mc-svg" viewBox="0 0 400 230" role="img" aria-label="Margin of error curve falling as sample size grows, with two marked points">
+    <line x1="30" y1="200" x2="380" y2="200" class="mc-axis"></line>
+    <line x1="30" y1="20" x2="30" y2="200" class="mc-axis"></line>
+    <path d={pts.join(' ')} class="mc-curve"></path>
+    {marks.map((k) => (
+      <g>
+        <circle cx={xOf(k.n)} cy={yOf(k.m)} r="4" class="mc-dot"></circle>
+        <text x={xOf(k.n) + 8} y={yOf(k.m) - 6} class="mc-t">n = {k.n}: ±{k.m.toFixed(1)}</text>
+      </g>
+    ))}
+    <text x="30" y="216" class="mc-t">0</text>
+    <text x="380" y="216" class="mc-t mc-end">2000</text>
+    <text x="205" y="216" class="mc-t">sample size n</text>
+    <text x="34" y="30" class="mc-t">±points</text>
+  </svg>
+</Figure>
+
+<style>
+  .mc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .mc-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .mc-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .mc-dot {
+    fill: var(--g-yellow);
+  }
+  .mc-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .mc-end {
+    text-anchor: end;
+  }
+</style>

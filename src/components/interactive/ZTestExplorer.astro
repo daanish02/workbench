@@ -1,0 +1,155 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Z-test for a coin"
+  caption="The curve is the distribution of the sample proportion if the coin is fair. The shaded tails are the outcomes at least as extreme as the one observed, so their total area is the two-sided p-value. Reject H₀ when the p-value is below 0.05."
+>
+  <z-test-explorer>
+    <div class="zt-ctl">
+      <label>n <input type="range" min="20" max="300" step="10" value="100" data-n /><b data-nv>100</b></label>
+      <label>heads <input type="range" min="0" max="100" step="1" value="60" data-h /><b data-hv>60</b></label>
+    </div>
+    <svg class="zt-svg" viewBox="0 0 400 200" role="img" aria-label="Null distribution of the sample proportion with shaded tails beyond the observed value">
+      <line x1="20" y1="170" x2="380" y2="170" class="zt-axis"></line>
+      <path data-tails class="zt-tail"></path>
+      <path data-curve class="zt-curve"></path>
+      <line data-obs x1="0" y1="10" x2="0" y2="170" class="zt-obs"></line>
+      <text x="20" y="186" class="zt-t">0</text>
+      <text x="200" y="186" class="zt-t">0.5 (H₀)</text>
+      <text x="380" y="186" class="zt-t zt-end">1</text>
+    </svg>
+    <p class="zt-stat" data-stat></p>
+  </z-test-explorer>
+</Figure>
+
+<style>
+  .zt-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .zt-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .zt-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .zt-ctl b {
+    min-width: 2.4em;
+    text-align: right;
+    color: var(--text);
+  }
+  .zt-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .zt-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .zt-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .zt-tail {
+    fill: rgba(234, 67, 53, 0.35);
+  }
+  .zt-obs {
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+  .zt-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .zt-end {
+    text-anchor: end;
+  }
+  .zt-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const Phi = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
+  // Abramowitz-Stegun approximation of the error function
+  function erf(x: number) {
+    const s = Math.sign(x);
+    const t = 1 / (1 + 0.3275911 * Math.abs(x));
+    const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+    return s * y;
+  }
+
+  class ZTestExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-h]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const nEl = this.querySelector<HTMLInputElement>('[data-n]')!;
+      const hEl = this.querySelector<HTMLInputElement>('[data-h]')!;
+      const n = +nEl.value;
+      hEl.max = String(n);
+      if (+hEl.value > n) hEl.value = String(n);
+      const h = +hEl.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-hv]')!.textContent = String(h);
+
+      const X0 = 20, W = 360, Y0 = 170, H = 150;
+      const xOf = (p: number) => X0 + p * W;
+      const s = Math.sqrt(0.25 / n);
+      const dens = (p: number) => Math.exp(-((p - 0.5) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+      const peak = dens(0.5);
+      const yOf = (p: number) => Y0 - (dens(p) / peak) * H;
+      const N = 200;
+      const curve: string[] = [];
+      for (let i = 0; i <= N; i++) {
+        const p = i / N;
+        curve.push(`${i ? 'L' : 'M'}${xOf(p).toFixed(2)},${yOf(p).toFixed(2)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', curve.join(' '));
+
+      const phat = h / n;
+      const d = Math.abs(phat - 0.5);
+      // shade both tails beyond the observed distance from 0.5
+      const tail = (from: number, to: number) => {
+        const out: string[] = [`M${xOf(from).toFixed(2)},${Y0}`];
+        const steps = 60;
+        for (let i = 0; i <= steps; i++) {
+          const p = from + ((to - from) * i) / steps;
+          out.push(`L${xOf(p).toFixed(2)},${yOf(p).toFixed(2)}`);
+        }
+        out.push(`L${xOf(to).toFixed(2)},${Y0} Z`);
+        return out.join(' ');
+      };
+      const tails = d > 0 ? tail(0, 0.5 - d) + ' ' + tail(0.5 + d, 1) : '';
+      this.querySelector('[data-tails]')!.setAttribute('d', tails);
+      const obs = this.querySelector<SVGLineElement>('[data-obs]')!;
+      obs.setAttribute('x1', xOf(phat).toFixed(2));
+      obs.setAttribute('x2', xOf(phat).toFixed(2));
+
+      const z = (phat - 0.5) / s;
+      const pv = 2 * (1 - Phi(Math.abs(z)));
+      this.querySelector('[data-stat]')!.textContent =
+        `p̂ = ${phat.toFixed(2)} · z = ${z.toFixed(2)} · two-sided p = ${pv.toFixed(4)} · ${pv < 0.05 ? 'reject H₀' : 'do not reject H₀'}`;
+    }
+  }
+  customElements.define('z-test-explorer', ZTestExplorer);
+</script>
