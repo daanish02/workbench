@@ -2,21 +2,6 @@
 
 Owns architectures, training mechanics, and the mathematics of how deep networks actually learn. `scaffold-applied-dl` owns what gets built _with_ these architectures (LLMs, vision models, audio, RL with neural function approximators). `scaffold-ml`'s shallow neural network section (perceptron, MLP, intuitive backprop) is the on-ramp this KB continues from — full derivation and modern architectures start here.
 
-**Build/reading order:**
-
-1. Neural Network Foundations, Deepened
-2. Training Dynamics & Optimization
-3. Convolutional Neural Networks
-4. Recurrent Neural Networks & Sequence Modeling
-5. Attention & Transformers
-6. Regularization & Generalization
-7. Generative Models (Foundations)
-8. Deep Learning Systems & Practical Training
-9. Deep Reinforcement Learning
-10. Deep Learning for Recommender Systems
-
-Tags: **[opt]** = included but lower priority. **[later]** = deferred.
-
 ---
 
 ## 1. Neural Network Foundations, Deepened
@@ -28,7 +13,7 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 3. **Automatic differentiation** — how frameworks compute exact gradients without anyone hand-deriving them
 4. **Weight initialization** — why it matters at all, Xavier/Glorot and He initialization
 5. **Loss functions for deep learning** — cross-entropy and MSE revisited at the scale and context deep nets actually use them
-6. [opt] **Universal approximation theorem, proof sketch** — deepened from the ML KB's stated-only version
+6. **Universal approximation theorem, proof sketch** — deepened from the ML KB's stated-only version
 
 **Interactive:** computational graph builder (construct a small expression, watch forward values and backward gradients computed live at every node — the clearest possible way to make backprop stop feeling like magic), weight initialization comparison (the same network, different initialization schemes, watch which ones actually train).
 
@@ -42,7 +27,7 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 4. **Dropout** — regularization specific to deep nets, what it does during training vs. inference
 5. **Learning rate schedules** — warmup, decay, cyclical learning rates
 6. **Hyperparameter tuning for deep nets** — how this differs from classical ML's grid/random search at this scale
-7. [opt] **Mixed precision training** — direct callback to `hardware:gpus-parallel-architectures:tensor-cores`
+7. **Mixed precision training** — direct callback to `hardware:gpus-parallel-architectures:tensor-cores`
 
 **Interactive:** optimizer race (the same loss surface, SGD vs. momentum vs. Adam converging at different rates side by side — extending the Math KB's gradient descent playground to the deep-learning-specific optimizers), vanishing gradient demo (a deep network, watch gradient magnitude shrink layer by layer during backprop), batch norm before/after (the same network's loss landscape, visibly smoother with batch norm applied).
 
@@ -55,7 +40,7 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 3. **CNN architectures as a narrative** — LeNet → AlexNet → VGG → ResNet, told as a sequence of solved problems, not a list of names
 4. **Residual connections** — why skip connections are what actually made very deep networks trainable
 5. **Transfer learning** — fine-tuning a pretrained CNN on a new task
-6. [opt] **Architecture scaling** — EfficientNet-style compound scaling, the idea of scaling depth/width/resolution together
+6. **Architecture scaling** — EfficientNet-style compound scaling, the idea of scaling depth/width/resolution together
 
 **Interactive:** convolution step-through (a kernel sliding across an image, the output feature map building up live, adjustable kernel values), CNN layer visualizer (feed a real image through a trained CNN, see what each layer's feature maps actually look like — the "early layers detect edges, later layers detect shapes" idea made visible), residual connection comparison (a very deep plain network vs. one with skip connections, training curves compared).
 
@@ -82,7 +67,7 @@ _(Architecture only — pretraining objectives, scaling laws, and what you actua
 2. **Self-attention** — attending within a single sequence rather than between two
 3. **The Transformer architecture, in full** — multi-head attention, positional encoding, feedforward sublayers, layer norm placement, the complete block
 4. **Why transformers parallelize better than RNNs** — direct callback to `hardware:gpus-parallel-architectures`, this is where that hardware knowledge pays off
-5. [opt] **Positional encoding variants** — learned vs. sinusoidal vs. rotary, why position needs to be injected at all
+5. **Positional encoding variants** — learned vs. sinusoidal vs. rotary, why position needs to be injected at all
 
 **Interactive:** attention weight visualizer (a sentence, click a word, see which other words it attends to, weights shown as connecting lines of varying thickness — genuinely one of the best possible demos for this concept), multi-head attention comparison (the same sentence, different heads attending to different relationships — syntax vs. coreference, for instance), transformer vs. RNN parallelism demo (visualize the sequential dependency chain in an RNN vs. the fully parallel computation in a transformer).
 
@@ -94,7 +79,7 @@ _(Architecture only — pretraining objectives, scaling laws, and what you actua
 2. **Data augmentation** — expanding training data artificially, why it works
 3. **Early stopping** — using the validation curve itself as a stopping signal
 4. **Weight decay in deep nets** — L2 regularization's deep-learning-specific behavior
-5. [opt] **Label smoothing** — softening hard targets, why it sometimes helps generalization
+5. **Label smoothing** — softening hard targets, why it sometimes helps generalization
 
 **Interactive:** data augmentation gallery (one image, watch a dozen augmented variants generate live), overfitting-at-scale demo (a large network memorizing a small dataset, train/val curves diverging dramatically — more extreme than the Math/ML KB's gentler version, same underlying idea).
 
@@ -108,7 +93,7 @@ _(This is where the autoencoder teased in `scaffold-ml:dimensionality-reduction`
 2. **Variational Autoencoders** — the probabilistic twist, the reparameterization trick
 3. **Generative Adversarial Networks** — generator vs. discriminator, the adversarial training game
 4. **Diffusion models, conceptually** — the forward noising process and the learned reverse process, at a foundational level
-5. [later] **Comparing generative paradigms** — a synthesis page once all four exist, contrasting training stability, sample quality, and what each is actually good for
+5. **Comparing generative paradigms** — a synthesis page once all four exist, contrasting training stability, sample quality, and what each is actually good for
 
 **Interactive:** autoencoder reconstruction demo (an image compressed through a bottleneck and reconstructed, bottleneck size adjustable live), GAN training visualizer (generator and discriminator loss curves racing against each other, generated samples improving over simulated training steps), diffusion step-through (watch an image get progressively noised, then watch the reverse process denoise it step by step).
 
@@ -120,7 +105,7 @@ _(This is where the autoencoder teased in `scaffold-ml:dimensionality-reduction`
 2. **Distributed training** — data parallelism vs. model parallelism, at a conceptual level
 3. **Mixed precision training, in practice** — building on the [opt] mention in Section 2
 4. **Experiment tracking and reproducibility** — why deep learning experiments are unusually easy to make irreproducible by accident
-5. [opt] **Model compression** — pruning, quantization, knowledge distillation
+5. **Model compression** — pruning, quantization, knowledge distillation
 
 **Interactive:** data vs. model parallelism visualizer (the same training job, split across devices two different ways, showing what gets duplicated vs. what gets partitioned).
 
@@ -135,7 +120,7 @@ _(Picks up exactly where `scaffold-ml:reinforcement-learning-basics` left off �
 3. **Policy gradient methods** — REINFORCE, directly optimizing a policy instead of a value function _(this is the item originally deferred from the ML KB — it belongs here, not in Applied DL)_
 4. **Actor-critic methods** — combining value-based and policy-based approaches
 5. **Proximal Policy Optimization (PPO), conceptually** — why naive policy gradients are unstable, what PPO's clipping trick fixes
-6. [opt] **Continuous action spaces** — when actions aren't discrete choices, what changes
+6. **Continuous action spaces** — when actions aren't discrete choices, what changes
 
 **Interactive:** DQN training visualizer (an agent in a simple environment, watch its Q-value estimates and resulting behavior improve over training episodes), policy gradient vs. value-based comparison (the same simple environment, two different algorithm families learning it, side by side).
 
@@ -150,31 +135,6 @@ _(Closes the loop deliberately left open in `scaffold-ml:recommender-systems` �
 3. **Embeddings for recommendation** — learned representations of users and items, and why this generalizes better than raw IDs
 4. **Two-tower architectures** — the retrieval pattern used at real-world scale, user tower and item tower trained jointly
 5. **Sequence-aware and session-based recommenders** — directly reusing this KB's own RNN/Transformer sections to model a user's behavior as a sequence rather than a static profile
-6. [opt] **Cold-start strategies in deep recommenders** — how learned representations help (or don't) with the cold-start problem introduced in the ML KB
+6. **Cold-start strategies in deep recommenders** — how learned representations help (or don't) with the cold-start problem introduced in the ML KB
 
 **Interactive:** embedding space visualizer (project learned user/item embeddings into 2D, watch similar items cluster together), two-tower retrieval demo (a query embedding, watch nearest-neighbor item embeddings get retrieved live).
-
----
-
-## Summary counts
-
-| #   | Section                                       | Core | Opt | Later |
-| --- | --------------------------------------------- | ---- | --- | ----- |
-| 1   | Neural Network Foundations, Deepened          | 5    | 1   | 0     |
-| 2   | Training Dynamics & Optimization              | 6    | 1   | 0     |
-| 3   | Convolutional Neural Networks                 | 5    | 1   | 0     |
-| 4   | Recurrent Neural Networks & Sequence Modeling | 6    | 0   | 0     |
-| 5   | Attention & Transformers                      | 4    | 1   | 0     |
-| 6   | Regularization & Generalization               | 4    | 1   | 0     |
-| 7   | Generative Models, Foundations                | 4    | 0   | 1     |
-| 8   | Deep Learning Systems & Practical Training    | 4    | 1   | 0     |
-| 9   | Deep Reinforcement Learning                   | 5    | 1   | 0     |
-| 10  | Deep Learning for Recommender Systems         | 5    | 1   | 0     |
-
-**~48 core concept pages** before [opt]/[later] expansion.
-
----
-
-## Revised boundary with `scaffold-applied-dl`
-
-The boundary shifts slightly from the original plan: **RL and Recommenders now live in DL, not Applied DL**, since both are general techniques built by combining this KB's own architectures (CNNs/RNNs/Transformers) with a specific problem framing — they aren't a _modality_ the way language, vision, and audio are. `scaffold-applied-dl` is now specifically **LLMs/NLP, Vision/VLMs, Audio** — domains with their own data types, pretraining regimes, and model families. Everything else here still holds: Transformers (Section 5) covers the architecture, not what you pretrain it on or how it scales into an LLM; Generative Models (Section 7) covers the four foundational paradigms, not any specific trained model or product. DL teaches mechanisms that generalize across domains and problem types; Applied DL builds the modality-specific systems on top.
