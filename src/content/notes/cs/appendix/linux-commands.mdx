@@ -1,0 +1,199 @@
+---
+title: "Linux Commands"
+description: "How the shell works, plus a searchable cheat sheet of the commands you reach for every day."
+order: 2
+tier: core
+takeaways:
+  - "The **shell** reads a command, runs a program, and connects programs through **streams**: input (stdin), output (stdout) and errors (stderr)."
+  - "The **pipe** `|` feeds one program's output into the next, so small tools combine into powerful one-liners."
+  - "Every command ends with an **exit code**: `0` means success, anything else means failure. `&&` and `||` act on it."
+  - "Files have **owner, group and other** permissions of read, write and execute; `chmod 755` is shorthand for them."
+  - "You are not expected to memorize the table. Know the **groups of tools** that exist, search the sheet, and use `man <command>` for the details."
+resources:
+  - title: "Missing Semester of Your CS Education: The Shell"
+    url: "https://missing.csail.mit.edu/2020/course-shell/"
+    note: "A hands-on introduction to the shell, pipes and permissions."
+  - title: "The Linux Command Line (free book)"
+    url: "https://linuxcommand.org/tlcl.php"
+  - title: "explainshell"
+    url: "https://explainshell.com/"
+    note: "Paste a command and see what each part means."
+  - title: "Linux man-pages"
+    url: "https://man7.org/linux/man-pages/"
+  - title: "bash(1) manual page"
+    url: "https://man7.org/linux/man-pages/man1/bash.1.html"
+---
+
+Most servers, containers and cloud machines run Linux, and you operate them through a text interface called the **shell** (usually `bash`). This note covers the few ideas that make the whole toolbox make sense, followed by a cheat sheet you can search. For the system underneath, see [Kernel Architecture](../../operating-systems/kernel-architecture/) and [System Calls](../../operating-systems/system-calls/).
+
+## How the Shell Works
+
+When you type a command the shell **finds a program** (searching the directories in your `PATH`), **starts it as a process** with your arguments, and waits. Three ideas explain almost everything else.
+
+**Streams.** Every process has three standard channels: **stdin** (input, normally the keyboard), **stdout** (normal output, the screen) and **stderr** (error messages, also the screen). Redirection rewires them: `>` writes stdout to a file, `>>` appends, `<` reads stdin from a file, and `2>&1` sends errors to the same place as normal output.
+
+**Pipes.** `a | b` connects the stdout of `a` to the stdin of `b`. Each tool does one small job on a stream of text, and a pipeline chains them. For example, given an access log, count requests per path, then list the paths that produced errors:
+
+```bash
+$ cat access.log
+GET /home 200
+GET /cart 200
+POST /pay 500
+GET /home 200
+GET /home 404
+POST /pay 200
+
+$ cut -d' ' -f2 access.log | sort | uniq -c | sort -rn     # path, count, most common first
+      3 /home
+      2 /pay
+      1 /cart
+
+$ awk '$3 >= 400 {print $2}' access.log | sort -u          # paths with a status of 400 or more
+/home
+/pay
+```
+
+In words: `cut` takes the second column, `sort` groups equal lines together, `uniq -c` counts runs of equal lines, and the final `sort -rn` orders by that count. None of these programs knows about the others; the pipe is the glue.
+
+**Exit codes.** When a command finishes it returns a number: `0` for success and non-zero for failure. The shell keeps the last one in `$?`. `a && b` runs `b` only if `a` succeeded, and `a || b` runs `b` only if `a` failed, which is how scripts chain steps and stop on errors.
+
+**Permissions.** Each file has an owner, a group and everyone else ("other"), and each of the three gets read (`r`, 4), write (`w`, 2) and execute (`x`, 1) rights. Add the numbers for each class: `chmod 755 run.sh` means owner `7` (read, write, execute), group `5` (read, execute), other `5` (read, execute). `chmod 640` is owner read and write, group read, other nothing, which is typical for a private config file.
+
+<Callout type="pitfall">
+The shell does exactly what you type, with no undo. `rm -rf` deletes without asking or using a trash bin, and a stray space in `rm -rf /tmp/build /` is a disaster. Read destructive commands twice, run `ls` with the same pattern first, and be careful with `sudo`, which runs a command with administrator rights.
+</Callout>
+
+## Cheat Sheet
+
+Type to filter by command or purpose (for example "port", "compress" or "log"), or choose a group. Examples assume a Debian or Ubuntu style system; flags differ slightly between distributions and on macOS.
+
+<FilterTable placeholder="Filter commands, e.g. port, compress, log, permission">
+
+### Files and Directories
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `pwd` | Print the current directory | `pwd` |
+| `ls` | List files (`-l` details, `-a` hidden, `-h` readable sizes) | `ls -lah` |
+| `cd` | Change directory (`cd -` goes back, `cd` alone goes home) | `cd /var/log` |
+| `mkdir` | Make a directory (`-p` creates parents too) | `mkdir -p app/src/utils` |
+| `cp` | Copy files (`-r` for directories) | `cp -r src backup` |
+| `mv` | Move or rename | `mv old.txt new.txt` |
+| `rm` | Delete files (`-r` directories, `-f` no prompt; permanent) | `rm -r build` |
+| `touch` | Create an empty file or update its timestamp | `touch notes.txt` |
+| `ln -s` | Create a symbolic link (a shortcut) | `ln -s /opt/app/current app` |
+| `find` | Search for files by name, type, size or age | `find . -name "*.log" -mtime -1` |
+| `stat` | Show detailed file information | `stat app.py` |
+| `file` | Guess what kind of file something is | `file mystery.bin` |
+
+### Viewing and Searching Text
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `cat` | Print a file to the screen | `cat config.yml` |
+| `less` | Page through a file (`/` to search, `q` to quit) | `less server.log` |
+| `head` / `tail` | First or last lines (`tail -f` follows new lines live) | `tail -f app.log` |
+| `wc` | Count lines, words, bytes (`-l` lines) | `wc -l access.log` |
+| `grep` | Print lines matching a pattern (`-i` ignore case, `-r` recurse, `-n` line numbers, `-v` invert) | `grep -rn "TODO" src` |
+| `sed` | Stream editor, mostly for substitution | `sed 's/http:/https:/g' urls.txt` |
+| `awk` | Process text by column | `awk '{print $1, $3}' data.txt` |
+| `cut` | Pick columns by delimiter | `cut -d, -f1,3 data.csv` |
+| `sort` | Sort lines (`-n` numeric, `-r` reverse, `-u` unique) | `sort -n sizes.txt` |
+| `uniq` | Collapse adjacent duplicates (`-c` count; sort first) | `sort ips.txt \| uniq -c` |
+| `tr` | Translate or delete characters | `tr 'a-z' 'A-Z' < in.txt` |
+| `xargs` | Turn input lines into arguments for a command | `find . -name "*.tmp" \| xargs rm` |
+| `tee` | Write to a file and to the screen at once | `make 2>&1 \| tee build.log` |
+| `diff` | Compare two files | `diff -u old.txt new.txt` |
+| `jq` | Query and reshape JSON (a separate package) | `curl -s api.example.com \| jq '.items[0]'` |
+
+### Processes and Services
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `ps` | List processes (`aux` shows all, with owners) | `ps aux \| grep nginx` |
+| `top` / `htop` | Live view of CPU and memory use per process | `top` |
+| `kill` | Send a signal to a process by ID (default asks it to stop) | `kill 4312` |
+| `kill -9` | Force a process to die immediately, with no cleanup | `kill -9 4312` |
+| `pkill` | Signal processes by name | `pkill -f "python app.py"` |
+| `&` / `jobs` / `fg` / `bg` | Run in the background, list jobs, bring back or send away | `sleep 60 &` |
+| `nohup` | Keep a command running after you log out | `nohup ./job.sh &` |
+| `systemctl` | Start, stop and inspect services | `systemctl status nginx` |
+| `journalctl` | Read logs managed by systemd | `journalctl -u nginx --since "1 hour ago"` |
+| `crontab -e` | Edit your scheduled jobs | `0 2 * * * /opt/backup.sh` |
+| `time` | Measure how long a command takes | `time python solve.py` |
+
+### Permissions and Users
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `chmod` | Change permissions (numeric or `u+x` style) | `chmod 755 run.sh` |
+| `chown` | Change owner and group | `chown alice:dev report.txt` |
+| `sudo` | Run one command as the administrator | `sudo systemctl restart nginx` |
+| `whoami` / `id` | Show your user, and your user and group IDs | `id` |
+| `su` | Switch to another user | `su - alice` |
+| `ls -l` | Read permissions as `-rwxr-xr--` (type, owner, group, other) | `ls -l run.sh` |
+
+### Networking
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `ping` | Check that a host is reachable and measure round-trip time | `ping -c 4 example.com` |
+| `curl` | Make HTTP requests (`-I` headers only, `-s` quiet, `-X` method, `-d` body) | `curl -I https://example.com` |
+| `wget` | Download a file | `wget https://example.com/file.zip` |
+| `ss` | List sockets and listening ports (`-tulpn`) | `ss -tulpn` |
+| `ip addr` | Show network interfaces and addresses | `ip addr` |
+| `dig` | Look up DNS records | `dig example.com A` |
+| `traceroute` | Show the hops a packet takes to a host | `traceroute example.com` |
+| `nc` | Open raw TCP connections; test whether a port is open | `nc -zv example.com 443` |
+| `ssh` | Log in to a remote machine securely | `ssh alice@server.example.com` |
+| `scp` | Copy files over SSH | `scp app.tar.gz alice@server:/opt/` |
+| `rsync` | Efficiently copy and sync directories, only sending changes | `rsync -av src/ server:/opt/app/` |
+
+### Disk and System
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `df` | Free and used space per filesystem (`-h` readable) | `df -h` |
+| `du` | Space used by files and directories | `du -sh *` |
+| `free` | Memory use (`-h` readable) | `free -h` |
+| `uptime` | How long the system has been up, and load averages | `uptime` |
+| `uname -a` | Kernel and system information | `uname -a` |
+| `lsblk` | List disks and partitions | `lsblk` |
+| `lscpu` | CPU details | `lscpu` |
+| `dmesg` | Kernel messages (hardware, out-of-memory kills) | `dmesg \| tail` |
+| `mount` | Show or attach filesystems | `mount \| grep ext4` |
+
+### Archives and Packages
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `tar -czf` | Create a compressed archive | `tar -czf backup.tar.gz project/` |
+| `tar -xzf` | Extract an archive | `tar -xzf backup.tar.gz` |
+| `zip` / `unzip` | Create and extract zip files | `unzip data.zip` |
+| `gzip` / `gunzip` | Compress or decompress one file | `gzip big.log` |
+| `apt` | Install software on Debian and Ubuntu | `sudo apt update && sudo apt install git` |
+| `dnf` | Install software on Fedora and Red Hat | `sudo dnf install git` |
+
+### Shell Features
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `>` / `>>` | Redirect output to a file (overwrite / append) | `echo hi >> log.txt` |
+| `2>&1` | Send errors to the same place as output | `cmd > all.log 2>&1` |
+| `\|` | Pipe output into the next command | `cat f \| sort \| uniq` |
+| `&&` / `\|\|` | Run next command only on success / only on failure | `make && ./run \|\| echo failed` |
+| `$?` | Exit code of the last command | `echo $?` |
+| `$(cmd)` | Use a command's output as text | `echo "Today is $(date +%F)"` |
+| `export` | Set an environment variable for child processes | `export API_URL=http://localhost:8000` |
+| `env` / `printenv` | Show environment variables | `env \| grep PATH` |
+| `which` / `type` | Find which program a name refers to | `which python` |
+| `alias` | Create a shortcut for a command | `alias ll='ls -lah'` |
+| `history` / `Ctrl+R` | List past commands / search them as you type | `history \| grep ssh` |
+| `man` | Read the manual for a command | `man tar` |
+| `Ctrl+C` / `Ctrl+Z` / `Ctrl+D` | Interrupt / suspend / end input | (keyboard) |
+
+</FilterTable>
+
+## Reading a Command
+
+Every command has the same shape: `program [options] [arguments]`. Options (`-l`, `--help`) change behaviour; arguments say what to act on. Short options combine, so `ls -l -a -h` is `ls -lah`. When you meet an unfamiliar command, try `command --help` for a summary, `man command` for the full manual, or paste it into [explainshell](https://explainshell.com/) to see each piece explained. The commands for [Git](../../software-engineering/git-internals/) and for [containers](../../software-engineering/containerization/) follow the same pattern, so once this shape is familiar most command-line tools are readable.
