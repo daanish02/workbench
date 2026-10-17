@@ -1,0 +1,105 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Synchronous calls add up; queued work does not wait for the customer"
+  caption="Placing an order. In the synchronous design the order service calls each service in turn and the customer waits for the sum. In the asynchronous design it records the order, takes payment (the one answer it needs now), publishes OrderPlaced and replies; consumers then work in parallel. Slow the email service or take it down and compare who notices."
+>
+  <sync-vs-async>
+    <div class="ctl-row">
+      <label class="sa-lbl">Email takes <input type="range" min="0.2" max="2.5" step="0.1" value="1.2" data-e /> <b data-evv>1.2 s</b></label>
+      <input type="checkbox" hidden data-down />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Email down</button>
+    </div>
+    <svg class="sa-svg" viewBox="0 0 600 330" role="img" aria-label="Timelines of a synchronous and an asynchronous order flow" data-svg></svg>
+    <p class="sa-stat" data-stat></p>
+  </sync-vs-async>
+</Figure>
+
+<style>
+  .sa-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); flex: 1; }
+  .sa-lbl input { flex: 1; }
+  .sa-svg { display: block; width: 100%; max-width: 640px; margin: 10px auto 0; }
+  .sa-svg :global(.hd) { fill: var(--text); font: 600 12px var(--font-sans); }
+  .sa-svg :global(.rl) { fill: var(--text-muted); font: 10.5px var(--font-mono); }
+  .sa-svg :global(.bl) { fill: var(--text); font: 10px var(--font-mono); }
+  .sa-svg :global(.ax) { fill: var(--text-faint); font: 9.5px var(--font-mono); text-anchor: middle; }
+  .sa-svg :global(.grid) { stroke: var(--border); }
+  .sa-svg :global(.wait) { fill: rgba(251, 188, 5, 0.22); stroke: var(--g-yellow); }
+  .sa-svg :global(.work) { fill: rgba(66, 133, 244, 0.28); stroke: var(--g-blue); }
+  .sa-svg :global(.bg) { fill: rgba(52, 168, 83, 0.24); stroke: var(--g-green); }
+  .sa-svg :global(.bad) { fill: rgba(234, 67, 53, 0.22); stroke: var(--g-red); }
+  .sa-svg :global(.q) { fill: rgba(234, 67, 53, 0.08); stroke: var(--g-red); stroke-dasharray: 4 3; }
+  .sa-stat { margin: 8px 0 0; font: 0.8125rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const TMAX = 4, X0 = 104, X1 = 590, TIMEOUT = 2;
+  const sx = (t: number) => X0 + (Math.min(t, TMAX) / TMAX) * (X1 - X0);
+  const D = { record: 0.1, inventory: 0.3, payment: 0.8, analytics: 0.4, publish: 0.05 };
+  type Bar = { row: string; a: number; b: number; cls: string; label?: string };
+
+  class SyncVsAsync extends HTMLElement {
+    connectedCallback() {
+      this.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const email = +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      const down = this.querySelector<HTMLInputElement>('[data-down]')!.checked;
+      this.querySelector('[data-evv]')!.textContent = `${email.toFixed(1)} s`;
+      const rows = ['customer', 'order', 'inventory', 'payment', 'email', 'analytics'];
+
+      // synchronous: one call after another, the customer waits for all of them
+      const s: Bar[] = [];
+      let t = 0;
+      s.push({ row: 'order', a: t, b: (t += D.record), cls: 'work' });
+      s.push({ row: 'inventory', a: t, b: (t += D.inventory), cls: 'work' });
+      s.push({ row: 'payment', a: t, b: (t += D.payment), cls: 'work' });
+      let syncFail = false;
+      if (down) { s.push({ row: 'email', a: t, b: (t += TIMEOUT), cls: 'bad', label: 'timeout' }); syncFail = true; }
+      else {
+        s.push({ row: 'email', a: t, b: (t += email), cls: 'work' });
+        s.push({ row: 'analytics', a: t, b: (t += D.analytics), cls: 'work' });
+      }
+      const syncDone = t;
+      s.unshift({ row: 'customer', a: 0, b: syncDone, cls: syncFail ? 'bad' : 'wait', label: syncFail ? 'error' : 'waiting' });
+
+      // asynchronous: only payment stays on the request path; the rest consume OrderPlaced
+      const as: Bar[] = [];
+      t = 0;
+      as.push({ row: 'order', a: t, b: (t += D.record), cls: 'work' });
+      as.push({ row: 'payment', a: t, b: (t += D.payment), cls: 'work' });
+      as.push({ row: 'order', a: t, b: (t += D.publish), cls: 'work' });
+      const asyncDone = t;
+      as.unshift({ row: 'customer', a: 0, b: asyncDone, cls: 'wait', label: 'waiting' });
+      const c0 = asyncDone + 0.05;
+      as.push({ row: 'inventory', a: c0, b: c0 + D.inventory, cls: 'bg' });
+      as.push({ row: 'analytics', a: c0, b: c0 + D.analytics, cls: 'bg' });
+      as.push(down ? { row: 'email', a: c0, b: TMAX, cls: 'q', label: 'queued, retried later' } : { row: 'email', a: c0, b: c0 + email, cls: 'bg' });
+
+      let g = '';
+      const panel = (y0: number, title: string, bars: Bar[]) => {
+        g += `<text class="hd" x="0" y="${y0}">${title}</text>`;
+        rows.forEach((r, k) => {
+          const y = y0 + 10 + k * 20;
+          g += `<text class="rl" x="0" y="${y + 11}">${r}</text><line class="grid" x1="${X0}" y1="${y + 16}" x2="${X1}" y2="${y + 16}"></line>`;
+          bars.filter((b) => b.row === r).forEach((b) => {
+            const w = Math.max(2, sx(b.b) - sx(b.a));
+            g += `<rect class="${b.cls}" x="${sx(b.a).toFixed(1)}" y="${y + 1}" width="${w.toFixed(1)}" height="14" rx="3"></rect>`;
+            if (b.label && w > 40) g += `<text class="bl" x="${(sx(b.a) + 5).toFixed(1)}" y="${y + 11.5}">${b.label}</text>`;
+          });
+        });
+      };
+      panel(14, 'Synchronous: call each service in turn', s);
+      panel(166, 'Asynchronous: reply, then consumers work', as);
+      for (let x = 0; x <= TMAX; x += 1) g += `<text class="ax" x="${sx(x)}" y="326">${x} s</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = g;
+      this.querySelector('[data-stat]')!.textContent = down
+        ? `sync: order fails after ${syncDone.toFixed(2)} s · async: customer done at ${asyncDone.toFixed(2)} s, email waits in the queue`
+        : `sync: customer waits ${syncDone.toFixed(2)} s · async: ${asyncDone.toFixed(2)} s · email no longer on the path`;
+    }
+  }
+  customElements.define('sync-vs-async', SyncVsAsync);
+</script>

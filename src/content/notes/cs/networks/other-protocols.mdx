@@ -7,7 +7,7 @@ takeaways:
   - "Choose a protocol by the **communication pattern**: who initiates, whether the connection persists, and whether you are moving data, exchanging messages or announcing an event."
   - "**SFTP** (over SSH) moves files securely; plain **FTP** sends credentials in the clear and is legacy."
   - "**SMTP** sends and relays email between servers; clients read mailboxes with **IMAP**."
-  - "**WebSockets** give a persistent two-way channel, replacing polling for live updates; **SSE** is a simpler one-way stream from server to browser."
+  - "**WebSockets** give a persistent two-way channel, **long polling** holds a request open until there is news, and **SSE** is a simpler one-way stream from server to browser."
   - "**MQTT** is a lightweight publish/subscribe protocol for devices and unreliable links; **SSH** is the encrypted channel for remote login, commands and tunnels."
   - "A **webhook** is an HTTP callback: the sender POSTs to your URL when an event happens. Verify signatures and handle duplicates."
 resources:
@@ -125,6 +125,36 @@ print(sse_event('{"percent": 40}', event="progress", id=2), end="")
 
 Its strengths are **automatic reconnection** (the browser retries and sends `Last-Event-ID` so the server can resume) and simplicity. Typical uses: live feeds, progress bars, notifications, dashboards, and streaming model output token by token. Reach for a WebSocket instead only if the client must also send frequent messages on the same channel; a normal HTTP request can carry client-to-server data alongside an SSE stream.
 
+## Long Polling: Holding the Request
+
+**Long polling** is a halfway point between polling and push that uses only ordinary HTTP. The client sends a request as in polling, but the server **does not answer until it has news** or a timeout passes (often 20 to 60 seconds). When the answer arrives, the client immediately sends the next request, so there is almost always one request waiting at the server.
+
+- **Latency** is close to push: an event is sent as soon as it happens, on the request already waiting for it.
+- **Requests** drop to about one per event, plus one per timeout when nothing happens.
+- **Cost:** the server holds one open request per waiting client, like a WebSocket, but each answer ends the request, so an event that arrives between one response and the next request has to be queued for the client.
+
+It was how browser chat worked before WebSockets, and it is still the fallback when proxies block WebSockets and the simple choice when updates are rare. Its awkward part is the gap between requests: the server must remember what each client has not yet seen (usually with a cursor the client sends back), or events in that gap are lost.
+
+## Polling, Push and Streaming Compared
+
+These patterns are easy to mix up because they all deliver "news" over HTTP or TCP. They differ in **who sends the first message**, **what stays open**, and **which way data can flow**. The figure runs the same events through all five:
+
+<CommPatterns />
+
+With events at 4, 19 and 23.5 seconds and a 5-second poll, short polling makes 6 requests, 3 of them empty, and delivers each event about 2 seconds late. Long polling makes 5 requests with 1 empty timeout and delivers each event after one network trip, like the push patterns. A webhook makes no request until there is news, but the receiver must be a server with a public URL, so it connects servers, not browsers.
+
+| Pattern | Who starts | What stays open | Direction | Typical use |
+| --- | --- | --- | --- | --- |
+| Short polling | Client, on a timer | Nothing | Client asks, server answers | Rare updates where seconds of delay are fine |
+| Long polling | Client, again after each answer | One waiting request | Server answers when it has news | Fallback for push; simple notification feeds |
+| SSE | Client, once | One streaming response | Server to client only | Live feeds, progress, streamed model output |
+| WebSocket | Client, once (HTTP upgrade) | One connection | Both ways | Chat, games, collaborative editing |
+| Webhook | The server with the news | Nothing | Server to server, per event | Payment and repository events between services |
+
+<Callout type="pitfall">
+A webhook is not a way to push to a browser or phone: the receiver needs a reachable HTTP endpoint, which clients behind NAT do not have. And SSE is not two-way: the client still sends ordinary requests to talk back. When the client sends often on the same channel, use a WebSocket.
+</Callout>
+
 ## MQTT: Publish/Subscribe for Devices
 
 **MQTT** is a lightweight **publish/subscribe** protocol designed for small devices and unreliable or low-bandwidth networks. Clients do not talk to each other directly. They connect to a **broker**: publishers send messages to a named **topic**, and the broker forwards each message to every client subscribed to that topic. Senders and receivers need not know about, or be online at the same time as, each other.
@@ -191,6 +221,7 @@ Start from the communication pattern, not the protocol name.
 | Deliver a message to someone's inbox | SMTP |
 | Interactive, two-way, low-latency updates | WebSockets |
 | Stream updates server → browser only | SSE |
+| Push to browsers where WebSockets are blocked | Long polling |
 | Learn about an event in an external service | Webhook |
 | Fetch or change data on demand | HTTP API |
 | Hand jobs between backend services | Message queue (AMQP and others) |

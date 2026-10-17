@@ -1,0 +1,109 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A pool is fine until demand reaches its size"
+  caption="Ten seconds of requests (random arrivals, seeded) sharing a pool. Blue is connections in use, capped by the dashed pool size; red is requests waiting for one. Waiters give up after 1 second. Push utilisation λW/c towards 100% and the queue grows without bound; turn on the slow query and watch a pool that was comfortable run out."
+>
+  <pool-exhaustion>
+    <label class="pe-lbl">Arrivals λ <input type="range" min="50" max="400" step="10" value="200" data-l /> <b data-lv>200/s</b></label>
+    <label class="pe-lbl">Hold time W <input type="range" min="10" max="150" step="5" value="50" data-w /> <b data-wv>50 ms</b></label>
+    <label class="pe-lbl">Pool size c <input type="range" min="2" max="40" step="1" value="14" data-c /> <b data-cv>14</b></label>
+    <div class="ctl-row">
+      <input type="checkbox" hidden data-slow />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Slow query 3–6 s (W × 4)</button>
+    </div>
+    <svg class="pe-svg" viewBox="0 0 340 190" role="img" aria-label="Connections in use and requests waiting over ten seconds" data-svg></svg>
+    <p class="pe-stat" data-stat></p>
+  </pool-exhaustion>
+</Figure>
+
+<style>
+  .pe-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 8px; }
+  .pe-lbl input { flex: 1; }
+  .pe-lbl b { min-width: 4.5em; text-align: right; }
+  .pe-svg { display: block; width: 100%; max-width: 480px; margin: 10px auto 0; }
+  .pe-svg :global(.ax) { stroke: var(--border); }
+  .pe-svg :global(.tk) { fill: var(--text-faint); font: 9px var(--font-mono); }
+  .pe-svg :global(.use) { fill: rgba(66, 133, 244, 0.35); stroke: var(--g-blue); stroke-width: 1.2; }
+  .pe-svg :global(.wait) { fill: rgba(234, 67, 53, 0.3); stroke: var(--g-red); stroke-width: 1.2; }
+  .pe-svg :global(.cap) { stroke: var(--g-green); stroke-dasharray: 4 3; stroke-width: 1.4; }
+  .pe-svg :global(.slow) { fill: rgba(251, 188, 5, 0.08); }
+  .pe-stat { margin: 8px 0 0; font: 0.8125rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const T = 10, GIVE_UP = 1, X0 = 28, X1 = 336, Y0 = 170, Y1 = 8;
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  class PoolExhaustion extends HTMLElement {
+    connectedCallback() {
+      this.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const q = (s: string) => +this.querySelector<HTMLInputElement>(s)!.value;
+      const lam = q('[data-l]'), W = q('[data-w]') / 1000, c = q('[data-c]');
+      const slow = this.querySelector<HTMLInputElement>('[data-slow]')!.checked;
+      this.querySelector('[data-lv]')!.textContent = `${lam}/s`;
+      this.querySelector('[data-wv]')!.textContent = `${Math.round(W * 1000)} ms`;
+      this.querySelector('[data-cv]')!.textContent = String(c);
+
+      // first-come first-served: each request takes the earliest free connection, or gives up
+      const r = rng(7);
+      const free = new Array(c).fill(0);
+      const busy: [number, number][] = [], waiting: [number, number][] = [];
+      const waits: number[] = [];
+      let t = 0, timedOut = 0, n = 0;
+      while ((t += -Math.log(1 - r()) / lam) < T) {
+        n++;
+        let k = 0;
+        for (let j = 1; j < c; j++) if (free[j] < free[k]) k = j;
+        const start = Math.max(t, free[k]);
+        if (start - t > GIVE_UP) { timedOut++; waiting.push([t, t + GIVE_UP]); continue; }
+        const hold = (-Math.log(1 - r()) * W) * (slow && start >= 3 && start < 6 ? 4 : 1);
+        if (start > t) waiting.push([t, start]);
+        waits.push(start - t);
+        busy.push([start, start + hold]);
+        free[k] = start + hold;
+      }
+      // sample both counts every 50 ms
+      const S = 200, use: number[] = [], wq: number[] = [];
+      for (let i = 0; i <= S; i++) {
+        const x = (T * i) / S;
+        use.push(busy.filter(([a, b]) => a <= x && x < b).length);
+        wq.push(waiting.filter(([a, b]) => a <= x && x < b).length);
+      }
+      const ymax = Math.max(c * 1.5, ...use.map((u, i) => u + wq[i]), 4);
+      const sx = (x: number) => X0 + (x / T) * (X1 - X0);
+      const sy = (y: number) => Y0 - (Math.min(y, ymax) / ymax) * (Y0 - Y1);
+      const area = (top: (i: number) => number, base: (i: number) => number) => {
+        let d = `M${sx(0)},${sy(base(0))}`;
+        for (let i = 0; i <= S; i++) d += `L${sx((T * i) / S).toFixed(1)},${sy(top(i)).toFixed(1)}`;
+        for (let i = S; i >= 0; i--) d += `L${sx((T * i) / S).toFixed(1)},${sy(base(i)).toFixed(1)}`;
+        return d + 'Z';
+      };
+      let g = slow ? `<rect class="slow" x="${sx(3)}" y="${Y1}" width="${sx(6) - sx(3)}" height="${Y0 - Y1}"></rect>` : '';
+      g += `<path class="use" d="${area((i) => use[i], () => 0)}"></path>`;
+      g += `<path class="wait" d="${area((i) => use[i] + wq[i], (i) => use[i])}"></path>`;
+      g += `<line class="cap" x1="${X0}" y1="${sy(c)}" x2="${X1}" y2="${sy(c)}"></line>`;
+      g += `<line class="ax" x1="${X0}" y1="${Y0}" x2="${X1}" y2="${Y0}"></line><line class="ax" x1="${X0}" y1="${Y1}" x2="${X0}" y2="${Y0}"></line>`;
+      for (let x = 0; x <= T; x += 2) g += `<text class="tk" x="${sx(x)}" y="${Y0 + 12}" text-anchor="middle">${x} s</text>`;
+      g += `<text class="tk" x="${X0 - 4}" y="${sy(c) + 3}" text-anchor="end">${c}</text><text class="tk" x="${X0 - 4}" y="${Y0}" text-anchor="end">0</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = g;
+
+      waits.sort((a, b) => a - b);
+      const p99 = waits.length ? waits[Math.floor(0.99 * (waits.length - 1))] * 1000 : 0;
+      const rho = (lam * W) / c;
+      const verdict = timedOut ? 'pool exhausted' : rho < 0.8 ? 'comfortable' : 'near the edge';
+      this.querySelector('[data-stat]')!.textContent =
+        `λW = ${(lam * W).toFixed(1)} busy · ρ = ${(rho * 100).toFixed(0)}% · p99 wait ${p99.toFixed(0)} ms · timed out ${timedOut} of ${n} · ${verdict}`;
+    }
+  }
+  customElements.define('pool-exhaustion', PoolExhaustion);
+</script>

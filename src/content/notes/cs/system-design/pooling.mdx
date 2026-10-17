@@ -1,0 +1,116 @@
+---
+title: "Resource Pools"
+description: "Why servers reuse connections and threads, how to size a pool with Little's law, and how a pool runs out."
+order: 6
+tier: core
+takeaways:
+  - "A **pool** keeps a fixed set of expensive resources (database connections, threads) open and lends them out, so a request skips the setup cost and the total stays bounded."
+  - "**Little's law** sizes it: connections busy on average $= \\lambda \\times W$, the request rate times how long each holds one. 200 requests per second at 50 ms keep 10 busy."
+  - "Size above the average: waiting grows steeply as utilisation $\\lambda W / c$ nears 100%. In the simulation a pool of 11 at 91% has a p99 wait of 272 ms; a pool of 16 at 62% has 17 ms."
+  - "Thread pools follow the work: about one thread per core for CPU-bound tasks, and $\\text{cores} \\times (1 + \\text{wait}/\\text{compute})$ when threads mostly wait on I/O."
+  - "A pool fails by **exhaustion**: one slow dependency holds every connection and everything else queues. Bound the wait, keep pools separate per dependency (**bulkheads**), and never hold a connection across a remote call."
+resources:
+  - title: "About Pool Sizing (HikariCP wiki)"
+    url: "https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing"
+    note: "Why a small database pool often beats a large one, with the cores-based starting formula."
+  - title: "Little's law (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Little%27s_law"
+    note: "The identity behind every pool size, with its conditions."
+  - title: "PgBouncer"
+    url: "https://www.pgbouncer.org/"
+    note: "A connection pooler that sits in front of PostgreSQL and shares a few server connections among many clients."
+---
+
+Every request to a web service needs some resources only for a moment: a database connection for a query, a thread to run its code. Creating them per request is slow and unbounded: a new database connection costs a TCP handshake, often a TLS handshake and an authentication round trip, and on PostgreSQL a whole new server process. A **pool** creates a fixed number once and lends them out. This note covers connection pools and thread pools, how to size them with Little's law from [Systems Thinking](../systems-thinking/), and how they fail. It builds on [Database Scaling](../database-scaling/), since the database is usually the pool's other end.
+
+## How a Pool Works
+
+A **connection pool** holds up to $c$ open connections. A request **borrows** one, uses it, and **returns** it; the next request reuses the same connection without a handshake. When all $c$ are in use, a new request **waits** in a queue, and gives up after a **wait timeout**. A pool also has housekeeping settings: a minimum number of idle connections kept warm, an idle timeout that closes unused ones, a maximum lifetime so connections are replaced regularly, and a validation check so a broken connection is not handed out.
+
+The limit is the point as much as the reuse. A database can serve only so many connections well: PostgreSQL's default `max_connections` is 100, and each connection is a process with its own memory. The limit applies to the **total** across all clients: 20 application instances with a pool of 10 each open 200 connections, twice that default. When instances scale out, either shrink each pool or put a shared pooler such as PgBouncer in front of the database.
+
+## Sizing With Little's Law
+
+**Little's law** says that in a stable system the average number of items inside equals the arrival rate times the average time each spends inside:
+
+$$
+L = \lambda W.
+
+$$
+
+In words: for a pool, $\lambda$ is requests per second that need a connection, $W$ is how long each holds it, and $L$ is how many connections are busy on average. At 200 requests per second holding a connection for 50 ms, $L = 200 \times 0.05 = 10$. The **utilisation** of a pool of size $c$ is $\rho = \lambda W / c$, the fraction of the time the average connection is busy.
+
+A pool of exactly 10 is not enough, because arrivals are random: some moments bring more than the average. The simulation below sends 20,000 requests with random arrivals and hold times to pools of different sizes.
+
+```python
+import heapq
+import random
+
+def simulate(pool_size, rate, hold, n=20_000, seed=0):
+    """Requests arrive at `rate` per second and hold a connection for `hold` seconds on average."""
+    rng = random.Random(seed)
+    free_at = [0.0] * pool_size          # when each connection is next free
+    heapq.heapify(free_at)
+    t, waits = 0.0, []
+    for _ in range(n):
+        t += rng.expovariate(rate)
+        start = max(t, heapq.heappop(free_at))   # wait for the earliest free connection
+        waits.append(start - t)
+        heapq.heappush(free_at, start + rng.expovariate(1 / hold))
+    waits.sort()
+    return waits[len(waits) // 2], waits[int(0.99 * len(waits))]
+
+rate, hold = 200, 0.050                  # 200 requests/s, 50 ms each: Little's law says 10 busy on average
+for size in (11, 12, 14, 16, 20):
+    p50, p99 = simulate(size, rate, hold)
+    print(f"pool {size:>2}: utilisation {rate * hold / size:.0%}, median wait {p50 * 1000:5.1f} ms, p99 wait {p99 * 1000:6.1f} ms")
+# pool 11: utilisation 91%, median wait  12.9 ms, p99 wait  272.0 ms
+# pool 12: utilisation 83%, median wait   0.0 ms, p99 wait  103.3 ms
+# pool 14: utilisation 71%, median wait   0.0 ms, p99 wait   38.1 ms
+# pool 16: utilisation 62%, median wait   0.0 ms, p99 wait   17.0 ms
+# pool 20: utilisation 50%, median wait   0.0 ms, p99 wait    0.0 ms
+```
+
+In words: at 91% utilisation the typical request already waits 12.9 ms and the slowest 1% wait 272 ms, more than five times the 50 ms of real work. Adding just five connections (62%) cuts the p99 wait to 17 ms, and at 50% it disappears. Waiting grows steeply as utilisation approaches 100%, the same curve as in [Systems Thinking](../systems-thinking/), so a useful starting size is $\lambda W$ divided by a target utilisation of about 0.6 to 0.7, then measured.
+
+<PoolExhaustion />
+
+Bigger is not always better. The database has a fixed number of cores and disks, and past that point more connections only add contention: the HikariCP guide in the resources finds that a pool of about twice the database's core count often outperforms one of hundreds. If Little's law asks for more connections than the database can run efficiently, the fix is to shorten $W$ (faster queries, less work inside the connection) or to add database capacity, not a larger pool.
+
+## Thread Pools
+
+A **thread pool** applies the same idea to execution. A fixed set of worker threads takes tasks from a **queue**; submitting a task is cheap, and the number of threads, each with its own stack (often around 1 MB), stays bounded. The queue should be bounded too, with a **rejection policy** for when it is full: reject the task, run it on the caller's thread (which slows the producer down), or drop it.
+
+The right number of threads depends on what the tasks do. A thread blocked on I/O frees its core for another thread, so I/O-heavy work needs more threads than cores:
+
+```python
+import math
+
+def threads_needed(cores, wait_ms, compute_ms):
+    # a thread blocked on I/O frees its core, so more threads than cores keep the cores busy
+    return math.ceil(cores * (1 + wait_ms / compute_ms))
+
+print("CPU-bound (no waiting):", threads_needed(8, 0, 10))
+print("half waiting:          ", threads_needed(8, 10, 10))
+print("mostly waiting on I/O: ", threads_needed(8, 90, 10))
+# CPU-bound (no waiting): 8
+# half waiting:           16
+# mostly waiting on I/O:  80
+```
+
+In words: with 8 cores, CPU-bound tasks want 8 threads, since more would only take turns on the same cores. Tasks that spend half their time waiting want 16, and tasks that wait 90 ms for every 10 ms of computation want 80. Event loops and async code (see [Concurrency Models](../../languages/concurrency-models/)) avoid the large thread counts by not blocking a thread while waiting, but they still need a bounded number of connections to each downstream service.
+
+## When Pools Run Out
+
+**Pool exhaustion** happens when demand $\lambda W$ exceeds the pool size for long enough that the queue keeps growing. The common cause is not more traffic but a longer $W$: one slow query, or a downstream service that starts taking seconds instead of milliseconds. Every request now holds its connection four or forty times longer, the pool fills, and requests that would have been fast wait behind the slow ones. Try the slow-query toggle in the figure: a pool sized comfortably at 71% has every connection busy within a fraction of a second and requests start timing out.
+
+The defences:
+
+- **Bound the wait.** A short wait timeout fails a request quickly instead of letting threads pile up behind the pool.
+- **Bulkheads.** Give each dependency its own pool (or its own cap), so a slow payment provider can use up only the payment pool, not the connections the rest of the site needs.
+- **Short holds.** Borrow a connection as late as possible and return it as soon as the query is done.
+- **Watch the pool.** Export active, idle and waiting counts and the wait time; a growing waiting count is an early warning before users see errors.
+
+<Callout type="pitfall">
+Holding a database connection while making a remote call (to a payment provider, an email service, another microservice) makes $W$ the remote call's latency. A 2-second third-party timeout turns a 10-connection pool into one that serves 5 requests per second. Finish the database work, return the connection, and only then call out; or open a short transaction after the call returns.
+</Callout>

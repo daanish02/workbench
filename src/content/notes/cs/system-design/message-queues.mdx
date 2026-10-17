@@ -1,7 +1,7 @@
 ---
 title: "Message Queues"
 description: "Event-driven architecture, decoupling, and pub/sub messaging patterns."
-order: 8
+order: 9
 tier: core
 takeaways:
   - "A **message broker** decouples producers from consumers in time and availability: the sender publishes and moves on."
@@ -33,6 +33,12 @@ If the email service is slow, the order request may be delayed. If analytics is 
 A message-driven design changes the interaction. The order service records the order and publishes an event such as `OrderPlaced`. Other components consume that event independently: inventory processes the reservation, analytics records the purchase, and a notification service sends an email.
 
 The order service no longer needs to wait for every downstream task to finish. The components are decoupled because they communicate through a message contract rather than a direct call to each implementation.
+
+Compare the two designs on the same order. With email taking 1.2 seconds, the synchronous customer waits 2.8 seconds for all four calls; the asynchronous one waits 0.95 seconds, for recording the order, taking payment and publishing the event. Take the email service down and the synchronous order fails, while the asynchronous email simply waits in its queue:
+
+<SyncVsAsync />
+
+The same split between waiting and not waiting appears between applications, as polling, webhooks and streaming connections: see [Polling, Push and Streaming](../../networks/other-protocols/#polling-push-and-streaming-compared).
 
 This does not eliminate dependencies. Consumers still depend on the meaning and structure of published messages, and critical workflows may still require coordination. The architecture changes how dependencies are managed.
 

@@ -64,6 +64,10 @@ Running nodes at 50% utilisation (see the queueing curve in [Systems Thinking](.
 
 Notice what is **absent**: no consensus protocol and no leader election. Dynamo deliberately avoids them, because they sacrifice availability during partitions (see [Consensus](../../distributed-systems/consensus/)). Instead it resolves disagreements **after the fact**, which is cheaper but weaker.
 
+Before the decisions one by one, here is the request path they produce. Follow a write, a read, and a write while one replica is down; the decisions below explain each step.
+
+<ArchDiagram system="key-value-store" />
+
 ## Decision 1: Partitioning on a Ring
 
 Keys and nodes are hashed onto a **ring**; a key belongs to the first node clockwise from its position, and each physical node owns many **virtual nodes** so load spreads evenly and a node joining or leaving moves only a small fraction of the keys. Compare the resulting movement with plain modulo hashing in the [Consistent Hashing](../../system-design/consistent-hashing/) note. Because every node knows the ring, **any node can route any request**: a client (or load balancer) contacts any node, and that node, acting as **coordinator**, forwards to the owners. There is no lookup service to fail.
@@ -214,6 +218,10 @@ Nodes must learn who is down without a central monitor. They use **gossip**: eac
 ## Decision 7: The Storage Engine on Each Node
 
 Each node needs a local engine that makes **writes cheap**. The standard choice is a **log-structured merge (LSM) tree**: a write is appended to a **commit log** (for durability) and inserted into an in-memory sorted **memtable**; when the memtable fills, it is flushed to disk as an immutable sorted file (an **SSTable**). Reads check the memtable and then the SSTables, newest first, using a **Bloom filter** per file to skip files that cannot contain the key (see [Bloom Filters](../../data-structures/bloom-filters/)); background **compaction** merges SSTables and drops overwritten or deleted entries. All disk writes are sequential, which is why it sustains very high write rates. Deletes are written as **tombstones** (a marker, removed later at compaction), the same idea as in the [Collaborative Editor](../collaborative-editor/) case and the segment merging in [Search & Autocomplete](../search-autocomplete/).
+
+Follow a write, a flush and a read through one node's engine:
+
+<ArchDiagram system="kv-node-engine" />
 
 ## Failure Modes
 

@@ -170,6 +170,12 @@ Two integers per key and one arithmetic step, versus storing a timestamp for eve
 
 A good limiter explains itself. Respond with `429 Too Many Requests` and a `Retry-After` header, and include the remaining allowance and reset time in response headers so clients can pace themselves (the `RateLimit` headers are being standardized). Clients should back off with jitter instead of retrying immediately (see [Distributed Basics](../../distributed-systems/distributed-basics/)). Different **layers** often combine: a coarse per-IP limit at the edge, a per-key quota at the gateway, and a concurrency limit protecting each backend.
 
+## The Whole Design
+
+The shared-store design as a system: every gateway checks the same counter in one atomic step before the request reaches the backend. Follow an allowed request, a rejected one, and one that arrives while the store is down.
+
+<ArchDiagram system="rate-limiter" />
+
 ## Failure Modes
 
 | What fails | Effect | Mitigation |

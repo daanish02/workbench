@@ -1,0 +1,155 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Five ways to learn that something happened"
+  caption="The same server events (yellow) over 30 seconds, delivered five ways. In each lane the top line is the side that wants the news and the bottom line is the side that has it; arrows are messages, with blue requests, green responses carrying news and red empty responses. Shaded bands are requests or connections held open. Move the poll interval, switch the events, and add a client message to see which patterns need a second channel to talk back."
+>
+  <comm-patterns>
+    <div class="ctl-row">
+      <label class="cp-lbl">Poll every <input type="range" min="1" max="10" step="1" value="5" data-p /> <b data-pv>5 s</b></label>
+    </div>
+    <div class="ctl-row">
+      <div class="choice-row">
+        <span class="ctl-label">Events</span>
+        <input type="hidden" data-ev value="rare" />
+        <span class="choice">
+          <button type="button" class="btn" data-choice="rare" aria-pressed="true">Rare</button>
+          <button type="button" class="btn" data-choice="burst" aria-pressed="false">Bursty</button>
+          <button type="button" class="btn" data-choice="none" aria-pressed="false">None</button>
+        </span>
+      </div>
+      <input type="checkbox" hidden data-cm />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Client sends at 12 s</button>
+    </div>
+    <svg class="cp-svg" viewBox="0 0 600 392" role="img" aria-label="Timelines of short polling, long polling, SSE, WebSocket and webhook delivery" data-svg></svg>
+    <p class="cp-stat" data-stat></p>
+  </comm-patterns>
+</Figure>
+
+<style>
+  .cp-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); flex: 1; }
+  .cp-lbl input { flex: 1; }
+  .cp-svg { display: block; width: 100%; max-width: 640px; margin: 10px auto 0; }
+  .cp-svg :global(.ln) { stroke: var(--text-faint); stroke-width: 1; }
+  .cp-svg :global(.nm) { fill: var(--text); font: 600 12px var(--font-sans); }
+  .cp-svg :global(.sd) { fill: var(--text-faint); font: 9.5px var(--font-mono); }
+  .cp-svg :global(.rd) { fill: var(--text-muted); font: 10px var(--font-mono); }
+  .cp-svg :global(.ax) { fill: var(--text-faint); font: 9.5px var(--font-mono); text-anchor: middle; }
+  .cp-svg :global(.ev) { stroke: var(--g-yellow); stroke-width: 2.5; }
+  .cp-svg :global(.rq) { stroke: var(--g-blue); stroke-width: 1.5; }
+  .cp-svg :global(.ok) { stroke: var(--g-green); stroke-width: 1.8; }
+  .cp-svg :global(.no) { stroke: var(--g-red); stroke-width: 1.2; }
+  .cp-svg :global(.cm) { stroke: var(--g-blue-l); stroke-width: 2; stroke-dasharray: 3 2; }
+  .cp-svg :global(.hold) { fill: rgba(251, 188, 5, 0.1); }
+  .cp-svg :global(.open) { fill: rgba(66, 133, 244, 0.12); }
+  .cp-stat { margin: 8px 0 0; font: 0.8125rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const T = 30, L = 0.4, HOLD = 10; // seconds shown, one-way latency, long-poll timeout
+  const X0 = 96, X1 = 590;
+  const sx = (t: number) => X0 + (t / T) * (X1 - X0);
+  const EVENTS: Record<string, number[]> = { rare: [4, 19, 23.5], burst: [6, 6.6, 7.1, 7.5, 21], none: [] };
+  type Arrow = { t0: number; t1: number; up: boolean; cls: string };
+  type Lane = { name: string; sides: [string, string]; arrows: Arrow[]; bands: { a: number; b: number; cls: string }[]; delays: number[]; requests: number; empty: number; note: string };
+
+  function shortPoll(ev: number[], P: number, cm: boolean): Lane {
+    const lane: Lane = { name: 'Short polling', sides: ['client', 'server'], arrows: [], bands: [], delays: [], requests: 0, empty: 0, note: '' };
+    let i = 0;
+    for (let t = 0; t + 2 * L <= T; t += P) {
+      lane.requests++;
+      lane.arrows.push({ t0: t, t1: t + L, up: false, cls: 'rq' });
+      const got: number[] = [];
+      while (i < ev.length && ev[i] <= t + L) got.push(ev[i++]);
+      got.forEach((e) => lane.delays.push(t + 2 * L - e));
+      if (!got.length) lane.empty++;
+      lane.arrows.push({ t0: t + L, t1: t + 2 * L, up: true, cls: got.length ? 'ok' : 'no' });
+    }
+    if (cm) { lane.requests++; lane.arrows.push({ t0: 12, t1: 12 + L, up: false, cls: 'cm' }); }
+    lane.note = 'a client message is one more request';
+    return lane;
+  }
+  function longPoll(ev: number[], cm: boolean): Lane {
+    const lane: Lane = { name: 'Long polling', sides: ['client', 'server'], arrows: [], bands: [], delays: [], requests: 0, empty: 0, note: '' };
+    let t = 0, i = 0;
+    while (t + L < T) {
+      lane.requests++;
+      const at = t + L;
+      lane.arrows.push({ t0: t, t1: at, up: false, cls: 'rq' });
+      // answer at once if news is waiting, else hold until the next event or the timeout
+      let resp = at;
+      if (!(i < ev.length && ev[i] <= at)) resp = i < ev.length && ev[i] <= at + HOLD ? ev[i] : at + HOLD;
+      if (resp > T) { lane.bands.push({ a: at, b: T, cls: 'hold' }); break; }
+      lane.bands.push({ a: at, b: resp, cls: 'hold' });
+      const got: number[] = [];
+      while (i < ev.length && ev[i] <= resp) got.push(ev[i++]);
+      got.forEach((e) => lane.delays.push(resp + L - e));
+      if (!got.length) lane.empty++;
+      lane.arrows.push({ t0: resp, t1: resp + L, up: true, cls: got.length ? 'ok' : 'no' });
+      t = resp + L;
+    }
+    if (cm) { lane.requests++; lane.arrows.push({ t0: 12, t1: 12 + L, up: false, cls: 'cm' }); }
+    lane.note = `held up to ${HOLD} s; a client message needs a separate request`;
+    return lane;
+  }
+  function stream(name: string, ev: number[], cm: boolean, ws: boolean): Lane {
+    const lane: Lane = { name, sides: ['client', 'server'], arrows: [], bands: [{ a: L, b: T, cls: 'open' }], delays: [], requests: 1, empty: 0, note: '' };
+    lane.arrows.push({ t0: 0, t1: L, up: false, cls: 'rq' });
+    ev.forEach((e) => { lane.arrows.push({ t0: e, t1: e + L, up: true, cls: 'ok' }); lane.delays.push(L); });
+    if (cm) {
+      lane.arrows.push({ t0: 12, t1: 12 + L, up: false, cls: 'cm' });
+      if (!ws) lane.requests++;
+    }
+    lane.note = ws ? 'one connection, both directions' : 'one response stream, server to client only; client sends a separate POST';
+    return lane;
+  }
+  function webhook(ev: number[]): Lane {
+    const lane: Lane = { name: 'Webhook', sides: ['your server', 'provider'], arrows: [], bands: [], delays: [], requests: ev.length, empty: 0, note: 'the provider calls your public URL; nothing held open' };
+    // here the side with the news makes the request: a POST up to the receiver, then 200 back down
+    ev.forEach((e) => {
+      lane.arrows.push({ t0: e, t1: e + L, up: true, cls: 'ok' });
+      lane.arrows.push({ t0: e + L, t1: e + 2 * L, up: false, cls: 'rq' });
+      lane.delays.push(L);
+    });
+    return lane;
+  }
+
+  class CommPatterns extends HTMLElement {
+    connectedCallback() {
+      this.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const P = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const ev = EVENTS[this.querySelector<HTMLInputElement>('[data-ev]')!.value];
+      const cm = this.querySelector<HTMLInputElement>('[data-cm]')!.checked;
+      this.querySelector('[data-pv]')!.textContent = `${P} s`;
+      const lanes = [shortPoll(ev, P, cm), longPoll(ev, cm), stream('SSE', ev, cm, false), stream('WebSocket', ev, cm, true), webhook(ev)];
+      let g = '';
+      lanes.forEach((ln, k) => {
+        const yTop = 22 + k * 74, yBot = yTop + 30;
+        g += `<text class="nm" x="0" y="${yTop + 4}">${ln.name}</text>`;
+        g += `<text class="sd" x="0" y="${yTop + 17}">${ln.sides[0]}</text><text class="sd" x="0" y="${yBot + 3}">${ln.sides[1]}</text>`;
+        ln.bands.forEach((b) => { g += `<rect class="${b.cls}" x="${sx(b.a).toFixed(1)}" y="${yTop}" width="${(sx(b.b) - sx(b.a)).toFixed(1)}" height="${yBot - yTop}"></rect>`; });
+        g += `<line class="ln" x1="${X0}" y1="${yTop}" x2="${X1}" y2="${yTop}"></line><line class="ln" x1="${X0}" y1="${yBot}" x2="${X1}" y2="${yBot}"></line>`;
+        ev.forEach((e) => { g += `<line class="ev" x1="${sx(e).toFixed(1)}" y1="${yBot - 5}" x2="${sx(e).toFixed(1)}" y2="${yBot + 5}"></line>`; });
+        ln.arrows.forEach((a) => {
+          const [ya, yb] = a.up ? [yBot, yTop] : [yTop, yBot];
+          g += `<line class="${a.cls}" x1="${sx(a.t0).toFixed(1)}" y1="${ya}" x2="${sx(Math.min(a.t1, T)).toFixed(1)}" y2="${yb}"></line>`;
+        });
+        const avg = ln.delays.length ? `${(ln.delays.reduce((s, d) => s + d, 0) / ln.delays.length).toFixed(1)} s` : '–';
+        const reqs = ln.name === 'Webhook' ? `${ln.requests} POSTs from the provider` : `${ln.requests} request${ln.requests === 1 ? '' : 's'}`;
+        g += `<text class="rd" x="${X0}" y="${yBot + 17}">${reqs} · ${ln.empty} empty · delay ${avg}</text>`;
+      });
+      for (let t = 0; t <= T; t += 10) g += `<text class="ax" x="${sx(t)}" y="388">${t} s</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = g;
+      const [sp, lp] = lanes;
+      const avg = (l: Lane) => (l.delays.length ? (l.delays.reduce((s, d) => s + d, 0) / l.delays.length).toFixed(1) : '–');
+      this.querySelector('[data-stat]')!.textContent =
+        `short poll ${sp.requests} req, ${sp.empty} empty, ${avg(sp)} s · long poll ${lp.requests} req, ${lp.empty} empty, ${avg(lp)} s · push ${L} s`;
+    }
+  }
+  customElements.define('comm-patterns', CommPatterns);
+</script>

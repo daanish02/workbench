@@ -1,0 +1,164 @@
+---
+import Figure from '../Figure.astro';
+import { architectures } from '../../data/architectures';
+
+// System architecture with a "follow a request" stepper. The layout and flows live in
+// src/data/architectures.ts; this file only draws them.
+interface Props { system: string }
+const { system } = Astro.props;
+const arch = architectures[system];
+if (!arch) throw new Error(`ArchDiagram: unknown system "${system}"`);
+
+const W = 104, H = 46, DX = 116, DY = 84, PAD = 8;
+const pos = new Map(arch.nodes.map((n) => [n.id, { x: PAD + n.col * DX + W / 2, y: PAD + n.row * DY + H / 2 }]));
+const cols = Math.max(...arch.nodes.map((n) => n.col)) + 1;
+const rows = Math.max(...arch.nodes.map((n) => n.row)) + 1;
+const vw = 2 * PAD + (cols - 1) * DX + W;
+const vh = 2 * PAD + (rows - 1) * DY + H;
+
+// clip the centre-to-centre line to each box's border, plus a small gap for the arrowhead
+const clip = (cx: number, cy: number, dx: number, dy: number, gap: number) => {
+  const t = Math.min(dx ? (W / 2 + gap) / Math.abs(dx) : Infinity, dy ? (H / 2 + gap) / Math.abs(dy) : Infinity);
+  return [cx + dx * t, cy + dy * t];
+};
+const edges = arch.edges.map((e) => {
+  const p = pos.get(e.from), q = pos.get(e.to);
+  if (!p || !q) throw new Error(`ArchDiagram ${system}: edge ${e.from}>${e.to} names an unknown node`);
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const [x1, y1] = clip(p.x, p.y, dx, dy, 2);
+  const [x2, y2] = clip(q.x, q.y, -dx, -dy, 5);
+  return { ...e, id: `${e.from}>${e.to}`, x1, y1, x2, y2 };
+});
+
+// resolve every step to the edge (or node) it highlights, so a typo fails the build
+const flows = arch.flows.map((f) => ({
+  name: f.name,
+  steps: f.steps.map((st) => {
+    if (!st.at.includes('>')) {
+      if (!pos.has(st.at)) throw new Error(`ArchDiagram ${system}: step names unknown node ${st.at}`);
+      return { edge: null, reply: false, nodes: [st.at], text: st.text };
+    }
+    const [x, y] = st.at.split('>');
+    const fwd = edges.find((e) => e.from === x && e.to === y);
+    const back = edges.find((e) => e.from === y && e.to === x);
+    const e = fwd ?? back;
+    if (!e) throw new Error(`ArchDiagram ${system}: step ${st.at} matches no edge`);
+    return { edge: e.id, kind: e.kind, reply: !fwd, nodes: [x, y], text: st.text };
+  }),
+}));
+const label = new Map(arch.nodes.map((n) => [n.id, n.label]));
+const uid = `arch-${system}`;
+---
+
+<Figure title={arch.title} caption={arch.caption}>
+  <arch-diagram data-flows={JSON.stringify(flows)} data-labels={JSON.stringify(Object.fromEntries(label))}>
+    {flows.length > 1 && (
+      <div class="choice-row">
+        <span class="ctl-label">Flow</span>
+        <input type="hidden" data-flow value="0" />
+        <span class="choice">
+          {flows.map((f, i) => <button type="button" class="btn" data-choice={String(i)} aria-pressed={i === 0 ? 'true' : 'false'}>{f.name}</button>)}
+        </span>
+      </div>
+    )}
+    <svg class="ad-svg" viewBox={`0 0 ${vw} ${vh}`} style={`max-width:${vw + 40}px`} role="img" aria-label={arch.title}>
+      <defs>
+        <marker id={`${uid}-sync`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4285f4" /></marker>
+        <marker id={`${uid}-async`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34a853" /></marker>
+        <marker id={`${uid}-hot`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#fbbc05" /></marker>
+      </defs>
+      {edges.map((e) => (
+        <line class:list={['ad-e', e.kind]} data-e={e.id} data-kind={e.kind} data-uid={uid}
+          x1={e.x1.toFixed(1)} y1={e.y1.toFixed(1)} x2={e.x2.toFixed(1)} y2={e.y2.toFixed(1)}
+          marker-end={`url(#${uid}-${e.kind})`} />
+      ))}
+      {arch.nodes.map((n) => {
+        const p = pos.get(n.id)!;
+        return (
+          <g class:list={['ad-n', n.kind]} data-n={n.id}>
+            <rect x={p.x - W / 2} y={p.y - H / 2} width={W} height={H} rx="8" />
+            <text class="ad-l" x={p.x} y={n.tag ? p.y - 3 : p.y + 4}>{n.label}</text>
+            {n.tag && <text class="ad-t" x={p.x} y={p.y + 12}>{n.tag}</text>}
+          </g>
+        );
+      })}
+    </svg>
+    <p class="ad-legend"><span class="sy">sync: caller waits</span> <span class="as">async: queued</span> <span class="hot">current step</span></p>
+    <p class="ad-msg" data-msg></p>
+    <p class="ad-stat" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </arch-diagram>
+</Figure>
+
+<style>
+  .ad-svg { display: block; width: 100%; margin: 8px auto 0; }
+  .ad-e { stroke-width: 1.8; }
+  .ad-e.sync { stroke: var(--g-blue); }
+  .ad-e.async { stroke: var(--g-green); stroke-dasharray: 5 4; }
+  .ad-e:global(.hot) { stroke: var(--g-yellow); stroke-width: 3; }
+  .ad-n rect { fill: rgba(66, 133, 244, 0.1); stroke: var(--g-blue); stroke-width: 1.2; transition: stroke 0.15s, fill 0.15s; }
+  .ad-n.store rect { fill: rgba(52, 168, 83, 0.1); stroke: var(--g-green); }
+  .ad-n.queue rect { fill: rgba(52, 168, 83, 0.06); stroke: var(--g-green); stroke-dasharray: 4 3; }
+  .ad-n.client rect, .ad-n.external rect { fill: transparent; stroke: var(--text-faint); }
+  .ad-n:global(.hot) rect { stroke: var(--g-yellow); stroke-width: 2.4; fill: rgba(251, 188, 5, 0.14); }
+  .ad-l { fill: var(--text); font: 600 12px var(--font-sans, Inter, system-ui, sans-serif); text-anchor: middle; }
+  .ad-t { fill: var(--text-faint); font: 10px var(--font-mono); text-anchor: middle; }
+  .ad-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 8px 0 0; font: 0.75rem var(--font-mono); }
+  .ad-legend span::before { content: ''; display: inline-block; width: 22px; vertical-align: middle; margin-right: 6px; border-top: 2px solid; }
+  .sy { color: var(--g-blue-l); } .as { color: var(--g-green-l); } .as::before { border-top-style: dashed !important; } .hot { color: var(--g-yellow-l); }
+  .ad-msg { min-height: 3em; margin: 10px 0 0; font-size: 0.9375rem; color: var(--text); text-align: center; }
+  .ad-stat { margin: 4px 0 10px; font: 0.8125rem var(--font-mono); color: var(--text-muted); text-align: center; }
+  .ctl-row { justify-content: center; }
+</style>
+
+<script>
+  type Step = { edge: string | null; kind?: string; reply: boolean; nodes: string[]; text: string };
+  class ArchDiagramEl extends HTMLElement {
+    flows: { name: string; steps: Step[] }[] = [];
+    labels: Record<string, string> = {};
+    i = 0;
+    connectedCallback() {
+      this.flows = JSON.parse(this.dataset.flows!);
+      this.labels = JSON.parse(this.dataset.labels!);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => { this.i++; this.draw(); });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => { this.i = 0; this.draw(); });
+      this.querySelector('[data-flow]')?.addEventListener('change', () => { this.i = 0; this.draw(); });
+      this.draw();
+    }
+    draw() {
+      const f = this.flows[+(this.querySelector<HTMLInputElement>('[data-flow]')?.value ?? 0)];
+      const n = f.steps.length;
+      this.i = Math.min(this.i, n);
+      this.querySelectorAll('.hot').forEach((el) => el.classList.remove('hot'));
+      this.querySelectorAll<SVGLineElement>('line[data-e]').forEach((l) => {
+        l.setAttribute('marker-end', `url(#${l.dataset.uid}-${l.dataset.kind})`);
+        l.removeAttribute('marker-start');
+      });
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = this.i >= n;
+      const msg = this.querySelector('[data-msg]')!, stat = this.querySelector('[data-stat]')!;
+      if (this.i === 0) {
+        msg.textContent = `${f.name}: press Step to follow it through the system.`;
+        stat.textContent = `step 0 / ${n}`;
+        return;
+      }
+      const st = f.steps[this.i - 1];
+      st.nodes.forEach((id) => this.querySelector(`[data-n="${id}"]`)?.classList.add('hot'));
+      let where = this.labels[st.nodes[0]];
+      if (st.edge) {
+        const l = this.querySelector<SVGLineElement>(`line[data-e="${st.edge}"]`)!;
+        l.classList.add('hot');
+        // a reply runs against the drawn arrow, so point the highlight the way the data moves
+        l.setAttribute(st.reply ? 'marker-start' : 'marker-end', `url(#${l.dataset.uid}-hot)`);
+        if (st.reply) l.removeAttribute('marker-end');
+        where = `${this.labels[st.nodes[0]]} → ${this.labels[st.nodes[1]]} · ${st.reply ? 'reply' : st.kind}`;
+      }
+      msg.textContent = st.text;
+      stat.textContent = `step ${this.i} / ${n} · ${where}`;
+    }
+  }
+  customElements.define('arch-diagram', ArchDiagramEl);
+</script>
