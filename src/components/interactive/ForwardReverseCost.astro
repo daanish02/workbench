@@ -1,0 +1,63 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Forward or reverse: which order is cheaper?"
+  caption="A function with n inputs and m outputs is a chain of L layers. Forward mode pushes one input direction through the chain per pass, so the full Jacobian needs n passes; reverse mode pulls one output back per pass, so it needs m. A loss has m = 1, which is why backpropagation runs backward."
+>
+  <forward-reverse-cost>
+    <div class="fr-ctl">
+      <label class="fr-lbl">inputs n <input type="range" min="0" max="7" step="1" value="6" data-n /> <b data-nv>1000000</b></label>
+      <label class="fr-lbl">outputs m <input type="range" min="0" max="7" step="1" value="0" data-m /> <b data-mv>1</b></label>
+      <label class="fr-lbl">layers L <input type="range" min="1" max="100" step="1" value="20" data-l /> <b data-lv>20</b></label>
+    </div>
+    <div class="fr-bars">
+      <div class="fr-row"><span>forward</span><div class="fr-bar fwd" data-fbar></div><b data-f></b></div>
+      <div class="fr-row"><span>reverse</span><div class="fr-bar rev" data-rbar></div><b data-r></b></div>
+    </div>
+    <p class="fr-stat" data-stat></p>
+  </forward-reverse-cost>
+</Figure>
+
+<style>
+  .fr-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .fr-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .fr-lbl input { flex: 1; }
+  .fr-bars { display: grid; gap: 8px; }
+  .fr-row { display: grid; grid-template-columns: 70px 1fr 110px; align-items: center; gap: 8px; font: 0.8rem var(--font-mono); color: var(--text-muted); }
+  .fr-bar { height: 14px; border-radius: 4px; min-width: 2px; }
+  .fwd { background: var(--g-blue); }
+  .rev { background: var(--g-green); }
+  .fr-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  class ForwardReverseCost extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const n = 10 ** +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const m = 10 ** +this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const L = +this.querySelector<HTMLInputElement>('[data-l]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      this.querySelector('[data-mv]')!.textContent = String(m);
+      this.querySelector('[data-lv]')!.textContent = String(L);
+      // each pass costs about one evaluation of the chain; count passes × layers
+      const f = n * L, r = m * L;
+      const mx = Math.log10(Math.max(f, r)) || 1;
+      const w = (v: number) => `${Math.max(1, (Math.log10(v) / mx) * 100)}%`;
+      this.querySelector<HTMLElement>('[data-fbar]')!.style.width = w(f);
+      this.querySelector<HTMLElement>('[data-rbar]')!.style.width = w(r);
+      this.querySelector('[data-f]')!.textContent = `${n} passes`;
+      this.querySelector('[data-r]')!.textContent = `${m} passes`;
+      const ratio = f / r;
+      this.querySelector("[data-stat]")!.textContent = ratio === 1 ? "same cost: n = m" : ratio > 1
+        ? `reverse mode is ${ratio.toExponential(0)}× cheaper here (bars on a log scale)`
+        : `forward mode is ${(1 / ratio).toExponential(0)}× cheaper here (bars on a log scale)`;
+    }
+  }
+  customElements.define('forward-reverse-cost', ForwardReverseCost);
+</script>

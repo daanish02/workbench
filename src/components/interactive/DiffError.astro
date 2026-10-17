@@ -1,0 +1,74 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Smaller h is not always better"
+  caption="Error of the forward difference (blue) and central difference (green) for the derivative of sin x at x = 1, computed in double precision, against the step h on log scales. Moving right to left, truncation error falls (slope 1 for forward, 2 for central) until rounding error takes over and the curves turn back up. The best h is near 10⁻⁸ for forward and 10⁻⁵ for central differences."
+>
+  <diff-error>
+    <label class="de-lbl">log₁₀ h <input type="range" min="-15" max="-1" step="0.25" value="-4" data-h /> <b data-hv>-4.00</b></label>
+    <svg class="de-svg" viewBox="0 0 340 220" role="img" aria-label="Log-log plot of derivative error against step size">
+      <g data-axes></g>
+      <path data-fwd class="de-fwd"></path>
+      <path data-cen class="de-cen"></path>
+      <line data-mark y1="10" y2="190" class="de-mark"></line>
+    </svg>
+    <p class="de-stat" data-stat></p>
+  </diff-error>
+</Figure>
+
+<style>
+  .de-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .de-lbl input { flex: 1; }
+  .de-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .de-fwd { fill: none; stroke: var(--g-blue); stroke-width: 2; }
+  .de-cen { fill: none; stroke: var(--g-green); stroke-width: 2; }
+  .de-mark { stroke: var(--g-yellow); stroke-dasharray: 4 3; }
+  .de-svg :global(.de-ax) { stroke: #3c4043; }
+  .de-svg :global(.de-t) { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .de-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const X = 1;
+  const TRUE = Math.cos(X);
+  const fwd = (h: number) => Math.abs((Math.sin(X + h) - Math.sin(X)) / h - TRUE) || 1e-17;
+  const cen = (h: number) => Math.abs((Math.sin(X + h) - Math.sin(X - h)) / (2 * h) - TRUE) || 1e-17;
+  // axes: log10 h from -15 to -1 across, log10 error from -16 to 0 down
+  const sx = (lh: number) => 30 + ((lh + 15) / 14) * 300;
+  const sy = (le: number) => 10 + (-le / 16) * 180;
+
+  class DiffError extends HTMLElement {
+    connectedCallback() {
+      let ax = `<line class="de-ax" x1="30" y1="190" x2="330" y2="190"></line><line class="de-ax" x1="30" y1="10" x2="30" y2="190"></line>`;
+      for (let lh = -15; lh <= -1; lh += 2) ax += `<text class="de-t" x="${sx(lh) - 8}" y="204">1e${lh}</text>`;
+      for (let le = 0; le >= -16; le -= 4) ax += `<text class="de-t" x="0" y="${sy(le) + 3}">1e${le}</text>`;
+      this.querySelector('[data-axes]')!.innerHTML = ax;
+      const path = (f: (h: number) => number) => {
+        let d = '';
+        for (let i = 0; i <= 280; i++) {
+          const lh = -15 + (14 * i) / 280;
+          const le = Math.max(-16, Math.log10(f(10 ** lh)));
+          d += `${i ? 'L' : 'M'}${sx(lh).toFixed(1)},${sy(le).toFixed(1)}`;
+        }
+        return d;
+      };
+      this.querySelector('[data-fwd]')!.setAttribute('d', path(fwd));
+      this.querySelector('[data-cen]')!.setAttribute('d', path(cen));
+      this.querySelector('[data-h]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const lh = +this.querySelector<HTMLInputElement>('[data-h]')!.value;
+      this.querySelector('[data-hv]')!.textContent = lh.toFixed(2);
+      const m = this.querySelector('[data-mark]')!;
+      m.setAttribute('x1', String(sx(lh)));
+      m.setAttribute('x2', String(sx(lh)));
+      const h = 10 ** lh;
+      this.querySelector('[data-stat]')!.textContent =
+        `h = ${h.toExponential(1)} · forward error ${fwd(h).toExponential(1)} · central error ${cen(h).toExponential(1)}`;
+    }
+  }
+  customElements.define('diff-error', DiffError);
+</script>

@@ -1,0 +1,87 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The ε–δ game"
+  caption="Your opponent picks ε, a band around the claimed limit L. You pick δ, a window around a. You win when every point of the curve inside the window (except at a itself) stays inside the band. For a continuous function a small enough δ always wins; for the jump, no δ wins once ε is too narrow to hold both sides of the step."
+>
+  <epsilon-delta-game>
+    <div class="ed-ctl">
+      <div class="ed-lbl">function
+        <input type="hidden" data-f value="smooth" /><span class="choice"><button type="button" class="btn" data-choice="smooth" aria-pressed="true">x² near a = 1, L = 1</button><button type="button" class="btn" data-choice="jump" aria-pressed="false">jump at a = 1, L = 1</button></span>
+      </div>
+      <label class="ed-lbl">ε <input type="range" min="0.05" max="1" step="0.05" value="0.4" data-eps /> <b data-epsv>0.40</b></label>
+      <label class="ed-lbl">δ <input type="range" min="0.01" max="0.8" step="0.01" value="0.3" data-del /> <b data-delv>0.30</b></label>
+    </div>
+    <svg class="ed-svg" viewBox="0 0 320 220" role="img" aria-label="Curve with an epsilon band and a delta window">
+      <rect data-band x="20" width="290" class="ed-band"></rect>
+      <rect data-win y="10" height="200" class="ed-win"></rect>
+      <path data-curve class="ed-curve"></path>
+      <path data-bad class="ed-bad"></path>
+    </svg>
+    <p class="ed-stat" data-stat></p>
+  </epsilon-delta-game>
+</Figure>
+
+<style>
+  .ed-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .ed-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .ed-lbl input { flex: 1; }
+  .ed-lbl select { background: var(--bg-soft); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+  .ed-svg { display: block; width: 100%; max-width: 400px; margin: 0 auto; }
+  .ed-band { fill: rgba(251, 188, 4, 0.15); }
+  .ed-win { fill: rgba(66, 133, 244, 0.15); }
+  .ed-curve { fill: none; stroke: var(--text-muted); stroke-width: 2; }
+  .ed-bad { fill: none; stroke: var(--g-red); stroke-width: 3; }
+  .ed-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  // plot window: x in [0, 2], y in [-0.5, 3]
+  const sx = (x: number) => 20 + (x / 2) * 290;
+  const sy = (y: number) => 210 - ((y + 0.5) / 3.5) * 200;
+  const F = {
+    smooth: (x: number) => x * x,
+    jump: (x: number) => (x < 1 ? 0.6 : 1.6),
+  } as Record<string, (x: number) => number>;
+
+  class EpsilonDeltaGame extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input, select').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const key = this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      const f = F[key];
+      const eps = +this.querySelector<HTMLInputElement>('[data-eps]')!.value;
+      const del = +this.querySelector<HTMLInputElement>('[data-del]')!.value;
+      this.querySelector('[data-epsv]')!.textContent = eps.toFixed(2);
+      this.querySelector('[data-delv]')!.textContent = del.toFixed(2);
+      const band = this.querySelector('[data-band]')!;
+      band.setAttribute('y', String(sy(1 + eps)));
+      band.setAttribute('height', String(sy(1 - eps) - sy(1 + eps)));
+      const win = this.querySelector('[data-win]')!;
+      win.setAttribute('x', String(sx(1 - del)));
+      win.setAttribute('width', String(sx(1 + del) - sx(1 - del)));
+      let d = '', bad = '', ok = true;
+      for (let i = 0; i <= 400; i++) {
+        const x = (2 * i) / 400;
+        const y = f(x);
+        const brk = key === 'jump' && i > 0 && (x - 2 / 400 < 1) !== (x < 1);
+        d += `${i === 0 || brk ? 'M' : 'L'}${sx(x).toFixed(1)},${sy(y).toFixed(1)}`;
+        if (Math.abs(x - 1) < del && x !== 1 && Math.abs(y - 1) >= eps) {
+          ok = false;
+          bad += `M${sx(x).toFixed(1)},${sy(y).toFixed(1)}l0.1,0`;
+        }
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', d);
+      this.querySelector('[data-bad]')!.setAttribute('d', bad);
+      const hint = key === 'smooth'
+        ? `a winning δ for this ε is any δ ≤ ${(Math.sqrt(1 + eps) - 1).toFixed(3)}`
+        : eps > 0.6 ? 'this ε is wider than half the jump, so a δ can still win' : 'no δ wins: the jump is wider than the band';
+      this.querySelector('[data-stat]')!.textContent = `${ok ? 'You win' : 'You lose (red points leave the band)'} · ${hint}`;
+    }
+  }
+  customElements.define('epsilon-delta-game', EpsilonDeltaGame);
+</script>

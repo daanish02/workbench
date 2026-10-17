@@ -1,0 +1,77 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="When Euler's method blows up"
+  caption="Euler's method on y′ = ky with k < 0, whose true solution (green) decays smoothly. Each step multiplies y by 1 + hk. Below h = 1/|k| the steps decay smoothly (blue), between 1/|k| and 2/|k| they flip sign but still shrink (yellow), and above 2/|k| they grow without bound (red)."
+>
+  <euler-stability>
+    <div class="es-ctl">
+      <label class="es-lbl">k <input type="range" min="-5" max="-0.5" step="0.5" value="-2" data-k /> <b data-kv>-2.0</b></label>
+      <label class="es-lbl">step h <input type="range" min="0.05" max="1.3" step="0.05" value="0.3" data-h /> <b data-hv>0.30</b></label>
+    </div>
+    <svg class="es-svg" viewBox="0 0 340 200" role="img" aria-label="Euler iterates against the exact decaying solution">
+      <line x1="20" y1="100" x2="330" y2="100" class="es-axis"></line>
+      <path data-exact class="es-exact"></path>
+      <path data-euler class="es-euler"></path>
+      <g data-dots></g>
+    </svg>
+    <p class="es-stat" data-stat></p>
+  </euler-stability>
+</Figure>
+
+<style>
+  .es-ctl { display: grid; gap: 10px; margin-bottom: 12px; }
+  .es-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); }
+  .es-lbl input { flex: 1; }
+  .es-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .es-axis { stroke: #3c4043; }
+  .es-exact { fill: none; stroke: var(--g-green); stroke-width: 2; }
+  .es-euler { fill: none; stroke: var(--g-blue); stroke-width: 1.5; }
+  .es-svg.osc .es-euler { stroke: var(--g-yellow); }
+  .es-svg.bad .es-euler { stroke: var(--g-red); }
+  .es-svg.osc :global(.es-dot) { fill: var(--g-yellow-l); }
+  .es-svg.bad :global(.es-dot) { fill: var(--g-red-l); }
+  .es-svg :global(.es-dot) { fill: var(--g-blue-l); }
+  .es-stat { margin: 10px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const T = 6;
+  const sx = (t: number) => 20 + (t / T) * 310;
+  const sy = (y: number) => 100 - Math.max(-1.8, Math.min(1.8, y)) * 50;
+
+  class EulerStability extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      const h = +this.querySelector<HTMLInputElement>('[data-h]')!.value;
+      this.querySelector('[data-kv]')!.textContent = k.toFixed(1);
+      this.querySelector('[data-hv]')!.textContent = h.toFixed(2);
+      let ex = '';
+      for (let i = 0; i <= 200; i++) { const t = (T * i) / 200; ex += `${i ? 'L' : 'M'}${sx(t).toFixed(1)},${sy(Math.exp(k * t)).toFixed(1)}`; }
+      this.querySelector('[data-exact]')!.setAttribute('d', ex);
+      let y = 1, d = `M${sx(0)},${sy(1)}`, dots = `<circle class="es-dot" r="2.5" cx="${sx(0)}" cy="${sy(1)}"></circle>`;
+      const steps = Math.floor(T / h);
+      for (let n = 1; n <= steps; n++) {
+        y *= 1 + h * k;
+        d += `L${sx(n * h).toFixed(1)},${sy(y).toFixed(1)}`;
+        dots += `<circle class="es-dot" r="2.5" cx="${sx(n * h).toFixed(1)}" cy="${sy(y).toFixed(1)}"></circle>`;
+      }
+      this.querySelector('[data-euler]')!.setAttribute('d', d);
+      this.querySelector('[data-dots]')!.innerHTML = dots;
+      const g = 1 + h * k;
+      const svg = this.querySelector('svg')!;
+      svg.classList.toggle('osc', g < 0 && Math.abs(g) < 1);
+      svg.classList.toggle('bad', Math.abs(g) >= 1);
+      const verdict = Math.abs(g) < 1 ? (g >= 0 ? 'decays smoothly' : 'oscillates but decays') : 'unstable: grows without bound';
+      this.querySelector('[data-stat]')!.textContent =
+        `factor 1 + hk = ${g.toFixed(2)} · stable for h < 2/|k| = ${(2 / Math.abs(k)).toFixed(2)} · ${verdict} · y(${(steps * h).toFixed(1)}) = ${y.toExponential(2)}`;
+    }
+  }
+  customElements.define('euler-stability', EulerStability);
+</script>

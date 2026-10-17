@@ -1,0 +1,72 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How fast each rule converges"
+  caption="Error in ∫₀¹ eˣ dx = e − 1 for the left Riemann sum, the midpoint rule, the trapezoid rule and Simpson's rule, against the number of pieces n, on log scales. Doubling n halves the left-sum error, quarters the midpoint and trapezoid errors, and divides Simpson's by sixteen: slopes 1, 2, 2 and 4."
+>
+  <quadrature-rules>
+    <label class="qr-lbl">n <input type="range" min="1" max="10" step="1" value="3" data-n /> <b data-nv>8</b></label>
+    <svg class="qr-svg" viewBox="0 0 340 220" role="img" aria-label="Log-log plot of quadrature error against number of pieces">
+      <g data-axes></g>
+      <g data-paths></g>
+      <line data-mark y1="10" y2="190" class="qr-mark"></line>
+    </svg>
+    <p class="qr-legend"><span class="l1">left</span> <span class="l2">midpoint</span> <span class="l3">trapezoid</span> <span class="l4">Simpson</span></p>
+    <p class="qr-stat" data-stat></p>
+  </quadrature-rules>
+</Figure>
+
+<style>
+  .qr-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .qr-lbl input { flex: 1; }
+  .qr-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .qr-mark { stroke: var(--text-faint); stroke-dasharray: 4 3; }
+  .qr-svg :global(.qr-ax) { stroke: #3c4043; }
+  .qr-svg :global(.qr-t) { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .qr-svg :global(path) { fill: none; stroke-width: 2; }
+  .qr-legend { text-align: center; font: 0.8rem var(--font-mono); margin: 6px 0 0; }
+  .l1 { color: var(--g-red-l); } .l2 { color: var(--g-blue-l); } .l3 { color: var(--g-yellow-l); } .l4 { color: var(--g-green-l); }
+  .qr-stat { margin: 6px 0 0; font: 0.8rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const f = Math.exp;
+  const EXACT = Math.E - 1;
+  const rules: [string, string, (n: number) => number][] = [
+    ['left', 'var(--g-red)', (n) => { let s = 0; for (let i = 0; i < n; i++) s += f(i / n); return s / n; }],
+    ['midpoint', 'var(--g-blue)', (n) => { let s = 0; for (let i = 0; i < n; i++) s += f((i + 0.5) / n); return s / n; }],
+    ['trapezoid', 'var(--g-yellow)', (n) => { let s = (f(0) + f(1)) / 2; for (let i = 1; i < n; i++) s += f(i / n); return s / n; }],
+    ['Simpson', 'var(--g-green)', (n) => { const m = 2 * n, h = 1 / m; let s = f(0) + f(1); for (let i = 1; i < m; i++) s += (i % 2 ? 4 : 2) * f(i * h); return (s * h) / 3; }],
+  ];
+  const err = (r: (n: number) => number, n: number) => Math.max(1e-16, Math.abs(r(n) - EXACT));
+  // n = 2^k for k = 0..10; error from 1 down to 1e-16
+  const sx = (k: number) => 30 + (k / 10) * 300;
+  const sy = (le: number) => 10 + (-le / 16) * 180;
+
+  class QuadratureRules extends HTMLElement {
+    connectedCallback() {
+      let ax = `<line class="qr-ax" x1="30" y1="190" x2="330" y2="190"></line><line class="qr-ax" x1="30" y1="10" x2="30" y2="190"></line>`;
+      for (let k = 0; k <= 10; k += 2) ax += `<text class="qr-t" x="${sx(k) - 6}" y="204">${2 ** k}</text>`;
+      for (let le = 0; le >= -16; le -= 4) ax += `<text class="qr-t" x="0" y="${sy(le) + 3}">1e${le}</text>`;
+      this.querySelector('[data-axes]')!.innerHTML = ax;
+      this.querySelector('[data-paths]')!.innerHTML = rules.map(([, col, r]) => {
+        let d = '';
+        for (let k = 0; k <= 10; k++) d += `${k ? 'L' : 'M'}${sx(k).toFixed(1)},${sy(Math.log10(err(r, 2 ** k))).toFixed(1)}`;
+        return `<path d="${d}" style="stroke:${col}"></path>`;
+      }).join('');
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const n = 2 ** k;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const m = this.querySelector('[data-mark]')!;
+      m.setAttribute('x1', String(sx(k))); m.setAttribute('x2', String(sx(k)));
+      this.querySelector('[data-stat]')!.textContent = `n = ${n}: ` + rules.map(([name, , r]) => `${name} ${err(r, n).toExponential(1)}`).join(' · ');
+    }
+  }
+  customElements.define('quadrature-rules', QuadratureRules);
+</script>
