@@ -1,0 +1,177 @@
+---
+title: "Web Vulnerabilities"
+description: "SQL injection, XSS, CSRF, SSRF: the pattern behind each."
+order: 5
+tier: core
+takeaways:
+  - "The shared pattern is **trust crossing a boundary**: untrusted input reaches an interpreter, a credential, or a privileged network position it should not control."
+  - "**SQL injection** and **XSS** mix data into code (SQL, HTML/JS); the defenses are parameterized queries and context-aware output encoding."
+  - "**CSRF** abuses a browser's automatic credentials; defend with anti-CSRF tokens, `SameSite` cookies and origin checks."
+  - "**SSRF** turns the server into a confused deputy on the internal network; defend with destination allowlists and egress controls."
+  - "Each defense matches one boundary: encoding does not fix CSRF, and parameterized queries do not stop SSRF."
+resources:
+  - title: "OWASP Top 10"
+    url: "https://owasp.org/www-project-top-ten/"
+    note: "The standard awareness list of critical web risks."
+  - title: "PortSwigger Web Security Academy"
+    url: "https://portswigger.net/web-security"
+    note: "Free, hands-on labs for each vulnerability class."
+  - title: "OWASP SQL Injection Prevention Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+  - title: "OWASP SSRF Prevention Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+---
+
+Web vulnerabilities often arise when an application confuses data with instructions, trusts input from the wrong source, or performs an action without correctly establishing who authorized it. SQL injection, cross-site scripting (XSS), cross-site request forgery (CSRF), and server-side request forgery (SSRF) exploit different versions of this underlying problem. Understanding the pattern behind each vulnerability makes it easier to recognize insecure designs and choose the right defense.
+
+## SQL injection: data becomes executable instructions
+
+SQL injection occurs when an application combines untrusted input with a database query in a way that allows the input to change the query's intended structure.
+
+Imagine a login system that constructs a database query by inserting a submitted username directly into a SQL string. The application intends the username to be a value to compare against a database field. But if the input is interpreted as part of the SQL language itself, it can alter the query's logic rather than simply supply a value.
+
+The underlying failure is a loss of separation between code and data. The database receives a query whose meaning depends partly on input that should have been treated only as data.
+
+The primary defense is parameterized queries, also called prepared statements. They keep the SQL structure separate from the supplied values, so input is treated as a value rather than executable SQL syntax. Where dynamic table names, column names, or sort directions are necessary, these structural elements generally require strict allowlisting because ordinary query parameters cannot substitute for every kind of SQL syntax.
+
+Input validation is useful, but it is not a replacement for parameterization. A string that appears harmless under one set of assumptions may still have unexpected meaning in another query context.
+
+The same general principle applies beyond databases: whenever an application builds executable commands by concatenating untrusted strings, it risks allowing data to influence the command's structure.
+
+The difference is visible when you run both versions of a login check:
+
+<InjectionPlayground />
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("CREATE TABLE users (name TEXT, password TEXT); INSERT INTO users VALUES ('maya', 's3cret');")
+def login_unsafe(name, pw):
+    q = f"SELECT * FROM users WHERE name = '{name}' AND password = '{pw}'"         # input becomes part of the SQL
+    return bool(db.execute(q).fetchall())
+def login_safe(name, pw):
+    return bool(db.execute("SELECT * FROM users WHERE name = ? AND password = ?", (name, pw)).fetchall())
+print("normal wrong password   unsafe:", login_unsafe("maya", "nope"), " safe:", login_safe("maya", "nope"))
+print("injected ' OR '1'='1    unsafe:", login_unsafe("maya", "x' OR '1'='1"), " safe:", login_safe("maya", "x' OR '1'='1"))
+# normal wrong password   unsafe: False  safe: False
+# injected ' OR '1'='1    unsafe: True  safe: False
+```
+
+## Cross-site scripting (XSS): data becomes browser-executable code
+
+Cross-site scripting occurs when an application causes a browser to interpret attacker-controlled content as executable script within a trusted website's origin.
+
+For example, a website may let users post comments and then display those comments to other visitors. If the application inserts a comment into an HTML document without correctly handling its context, the browser may interpret part of the comment as markup or script rather than ordinary text.
+
+The consequence is particularly serious because browsers enforce a same-origin security model. Code executing in a site's origin may be able to interact with that site's page, access information available to its scripts, or make requests using the user's existing session. The attacker's content can therefore inherit the authority associated with the vulnerable site.
+
+The pattern resembles SQL injection, but the interpreter is different:
+
+- SQL injection crosses the boundary into a database query language.
+- XSS crosses the boundary into the browser's HTML, JavaScript, or related parsing contexts.
+
+The defense depends on the output context. Applications should use framework-supported safe rendering, apply context-appropriate output encoding, and avoid unsafe HTML insertion. When users genuinely need to submit HTML, a well-maintained HTML sanitizer is generally more appropriate than simple escaping. Content Security Policy (CSP) can provide additional defense in depth, but it should not replace fixing the underlying injection flaw.
+
+XSS is often categorized as stored, reflected, or DOM-based, depending on how the malicious content reaches the execution point. These categories describe different delivery paths, not different fundamental failures.
+
+```python
+import html
+
+comment = '<script>steal(document.cookie)</script>'
+print("raw     :", comment)
+print("encoded :", html.escape(comment))
+# raw     : <script>steal(document.cookie)</script>
+# encoded : &lt;script&gt;steal(document.cookie)&lt;/script&gt;
+```
+
+Encoded, the browser shows the text instead of running it. (Encoding must match the context: HTML body, attribute, URL and JavaScript each need their own.)
+
+## Cross-site request forgery (CSRF): a browser's authority is misused
+
+Cross-site request forgery occurs when an attacker induces a victim's browser to send an unwanted request to a website where the victim is already authenticated.
+
+Suppose a user is logged in to a banking website. The browser holds a session cookie that the bank uses to recognize the user. If the bank accepts a sensitive state-changing request based solely on that cookie, an attacker may be able to cause the browser to send such a request from another site.
+
+The critical distinction is that the browser may automatically attach authentication credentials even though the user did not intentionally initiate the action. The request can therefore appear authenticated without being properly authorized by the user's intent.
+
+CSRF is not primarily about injecting code into the target website. Instead, it exploits a mismatch between the browser's ability to present credentials and the application's ability to establish that a request was intentionally initiated from a trusted interaction.
+
+Common defenses include anti-CSRF tokens tied to the user's session, validating the `Origin` header where appropriate, and setting cookies with suitable `SameSite` restrictions. Sensitive state changes should use appropriate HTTP methods and should never rely on a simple link or a GET request to perform an important mutation.
+
+`SameSite` cookies reduce many CSRF opportunities, but their protection depends on cookie configuration, browser behavior, and the application's request patterns. Anti-CSRF tokens and origin checks provide additional safeguards where needed.
+
+CSRF also illustrates why authentication and authorization are not enough by themselves. A request can carry valid credentials and still fail to demonstrate that the user intended the action.
+
+```python
+import hmac
+import secrets
+
+session_token = secrets.token_urlsafe(16)                      # issued with the form, tied to this session
+def csrf_ok(submitted): return hmac.compare_digest(submitted, session_token)
+print("form with token:", csrf_ok(session_token), "| forged cross-site request:", csrf_ok(""))
+# form with token: True | forged cross-site request: False
+```
+
+A page on another site can make the browser send your cookie, but it cannot read the token and so cannot include it.
+
+## Server-side request forgery (SSRF): the server becomes a confused network client
+
+Server-side request forgery occurs when an application can be induced to make network requests to destinations that the requester should not control.
+
+Consider a service that accepts a URL and fetches the referenced image or document. The feature may be legitimate, but if the application accepts arbitrary destinations, an attacker might influence the server to contact internal services, administrative interfaces, or cloud metadata endpoints that are not directly accessible from the public internet.
+
+The core problem is a trust-boundary failure between user-controlled destinations and the server's network authority. The server may have access to internal systems that the external requester cannot reach. If it uses that access on the requester's behalf without sufficient restrictions, it becomes a confused deputy: a component whose legitimate authority is misused to perform an unintended action.
+
+SSRF differs from the previous vulnerabilities because the dangerous interpreter or capability is the server's networking stack and its access to reachable destinations. The input need not become executable code; controlling where the server connects can be enough.
+
+Defenses include restricting outbound network access, allowlisting permitted destinations when the feature permits it, validating URL schemes and destination addresses, and rechecking destinations after DNS resolution and across redirects. Network-level controls are especially important because application-level checks alone can be undermined by DNS rebinding, redirect behavior, or address-parsing inconsistencies.
+
+A robust design also limits what a fetching service can reach through network segmentation and narrowly scoped service permissions. If the feature only needs to fetch public images, it should not have unrestricted access to internal infrastructure.
+
+```python
+import ipaddress
+from urllib.parse import urlparse
+
+def safe_url(url):
+    u = urlparse(url)
+    if u.scheme not in ("http", "https"):
+        return False
+    try:
+        ip = ipaddress.ip_address(u.hostname)
+    except ValueError:
+        return "needs DNS resolution, then re-check the resolved address"
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local)
+for url in ("https://93.184.216.34/img.png", "http://127.0.0.1:8080/admin", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd", "http://10.0.0.5/"):
+    print(f"{url:<45} {safe_url(url)}")
+# https://93.184.216.34/img.png                 True
+# http://127.0.0.1:8080/admin                   False
+# http://169.254.169.254/latest/meta-data/      False
+# file:///etc/passwd                            False
+# http://10.0.0.5/                              False
+```
+
+This is only one layer: a hostname must be resolved and the *resolved* address checked (and again after redirects), which is why network egress controls matter more than string checks.
+
+## The common pattern: trust crosses a boundary
+
+These vulnerabilities become easier to distinguish when mapped to the boundary that fails.
+
+| Vulnerability | Boundary being crossed                        | What the attacker influences             | Core defense                                         |
+| ------------- | --------------------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| SQL injection | Application → database interpreter            | Query structure                          | Parameterized queries                                |
+| XSS           | Application content → browser interpreter     | Executable page content                  | Safe rendering and context-aware encoding            |
+| CSRF          | External site → authenticated browser request | An action using the victim's credentials | CSRF tokens, origin checks, suitable cookie settings |
+| SSRF          | User input → server network                   | The destination the server contacts      | Destination restrictions and network egress controls |
+
+The shared principle is to preserve boundaries between untrusted input, executable instructions, authenticated authority, and privileged resources. But the specific defense must match the boundary: encoding does not solve CSRF, a CSRF token does not solve SQL injection, and parameterized queries do not prevent SSRF.
+
+A useful security review therefore asks four questions: What does the input control? Which component interprets it? Whose authority does that component possess? What prevents the input from exceeding its intended scope? These questions expose the design flaw before there is any need to study a particular exploit.
+
+Test your pattern recognition. For each scenario, name the boundary that fails:
+
+<VulnQuiz />
+
+<Callout type="key">
+For any feature, ask four questions: **What does the input control? Which component interprets it? Whose authority does that component hold? What stops the input exceeding its intended scope?** The answers expose the flaw before you need to know any particular exploit.
+</Callout>

@@ -1,0 +1,146 @@
+---
+title: "Compliance & Privacy"
+description: "GDPR and data protection, explained at a conceptual level."
+order: 9
+tier: optional
+takeaways:
+  - "**Personal data** is anything relating to an identified or identifiable person; combinations of ordinary facts (location, timestamps) can identify someone."
+  - "**Pseudonymized** data is still personal data under GDPR; only genuinely **anonymous** data falls outside it."
+  - "GDPR processing needs a **lawful basis** (six options); **consent** is only one of them and has strict requirements."
+  - "Core principles: purpose limitation, **data minimization**, accuracy, storage limitation, security, accountability."
+  - "Individuals have **rights** (access, erasure, portability, objection...); organizations must be able to find and act on their data. Breaches generally need notifying within **72 hours**."
+resources:
+  - title: "GDPR full text, browsable (gdpr-info.eu)"
+    url: "https://gdpr-info.eu/"
+    note: "Every article and recital, easy to navigate."
+  - title: "ICO: Guide to the UK GDPR"
+    url: "https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/"
+    note: "Plain-English regulator guidance on principles, bases and rights."
+  - title: "k-anonymity (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/K-anonymity"
+---
+
+Data protection is the practice of controlling how personal information is collected, used, stored, shared, and deleted. Privacy is the broader principle that people should have meaningful control over information about them and how it affects their lives. The General Data Protection Regulation (GDPR) turns many of these principles into legal obligations: organizations must justify their processing of personal data, protect it appropriately, respect individual rights, and demonstrate accountability. The central idea is that having access to personal data does not automatically give an organization unlimited permission to use it.
+
+## Personal data and the scope of protection
+
+Personal data is information relating to an identified or identifiable natural person. It includes obvious identifiers such as names, email addresses, and government identification numbers, but can also include location histories, online identifiers, purchase records, and combinations of seemingly ordinary facts that identify someone.
+
+For example, a dataset containing only timestamps and approximate locations might appear anonymous. If those locations can be matched to a person's home and workplace, the dataset may identify them. Privacy risk therefore depends not only on individual fields but also on what can be inferred by combining information.
+
+The GDPR distinguishes ordinary personal data from special categories of personal data, which receive additional protection. These include information about racial or ethnic origin, political opinions, religious or philosophical beliefs, trade-union membership, genetic data, biometric data used for uniquely identifying someone, health data, and data concerning sex life or sexual orientation.
+
+Pseudonymized data replaces direct identifiers with codes or other substitutes. It can reduce risk, but remains personal data under the GDPR when it can still be linked to an individual using additional information. Truly anonymous information, where identification is no longer reasonably possible, falls outside the GDPR's personal-data rules. An organization cannot establish anonymity merely by removing names.
+
+A small experiment shows both halves. A keyed pseudonym hides the identifier but anyone holding the key can link it back; and a dataset with no names can still single people out:
+
+```python
+import hashlib
+import hmac
+from collections import Counter
+
+key = b"rotate-me-and-store-separately"
+pseudo = lambda email: hmac.new(key, email.encode(), hashlib.sha256).hexdigest()[:10]
+print("pseudonym:", pseudo("maya@example.com"), "(still personal data: the key links it back)")
+
+rows = [("1985", "10115", "flu"), ("1985", "10115", "asthma"), ("1990", "10117", "diabetes"), ("1962", "10119", "flu")]
+groups = Counter((year, zipcode) for year, zipcode, _ in rows)
+print("group sizes by (birth year, zip):", dict(groups), "-> k =", min(groups.values()))
+print("rows in a group of 1 are re-identifiable from public data alone")
+# pseudonym: 4052db002c (still personal data: the key links it back)
+# group sizes by (birth year, zip): {('1985', '10115'): 2, ('1990', '10117'): 1, ('1962', '10119'): 1} -> k = 1
+# rows in a group of 1 are re-identifiable from public data alone
+```
+
+Here the "k" in **k-anonymity** is the size of the smallest group of people sharing the same quasi-identifiers; k = 1 means someone is unique. Removing names is not anonymization.
+
+## The principles governing data processing
+
+The GDPR establishes principles that shape how personal data should be handled throughout its lifecycle. These principles are connected: collecting less information makes security easier, while clearly defined purposes make it easier to decide which uses are legitimate.
+
+- Lawfulness, fairness, and transparency: Processing must have a valid legal basis, be fair to the individual, and be explained clearly.
+- Purpose limitation: Data collected for a specified purpose should not be reused for incompatible purposes without an appropriate justification.
+- Data minimization: Collect only the personal data necessary for the stated purpose.
+- Accuracy: Take reasonable steps to keep data accurate and correct inaccuracies.
+- Storage limitation: Do not retain identifiable personal data longer than necessary.
+- Integrity and confidentiality: Protect data against unauthorized access, loss, destruction, and damage.
+- Accountability: Be able to demonstrate that the organization complies with these principles.
+
+Consider a service that provides online learning. It may need an email address to create an account and progress records to resume lessons. Collecting a user's precise location, contact list, and unrelated browsing history would require separate justification; convenience alone does not establish necessity.
+
+Data minimization is particularly important because every additional field creates another potential exposure, retention obligation, and access-control requirement. Information that is never collected cannot later be leaked from that system.
+
+## Legal basis: consent is not the only option
+
+A common misconception is that the GDPR requires consent for every use of personal data. In reality, Article 6 defines six legal bases for processing:
+
+| Legal basis          | Conceptual meaning                                                                                                           |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Consent              | The person freely agrees to a specified use of their data.                                                                   |
+| Contract             | Processing is necessary to perform a contract with the person or take requested pre-contractual steps.                       |
+| Legal obligation     | Processing is necessary to comply with a legal duty.                                                                         |
+| Vital interests      | Processing is necessary to protect someone's life or similarly vital interests in the circumstances covered by the law.      |
+| Public task          | Processing is necessary for a task carried out in the public interest or under official authority.                           |
+| Legitimate interests | A legitimate interest supports the processing, provided the individual's interests, rights, and freedoms do not override it. |
+
+The legal basis must fit the actual purpose and circumstances. An organization cannot simply select whichever basis is most convenient after deciding what it wants to do.
+
+Pick a processing activity and see which basis usually fits, and the catch to watch for:
+
+<LegalBasisPicker />
+
+Consent has specific requirements. It must be freely given, specific, informed, and unambiguous, and it must be possible to withdraw it. If a person cannot realistically refuse without suffering an inappropriate disadvantage, consent may not be valid. Some processing also requires an additional condition under Article 9 when special-category data is involved.
+
+The distinction matters in practice. A service may need certain information to deliver a requested feature, while optional marketing may require a different justification. Combining both purposes into one compulsory consent can obscure the individual's actual choice.
+
+## Individual rights and organizational responsibilities
+
+The GDPR gives individuals rights that allow them to understand and influence how their data is processed. These rights are not all absolute; their application depends on the circumstances, applicable exceptions, and other legal obligations.
+
+Important rights include:
+
+- Right of access: obtain confirmation of whether personal data is being processed and, in applicable circumstances, receive access to it and related information.
+- Right to rectification: correct inaccurate personal data.
+- Right to erasure: request deletion when the legal conditions are met. This is not an unconditional right to delete every record.
+- Right to restrict processing: limit certain uses while specified issues are resolved.
+- Right to data portability: receive certain data in a structured, commonly used, machine-readable format and, where technically feasible and legally applicable, transmit it to another controller.
+- Right to object: object to certain processing, including processing based on legitimate interests and processing for direct marketing.
+- Rights concerning automated decisions: receive protections under Article 22 where a decision is solely automated and has legal or similarly significant effects, subject to the article's conditions and exceptions.
+
+Organizations need processes to receive, authenticate, assess, and answer these requests within the applicable time limits. They must also know where personal data is stored and which processors or other recipients have received it. A deletion request is difficult to fulfill reliably if copies are scattered across production databases, analytics systems, exports, and backups with no documented retention process.
+
+The GDPR also distinguishes between a controller and a processor. A controller determines the purposes and essential means of processing; a processor handles personal data on the controller's behalf under appropriate instructions and obligations. A cloud provider may act as a processor for one activity, while acting as a controller for a separate activity of its own. Contracts, access restrictions, and clear responsibilities help ensure that the distinction works operationally.
+
+## Privacy by design, security, and accountability
+
+Privacy cannot be achieved solely through a policy document. It must be reflected in system architecture, data flows, default settings, access controls, retention rules, and operational procedures.
+
+Privacy by design and by default means considering data protection from the start and configuring systems to process only the personal data necessary for each purpose by default. A product should not automatically make every profile public or retain all user activity indefinitely merely because doing so is technically easy.
+
+Technical measures include encryption, pseudonymization, role-based access controls, audit logging, and separation of environments. Organizational measures include staff training, documented responsibilities, vendor assessments, retention schedules, and procedures for responding to data-subject requests and security incidents.
+
+The GDPR requires appropriate technical and organizational security measures based on risk. It does not prescribe one universal security configuration for every organization. The relevant safeguards depend on factors such as the nature of the data, the scale and purpose of processing, and the likelihood and severity of harm.
+
+A Data Protection Impact Assessment (DPIA) is required where processing is likely to result in a high risk to individuals' rights and freedoms. It helps identify risks before processing begins and determine whether safeguards adequately address them. High-risk systematic monitoring and certain large-scale uses of sensitive data are examples of activities that may trigger this requirement.
+
+Accountability makes these obligations demonstrable. An organization should be able to explain what it collects, why it collects it, which legal basis applies, who can access it, how long it is retained, and what safeguards are in place. Depending on the circumstances, additional obligations may include maintaining records of processing, appointing a Data Protection Officer, or consulting a supervisory authority before proceeding with processing that remains high-risk.
+
+## Breaches, enforcement, and the limits of compliance
+
+A personal data breach involves a security incident leading to accidental or unlawful destruction, loss, alteration, unauthorized disclosure of, or access to personal data. It is not limited to an external hacker stealing a database: sending a file to the wrong recipient or exposing a database through a misconfiguration can also qualify.
+
+Under the GDPR, a controller must notify the competent supervisory authority of a personal data breach unless it is unlikely to result in a risk to individuals' rights and freedoms. Where notification is required, it must generally occur within 72 hours of becoming aware of the breach, where feasible. If the breach is likely to result in a high risk to individuals, affected people must also be informed without undue delay, subject to the regulation's conditions and exceptions.
+
+Regulatory consequences can be substantial. Certain infringements can attract administrative fines of up to €20 million or 4% of the undertaking's total worldwide annual turnover for the preceding financial year, whichever is higher; other infringements have lower maximum tiers. Actual enforcement depends on the infringement and the factors specified in the regulation.
+
+The GDPR can apply to organizations outside the European Union when their processing falls within its territorial scope, including certain offerings of goods or services to people in the EU or monitoring of their behavior there. Applicability is determined by the regulation's criteria, not simply by where a company's headquarters are located or where its servers run.
+
+Finally, compliance and privacy are related but not identical. An organization may meet formal legal requirements while still collecting more data than users reasonably expect or designing confusing choices. Conversely, a sensible privacy practice does not automatically satisfy every applicable legal obligation. Effective data protection combines lawful processing, meaningful transparency, proportionate collection, appropriate security, respect for individual rights, and evidence that these commitments are followed in practice.
+
+<Callout type="pitfall">
+"We anonymized it" is a claim to test, not a label. If records can still be singled out, linked or re-identified with other data, they remain personal data and every GDPR obligation still applies. This note is conceptual, not legal advice; obligations depend on your jurisdiction and facts.
+</Callout>
+
+<Callout type="practice">
+The cheapest compliance step is data minimization: data you never collect cannot leak, needs no retention policy and cannot be the subject of a deletion request. Keep a record of what you hold, why, on what basis, who can access it and for how long.
+</Callout>

@@ -1,0 +1,161 @@
+---
+title: "Secure Development"
+description: "Secure coding, dependency vulnerabilities, and secrets management."
+order: 7
+tier: core
+takeaways:
+  - "Security is a property of the **whole lifecycle** (design, code, build, deploy, operate), not a final test; fixing issues earlier is cheaper."
+  - "**Secure coding** keeps untrusted input from gaining power: validate at trust boundaries, enforce authorization on the server, fail safely, use least privilege."
+  - "Most of your running code is **dependencies**, including transitive ones: inventory them (SBOM), scan them, and patch by risk and reachability."
+  - "**Secrets** (keys, tokens, passwords) belong in a secrets manager, not in source; rotate them and respond decisively when one leaks."
+  - "The loop is **prevent → detect → respond → improve**; the goal is failures that are less likely, easier to find and less damaging."
+resources:
+  - title: "OWASP Cheat Sheet Series"
+    url: "https://cheatsheetseries.owasp.org/"
+    note: "Concise, practical guidance for nearly every secure-coding topic."
+  - title: "OWASP Secrets Management Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+  - title: "SLSA: supply-chain levels for software artifacts"
+    url: "https://slsa.dev/"
+    note: "A framework for build and supply-chain integrity."
+  - title: "NIST Secure Software Development Framework"
+    url: "https://csrc.nist.gov/projects/ssdf"
+---
+
+Security in the development lifecycle means treating security as a property of the entire software development process, not as a final test before release. Secure coding reduces vulnerabilities in application logic, dependency management controls risks introduced by external components, and secrets management protects credentials that grant access to systems and data. These practices reinforce one another: secure code can still be compromised by a vulnerable library, and a well-maintained application can still be breached if its credentials are exposed.
+
+## Security begins with design, not testing
+
+Software vulnerabilities often originate in assumptions made before implementation: which users are trusted, what input can be controlled by an attacker, which components need access to sensitive data, and what happens when a dependency or service fails.
+
+A secure development lifecycle addresses these questions throughout planning, design, implementation, testing, deployment, and maintenance. This is sometimes called shifting security left: finding problems earlier, when changing the architecture or code is generally less expensive than correcting a deployed system. It does not mean moving all security work to the beginning; deployed software still needs monitoring, patching, and incident response.
+
+Threat modeling is one way to make design assumptions explicit. Developers identify valuable assets, trust boundaries, possible attackers, and plausible attack paths. For example, a service that accepts file uploads needs to consider malicious file contents, oversized inputs, storage permissions, and whether uploaded files could be executed or served in an unsafe context.
+
+The purpose is to make security requirements concrete. “The application must be secure” is not testable. “Uploaded files must not be executable by the web server, and their contents must be validated before processing” is a requirement that can guide implementation and verification.
+
+## Secure coding: preserving boundaries and enforcing assumptions
+
+Secure coding is primarily about preventing untrusted input, unexpected states, and excessive privileges from violating the assumptions under which a program operates.
+
+A recurring failure pattern is allowing input to acquire more power than intended. SQL injection occurs when data changes the structure of a database query; cross-site scripting occurs when data becomes executable browser content; command injection occurs when input alters an operating-system command. Parameterized database queries, safe output encoding, and avoiding shell-command construction with untrusted strings are examples of preserving the boundary between data and instructions.
+
+Other important practices address how the application handles failure and authority:
+
+- Validate at trust boundaries. Check types, lengths, formats, ranges, and business rules when accepting external data. Validation should reflect what the application actually permits, rather than relying on a superficial check that input merely looks plausible.
+- Enforce authorization on the server. Do not rely on hidden buttons, disabled interface elements, or client-supplied role information. Every sensitive operation must verify that the requesting identity has permission to perform it.
+- Fail safely. Errors should not reveal passwords, access tokens, internal paths, database details, or sensitive records. Failure should not accidentally grant access or leave a system in an insecure partial state.
+- Use least privilege. Run processes with only the operating-system, database, and cloud permissions they require. A compromised web process should not automatically gain administrative control over the host.
+- Protect sensitive data. Minimize collection and retention, use appropriate encryption, and avoid exposing confidential information through logs, error messages, or debug endpoints.
+
+Secure coding also depends on language and framework features. Memory-safe languages can eliminate many classes of memory-corruption bugs, while established frameworks often provide safe defaults for sessions, database access, and output rendering. These features reduce risk, but they do not prevent logical errors such as broken access control or incorrect business rules.
+
+Code review and automated testing complement one another. Reviewers can identify flawed assumptions and missing authorization checks, while unit tests, integration tests, static analysis, and dynamic testing can systematically examine different failure modes. None is sufficient alone: a program can pass its tests and still contain vulnerabilities that the tests never exercise.
+
+## Dependency vulnerabilities: inherited risk from external code
+
+Most modern applications rely on third-party libraries, frameworks, build tools, and transitive dependencies. These components save development time, but they also expand the software's attack surface.
+
+A dependency vulnerability exists when a component contains a security flaw that an attacker may be able to exploit under particular conditions. For example, an application might use a library with a known vulnerability in its file parser. Even if the application's own code is well written, processing a malicious file could trigger the flaw inside that library.
+
+Dependencies form a graph rather than a flat list. If application A directly uses library B, and B depends on library C, then C is a transitive dependency of A. Developers may not have chosen C explicitly, yet its vulnerabilities can still affect the application.
+
+A simplified dependency relationship is:
+
+$$
+A \rightarrow B \rightarrow C
+$$
+
+In words: your application $A$ uses library $B$, which uses $C$, so a flaw in $C$ can reach you even though you never chose it.
+
+A vulnerability in C matters only insofar as the affected component and vulnerable functionality are present and reachable under the application's operating conditions. A published vulnerability therefore indicates a risk to investigate, not automatic proof that every application using that component is exploitable.
+
+Click any package to mark it vulnerable and see who is affected:
+
+<DependencyGraph />
+
+```python
+DEPS = {"app": ["web", "orm"], "web": ["http", "json"], "orm": ["json", "driver"], "http": ["tls"], "json": [], "driver": [], "tls": []}
+def affected(vulnerable):
+    hit, changed = {vulnerable}, True
+    while changed:
+        changed = False
+        for pkg, deps in DEPS.items():
+            if pkg not in hit and any(d in hit for d in deps):
+                hit.add(pkg); changed = True
+    return sorted(hit)
+print("vulnerability in 'json' reaches:", affected("json"))
+print("vulnerability in 'tls'  reaches:", affected("tls"))
+# vulnerability in 'json' reaches: ['app', 'json', 'orm', 'web']
+# vulnerability in 'tls'  reaches: ['app', 'http', 'tls', 'web']
+```
+
+Dependency security involves several connected practices:
+
+**Inventory and identification.** Maintain a reliable record of the packages and versions used to build and run the application. Software Composition Analysis (SCA) tools compare this inventory against known vulnerability databases. A Software Bill of Materials (SBOM) records components included in a software product, making it easier to investigate exposure when a new vulnerability is disclosed.
+
+**Version control and reproducible builds.** Use lockfiles and controlled dependency updates so that builds resolve to known versions. This improves traceability and reduces unexpected changes, although locking a version does not make that version safe.
+
+**Risk-based patching.** Prioritize updates using factors such as exploitability, exposure, available fixes, the component's role, and whether vulnerable functionality is reachable. A remotely exploitable vulnerability in an internet-facing service usually deserves more urgency than an issue in an unused development-only tool. The distinction should be established through evidence, not assumption.
+
+**Supply-chain integrity.** Prefer reputable packages, verify package sources and integrity, restrict who can publish or modify dependencies, and protect build systems. Attackers may compromise a package maintainer's account, publish a malicious update, or tamper with a build pipeline. A dependency can therefore be dangerous even without a conventional vulnerability recorded in a database.
+
+Automated dependency scanners are useful, but they have limitations. They can produce false positives, miss unknown vulnerabilities, or fail to account for application-specific reachability. Dependency security requires both automation and a process for deciding which findings matter, how quickly to act, and how to verify that fixes actually reached production.
+
+## Secrets management: protecting credentials and authority
+
+A secret is sensitive information that grants access or enables trust. Examples include database passwords, API keys, cloud credentials, signing keys, and tokens used between services.
+
+Secrets are especially dangerous because they often grant capabilities directly. A stolen database password may permit data extraction; a cloud access key may allow an attacker to create infrastructure or read storage; a compromised signing key may enable forged tokens or software artifacts.
+
+The common mistake is treating secrets as ordinary configuration or source code. Hardcoding a credential in a repository makes it easy to copy, inspect, and preserve indefinitely. Removing the credential from the latest commit does not guarantee that it has disappeared from repository history, forks, caches, logs, or existing clones.
+
+A safer design separates the application from the long-term storage of its credentials. Secrets should be stored in an appropriate secrets manager or protected platform mechanism and supplied to the application only when needed. Access should be restricted to the identities and workloads that require each secret, and access events should be auditable.
+
+Good secrets management includes several principles:
+
+- Minimize lifetime and scope. Prefer short-lived credentials and narrowly scoped permissions over permanent, broadly privileged keys.
+- Separate environments. Development, testing, and production should not share powerful credentials unnecessarily.
+- Rotate when necessary. Rotation limits the useful lifetime of an exposed credential, but it must account for dependent services and deployment processes. Rotation does not compensate for leaving an active copy of the old secret accessible.
+- Prevent accidental disclosure. Redact sensitive values in logs, protect build output, and use secret-scanning tools to detect credentials committed to repositories.
+- Respond decisively to exposure. Revoke or rotate the compromised credential, investigate its use, and remove the underlying exposure. Deleting a visible string alone is insufficient.
+
+Secret scanners are mostly pattern matching, and you can run one in a few lines. Any match in a repository should be treated as leaked and rotated:
+
+```python
+import re
+
+source = '''
+DB_URL = "postgres://app:Sup3rS3cret@db.internal/prod"
+API_KEY = "AKIAIOSFODNN7EXAMPLE"
+TIMEOUT = 30
+'''
+patterns = {"AWS access key id": r"AKIA[0-9A-Z]{16}", "password in URL": r"://[^/\s:]+:[^@\s]+@"}
+for name, pat in patterns.items():
+    for m in re.finditer(pat, source):
+        print(f"found {name}: {m.group(0)[:14]}...")
+# found AWS access key id: AKIAIOSFODNN7E...
+# found password in URL: ://app:Sup3rS3...
+```
+
+Secrets management is broader than encryption at rest. Encryption protects stored values against some forms of unauthorized access, but an application still needs permission to retrieve and use them. If an attacker compromises that application's identity, the attacker may inherit the same access. Least privilege, identity controls, and monitoring are therefore essential.
+
+## Integrating the practices into a release process
+
+These areas become most effective when connected through a repeatable development workflow.
+
+Before implementation, define security requirements and identify important trust boundaries. During coding, use safe APIs, explicit authorization checks, and narrowly scoped permissions. During review and testing, examine both application logic and known classes of vulnerability. During builds, scan dependencies and secrets, verify component integrity, and produce traceable artifacts. Before deployment, ensure production credentials are supplied through controlled mechanisms and that unnecessary services and permissions are disabled.
+
+After release, monitor for new vulnerability disclosures, unusual credential use, and changes in the application's threat environment. Apply patches, rotate credentials when warranted, and investigate incidents. Security is an ongoing maintenance responsibility because the software's dependencies, operating conditions, and potential attackers continue to change after its initial release.
+
+The workflow can be summarized as:
+
+$$
+\text{Prevent} \rightarrow \text{Detect} \rightarrow \text{Respond} \rightarrow \text{Improve}
+$$
+
+Prevention reduces the likelihood of a flaw, detection identifies weaknesses that remain, response limits the damage when something goes wrong, and improvement feeds the findings back into design and implementation. The goal is not to assume that vulnerabilities can be eliminated completely; it is to make failures less likely, easier to discover, and less damaging.
+
+<Callout type="pitfall">
+Deleting a leaked secret from the latest commit does **not** remove it from history, forks or clones. Treat any committed secret as compromised: revoke it, rotate it, and check its logs for use. Prevention (a pre-commit scanner and short-lived credentials) is far cheaper than cleanup.
+</Callout>

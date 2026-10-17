@@ -1,0 +1,142 @@
+---
+title: "Authorization"
+description: "RBAC, ACLs, and the principle of least privilege, and how each enforces access."
+order: 4
+tier: core
+takeaways:
+  - "**Authorization** decides whether an authenticated subject may perform an action on a resource, in a given context; it is separate from proving identity."
+  - "**RBAC** grants permissions through roles (easy to manage, risks *role explosion*); **ACLs** attach permissions to resources (good for sharing, hard to audit at scale)."
+  - "**ABAC** evaluates attributes of the subject, resource, action and environment, expressing rules roles cannot."
+  - "**Least privilege**: give each user and service only the access it needs, for only as long as needed; review it regularly."
+  - "Enforce authorization **on the server, on every request**; hiding a button is not a control."
+resources:
+  - title: "OWASP Authorization Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"
+  - title: "NIST: Role-Based Access Control"
+    url: "https://csrc.nist.gov/projects/role-based-access-control"
+  - title: "Principle of least privilege (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Principle_of_least_privilege"
+---
+
+Authorization determines what an authenticated identity is allowed to do. While [authentication mechanisms](../authentication/) establish who is making a request, authorization evaluates whether that identity may perform a particular action on a particular resource. Role-Based Access Control (RBAC) assigns permissions through organizational roles, Access Control Lists (ACLs) attach permissions to individual resources, and the principle of least privilege constrains access to only what is necessary. These approaches solve related but distinct problems, and secure systems often combine them.
+
+## Authorization is a decision about an action and a resource
+
+A useful way to model an authorization decision is:
+
+$$
+\operatorname{allow}(s,a,r,c) \in \{\text{permit},\ \text{deny}\}
+$$
+
+where $s$ is the subject requesting access, $a$ is the action, $r$ is the resource, and $c$ represents relevant context, such as time, device, or location. The decision evaluates whether the request should be permitted.
+
+For example, a user might be allowed to read a document but not modify it, even though both actions target the same resource. Another user might be permitted to modify documents only within their own department.
+
+Authentication supplies an identity, but that identity alone is insufficient. Authorization requires a policy that connects identities, actions, resources, and sometimes contextual conditions. This separation allows a system to change access rules without changing how users prove who they are.
+
+## Role-Based Access Control: permissions through roles
+
+Role-Based Access Control (RBAC) assigns permissions to roles rather than granting every permission directly to every user. Users receive roles, and those roles determine their permitted operations.
+
+Consider a hospital application with three roles: nurse, doctor, and administrator. Each role receives a set of permissions appropriate to its responsibilities. A nurse may record observations, a doctor may prescribe medication, and an administrator may manage user accounts. A particular user gains the permissions associated with their assigned roles.
+
+The structure can be represented as:
+
+$$
+\text{User} \rightarrow \text{Role} \rightarrow \text{Permission}
+$$
+
+In words: a user is never granted permissions directly; they hold roles, and roles hold permissions.
+
+Build a policy and test it: change what a role grants, or which roles a user holds, and ask "can they?"
+
+<AccessMatrix />
+
+This indirection makes large systems easier to manage. If twenty employees need the same capabilities, an administrator can assign them the same role instead of maintaining twenty separate permission sets. When responsibilities change, updating the role can update the access of everyone assigned to it.
+
+RBAC is especially effective when permissions follow stable organizational responsibilities. It becomes less convenient when access depends on many individual circumstances. If a doctor may access a record only when assigned to that patient, a broad `doctor` role cannot express the entire rule by itself. The system needs additional constraints or a more expressive policy model.
+
+Roles can also accumulate excessively as exceptions multiply. Creating separate roles for every department, project, seniority level, and temporary assignment can produce role explosion. RBAC works best when roles represent meaningful responsibilities rather than arbitrary combinations of permissions.
+
+## Access Control Lists: permissions attached to resources
+
+An Access Control List (ACL) specifies which subjects or groups may perform which operations on a particular resource. Instead of starting with a user's role, the system examines the permissions attached to the object being accessed.
+
+For example, a shared document might have an ACL that grants its owner read and write access, a colleague read-only access, and a particular group no access. Another document can have a completely different ACL even when the same people are involved.
+
+Conceptually, an ACL looks like this:
+
+| Subject           | Resource         | Permission  |
+| ----------------- | ---------------- | ----------- |
+| Alice             | Project document | Read, write |
+| Bob               | Project document | Read        |
+| Engineering group | Project document | Read        |
+| Everyone else     | Project document | Denied      |
+
+ACLs are natural when resource ownership and sharing are central to the application. File systems, shared documents, and network services commonly use ACL-like mechanisms because permissions can be managed close to the resource they protect.
+
+The main challenge is scale and visibility. If access is granted independently across thousands of resources, it can become difficult to answer questions such as “What can this employee access?” or “Who still has access to this confidential file?” Permissions may also become inconsistent as people change teams or leave an organization.
+
+RBAC and ACLs are not mutually exclusive. An ACL entry can grant access to a group, while membership in that group is managed through roles. One model organizes permissions around responsibilities; the other expresses permissions around individual resources.
+
+## Least privilege: minimizing the consequences of access
+
+The principle of least privilege states that every user, process, and service should receive only the permissions necessary to perform its intended function, for only as long as those permissions are needed.
+
+This is a design principle, not a specific authorization mechanism. RBAC and ACLs can both implement it, but neither guarantees it automatically.
+
+Suppose a data-analysis service needs to read a dataset and write results to one output directory. Giving it administrator privileges would allow it to modify unrelated files, change security settings, or access other datasets. Least privilege instead grants narrowly scoped read access to the required input and write access to the required output.
+
+The security benefit can be understood through the concept of an attack surface. If a compromised account has access to many systems, an attacker can potentially exploit all of those permissions. Restricting access limits the paths available for misuse and reduces the damage a compromise can cause.
+
+Least privilege applies at several levels:
+
+- Users: grant only the capabilities needed for their responsibilities.
+- Services: give applications and background processes narrowly scoped permissions.
+- Time: use temporary privileges for exceptional tasks rather than permanent administrator access.
+- Resources and actions: distinguish reading from modifying, deleting, exporting, or administering.
+
+A common implementation is just-in-time privilege elevation: a user receives elevated permissions for an approved task and loses them afterward. Another is separating routine accounts from privileged accounts so that everyday activities do not require administrative access.
+
+Least privilege also requires maintenance. Permissions that were once necessary can remain long after a person changes jobs or a service changes purpose. Periodic access reviews, automated removal of stale permissions, and explicit ownership of access policies help prevent privilege accumulation.
+
+## Combining the models into a secure policy
+
+Consider a company application that stores confidential project documents. RBAC assigns employees roles such as engineer, manager, and administrator. ACLs restrict each document to its owner and approved collaborators. Least privilege ensures that engineers can edit only the projects they work on and that the application service cannot administer user accounts merely because it can read documents.
+
+The resulting decision is layered: the user's role establishes a baseline of permitted actions, resource-specific rules narrow that access, and least-privilege constraints prevent unnecessary capabilities. More sophisticated systems may also evaluate attributes such as department, document classification, or device security.
+
+This is where [Attribute-Based Access Control (ABAC)](https://en.wikipedia.org/wiki/Attribute-based_access_control) becomes useful: instead of relying only on predefined roles or resource-specific lists, it evaluates policies using attributes of the subject, resource, action, and environment. For example, access might be permitted only when the employee belongs to the finance department, the document is classified as financial, and the request originates from a managed device.
+
+No authorization model is secure simply because it is implemented correctly in isolation. Policies must be understandable, consistently enforced, and tested against both intended use and plausible misuse. The goal is not merely to specify who can enter a system, but to make every allowed action deliberate and every unnecessary permission difficult to exploit.
+
+
+Here is that layered decision as a few lines of code (real output): a role grants a baseline, then an attribute rule narrows it.
+
+```python
+ROLE_PERMS = {"nurse": {"record:read", "obs:write"}, "doctor": {"record:read", "obs:write", "rx:write"}, "admin": {"user:manage"}}
+USER_ROLES = {"ana": {"nurse"}, "raj": {"doctor"}, "sue": {"admin"}}
+ASSIGNED = {("raj", "patient-7")}                              # a doctor may only open records of their own patients
+
+def allowed(user, action, resource=None):
+    if not any(action in ROLE_PERMS[r] for r in USER_ROLES.get(user, ())):       # 1. RBAC: does some role grant it?
+        return False
+    if action == "record:read" and "doctor" in USER_ROLES[user]:                  # 2. attribute rule narrows the role
+        return (user, resource) in ASSIGNED
+    return True
+
+for case in [("ana", "obs:write", None), ("ana", "rx:write", None), ("raj", "record:read", "patient-7"),
+             ("raj", "record:read", "patient-9"), ("sue", "record:read", "patient-7")]:
+    print(f"{case[0]:<4} {case[1]:<12} {str(case[2]):<10} -> {allowed(*case)}")
+# ana  obs:write    None       -> True
+# ana  rx:write     None       -> False
+# raj  record:read  patient-7  -> True
+# raj  record:read  patient-9  -> False
+# sue  record:read  patient-7  -> False
+```
+
+Note the default: anything not explicitly granted is denied.
+
+<Callout type="pitfall">
+The most common serious flaw is **broken access control**: the server authenticates the caller but never checks that *this* caller may touch *this* object (changing `/invoices/1042` to `/invoices/1043`). Check ownership or permission on every request, server-side, and default to deny.
+</Callout>

@@ -1,0 +1,210 @@
+---
+title: "Advanced Cryptography"
+description: "Zero-knowledge proofs and homomorphic encryption, at a conceptual level."
+order: 10
+tier: advanced
+takeaways:
+  - "A **zero-knowledge proof** convinces a verifier that a statement is true without revealing the secret witness; it needs completeness, soundness and zero knowledge."
+  - "**Homomorphic encryption** lets you compute on ciphertexts so the decrypted result equals computing on the plaintext."
+  - "Partially homomorphic schemes (e.g. Paillier adds) are practical today; **fully homomorphic** encryption supports arbitrary computation but is far more expensive."
+  - "ZKPs protect *what must be revealed* to establish a claim; HE protects data *while it is computed on*. Neither removes the need to trust protocols, implementations and key management."
+  - "A proof only proves the statement actually encoded in it: designing the wrong statement still leaks."
+resources:
+  - title: "Zero Knowledge Proofs: An illustrated primer (Matthew Green)"
+    url: "https://blog.cryptographyengineering.com/2014/11/27/zero-knowledge-proofs-illustrated-primer/"
+    note: "The clearest non-mathematical introduction."
+  - title: "Homomorphic encryption (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Homomorphic_encryption"
+  - title: "ZKP.science"
+    url: "https://zkp.science/"
+    note: "A curated map of ZKP systems, papers and tools."
+  - title: "Microsoft SEAL"
+    url: "https://github.com/microsoft/SEAL"
+    note: "A widely used open-source homomorphic encryption library."
+---
+
+Zero-knowledge proofs and homomorphic encryption address a fundamental tension in computing: how can a system verify information or perform useful calculations without unnecessarily exposing the underlying data? A zero-knowledge proof lets one party demonstrate that a statement is true without revealing the secret that makes it true. Homomorphic encryption lets a party compute on encrypted data so that the result, when decrypted, corresponds to a computation on the original plaintext. Both reduce the need to expose sensitive information, but they solve different problems: zero-knowledge proofs protect what must be revealed to establish a claim; homomorphic encryption protects data while it is being computed on.
+
+## Zero-knowledge proofs: proving without revealing
+
+A zero-knowledge proof (ZKP) is a cryptographic protocol in which a prover convinces a verifier that a statement is true without revealing the underlying secret or witness used to establish that truth.
+
+Suppose a user wants to prove they know the password to an account. A conventional system typically asks the user to send a password-derived credential that the server can verify. A zero-knowledge protocol takes a different approach: the user can prove knowledge of a secret through a carefully designed exchange without transmitting the secret itself.
+
+A useful conceptual example is proving knowledge of a solution to a mathematical puzzle. The prover demonstrates possession of a valid solution in a way that convinces the verifier, while the verifier learns no additional information about the solution beyond what the proof itself establishes.
+
+A proper zero-knowledge proof has three fundamental properties:
+
+- Completeness: an honest prover with a valid witness can convince an honest verifier.
+- Soundness: a prover without a valid witness should not be able to convince the verifier, except with a suitably small probability or under the protocol's formal security assumptions.
+- Zero knowledge: the verifier learns nothing about the witness beyond the validity of the statement, in the formal sense defined by the protocol.
+
+The third property is subtle. It does not mean the verifier learns nothing at all. The verifier learns that the claim holds. If a proof establishes that someone is over a specified age, the intended result is that the verifier learns the age condition is satisfied, not the person's exact birth date.
+
+### How a proof can establish knowledge
+
+Many zero-knowledge protocols can be understood through a repeated challenge-and-response pattern.
+
+The prover first commits to some cryptographic information derived from the secret. The verifier then issues a challenge. The prover responds in a way that depends on both the commitment and the secret, allowing the verifier to check consistency without directly recovering the secret.
+
+In classic interactive protocols, repeating the exchange reduces the probability that someone without the witness can pass by chance. Modern systems also use non-interactive proofs, in which a proof can be generated once and verified later without a live back-and-forth conversation.
+
+The mathematical construction is crucial. Simply encrypting a secret or hashing it does not automatically produce a zero-knowledge proof. The protocol must establish a precise statement while preventing the verifier from extracting the witness.
+
+For example, a hash of a password may support password verification, but it is not by itself a proof that reveals nothing useful about the password. If the password has low entropy, an attacker can try candidate passwords offline and compare their hashes. A zero-knowledge protocol must be designed around its security goal, not merely around the fact that it uses cryptography.
+
+Here is the classic Schnorr protocol in miniature (tiny numbers so you can follow every step). The prover knows $x$ with $y = g^x$; the fresh random $r$ makes the response $s = r + c\cdot x$ reveal nothing about $x$ by itself:
+
+<SchnorrZkp />
+
+```python
+import random
+
+random.seed(2)
+
+# Toy Schnorr proof of knowledge in the group of order q = 11 inside Z_23*.
+p, q, g = 23, 11, 4
+x = 7                                                          # the secret ("witness")
+y = pow(g, x, p)                                               # public key: y = g^x
+
+r = random.randrange(1, q)                                     # prover's one-time randomness
+t = pow(g, r, p)                                               # 1. commitment
+c = random.randrange(1, q)                                     # 2. verifier's random challenge
+s = (r + c * x) % q                                            # 3. response; the random r masks x
+print(f"public y={y}; commitment t={t}; challenge c={c}; response s={s}")
+print("verifier checks g^s == t * y^c (mod p):", pow(g, s, p) == (t * pow(y, c, p)) % p)
+
+wrong = (r + c * 3) % q                                        # a response computed from a wrong guess of x
+print("response from a wrong secret passes:", pow(g, wrong, p) == (t * pow(y, c, p)) % p)
+# public y=8; commitment t=4; challenge c=2; response s=4
+# verifier checks g^s == t * y^c (mod p): True
+# response from a wrong secret passes: False
+```
+
+The check works because $g^s = g^{r+cx} = g^r\,(g^x)^c = t\,y^c$. In words: the verifier recomputes the commitment from the response and the public key. Making the challenge non-interactive (deriving $c$ from a hash of the commitment, the Fiat–Shamir transform) turns this into a signature-like proof anyone can verify later.
+
+### Where zero-knowledge proofs are useful
+
+ZKPs are valuable whenever a system needs to verify a property but does not need the underlying data.
+
+In digital identity, a person might prove that they satisfy an age requirement without disclosing their full date of birth. In privacy-preserving financial systems, a transaction might prove that its values obey specified rules without revealing every value publicly. In distributed computing, a system might prove that a computation was performed correctly without requiring every verifier to repeat the entire computation.
+
+Some modern proof systems, including zk-SNARKs and zk-STARKs, can produce compact proofs that are verified much more cheaply than the computation they represent. These are particularly useful when many parties need to verify a result. However, the systems differ in proof size, verification cost, prover cost, assumptions, and setup requirements. Some SNARK constructions require a trusted setup; others avoid that requirement. STARKs are designed around transparent setup assumptions and commonly use hash-based cryptographic techniques, often with larger proofs.
+
+The name of a system does not guarantee that every part of an application is private or secure. A proof can establish only the statement encoded in its circuit or verification relation. If the application checks the wrong property, leaks information through metadata, or exposes data outside the proof system, the cryptography cannot repair those design errors.
+
+## Homomorphic encryption: computing without decrypting
+
+Homomorphic encryption (HE) allows a party to perform certain computations directly on ciphertexts. After decryption, the result corresponds to the same computation performed on the original plaintexts.
+
+Ordinary encryption is designed primarily to conceal data. Typically, a system decrypts a message before processing its contents. Homomorphic encryption changes this pattern: a service can process encrypted inputs without needing to see the underlying values.
+
+Let $E$ denote encryption and $D$ denote decryption. For an operation $f$, the essential relationship is:
+
+$$
+D\bigl(f_E(E(x))\bigr)=f(x)
+$$
+
+Here, $f_E$ is the supported operation performed on ciphertexts. The equation expresses the desired correspondence: computing on encrypted data and then decrypting produces the result of computing on the plaintext.
+
+For example, imagine a hospital wants an external analytics provider to calculate a statistic over patient measurements without giving that provider access to the measurements themselves. With an appropriate homomorphic scheme, the hospital can encrypt the data, the provider can perform supported operations on the ciphertexts, and the hospital can decrypt the resulting statistic.
+
+The provider can perform the computation without receiving the raw measurements, although other information about the task, output, access patterns, or metadata may still be exposed. The output may itself reveal sensitive information, especially when repeated queries allow an observer to infer individual records.
+
+### Levels of homomorphic computation
+
+Homomorphic encryption schemes differ in which operations they support and how many operations can be performed efficiently.
+
+Partially homomorphic encryption supports a particular operation or family of operations, such as addition or multiplication, potentially an unlimited number of times within the scheme's supported model.
+
+Somewhat homomorphic encryption supports a limited combination or depth of operations before noise or other computational constraints make further evaluation impractical.
+
+Fully homomorphic encryption (FHE) supports general computations over encrypted data, subject to the scheme's computational model and the resources required to evaluate them. It can be understood as the ability to compose encrypted operations into increasingly complex computations, including circuits containing both additions and multiplications.
+
+A simplified example illustrates the idea. Suppose encrypted values represent $x$ and $y$, and the supported encrypted operations are $\oplus$ and $\otimes$. A service can evaluate an encrypted expression corresponding to:
+
+$$
+x^2+3y
+$$
+
+without first decrypting $x$ or $y$. The party holding the appropriate decryption key can decrypt the final result and recover the value of that expression.
+
+The algebraic details vary by scheme. Some use modular arithmetic, some operate over integers, and others support approximate arithmetic suitable for numerical applications. The expression above illustrates the computational principle, not a universal implementation recipe.
+
+A concrete example is **Paillier** encryption, which is partially homomorphic: multiplying two ciphertexts adds the plaintexts. Try it with toy-sized numbers:
+
+<PaillierToy />
+
+```python
+import math
+import random
+
+random.seed(2)
+
+# Toy Paillier encryption (tiny primes, illustration only): multiplying ciphertexts adds the plaintexts.
+P, Q = 17, 19
+n = P * Q
+n2 = n * n
+phi = (P - 1) * (Q - 1)
+mu = pow(phi, -1, n)
+
+
+def enc(m):
+    while True:
+        r = random.randrange(2, n)
+        if math.gcd(r, n) == 1:                                # fresh randomness: equal messages encrypt differently
+            return (pow(n + 1, m, n2) * pow(r, n, n2)) % n2
+
+
+def dec(c):
+    return (((pow(c, phi, n2) - 1) // n) * mu) % n
+
+
+c1, c2 = enc(20), enc(35)
+print("ciphertexts:", c1, c2)
+print("multiply the ciphertexts, decrypt:", dec((c1 * c2) % n2), "= 20 + 35")
+print("same message encrypts differently each time:", enc(20) != enc(20))
+# ciphertexts: 19520 45108
+# multiply the ciphertexts, decrypt: 55 = 20 + 35
+# same message encrypts differently each time: True
+```
+
+The party doing the multiplication never learned 20 or 35. Real systems use primes thousands of bits long, and the same trick underlies encrypted tallies in some voting and private-aggregation designs.
+
+### Why homomorphic encryption remains expensive
+
+In ordinary computing, arithmetic on plaintext numbers is relatively cheap. Homomorphic encryption adds cryptographic structures to the data so that operations can be performed without revealing the values. Evaluating those operations can increase ciphertext size and computational cost substantially.
+
+Many schemes also manage noise introduced by ciphertext operations. As computations become deeper, this noise may grow until the result can no longer be decrypted correctly. Some schemes use bootstrapping, a costly operation that refreshes a ciphertext so further computation can continue.
+
+Consequently, FHE is not a universal replacement for ordinary databases or processors. It is most attractive when the privacy benefit of keeping inputs encrypted justifies the extra computation, engineering complexity, and restrictions on the supported workload.
+
+Potential applications include private statistical analysis, outsourced computations on sensitive records, and selected machine-learning inference workloads. Practical performance depends heavily on the model, arithmetic operations, data representation, and required latency.
+
+## Two different ways to reduce information exposure
+
+Zero-knowledge proofs and homomorphic encryption both reduce the need to disclose sensitive data, but they operate at different conceptual layers.
+
+| Dimension                 | Zero-knowledge proofs                               | Homomorphic encryption                                                                       |
+| ------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Primary goal              | Prove a statement without revealing its witness     | Compute on encrypted inputs                                                                  |
+| Main participant roles    | Prover and verifier                                 | Data owner, computing party, and often a decryptor                                           |
+| What the recipient learns | The verified statement and any unavoidable leakage  | The computation's observable structure and outputs, but not necessarily the plaintext inputs |
+| Typical question          | “Can you prove that this condition holds?”          | “Can you calculate this result without seeing the inputs?”                                   |
+| Main challenge            | Constructing a sound proof of the correct statement | Making the required encrypted computation efficient and correct                              |
+
+Consider a privacy-preserving loan application. A zero-knowledge proof might establish that an applicant's income exceeds a threshold without revealing the exact income. Homomorphic encryption might allow a lender to compute an aggregate statistic over encrypted financial records without seeing each record's plaintext.
+
+These approaches can also be combined. A system could use homomorphic encryption to perform a confidential computation and a zero-knowledge proof to demonstrate that a result or computation satisfies a required constraint. Such a design can provide stronger guarantees than either mechanism alone, but the combined protocol must carefully specify which parties learn what, who holds the keys, and what the proof actually verifies.
+
+## The deeper principle: minimize what must be trusted
+
+Traditional computing often assumes that the party performing a calculation can see the data it processes. Traditional verification often assumes that the party checking a claim receives enough information to inspect the claim directly. Advanced cryptography challenges both assumptions.
+
+Zero-knowledge proofs replace disclosure of a secret with a verifiable mathematical argument. Homomorphic encryption replaces plaintext computation with computation over protected representations. Both can reduce reliance on a trusted intermediary, but neither eliminates trust entirely: security still depends on correct protocols, sound implementations, key management, appropriate threat models, and careful handling of outputs.
+
+The most important design question is therefore not simply whether data is encrypted. It is what information must be revealed, to whom, and for which operation. If the system only needs to verify a condition, a proof may be enough. If it must calculate a result over confidential inputs, homomorphic encryption may be appropriate. Choosing the right primitive begins by identifying the exact information flow that needs protection.
+
+<Callout type="key">
+Pick the primitive from the **information flow** you need to protect. If a party only needs to be *convinced* of a fact, use a proof. If a party must *compute* over data it must not see, use homomorphic encryption (or another confidential-computing technique). If neither is needed, ordinary encryption and access control are simpler and faster.
+</Callout>

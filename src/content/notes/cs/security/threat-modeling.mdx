@@ -1,0 +1,162 @@
+---
+title: "Threat Modeling"
+description: "Assets, adversaries, and attack surface: thinking like an attacker first."
+order: 1
+tier: core
+takeaways:
+  - "**Threat modeling** identifies what to protect (**assets**), who might attack (**adversaries**) and where they can interact (**attack surface**) before weaknesses become incidents."
+  - "A **vulnerability** is a weakness; a **threat** is a harmful event involving it; **risk** weighs likelihood and impact."
+  - "Prioritize by **risk, not drama**: likelihood × impact is a useful aid, not a precise law, and assumptions should be written down."
+  - "**STRIDE** (spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege) helps you not miss a class of threat."
+  - "Do it **early and repeatedly**: the output is a small, prioritized, actionable list, not a one-off compliance document."
+resources:
+  - title: "OWASP Threat Modeling Cheat Sheet"
+    url: "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+    note: "A practical walk-through of the four key questions."
+  - title: "Threat Modeling Manifesto"
+    url: "https://www.threatmodelingmanifesto.org/"
+    note: "Values and principles written by practitioners."
+  - title: "STRIDE (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/STRIDE_model"
+---
+
+Threat modeling is the practice of identifying what a system needs to protect, who might try to compromise it, and how they could do so before those weaknesses become incidents. Rather than starting with security tools, it starts with the system’s assets, adversaries, and attack surface. The goal is not to predict every possible attack, but to reason systematically about which threats matter most and where defenses will have the greatest effect.
+
+## Start with what needs protecting
+
+An asset is anything valuable that could be exposed, altered, destroyed, or made unavailable. Assets include obvious things such as passwords, customer records, and financial data, but also less tangible properties: service availability, the integrity of transactions, user privacy, and trust in the system.
+
+The value of an asset depends on what would happen if it were compromised. A public website might contain no confidential information, yet its integrity still matters: an attacker who can replace its content could damage the organization’s reputation or distribute malicious code.
+
+Security goals are often organized around the [confidentiality, integrity, and availability (CIA) triad](https://en.wikipedia.org/wiki/Information_security):
+
+- Confidentiality: Can someone access information they should not see?
+- Integrity: Can someone modify data or behavior without authorization?
+- Availability: Can someone prevent legitimate users from accessing the system?
+
+These goals can conflict. Stronger access controls may improve confidentiality but introduce complexity that makes outages more likely. Threat modeling helps identify which properties matter most for each asset, so security decisions reflect actual consequences rather than a generic checklist.
+
+## Identify adversaries and their incentives
+
+An adversary is an actor capable of attempting to compromise the system. Different adversaries have different capabilities, resources, and motivations. A financially motivated criminal may target payment data, a competitor may seek confidential plans, and a disgruntled insider may abuse legitimate access.
+
+The useful question is not simply who the attacker is, but what they can realistically do.
+
+An adversary model considers their access, technical skill, resources, persistence, and knowledge of the system. An unauthenticated internet user has different opportunities from an employee with administrative privileges. A sophisticated attacker may chain several small weaknesses together, while an opportunistic attacker may exploit only the easiest exposed flaw.
+
+Threat modeling does not require certainty about an attacker’s identity. It requires plausible assumptions about their capabilities and goals. Those assumptions should be explicit, because a design that is safe against casual misuse may be inadequate against a determined adversary with privileged access.
+
+## Map the attack surface
+
+The attack surface is the collection of places where an attacker can interact with a system or influence its behavior. Every interface, trust boundary, dependency, and privileged operation can create an opportunity for abuse.
+
+A simplified web application, from the outside in:
+
+| Layer | Examples | What an attacker tries |
+| --- | --- | --- |
+| **External actors** | Users, bots, malicious clients | Probe anything reachable |
+| **Entry points** | Web forms, APIs, login, file uploads | Send input the designers did not expect |
+| **Trust boundaries** | Authentication, authorization, business logic | Cross a boundary without permission |
+| **Protected resources** | Databases, secrets, internal services | Read, change or destroy what matters |
+
+The attack surface is not limited to internet-facing ports. It includes password-reset flows, third-party integrations, cloud permissions, administrative consoles, deployment pipelines, and the assumptions that services make about one another.
+
+For example, an API may correctly authenticate a user but still allow that user to retrieve another person's record by changing an identifier in a request. The exposed endpoint is part of the attack surface; the missing authorization check is the weakness. Authentication establishes who the caller is, while authorization determines what that caller may do.
+
+Reducing attack surface means removing unnecessary entry points, limiting privileges, disabling unused services, and minimizing the amount of code and infrastructure that must be trusted. It does not mean eliminating every interface: a system must expose some functionality to be useful.
+
+## Turn system structure into concrete threats
+
+Knowing the assets, adversaries, and attack surface establishes the ingredients of a threat model. The next step is to connect them through plausible attack paths.
+
+A threat is more specific than a vulnerability. A vulnerability is a weakness; a threat is a potential harmful event involving that weakness and an adversary or other cause. Risk describes the significance of that event, considering its likelihood and impact.
+
+Consider a service that stores private user documents:
+
+| Element        | Example                                |
+| -------------- | -------------------------------------- |
+| Asset          | Private documents                      |
+| Adversary      | Authenticated malicious user           |
+| Attack surface | Document-download API                  |
+| Weakness       | Ownership is not checked               |
+| Threat         | User accesses another user's documents |
+| Impact         | Confidentiality breach                 |
+
+This chain is useful because it separates the thing being protected from the mechanism by which it could be harmed. It also points toward a specific defense: enforce authorization against the document owner on every relevant request, rather than relying on a hard-to-guess document identifier.
+
+Threat modeling is especially effective when represented as [attack trees](https://en.wikipedia.org/wiki/Attack_tree) or data-flow diagrams. These make it easier to see how an attacker might move from an exposed entry point toward a valuable asset, including through intermediate systems or multiple weaknesses.
+
+<Callout type="key">
+Write each threat as a **chain**: asset → adversary → attack surface → weakness → threat → impact. Separating the thing being protected from the mechanism that could harm it points straight at a specific defense (here: check ownership on every request, instead of relying on hard-to-guess IDs).
+</Callout>
+
+## Prioritize threats by risk, not drama
+
+A threat model can produce an enormous list of hypothetical attacks. The purpose is not to treat every possibility equally, but to determine which ones deserve attention first.
+
+A simple conceptual model is:
+
+$$
+\text{risk} \approx \text{likelihood} \times \text{impact}
+$$
+
+In words: a threat matters in proportion to how likely it is *and* how much damage it does, so a rare catastrophe can outrank a frequent nuisance.
+
+This is a prioritization aid, not a precise universal equation. Likelihood depends on factors such as exposure, exploitability, attacker capability, and existing controls. Impact depends on the sensitivity of the affected asset, the scale of compromise, recovery costs, and consequences for users or the organization.
+
+A remotely exploitable authorization flaw affecting every customer's data may deserve immediate attention. A difficult-to-exploit weakness in an isolated test environment may rank lower, even if both are technically real vulnerabilities.
+
+Risk also depends on context. A small probability of catastrophic harm can outweigh a high probability of minor disruption. Teams should therefore record assumptions, use consistent severity criteria, and revisit priorities when architecture, dependencies, or adversary capabilities change.
+
+Rank some threats yourself: select one, change its likelihood or impact, and watch the priority order change.
+
+<ThreatRiskMatrix />
+
+```python
+threats = [
+    ("User downloads another user's document", 4, 5),     # (name, likelihood 1-5, impact 1-5)
+    ("SQL injection in search", 3, 5),
+    ("Admin console exposed to the internet", 2, 5),
+    ("Verbose error leaks stack trace", 5, 1),
+    ("DDoS on the login page", 3, 3),
+]
+for name, likelihood, impact in sorted(threats, key=lambda t: -t[1] * t[2]):
+    print(f"risk {likelihood * impact:>2}  L{likelihood} x I{impact}  {name}")
+# risk 20  L4 x I5  User downloads another user's document
+# risk 15  L3 x I5  SQL injection in search
+# risk 10  L2 x I5  Admin console exposed to the internet
+# risk  9  L3 x I3  DDoS on the login page
+# risk  5  L5 x I1  Verbose error leaks stack trace
+```
+
+The most frequent issue (a verbose error message) ranks last because its impact is low; a flaw that is merely likely but exposes every customer's data ranks first.
+
+## Make threat modeling part of design
+
+Threat modeling is most valuable before implementation decisions become expensive to change, but it remains useful during code review, deployment, and incident response. A practical session can be organized around a few questions:
+
+1. What are we building, and where are the trust boundaries?
+2. What assets and security properties matter?
+3. Who could attack the system, and what capabilities might they have?
+4. Where can they interact with it or cross a trust boundary?
+5. What harmful outcomes could follow, and which are most important?
+6. What design changes or controls reduce those risks?
+
+Frameworks such as [STRIDE](https://en.wikipedia.org/wiki/STRIDE_model) help systematically generate threat categories: spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege. Such frameworks reduce the chance of overlooking a class of threat, but they do not replace understanding the actual system.
+
+The six STRIDE categories each map to a security property that an attacker violates:
+
+| Threat | Violates | Example |
+| --- | --- | --- |
+| **S**poofing | Authentication | Logging in with stolen credentials |
+| **T**ampering | Integrity | Changing a price in a request |
+| **R**epudiation | Non-repudiation | "I never deleted that file" with no audit log |
+| **I**nformation disclosure | Confidentiality | Reading another user's record |
+| **D**enial of service | Availability | Flooding the login endpoint |
+| **E**levation of privilege | Authorization | An ordinary user performing admin actions |
+
+The result should be actionable: a small set of prioritized threats, explicit assumptions, proposed mitigations, and remaining risks. Threat modeling is not a guarantee of security, nor a one-time compliance exercise. It is a repeatable way to challenge design assumptions before an attacker does.
+
+<Callout type="practice">
+Run a 30-minute session on every significant design change: draw the data flows, mark the trust boundaries, ask "what could go wrong here?" with STRIDE, rank the answers, and file the top few as work items. Revisit when the architecture changes.
+</Callout>

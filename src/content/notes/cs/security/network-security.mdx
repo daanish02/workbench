@@ -1,0 +1,167 @@
+---
+title: "Network Security"
+description: "Firewalls, VPNs and TLS in proper depth: how each one protects a network."
+order: 6
+tier: core
+takeaways:
+  - "A **firewall** controls which traffic is allowed: filter by address, port and protocol, track connection state, and follow **default deny**."
+  - "A **VPN** builds an encrypted tunnel across an untrusted network; it protects the path to the gateway, not the destination, and does not replace TLS."
+  - "**TLS** gives confidentiality, integrity and server authentication between endpoints; it does not prove a site is honest."
+  - "Firewalls, VPNs and TLS answer **different questions** (who can reach what, is the path protected, who am I talking to) and fail in different ways, which is why they are layered."
+  - "Prefer **segmentation** over a single perimeter, so one compromised host cannot reach everything."
+resources:
+  - title: "Firewall (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Firewall_(computing)"
+  - title: "WireGuard"
+    url: "https://www.wireguard.com/"
+    note: "A small, modern VPN protocol; the whitepaper is readable."
+  - title: "Mozilla SSL Configuration Generator"
+    url: "https://ssl-config.mozilla.org/"
+    note: "Current, safe TLS settings for common servers."
+---
+
+Network security is the practice of controlling which systems can communicate, protecting information as it travels, and limiting what an attacker can reach after gaining access. Firewalls, VPNs, and TLS address different parts of this problem: firewalls control traffic, VPNs create protected network paths, and TLS protects communication between endpoints. Understanding their boundaries matters because none of these mechanisms, by itself, makes an entire network trustworthy.
+
+## Firewalls: controlling which traffic is allowed
+
+A firewall enforces rules governing traffic entering, leaving, or moving within a network. Its fundamental job is to reduce the set of communications that systems are permitted to establish.
+
+A rule might allow HTTPS traffic to a public web server while blocking unsolicited connections to its database. The firewall evaluates traffic against a policy and permits, rejects, or drops it. A well-designed policy grants only the connectivity that services actually need.
+
+The simplest firewalls filter packets using network and transport-layer information: source and destination IP addresses, ports, and protocols. For example, a rule might permit TCP traffic destined for port 443 on a public server. This is useful because many services have predictable network requirements, but a port number alone does not establish whether the application traffic is safe.
+
+Stateful firewalls track the state of network connections. If an internal client initiates a permitted TCP connection to a server, the firewall can recognize packets belonging to that established connection without requiring an independent inbound rule for every response packet. This is more expressive than treating every packet as an unrelated event.
+
+More advanced firewalls can inspect application protocols, identify applications, or integrate intrusion-prevention capabilities. These features can detect some suspicious traffic that ordinary packet filtering cannot, although encrypted traffic limits what an intermediary can inspect unless it terminates or otherwise has access to the encrypted connection.
+
+A key architectural distinction is between perimeter filtering and internal segmentation. A firewall at the internet boundary may block direct access to a database from outside the organization, but it does not necessarily stop a compromised workstation from reaching that database from inside. Internal firewalls and segmentation policies restrict communication between network zones, reducing the paths available for lateral movement.
+
+The guiding principle is default deny: deny traffic unless a policy explicitly permits it. Exceptions should be narrow and reviewed as services change. Overly broad rules such as permitting all traffic between internal networks undermine the point of filtering.
+
+Try a packet against a small rule set. Reorder the rules or turn default deny off and see what slips through:
+
+<FirewallRules />
+
+```python
+RULES = [("allow", "internet", "web", 443), ("allow", "admin-vpn", "web", 22), ("allow", "web", "db", 5432)]
+def verdict(src, dst, port):
+    for action, s, d, p in RULES:
+        if (s, d, p) == (src, dst, port):
+            return action, f"matched {s}->{d}:{p}"
+    return "deny", "no rule matched (default deny)"
+for pkt in [("internet", "web", 443), ("internet", "db", 5432), ("web", "db", 5432), ("internet", "web", 22)]:
+    print(pkt, "->", *verdict(*pkt))
+# ('internet', 'web', 443) -> allow matched internet->web:443
+# ('internet', 'db', 5432) -> deny no rule matched (default deny)
+# ('web', 'db', 5432) -> allow matched web->db:5432
+# ('internet', 'web', 22) -> deny no rule matched (default deny)
+```
+
+Firewalls also have limits. They cannot reliably identify every malicious action inside an allowed connection, and permitting HTTPS does not guarantee that the content is benign. Firewalls govern reachability, not the full trustworthiness of an application or user.
+
+## VPNs: creating a protected path across an untrusted network
+
+A Virtual Private Network (VPN) establishes a logical network connection over an underlying network, often the public internet. It typically uses tunneling and cryptographic protection to let a device or network communicate securely with another network.
+
+Imagine an employee working from a café. Their laptop needs to reach an internal company service, but the local Wi-Fi and intervening internet infrastructure are not trusted. A VPN client establishes a protected tunnel to a VPN gateway. Traffic routed through that tunnel is encapsulated and cryptographically protected according to the VPN protocol.
+
+The process has three important parts:
+
+1. Authentication: the client and gateway establish which parties are permitted to connect.
+2. Tunnel establishment: they negotiate the cryptographic parameters and keys needed to protect the connection.
+3. Traffic forwarding: selected packets are carried through the tunnel and delivered to their destinations.
+
+Protocols such as IPsec and WireGuard provide different approaches to encrypted network tunneling. TLS-based VPNs also exist. The specific protocol affects key management, authentication, performance, and deployment, but the architectural goal is similar: provide protected connectivity over a network that may be observable or hostile.
+
+A VPN does not automatically encrypt every packet sent by a device. In a full-tunnel configuration, most or all internet traffic is routed through the VPN. In a split-tunnel configuration, only selected traffic uses it, while other traffic travels directly through the ordinary network connection. Split tunneling can improve efficiency, but it requires careful routing and security policy.
+
+A VPN also changes where trust is placed. Traffic leaving a laptop may be protected from local network observers, but the VPN gateway becomes a significant trust boundary. The gateway operator may see destination information and, depending on where encryption terminates, some unencrypted traffic. A VPN does not automatically protect traffic beyond the tunnel's endpoint.
+
+For example, when a browser accesses an HTTPS website through a VPN, there are typically two separate protections:
+
+- The VPN protects the traffic between the device and the VPN endpoint.
+- TLS protects the application connection between the browser and the website.
+
+The VPN cannot replace TLS because the tunnel may terminate at an intermediary that is not the intended website. Conversely, TLS can protect a website connection without any VPN at all.
+
+VPNs also do not inherently make a device anonymous or safe. Websites can still identify users through account logins, browser characteristics, and other signals. Malware on the device remains dangerous, and a compromised VPN account can give an attacker access to internal services. A VPN is a connectivity and transport-security mechanism, not a general guarantee of privacy or endpoint security.
+
+## TLS: protecting communication between endpoints
+
+Transport Layer Security (TLS) protects communication against eavesdropping, tampering, and impersonation when correctly configured and used. It underpins HTTPS, secure APIs, many email transport connections, and numerous other internet protocols.
+
+SSL is the historical predecessor to TLS. The old SSL protocols are obsolete and insecure; modern systems should use TLS, typically TLS 1.2 or TLS 1.3 where supported and appropriately configured. People still say “SSL certificate,” but the certificates commonly used for HTTPS participate in modern TLS connections.
+
+TLS primarily provides three security properties:
+
+- Confidentiality: outsiders cannot feasibly read the protected application data.
+- Integrity: unauthorized modifications to protected records are detected.
+- Authentication: the client can verify the server's identity when certificate validation is performed correctly. Client authentication is also possible, but is not required for ordinary HTTPS.
+
+TLS does not establish that a website is honest or that its application is secure. It establishes a protected connection to the endpoint whose identity has been validated. An encrypted connection to a fraudulent website is still an encrypted connection to a fraudulent website.
+
+### How a TLS handshake establishes trust
+
+When a browser connects to an HTTPS server, the two endpoints perform a handshake before exchanging ordinary application data. At a conceptual level, the handshake accomplishes several tasks.
+
+The client and server negotiate a supported TLS version and cryptographic parameters. The server presents a digital certificate, usually containing its domain name and public key information, along with a certificate chain leading to a trusted certificate authority. The browser validates the certificate chain, the requested hostname, the validity period, and other relevant constraints.
+
+The endpoints then establish shared session keys. In modern TLS, this commonly involves ephemeral Diffie–Hellman key exchange, such as ECDHE. Each side contributes cryptographic material that allows both to derive the same secret without transmitting that secret directly over the network.
+
+The resulting keys protect the application data using authenticated encryption, such as AES-GCM or ChaCha20-Poly1305. This combines confidentiality with integrity and authenticity checks for the encrypted records.
+
+A simplified model is:
+
+$$
+\text{Server authentication} \rightarrow \text{Key agreement} \rightarrow \text{Symmetric encryption}
+$$
+
+The server's certificate and proof of possession of the corresponding private key help authenticate the server. Key agreement establishes the session secrets, and symmetric encryption protects the large volume of subsequent traffic efficiently.
+
+Public-key cryptography is useful for authentication and key establishment, but symmetric cryptography is generally more efficient for bulk data. TLS combines these techniques rather than choosing one at the expense of the other.
+
+<Callout type="key">
+This note covers TLS from the security side. The handshake itself, certificates and forward secrecy are walked through step by step in [TLS](../../networks/tls/) under Networks.
+</Callout>
+
+### Certificates, trust, and forward secrecy
+
+A TLS certificate binds a public key to an identity, such as a domain name, through a digital signature from a trusted certificate authority. The browser does not need to have met the website beforehand; it can validate the certificate chain using trust anchors already installed in its trust store.
+
+This trust model depends on correct hostname validation, certificate issuance practices, private-key protection, and the integrity of the certificate authority ecosystem. A valid certificate does not mean that a website is reputable. It means that the certificate satisfies the browser's validation rules for the claimed identity.
+
+Modern TLS configurations also commonly provide forward secrecy. With ephemeral key agreement, compromising the server's long-term private key later does not, by itself, reveal previously recorded sessions whose ephemeral secrets have been discarded. This matters because attackers may record encrypted traffic today and attempt to decrypt it after a future key compromise.
+
+TLS still has operational limits. Misconfigured certificates, obsolete protocol versions, weak cipher suites, compromised endpoints, and incorrect certificate validation can undermine its protections. TLS also cannot prevent a legitimate endpoint from logging, leaking, or misusing data after decryption.
+
+## How the three mechanisms work together
+
+Consider a company that hosts a web application and a private database. Each mechanism protects a different boundary.
+
+| Hop | Component | What protects it |
+| --- | --- | --- |
+| Employee's device → company | **Encrypted tunnel** to the VPN gateway | VPN authentication; the firewall restricts what the tunnel can reach |
+| Browser → web application | **TLS** | Encrypts the application data and authenticates the server |
+| Web application → database | **Narrow firewall rule** | Only the application can connect; the database is not reachable otherwise |
+
+The firewall ensures that the database is not reachable by arbitrary clients. The VPN gives the employee a protected path into the company network, subject to the gateway's access policy. TLS protects the application connection and allows the browser to validate the website's identity. Additional authorization controls determine which data the employee can access, while database credentials and network rules limit what the application itself can do.
+
+Notice what is not implied: connecting to the VPN does not make every internal system trustworthy, and using TLS does not mean every request is authorized. The design should limit each component's privileges and assume that some endpoints or credentials may eventually be compromised.
+
+## The deeper principle: separate reachability, transport, and authority
+
+The three mechanisms correspond to different security questions:
+
+| Mechanism | Primary question                                                    | Typical failure                                                                        |
+| --------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Firewall  | Which systems can communicate?                                      | An overly broad rule exposes an internal service.                                      |
+| VPN       | Is there a protected path between network endpoints?                | A compromised gateway or excessive tunnel access exposes internal resources.           |
+| TLS       | Is this connection protected, and is the peer's identity validated? | A misconfigured connection permits interception or connects to an unverified endpoint. |
+
+These protections are strongest when layered because their failure modes differ. A firewall can block access even if a service has a vulnerability. TLS can protect data even when packets traverse an untrusted network. A VPN can provide private connectivity without requiring every internal service to be exposed publicly.
+
+But layers should not be confused with guarantees. Network controls cannot compensate for every vulnerable application, TLS cannot repair a compromised endpoint, and VPN access should not imply unlimited trust. Effective network security combines restricted connectivity, authenticated encrypted communication, least-privilege access, and continuous attention to the systems at either end of each connection.
+
+<Callout type="practice">
+Assume some endpoint or credential will eventually be compromised. Segment the network so a breach of one workstation does not give reach to the database, require authentication and authorization on every internal service, and treat "inside the VPN" as a lower-trust zone, not a trusted one.
+</Callout>

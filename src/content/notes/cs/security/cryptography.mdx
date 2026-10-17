@@ -1,0 +1,242 @@
+---
+title: "Cryptography Fundamentals"
+description: "Symmetric vs. asymmetric encryption, hashing, signatures, and Diffie–Hellman."
+order: 2
+tier: core
+takeaways:
+  - "**Symmetric** encryption (AES) uses one shared key and is fast; **asymmetric** (RSA, elliptic curves) uses a public/private pair and solves key distribution; real protocols combine both."
+  - "A **hash** is a one-way fixed-size fingerprint; it gives integrity, not secrecy or identity. For passwords use a slow, salted function (Argon2, scrypt)."
+  - "A **digital signature** proves a message came from the holder of a private key and was not altered; it is not 'encryption with the private key'."
+  - "**Diffie–Hellman** lets two parties agree on a secret over a public channel, but on its own it is vulnerable to a man in the middle."
+  - "Use **authenticated encryption** (AES-GCM, ChaCha20-Poly1305) and vetted libraries; never invent your own algorithm."
+resources:
+  - title: "pyca/cryptography documentation"
+    url: "https://cryptography.io/en/latest/"
+    note: "The library used in the snippets, with clear guidance on safe choices."
+  - title: "Diffie–Hellman key exchange (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Diffie%E2%80%93Hellman_key_exchange"
+  - title: "Cryptopals crypto challenges"
+    url: "https://cryptopals.com/"
+    note: "Learn by breaking badly built cryptography."
+  - title: "Khan Academy: Cryptography"
+    url: "https://www.khanacademy.org/computing/computer-science/cryptography"
+---
+
+Cryptography is the science of protecting information using mathematical techniques, even when communication takes place over an insecure channel. Its modern foundation is not simply the ability to hide a message, but the ability to establish confidentiality, detect tampering, verify identities, and prove that a message came from someone possessing a particular secret. These goals require different mechanisms: symmetric encryption protects data efficiently, asymmetric cryptography establishes relationships between public and private keys, hashing produces compact fingerprints of data, digital signatures authenticate messages, and Diffie–Hellman allows two parties to establish a shared secret without transmitting it directly.
+
+## Two kinds of keys, two different problems
+
+The fundamental distinction in cryptography is between keeping information secret and establishing the conditions under which secrets can be shared securely.
+
+Symmetric encryption uses the same secret key for encryption and decryption. If Alice wants to send Bob a confidential message, both must already possess the same key, or have a secure way to obtain it.
+
+Mathematically, encryption and decryption can be represented as
+
+$$
+C = E_K(M)
+$$
+
+$$
+M = D_K(C)
+$$
+
+where $M$ is the plaintext, $C$ is the ciphertext, and $K$ is the shared secret key.
+
+Algorithms such as [AES](https://en.wikipedia.org/wiki/Advanced_Encryption_Standard) are widely used for symmetric encryption. They are efficient enough to protect large files, network traffic, and storage devices. The difficulty is key distribution: how do Alice and Bob obtain the same secret key without an attacker obtaining it too?
+
+Asymmetric cryptography addresses a different part of this problem by using a mathematically related pair of keys: a public key and a private key. The public key can be distributed openly, while the private key must remain secret.
+
+For public-key encryption, Alice can encrypt a message using Bob's public key, and Bob can decrypt it using his private key. An attacker who intercepts the ciphertext should not be able to recover the plaintext without the private key, assuming the algorithm is secure and used correctly.
+
+Algorithms such as [RSA](https://en.wikipedia.org/wiki/RSA_cryptosystem) and schemes based on elliptic curves provide different forms of public-key cryptography, with different mathematical foundations and security properties.
+
+The advantage is that Bob does not need to share his private key with Alice. The disadvantage is that asymmetric operations are generally more computationally expensive than symmetric encryption and require careful public-key authentication.
+
+Modern secure communication therefore usually combines both approaches. Asymmetric cryptography helps establish a shared secret or authenticate participants, while symmetric encryption protects the actual data stream. This arrangement is the foundation of protocols such as [TLS](../../networks/tls/), which secures much of the traffic on the web.
+
+Here is symmetric *authenticated* encryption in practice. The ciphertext is 16 bytes longer than the message (the authentication tag), and flipping a single bit makes decryption fail instead of returning garbage:
+
+```python
+import secrets
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+k = AESGCM.generate_key(bit_length=256)
+nonce = secrets.token_bytes(12)                               # never reuse a nonce with the same key
+ct = AESGCM(k).encrypt(nonce, b"meet at noon", b"header")
+print("ciphertext bytes:", len(ct), "(12 plaintext + 16 auth tag)")
+print("decrypts:", AESGCM(k).decrypt(nonce, ct, b"header"))
+flipped = bytearray(ct); flipped[0] ^= 1
+try:
+    AESGCM(k).decrypt(nonce, bytes(flipped), b"header")
+except InvalidTag:
+    print("tampered ciphertext rejected: InvalidTag")
+# ciphertext bytes: 28 (12 plaintext + 16 auth tag)
+# decrypts: b'meet at noon'
+# tampered ciphertext rejected: InvalidTag
+```
+
+## Hashing: fingerprints rather than locks
+
+A cryptographic hash function takes an input of arbitrary length and produces a fixed-length output called a hash or digest.
+
+$$
+h = H(M)
+$$
+
+For example, [SHA-256](https://en.wikipedia.org/wiki/SHA-2) produces a 256-bit digest regardless of whether the input is a short word or a large document.
+
+Unlike encryption, hashing is not intended to be reversible. There is no decryption key that reconstructs the original message from its digest. Instead, a cryptographic hash function is designed to make it computationally infeasible to find an input matching a specified digest or to find two distinct inputs with the same digest.
+
+Three properties are especially important:
+
+- Preimage resistance: Given a digest, it should be infeasible to find an input that produces it.
+- Second-preimage resistance: Given one input, it should be infeasible to find a different input with the same digest.
+- Collision resistance: It should be infeasible to find any two distinct inputs that produce the same digest.
+
+A hash can help verify that a downloaded file has not changed, provided the expected digest comes from a trustworthy source. But a hash alone does not establish who created the file. An attacker who can replace both the file and its advertised digest can defeat that simple check.
+
+Passwords illustrate another important distinction. Storing a fast hash of a password is generally insufficient because attackers can test large numbers of guesses cheaply. Systems should instead use purpose-built password-hashing functions such as [Argon2](https://en.wikipedia.org/wiki/Argon2), with unique salts and appropriate computational costs.
+
+Hashing is therefore useful for integrity and as a building block for authentication, but it does not itself provide confidentiality or prove identity.
+
+Change one character and the digest changes completely: roughly half of the 256 output bits flip, with no visible relationship to the input. Try it:
+
+<HashAvalanche />
+
+```python
+import hashlib
+import hmac
+
+for msg in (b"hello world", b"hello worle"):                 # one character changed
+    print(hashlib.sha256(msg).hexdigest()[:32], msg)
+a, b = (int.from_bytes(hashlib.sha256(m).digest(), "big") for m in (b"hello world", b"hello worle"))
+print("bits that differ:", bin(a ^ b).count("1"), "of 256")
+
+# A plain hash can be recomputed by anyone. An HMAC mixes in a secret key, so only key holders can produce the tag.
+key = b"shared-secret"
+tag = hmac.new(key, b"amount=100", hashlib.sha256).hexdigest()
+print("tag valid:", hmac.compare_digest(tag, hmac.new(key, b"amount=100", hashlib.sha256).hexdigest()))
+print("tampered :", hmac.compare_digest(tag, hmac.new(key, b"amount=900", hashlib.sha256).hexdigest()))
+# b94d27b9934d3e08a52e52d7da7dabfa b'hello world'
+# 0fc30e735a0228a31cbbb969988b4f50 b'hello worle'
+# bits that differ: 140 of 256
+# tag valid: True
+# tampered : False
+```
+
+## Digital signatures: proving possession of a private key
+
+A digital signature allows someone to verify that a message was signed by a party possessing a particular private key and that the signed data has not been altered.
+
+Alice uses her private signing key to generate a signature associated with a message. Bob uses the corresponding public key to verify it.
+
+Conceptually,
+
+$$
+\sigma = \operatorname{Sign}_{sk}(M)
+$$
+
+and verification checks
+
+$$
+\operatorname{Verify}_{pk}(M,\sigma)=\text{valid}.
+$$
+
+Here, $sk$ is the private signing key, $pk$ is the public verification key, and $\sigma$ is the signature.
+
+Real signature schemes, such as [Ed25519](https://en.wikipedia.org/wiki/EdDSA) and RSA-based signature schemes, have specific algorithms and security requirements. They do not simply encrypt a message with a private key, despite that common but misleading description.
+
+A valid signature provides evidence that the message was signed using the corresponding private key and that the signed content has not been modified, assuming the scheme is secure. It does not automatically prove the real-world identity of the signer. That requires a trustworthy connection between the public key and the person or organization claiming to own it, often through certificates or another authenticated mechanism.
+
+Signatures also support accountability: they can help establish who authorized a message or software release. However, their evidentiary value depends on key security, implementation, and the surrounding system.
+
+```python
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+sk = Ed25519PrivateKey.generate()
+sig = sk.sign(b"release v1.2.3")
+sk.public_key().verify(sig, b"release v1.2.3")                # raises if invalid
+print("signature length:", len(sig), "bytes; verifies: True")
+try:
+    sk.public_key().verify(sig, b"release v1.2.4")
+except InvalidSignature:
+    print("different message: InvalidSignature")
+# signature length: 64 bytes; verifies: True
+# different message: InvalidSignature
+```
+
+## Diffie–Hellman: agreeing on a secret in public
+
+Diffie–Hellman key exchange solves a problem that encryption alone does not: two parties can establish a common secret even when an attacker can observe everything exchanged over the network.
+
+In a simplified finite-field version, Alice and Bob publicly agree on a large prime $p$ and a generator $g$. Alice chooses a private value $a$ and sends
+
+$$
+A = g^a \bmod p.
+$$
+
+Bob independently chooses a private value $b$ and sends
+
+$$
+B = g^b \bmod p.
+$$
+
+Alice calculates
+
+$$
+s = B^a \bmod p,
+$$
+
+while Bob calculates
+
+$$
+s = A^b \bmod p.
+$$
+
+Both obtain the same result because
+
+$$
+B^a \bmod p = (g^b)^a \bmod p = g^{ab} \bmod p = (g^a)^b \bmod p = A^b \bmod p.
+$$
+
+An observer knows $p$, $g$, $A$, and $B$, but recovering the secret should be computationally infeasible with appropriately chosen parameters and a secure implementation. The security relies on the difficulty of related discrete-logarithm problems.
+
+The exchanged value is not normally used directly as an encryption key. A [key-derivation function](https://en.wikipedia.org/wiki/Key_derivation_function) derives suitable cryptographic keys from the shared secret.
+
+Pick the private numbers and watch both sides reach the same secret while the eavesdropper has to search for it:
+
+<DiffieHellmanDemo />
+
+```python
+p, g = 23, 5
+a, b = 6, 15                                                  # private values, never sent
+A, B = pow(g, a, p), pow(g, b, p)                             # public values, sent in the clear
+print("A =", A, " B =", B, " | Alice's secret:", pow(B, a, p), " Bob's secret:", pow(A, b, p))
+print("eavesdropper brute-forces a from A:", next(x for x in range(p) if pow(g, x, p) == A), "(easy for p=23, infeasible for 2048-bit p)")
+# A = 8  B = 19  | Alice's secret: 2  Bob's secret: 2
+# eavesdropper brute-forces a from A: 6 (easy for p=23, infeasible for 2048-bit p)
+```
+
+There is an important limitation: ordinary Diffie–Hellman does not authenticate the participants. An active attacker can intercept the exchange, establish one secret with Alice and another with Bob, and relay messages between them. This is a [man-in-the-middle attack](https://en.wikipedia.org/wiki/Man-in-the-middle_attack). Authenticated protocols prevent this by binding the key exchange to verified identities or signatures.
+
+## How the pieces work together
+
+These mechanisms solve different problems, which is why secure systems combine them rather than treating them as interchangeable.
+
+| Mechanism             | Primary purpose                                 | What it does not provide by itself      |
+| --------------------- | ----------------------------------------------- | --------------------------------------- |
+| Symmetric encryption  | Confidentiality                                 | Secure initial key distribution         |
+| Asymmetric encryption | Confidentiality using a public/private key pair | Automatic identity verification         |
+| Cryptographic hashing | Compact digest and integrity support            | Confidentiality or authentication       |
+| Digital signatures    | Authentication of signed data and integrity     | Secrecy of the message                  |
+| Diffie–Hellman        | Establishing a shared secret                    | Authentication against active attackers |
+
+Consider a secure web connection. The client and server negotiate cryptographic parameters, authenticate the server using a certificate and associated verification procedures, and establish shared key material through an authenticated key exchange. A key-derivation function produces session keys, and symmetric authenticated encryption protects subsequent traffic. Hash functions and digital signatures support parts of the protocol's integrity and authentication mechanisms.
+
+The deeper principle is that cryptography is a collection of complementary tools. Encryption hides content; hashing provides a compact representation of content; signatures bind content to a private key; and key exchange establishes shared secrets. Security emerges when these mechanisms are combined correctly, their keys are managed properly, and the protocol accounts for attackers who can observe, modify, replay, or inject messages.
+
+<Callout type="pitfall">
+A signature is often described as "encrypting a hash with the private key". It is not: real schemes such as Ed25519 are specific algorithms with their own security requirements. And never build your own cipher, key exchange or protocol: use vetted libraries and high-level, hard-to-misuse APIs (authenticated encryption, signature verification) so details like nonces and padding are handled for you.
+</Callout>

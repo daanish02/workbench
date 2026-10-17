@@ -1,0 +1,142 @@
+---
+title: "Penetration Testing"
+description: "Methodology and mindset for penetration testing, not tool tutorials."
+order: 8
+tier: optional
+takeaways:
+  - "A **penetration test** is an *authorized*, controlled attempt to show what an attacker could actually achieve, not just to list bugs."
+  - "Treat security assumptions as **hypotheses**: change one assumption at a time and gather evidence."
+  - "Real compromises are usually **chains** of modest weaknesses (an attack path), not one spectacular flaw."
+  - "Separate **potential**, **demonstrated** and **observed in practice**, and use the **smallest sufficient proof**."
+  - "Scope and rules of engagement come first; **retesting** confirms a fix worked."
+resources:
+  - title: "OWASP Web Security Testing Guide"
+    url: "https://owasp.org/www-project-web-security-testing-guide/"
+    note: "A thorough methodology and checklist for web application testing."
+  - title: "Penetration Testing Execution Standard (PTES)"
+    url: "http://www.pentest-standard.org/"
+  - title: "NIST SP 800-115: Technical Guide to Information Security Testing"
+    url: "https://csrc.nist.gov/pubs/sp/800/115/final"
+  - title: "CVSS (FIRST)"
+    url: "https://www.first.org/cvss/"
+    note: "The standard severity scoring system, and its limits."
+---
+
+Penetration testing is an authorized, controlled attempt to discover whether weaknesses in a system can be combined into meaningful security failures. Its purpose is not merely to find bugs, but to determine what an attacker could actually achieve, under which conditions, and with what consequences. The central mindset is to treat security assumptions as hypotheses to test: a control may appear effective in isolation while a weakness elsewhere allows the overall system to be compromised.
+
+## From security assumptions to testable hypotheses
+
+Every system rests on assumptions about trust, access, and behavior. A penetration tester identifies these assumptions and asks what happens if one of them is false.
+
+For example, a web application may assume that only administrators can modify account permissions. That assumption could be enforced by the user interface, the backend, or both. If the backend does not independently check authorization, hiding the administrative controls from ordinary users provides no meaningful security boundary.
+
+A useful test begins with a specific hypothesis: an ordinary user may be able to perform an administrative action because authorization is enforced only in the interface. The tester then gathers evidence to determine whether the assumption holds.
+
+This distinguishes penetration testing from indiscriminate vulnerability hunting. A finding is valuable when it establishes a concrete failure, explains its preconditions, and demonstrates its security implications. An unusual response or suspicious configuration is a lead, not necessarily proof of a vulnerability.
+
+The process is also different from ordinary software testing. Functional testing asks whether the system behaves as intended under expected conditions. Penetration testing asks whether the system can be made to violate its security requirements under adversarial conditions.
+
+## Methodology: a disciplined sequence of investigation
+
+A penetration test is usually organized into stages, although real investigations often move back and forth between them.
+
+| Stage | What happens |
+| --- | --- |
+| **1. Scope and authorization** | Written permission, target systems, permitted techniques, testing windows, data-handling rules, prohibited actions, and when testing must stop. |
+| **2. Reconnaissance and mapping** | Understand architecture, exposed interfaces, identities, trust boundaries and dependencies before deciding where to look. |
+| **3. Vulnerability discovery** | Form hypotheses about weaknesses in authentication, authorization, input handling, configuration and system interactions; test them in a controlled way. |
+| **4. Validation and impact** | Establish whether a suspected weakness is real, reproducible and exploitable in scope, with the minimum evidence needed. |
+| **5. Reporting and retesting** | Document evidence, impact, prerequisites and remediation; after the fix, verify the weakness is gone and nothing new broke. |
+
+The stages are related but not interchangeable. Reconnaissance identifies possible attack surfaces; discovery develops hypotheses about weaknesses; validation establishes what the evidence supports. Skipping validation produces speculative findings, while skipping scoping can turn a legitimate test into an operational or legal incident.
+
+## Attack surface and attack paths
+
+The attack surface is the set of interfaces and conditions through which an attacker might influence a system. It includes more than public network ports: login flows, APIs, file uploads, administrative functions, cloud permissions, third-party integrations, and deployment pipelines can all create attack opportunities.
+
+A penetration tester does not assume that every exposed component is equally important. Instead, the tester looks for paths connecting an initial weakness to a meaningful objective.
+
+Consider a hypothetical application with three properties:
+
+- An externally accessible API accepts requests from ordinary users.
+- A background service processes uploaded files with elevated permissions.
+- The service can access an internal database.
+
+Each property might appear reasonable in isolation. The security question is whether an attacker can combine them: perhaps influence file processing, abuse the service's privileges, and reach data that the original account could not access. The test investigates whether such a path actually exists, rather than assuming that the presence of the three properties proves compromise.
+
+Attack paths can be represented as a graph. Nodes represent assets, identities, or security states; edges represent actions or transitions that are possible under specific conditions. The most important finding may therefore be a chain of individually modest weaknesses rather than one spectacular vulnerability.
+
+Each arrow below exists because of one weakness. Fix some and see whether a path from the internet to the database survives:
+
+<AttackPathGraph />
+
+Finding such a path is a graph search, exactly like the traversal in [Graph Algorithms](../../algorithms/graph-algorithms/):
+
+```python
+from collections import deque
+
+EDGES = {"internet": [("api", "public endpoint")], "api": [("upload-service", "unvalidated upload")],
+         "upload-service": [("db", "service has db admin rights")]}
+def path_exists(blocked=()):
+    q, seen = deque([("internet", ["internet"])]), {"internet"}
+    while q:
+        node, path = q.popleft()
+        if node == "db":
+            return path
+        for nxt, why in EDGES.get(node, []):
+            if why not in blocked and nxt not in seen:
+                seen.add(nxt); q.append((nxt, path + [nxt]))
+    return None
+print("as built      :", path_exists())
+print("fix upload bug:", path_exists(blocked={"unvalidated upload"}))
+# as built      : ['internet', 'api', 'upload-service', 'db']
+# fix upload bug: None
+```
+
+This is why penetration testing examines compositions of controls. A strong login mechanism does not compensate for broken authorization, and a correctly configured firewall does not guarantee that a reachable application cannot misuse its own internal privileges.
+
+## The mindset: think in assumptions, evidence, and consequences
+
+Good penetration testing requires adversarial reasoning, but not guesswork. The tester tries to disprove security claims while remaining disciplined about what the evidence actually establishes.
+
+Several habits are particularly important.
+
+**Question the intended trust boundary.** If a system treats a request, identity, file, or internal network as trustworthy, ask what guarantees that trust. Does the server verify permissions independently? Can user-controlled input influence a privileged operation? Does an internal service accept requests merely because they originate inside the network?
+
+**Change one assumption at a time.** When investigating a suspected flaw, isolate the relevant variable where possible. This makes results easier to interpret and helps distinguish causation from coincidence.
+
+**Think in terms of invariants.** An invariant is a property that must remain true regardless of how a user interacts with the system. For example, “a user cannot read another customer's private record without explicit authorization” should hold across every API endpoint, interface, and request sequence. A tester looks for paths that violate the invariant.
+
+**Seek the smallest sufficient proof.** Demonstrating unauthorized access to a harmless test record may establish an authorization flaw without accessing real customer data. Reading sensitive production data or disrupting services merely to make a finding more dramatic is generally unnecessary and may violate the agreed scope.
+
+**Update beliefs when evidence changes.** An apparent vulnerability may turn out to be a false positive, a documented limitation, or a flaw that requires conditions absent from the target. Conversely, a low-severity observation may become significant when combined with another weakness. The assessment should follow the evidence rather than a predetermined conclusion.
+
+## Severity: exploitability is not the same as impact
+
+A vulnerability's seriousness depends on more than its technical label. A useful assessment considers the impact of exploitation, the privileges required, the exposure of the affected component, the likelihood of successful exploitation, and the sensitivity of the assets involved.
+
+For example, a file-read vulnerability might expose harmless public content in one application but reveal credentials or private customer records in another. The underlying weakness may be similar, yet the consequences differ substantially.
+
+A common framework is the Common Vulnerability Scoring System (CVSS), which provides a standardized way to describe and score vulnerability severity. Its score is useful for comparison, but it does not replace context-specific risk analysis. Business impact, existing controls, exploit evidence, and the importance of the affected system still matter.
+
+Penetration testers should distinguish at least three claims:
+
+- Potential: a weakness appears capable of producing a particular consequence.
+- Demonstrated: controlled evidence establishes that the consequence is achievable under the tested conditions.
+- Observed in practice: evidence indicates that the weakness has actually been exploited in a real incident.
+
+These claims are not equivalent. A responsible report states which one the evidence supports and avoids overstating certainty.
+
+## Rules of engagement and professional responsibility
+
+Authorization is a technical boundary as well as a legal one. A test should specify which assets are in scope, which activities are permitted, how sensitive data must be handled, and how unexpected effects will be managed. Third-party infrastructure, shared cloud environments, production data, and denial-of-service testing require particular care.
+
+Testing should use the least disruptive method that answers the security question. If an experiment risks data loss, service interruption, or exposure of private information, the tester should stop and obtain the required approval rather than proceed simply because the technique might work.
+
+A strong report is designed to help the system owner make a decision. It describes the affected component, the conditions required for exploitation, the evidence collected, the likely impact, and a practical remediation path. It also records limitations: assets not tested, assumptions that could not be verified, and areas where evidence remains incomplete.
+
+Retesting closes the loop. A fix is not proven merely because a patch was deployed; the original failure must be retested, and related behavior should be checked for regressions. The ultimate measure of a penetration test is not the number of findings, but whether it produces reliable evidence that helps reduce real security risk.
+
+<Callout type="practice">
+Only test systems you own or have **written** permission to test, within the agreed scope. If an experiment risks data loss, outages or exposing real private data, stop and get approval instead of proving a point. The best finding is a reproducible chain with the smallest proof that convinces the owner to fix it.
+</Callout>
