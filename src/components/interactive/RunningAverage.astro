@@ -1,0 +1,163 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Running average of die rolls"
+  caption="Each point is the average of the first n rolls of a fair die. The dashed line is the expected value 3.5. Move n, or start a new run, and watch the average settle."
+>
+  <running-average>
+    <div class="ra-ctl">
+      <label>n <input type="range" min="1" max="1000" step="1" value="50" data-n /><b data-nv>50</b></label>
+      <button type="button" data-new>new run</button>
+    </div>
+    <svg class="ra-svg" viewBox="0 0 400 220" role="img" aria-label="Running average of die rolls against the number of rolls, settling near 3.5">
+      <g transform="translate(30 10)">
+        <line x1="0" y1="0" x2="0" y2="190" class="ra-axis"></line>
+        <line x1="0" y1="190" x2="355" y2="190" class="ra-axis"></line>
+        <line x1="0" y1="0" x2="355" y2="0" class="ra-grid"></line>
+        <line data-target x1="0" y1="0" x2="355" y2="0" class="ra-target"></line>
+        <path data-full class="ra-full"></path>
+        <path data-part class="ra-part"></path>
+        <circle data-dot r="4" class="ra-dot"></circle>
+      </g>
+    </svg>
+    <p class="ra-stat" data-stat></p>
+  </running-average>
+</Figure>
+
+<style>
+  .ra-ctl {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .ra-ctl label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ra-ctl input {
+    flex: 1;
+  }
+  .ra-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ra-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .ra-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ra-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ra-grid {
+    stroke: #3c4043;
+    stroke-width: 0.5;
+    opacity: 0.4;
+  }
+  .ra-target {
+    stroke: #9aa0a6;
+    stroke-width: 1.2;
+    stroke-dasharray: 5 4;
+  }
+  .ra-full {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+  .ra-part {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .ra-dot {
+    fill: var(--g-yellow);
+  }
+  .ra-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Seeded generator so each run is repeatable; "new run" changes the seed.
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  class RunningAverage extends HTMLElement {
+    rolls: number[] = [];
+    seed = 2024;
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-new]')!.addEventListener('click', () => {
+        this.seed += 1;
+        this.make();
+      });
+      this.make();
+    }
+
+    make() {
+      const r = rng(this.seed);
+      this.rolls = Array.from({ length: 1000 }, () => Math.floor(r() * 6) + 1);
+      // map mean in [1, 6] to y, n in [1, 1000] to x
+      const toY = (m: number) => 190 - ((m - 1) / 5) * 190;
+      const toX = (n: number) => (n / 1000) * 355;
+      let sum = 0;
+      const pts: string[] = [];
+      this.rolls.forEach((v, i) => {
+        sum += v;
+        pts.push(`${i ? 'L' : 'M'}${toX(i + 1).toFixed(2)},${toY(sum / (i + 1)).toFixed(2)}`);
+      });
+      this.querySelector('[data-full]')!.setAttribute('d', pts.join(' '));
+      this.querySelector<SVGLineElement>('[data-target]')!.setAttribute('y1', toY(3.5).toFixed(2));
+      this.querySelector<SVGLineElement>('[data-target]')!.setAttribute('y2', toY(3.5).toFixed(2));
+      this.draw();
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const toY = (m: number) => 190 - ((m - 1) / 5) * 190;
+      const toX = (k: number) => (k / 1000) * 355;
+      let sum = 0;
+      const pts: string[] = [];
+      for (let i = 0; i < n; i++) {
+        sum += this.rolls[i];
+        pts.push(`${i ? 'L' : 'M'}${toX(i + 1).toFixed(2)},${toY(sum / (i + 1)).toFixed(2)}`);
+      }
+      const mean = sum / n;
+      this.querySelector('[data-part]')!.setAttribute('d', pts.join(' '));
+      const dot = this.querySelector<SVGCircleElement>('[data-dot]')!;
+      dot.setAttribute('cx', toX(n).toFixed(2));
+      dot.setAttribute('cy', toY(mean).toFixed(2));
+      this.querySelector('[data-stat]')!.textContent =
+        `n = ${n} · average = ${mean.toFixed(3)} · error = ${Math.abs(mean - 3.5).toFixed(3)} · expected 3.5`;
+    }
+  }
+  customElements.define('running-average', RunningAverage);
+</script>

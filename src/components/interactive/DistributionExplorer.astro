@@ -1,0 +1,194 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Distribution explorer"
+  caption="Pick a family and move the sliders. Discrete families show bars for P(X = k); continuous families show the density. The readout gives the mean and variance, which follow from the parameters."
+>
+  <distribution-explorer>
+    <div class="de-ctl">
+      <label>family
+        <select data-f>
+          <option value="binomial">binomial (n, p)</option>
+          <option value="poisson">Poisson (λ)</option>
+          <option value="normal">normal (μ, σ)</option>
+          <option value="exponential">exponential (rate)</option>
+        </select>
+      </label>
+      <label><span data-la>n</span> <input type="range" min="1" max="40" step="1" value="10" data-a /><b data-av>10</b></label>
+      <label><span data-lb>p</span> <input type="range" min="0.01" max="0.99" step="0.01" value="0.3" data-b /><b data-bv>0.30</b></label>
+    </div>
+    <svg class="de-svg" viewBox="0 0 400 220" role="img" aria-label="Probability shape of the chosen distribution">
+      <line x1="30" y1="190" x2="390" y2="190" class="de-axis"></line>
+      <line x1="30" y1="10" x2="30" y2="190" class="de-axis"></line>
+      <g data-shape></g>
+    </svg>
+    <p class="de-stat" data-stat></p>
+  </distribution-explorer>
+</Figure>
+
+<style>
+  .de-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+  }
+  .de-ctl label {
+    flex: 1 1 180px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .de-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border, #3c4043);
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .de-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .de-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .de-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .de-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .de-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .de-svg :global(.de-bar) {
+    fill: var(--g-blue);
+    opacity: 0.85;
+  }
+  .de-svg :global(.de-curve) {
+    fill: rgba(66, 133, 244, 0.25);
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .de-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Parameter ranges per family: [labelA, minA, maxA, stepA, defaultA, labelB, minB, maxB, stepB, defaultB]
+  type Fam = { la: string; a: [number, number, number, number]; lb: string | null; b: [number, number, number, number] };
+  const families: Record<string, Fam> = {
+    binomial: { la: 'n', a: [1, 40, 1, 10], lb: 'p', b: [0.01, 0.99, 0.01, 0.3] },
+    poisson: { la: 'λ', a: [0.5, 20, 0.5, 4], lb: null, b: [0, 0, 0, 0] },
+    normal: { la: 'μ', a: [-5, 5, 0.1, 0], lb: 'σ', b: [0.2, 3, 0.1, 1] },
+    exponential: { la: 'rate', a: [0.1, 4, 0.1, 1], lb: null, b: [0, 0, 0, 0] },
+  };
+
+  const comb = (n: number, k: number) => {
+    let c = 1;
+    for (let i = 1; i <= k; i++) c = (c * (n - k + i)) / i;
+    return c;
+  };
+  const binom = (k: number, n: number, p: number) => comb(n, k) * p ** k * (1 - p) ** (n - k);
+  const pois = (k: number, lam: number) => {
+    let f = 1;
+    for (let i = 2; i <= k; i++) f *= i;
+    return (Math.exp(-lam) * lam ** k) / f;
+  };
+  const normalDens = (x: number, mu: number, s: number) => Math.exp(-((x - mu) ** 2) / (2 * s * s)) / (s * Math.sqrt(2 * Math.PI));
+
+  class DistributionExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('change', () => this.setup());
+      this.querySelector('[data-a]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-b]')!.addEventListener('input', () => this.draw());
+      this.setup();
+    }
+
+    setup() {
+      const fam = families[this.querySelector<HTMLSelectElement>('[data-f]')!.value];
+      const a = this.querySelector<HTMLInputElement>('[data-a]')!;
+      const b = this.querySelector<HTMLInputElement>('[data-b]')!;
+      a.min = String(fam.a[0]); a.max = String(fam.a[1]); a.step = String(fam.a[2]); a.value = String(fam.a[3]);
+      b.min = String(fam.b[0]); b.max = String(fam.b[1]); b.step = String(fam.b[2]); b.value = String(fam.b[3]);
+      this.querySelector('[data-la]')!.textContent = fam.la;
+      this.querySelector('[data-lb]')!.textContent = fam.lb ?? '—';
+      b.disabled = fam.lb === null;
+      this.draw();
+    }
+
+    draw() {
+      const key = this.querySelector<HTMLSelectElement>('[data-f]')!.value;
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      const b = +this.querySelector<HTMLInputElement>('[data-b]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(a % 1 ? 1 : 0);
+      this.querySelector('[data-bv]')!.textContent = this.querySelector<HTMLInputElement>('[data-b]')!.disabled ? '—' : b.toFixed(2);
+      const X0 = 30, X1 = 390, Y0 = 190, H = 170;
+      const shape = this.querySelector('[data-shape]')!;
+      let stat = '';
+      if (key === 'binomial' || key === 'poisson') {
+        const K = key === 'binomial' ? a : Math.ceil(a + 4 * Math.sqrt(a)) + 2;
+        const pm = (k: number) => (key === 'binomial' ? binom(k, a, b) : pois(k, a));
+        const ks = Array.from({ length: K + 1 }, (_, k) => k);
+        const peak = Math.max(...ks.map(pm));
+        const w = (X1 - X0) / (K + 1);
+        shape.innerHTML = ks
+          .map((k) => {
+            const h = (pm(k) / peak) * H;
+            return `<rect class="de-bar" x="${(X0 + k * w + w * 0.15).toFixed(2)}" y="${(Y0 - h).toFixed(2)}" width="${(w * 0.7).toFixed(2)}" height="${h.toFixed(2)}"></rect>`;
+          })
+          .join('');
+        stat =
+          key === 'binomial'
+            ? `binomial(n=${a}, p=${b.toFixed(2)}) · mean np = ${(a * b).toFixed(2)} · variance np(1−p) = ${(a * b * (1 - b)).toFixed(2)} · tallest bar = ${peak.toFixed(3)}`
+            : `Poisson(λ=${a.toFixed(1)}) · mean = variance = λ = ${a.toFixed(1)} · tallest bar = ${peak.toFixed(3)}`;
+      } else {
+        // continuous: density over a window; scale to the tallest point in view
+        let lo: number, hi: number, f: (x: number) => number;
+        // fixed x-window, so moving a parameter moves the curve on the axis
+        if (key === 'normal') {
+          lo = -10; hi = 10; f = (x) => normalDens(x, a, b);
+        } else {
+          lo = 0; hi = 10; f = (x) => a * Math.exp(-a * x);
+        }
+        const N = 120;
+        const pts: string[] = [];
+        let peak = 0;
+        for (let i = 0; i <= N; i++) {
+          const x = lo + ((hi - lo) * i) / N;
+          peak = Math.max(peak, f(x));
+        }
+        for (let i = 0; i <= N; i++) {
+          const x = lo + ((hi - lo) * i) / N;
+          const px = X0 + ((X1 - X0) * i) / N;
+          const py = Y0 - (f(x) / peak) * H;
+          pts.push(`${i ? 'L' : 'M'}${px.toFixed(2)},${py.toFixed(2)}`);
+        }
+        shape.innerHTML = `<path class="de-curve" d="${pts.join(' ')} L${X1},${Y0} L${X0},${Y0} Z"></path>`;
+        stat =
+          key === 'normal'
+            ? `normal(μ=${a.toFixed(1)}, σ=${b.toFixed(1)}) · mean = ${a.toFixed(1)} · variance σ² = ${(b * b).toFixed(2)} · peak density = ${peak.toFixed(3)}`
+            : `exponential(rate=${a.toFixed(1)}) · mean 1/rate = ${(1 / a).toFixed(2)} · variance 1/rate² = ${(1 / (a * a)).toFixed(2)} · peak density = ${peak.toFixed(3)}`;
+      }
+      this.querySelector('[data-stat]')!.textContent = stat;
+    }
+  }
+  customElements.define('distribution-explorer', DistributionExplorer);
+</script>

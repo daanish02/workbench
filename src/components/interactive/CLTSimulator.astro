@@ -1,0 +1,160 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Central limit theorem simulator"
+  caption="Each bar group is the histogram of 2000 sample means. Pick a source distribution and a sample size n. The curve is the normal approximation with mean μ and standard error σ/√n. Larger n makes the histogram match the curve, even for skewed sources."
+>
+  <clt-simulator>
+    <div class="clt-ctl">
+      <label>source
+        <select data-s>
+          <option value="uniform">uniform(0, 1)</option>
+          <option value="exponential">exponential(1)</option>
+          <option value="die">fair die</option>
+        </select>
+      </label>
+      <label>n <input type="range" min="1" max="60" step="1" value="5" data-n /><b data-nv>5</b></label>
+    </div>
+    <svg class="clt-svg" viewBox="0 0 400 220" role="img" aria-label="Histogram of sample means with a normal curve overlaid">
+      <line x1="20" y1="190" x2="390" y2="190" class="clt-axis"></line>
+      <g data-bars></g>
+      <path data-curve class="clt-curve"></path>
+    </svg>
+    <p class="clt-stat" data-stat></p>
+  </clt-simulator>
+</Figure>
+
+<style>
+  .clt-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+  }
+  .clt-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .clt-ctl select {
+    font: inherit;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 2px 4px;
+  }
+  .clt-ctl option {
+    background: #1a1a1a;
+    color: #e8eaed;
+  }
+  .clt-ctl input {
+    width: 160px;
+  }
+  .clt-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .clt-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .clt-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .clt-svg :global(.clt-bar) {
+    fill: var(--g-blue);
+    opacity: 0.7;
+  }
+  .clt-curve {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .clt-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Seeded generator; the same n and source always give the same histogram.
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  const sources: Record<string, { mu: number; sigma: number; draw: (r: () => number) => number }> = {
+    uniform: { mu: 0.5, sigma: Math.sqrt(1 / 12), draw: (r) => r() },
+    exponential: { mu: 1, sigma: 1, draw: (r) => -Math.log(1 - r()) },
+    die: { mu: 3.5, sigma: Math.sqrt(35 / 12), draw: (r) => Math.floor(r() * 6) + 1 },
+  };
+
+  class CLTSimulator extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-s]')!.addEventListener('change', () => this.draw());
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const key = this.querySelector<HTMLSelectElement>('[data-s]')!.value;
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const src = sources[key];
+      const r = rng(42);
+      const means: number[] = [];
+      for (let i = 0; i < 2000; i++) {
+        let s = 0;
+        for (let j = 0; j < n; j++) s += src.draw(r);
+        means.push(s / n);
+      }
+      const se = src.sigma / Math.sqrt(n);
+      const lo = src.mu - 4 * se;
+      const hi = src.mu + 4 * se;
+      const bins = 30;
+      const counts = new Array(bins).fill(0);
+      for (const m of means) {
+        const b = Math.floor(((m - lo) / (hi - lo)) * bins);
+        if (b >= 0 && b < bins) counts[b]++;
+      }
+      const binW = (hi - lo) / bins;
+      const dens = counts.map((c) => c / (2000 * binW));
+      const normal = (x: number) => Math.exp(-((x - src.mu) ** 2) / (2 * se * se)) / (se * Math.sqrt(2 * Math.PI));
+      const yMax = Math.max(...dens, normal(src.mu)) * 1.1;
+      const toY = (d: number) => 190 - (d / yMax) * 170;
+      const X0 = 20, W = 370;
+      const bars = counts
+        .map((_, b) => {
+          const x = X0 + (b / bins) * W;
+          const y = toY(dens[b]);
+          return `<rect class="clt-bar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${(W / bins - 1).toFixed(2)}" height="${(190 - y).toFixed(2)}"></rect>`;
+        })
+        .join('');
+      this.querySelector('[data-bars]')!.innerHTML = bars;
+      const pts: string[] = [];
+      for (let i = 0; i <= 120; i++) {
+        const x = lo + ((hi - lo) * i) / 120;
+        pts.push(`${i ? 'L' : 'M'}${(X0 + ((x - lo) / (hi - lo)) * W).toFixed(2)},${toY(normal(x)).toFixed(2)}`);
+      }
+      this.querySelector('[data-curve]')!.setAttribute('d', pts.join(' '));
+      const mean = means.reduce((a, b) => a + b, 0) / means.length;
+      const sd = Math.sqrt(means.reduce((a, b) => a + (b - mean) ** 2, 0) / means.length);
+      this.querySelector('[data-stat]')!.textContent =
+        `n = ${n} · sd of means = ${sd.toFixed(3)} · predicted σ/√n = ${se.toFixed(3)} · mean of means = ${mean.toFixed(3)}`;
+    }
+  }
+  customElements.define('clt-simulator', CLTSimulator);
+</script>

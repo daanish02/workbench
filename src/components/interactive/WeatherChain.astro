@@ -1,0 +1,174 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Weather Markov chain"
+  caption="Two states with transition probabilities on the arrows. Click a state to start the chain there. The circle sizes show the distribution after t steps, and the plot shows P(sunny) over time against the stationary value."
+>
+  <weather-chain>
+    <div class="wc-ctl">
+      <label>P(sun → sun) <input type="range" min="0.05" max="0.95" step="0.05" value="0.8" data-ss /><b data-ssv>0.80</b></label>
+      <label>P(rain → rain) <input type="range" min="0.05" max="0.95" step="0.05" value="0.6" data-rr /><b data-rrv>0.60</b></label>
+      <label>t <input type="range" min="0" max="30" step="1" value="10" data-t /><b data-tv>10</b></label>
+    </div>
+    <svg class="wc-svg" viewBox="0 0 440 240" role="img" aria-label="Two-state weather chain with transition arrows and a plot of P(sunny) over time">
+      <g class="wc-edges">
+        <path d="M 110 80 C 130 20, 230 20, 250 80" class="wc-arc"></path>
+        <path d="M 250 100 C 230 140, 130 140, 110 100" class="wc-arc"></path>
+        <text x="180" y="34" class="wc-lab" data-ps>S→R 0.20</text>
+        <text x="180" y="140" class="wc-lab" data-pr>R→S 0.40</text>
+      </g>
+      <g data-state="S" class="wc-node"><circle data-cs cx="80" cy="90" r="30"></circle><text x="80" y="95">Sunny</text></g>
+      <g data-state="R" class="wc-node"><circle data-cr cx="280" cy="90" r="30"></circle><text x="280" y="95">Rainy</text></g>
+      <text x="80" y="134" class="wc-lab" data-sl>stay 0.80</text>
+      <text x="280" y="134" class="wc-lab" data-rl>stay 0.60</text>
+      <line x1="20" y1="230" x2="420" y2="230" class="wc-axis"></line>
+      <line x1="20" y1="230" x2="20" y2="160" class="wc-axis"></line>
+      <line data-stat-line x1="250" y1="0" x2="430" y2="0" class="wc-stat-line"></line>
+      <path data-trace class="wc-trace"></path>
+    </svg>
+    <p class="wc-readout" data-stat></p>
+  </weather-chain>
+</Figure>
+
+<style>
+  .wc-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-bottom: 10px;
+  }
+  .wc-ctl label {
+    flex: 1 1 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .wc-ctl input {
+    flex: 1;
+  }
+  .wc-ctl b {
+    min-width: 2.4em;
+    text-align: right;
+    color: var(--text);
+  }
+  .wc-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .wc-svg :global(.wc-node circle) {
+    fill: #1a1a1a;
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+    cursor: pointer;
+  }
+  .wc-svg :global(.wc-node text) {
+    fill: var(--text);
+    font: 600 11px var(--font-mono);
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .wc-arc {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 1.4;
+  }
+  .wc-lab {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .wc-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .wc-stat-line {
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 5 4;
+  }
+  .wc-trace {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .wc-readout {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class WeatherChain extends HTMLElement {
+    start = 0; // 0 = sunny, 1 = rainy
+    connectedCallback() {
+      this.querySelector('[data-ss]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-rr]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.querySelectorAll<SVGGElement>('[data-state]').forEach((g) =>
+        g.addEventListener('click', () => {
+          this.start = g.dataset.state === 'S' ? 0 : 1;
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const pss = +this.querySelector<HTMLInputElement>('[data-ss]')!.value;
+      const prr = +this.querySelector<HTMLInputElement>('[data-rr]')!.value;
+      const T = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-ssv]')!.textContent = pss.toFixed(2);
+      this.querySelector('[data-rrv]')!.textContent = prr.toFixed(2);
+      this.querySelector('[data-tv]')!.textContent = String(T);
+      const P = [
+        [pss, 1 - pss],
+        [1 - prr, prr],
+      ];
+      // stationary: pi_S = (1 - prr) / ((1 - pss) + (1 - prr))
+      const piS = (1 - prr) / ((1 - pss) + (1 - prr));
+      // distribution over time from the chosen start
+      let pi = this.start === 0 ? [1, 0] : [0, 1];
+      const trace: number[] = [pi[0]];
+      for (let t = 1; t <= 30; t++) {
+        pi = [pi[0] * P[0][0] + pi[1] * P[1][0], pi[0] * P[0][1] + pi[1] * P[1][1]];
+        trace.push(pi[0]);
+      }
+      // nodes: radius grows with probability at time T
+      const piT: number[] = [1, 0];
+      let cur = this.start === 0 ? [1, 0] : [0, 1];
+      for (let t = 0; t < T; t++) {
+        cur = [cur[0] * P[0][0] + cur[1] * P[1][0], cur[0] * P[0][1] + cur[1] * P[1][1]];
+      }
+      piT[0] = cur[0];
+      piT[1] = cur[1];
+      this.querySelector<SVGCircleElement>('[data-cs]')!.setAttribute('r', (18 + 14 * piT[0]).toFixed(1));
+      this.querySelector<SVGCircleElement>('[data-cr]')!.setAttribute('r', (18 + 14 * piT[1]).toFixed(1));
+      this.querySelector('[data-ps]')!.textContent = `S→R ${(1 - pss).toFixed(2)}`;
+      this.querySelector('[data-pr]')!.textContent = `R→S ${(1 - prr).toFixed(2)}`;
+      this.querySelector('[data-sl]')!.textContent = `stay ${pss.toFixed(2)}`;
+      this.querySelector('[data-rl]')!.textContent = `stay ${prr.toFixed(2)}`;
+      // plot: x from t = 0 to 30 over 20..420, y from 0 to 1 over 230..160
+      const toX = (t: number) => 20 + (t / 30) * 400;
+      const toY = (p: number) => 230 - p * 70;
+      const pts: string[] = [];
+      for (let t = 0; t <= T; t++) {
+        pts.push(`${t ? 'L' : 'M'}${toX(t).toFixed(2)},${toY(trace[t]).toFixed(2)}`);
+      }
+      this.querySelector('[data-trace]')!.setAttribute('d', pts.join(' '));
+      const sl = this.querySelector<SVGLineElement>('[data-stat-line]')!;
+      sl.setAttribute('y1', toY(piS).toFixed(2));
+      sl.setAttribute('y2', toY(piS).toFixed(2));
+      this.querySelector('[data-stat]')!.textContent =
+        `start ${this.start === 0 ? 'sunny' : 'rainy'} · after t = ${T}: P(sunny) = ${piT[0].toFixed(3)} · stationary P(sunny) = ${piS.toFixed(3)}`;
+    }
+  }
+  customElements.define('weather-chain', WeatherChain);
+</script>

@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Simple random walk"
+  caption="Eight sample paths of a walk that steps ±1 with equal chance. The dashed envelope is ±2√k, the typical spread after k steps. The readout compares the sample variance of S_n with the theoretical n."
+>
+  <random-walk>
+    <div class="rw-ctl">
+      <label>steps n <input type="range" min="1" max="200" step="1" value="60" data-n /><b data-nv>60</b></label>
+    </div>
+    <svg class="rw-svg" viewBox="0 0 400 220" role="img" aria-label="Sample paths of a simple random walk with a dashed spread envelope of two root k">
+      <line x1="20" y1="110" x2="390" y2="110" class="rw-axis"></line>
+      <path data-env class="rw-env"></path>
+      <path data-env2 class="rw-env"></path>
+      <g data-paths></g>
+    </svg>
+    <p class="rw-stat" data-stat></p>
+  </random-walk>
+</Figure>
+
+<style>
+  .rw-ctl {
+    margin-bottom: 10px;
+  }
+  .rw-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .rw-ctl input {
+    flex: 1;
+  }
+  .rw-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .rw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .rw-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .rw-env {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 5 4;
+  }
+  .rw-svg :global(.rw-path) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 1;
+    opacity: 0.6;
+  }
+  .rw-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  class RandomWalk extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      // x: step 0..200 over 20..390; y: position -30..30 over 200..20
+      const toX = (k: number) => 20 + (k / 200) * 370;
+      const toY = (s: number) => 110 - (s / 30) * 90;
+      const r = rng(7);
+      let html = '';
+      for (let p = 0; p < 8; p++) {
+        let s = 0;
+        const pts: string[] = [`M${toX(0).toFixed(2)},${toY(0).toFixed(2)}`];
+        for (let k = 1; k <= n; k++) {
+          s += r() < 0.5 ? -1 : 1;
+          pts.push(`L${toX(k).toFixed(2)},${toY(s).toFixed(2)}`);
+        }
+        html += `<path class="rw-path" d="${pts.join(' ')}"></path>`;
+      }
+      this.querySelector('[data-paths]')!.innerHTML = html;
+      const envPts = (sign: number) => {
+        const out: string[] = [];
+        for (let k = 0; k <= n; k++) out.push(`${k ? 'L' : 'M'}${toX(k).toFixed(2)},${toY(sign * 2 * Math.sqrt(k)).toFixed(2)}`);
+        return out.join(' ');
+      };
+      this.querySelector('[data-env]')!.setAttribute('d', envPts(1));
+      this.querySelector('[data-env2]')!.setAttribute('d', envPts(-1));
+      // sample variance of S_n over 3000 independent walks
+      const rv = rng(99);
+      const ends: number[] = [];
+      for (let w = 0; w < 3000; w++) {
+        let s = 0;
+        for (let k = 0; k < n; k++) s += rv() < 0.5 ? -1 : 1;
+        ends.push(s);
+      }
+      const mean = ends.reduce((a, b) => a + b, 0) / ends.length;
+      const v = ends.reduce((a, b) => a + (b - mean) ** 2, 0) / ends.length;
+      this.querySelector('[data-stat]')!.textContent =
+        `after ${n} steps · sample variance of S_n = ${v.toFixed(1)} · theory n = ${n} · sample mean = ${mean.toFixed(2)}`;
+    }
+  }
+  customElements.define('random-walk', RandomWalk);
+</script>

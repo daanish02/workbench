@@ -1,0 +1,141 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Brownian motion paths"
+  caption="Six simulated paths of Brownian motion on [0, t]. The dashed envelope is ±2√s, the typical spread at time s. The readout compares the sample variance of W_t with the theoretical t."
+>
+  <brownian-paths>
+    <div class="bm-ctl">
+      <label>time t <input type="range" min="0.05" max="1" step="0.05" value="1" data-t /><b data-tv>1.00</b></label>
+    </div>
+    <svg class="bm-svg" viewBox="0 0 400 220" role="img" aria-label="Sample paths of Brownian motion with a dashed envelope of two root s">
+      <line x1="20" y1="110" x2="390" y2="110" class="bm-axis"></line>
+      <path data-env class="bm-env"></path>
+      <path data-env2 class="bm-env"></path>
+      <g data-paths></g>
+    </svg>
+    <p class="bm-stat" data-stat></p>
+  </brownian-paths>
+</Figure>
+
+<style>
+  .bm-ctl {
+    margin-bottom: 10px;
+  }
+  .bm-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .bm-ctl input {
+    flex: 1;
+  }
+  .bm-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .bm-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .bm-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .bm-env {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 5 4;
+  }
+  .bm-svg :global(.bm-path) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 1.2;
+    opacity: 0.7;
+  }
+  .bm-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const rng = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  // standard normal by Box-Muller
+  const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+  const STEPS = 400;
+  const PATHS = 6;
+
+  class BrownianPaths extends HTMLElement {
+    increments: number[][] = [];
+    connectedCallback() {
+      const r = rng(5);
+      for (let p = 0; p < PATHS; p++) {
+        const row: number[] = [];
+        for (let k = 0; k < STEPS; k++) row.push(gauss(r) / Math.sqrt(STEPS));
+        this.increments.push(row);
+      }
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const T = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = T.toFixed(2);
+      // x: time 0..1 over 20..390; y: position -3..3 over 200..20
+      const toX = (s: number) => 20 + s * 370;
+      const toY = (w: number) => 110 - (w / 3) * 90;
+      const upto = Math.round((T / 1) * STEPS);
+      let html = '';
+      for (const row of this.increments) {
+        let w = 0;
+        const pts = [`M${toX(0).toFixed(2)},${toY(0).toFixed(2)}`];
+        for (let k = 0; k < upto; k++) {
+          w += row[k];
+          pts.push(`L${toX((k + 1) / STEPS).toFixed(2)},${toY(w).toFixed(2)}`);
+        }
+        html += `<path class="bm-path" d="${pts.join(' ')}"></path>`;
+      }
+      this.querySelector('[data-paths]')!.innerHTML = html;
+      const env = (sign: number) => {
+        const out: string[] = [];
+        for (let k = 0; k <= 100; k++) {
+          const s = (T * k) / 100;
+          out.push(`${k ? 'L' : 'M'}${toX(s / 1).toFixed(2)},${toY(sign * 2 * Math.sqrt(s)).toFixed(2)}`);
+        }
+        return out.join(' ');
+      };
+      this.querySelector('[data-env]')!.setAttribute('d', env(1));
+      this.querySelector('[data-env2]')!.setAttribute('d', env(-1));
+      // sample variance of W_t over 2000 paths, each the sum of 100 increments of variance t/100
+      const rv = rng(77);
+      const ends: number[] = [];
+      for (let p = 0; p < 2000; p++) {
+        let w = 0;
+        for (let k = 0; k < 100; k++) w += gauss(rv) * Math.sqrt(T / 100);
+        ends.push(w);
+      }
+      const mean = ends.reduce((a, b) => a + b, 0) / ends.length;
+      const v = ends.reduce((a, b) => a + (b - mean) ** 2, 0) / ends.length;
+      this.querySelector('[data-stat]')!.textContent =
+        `at t = ${T.toFixed(2)} · sample variance of W_t = ${v.toFixed(3)} · theory t = ${T.toFixed(3)}`;
+    }
+  }
+  customElements.define('brownian-paths', BrownianPaths);
+</script>
