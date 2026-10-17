@@ -21,7 +21,7 @@ resources:
     note: "sin and e, used in the checks below."
 ---
 
-Calculus is built on one idea: what a function does as its input gets very close to a point, even if the function is not defined at that point. Newton and Leibniz used this idea informally, and it took about a century to make it precise. The precise version, the limit, is the foundation of derivatives, integrals and infinite sums. This note introduces limits informally, gives the epsilon-delta definition, and works through the two limits that most people meet first.
+Calculus is built on one idea: what a function does as its input gets very close to a point, even if the function is not defined at that point. Newton and Leibniz used this idea informally, and it took well over a century to make it precise. The precise version, the limit, is the foundation of derivatives, integrals and infinite sums. This note introduces limits informally, gives the epsilon-delta definition, and works through the two limits that most people meet first.
 
 ## Approaching a value
 
@@ -38,7 +38,11 @@ The script below evaluates the function at points closing in on $0$ from both si
 import math
 
 for x in [0.1, 0.01, 0.001, -0.001]:
-    print(f"x = {x:>7}: sin(x)/x = {math.sin(x) / x:.8f}")  # prints: x =     0.1: sin(x)/x = 0.99833417 ...
+    print(f"x = {x:>7}: sin(x)/x = {math.sin(x) / x:.8f}")
+# x =     0.1: sin(x)/x = 0.99833417
+# x =    0.01: sin(x)/x = 0.99998333
+# x =   0.001: sin(x)/x = 0.99999983
+# x =  -0.001: sin(x)/x = 0.99999983
 ```
 
 In words: at $x = 0.001$ the value is $0.99999983$, and from the negative side it is the same. The limit does not depend on the direction of approach. A table of values is evidence, not proof, which is why the definition below is needed.
@@ -61,11 +65,11 @@ For a linear function the choice is direct. For $f(x) = 2x + 1$ at $a = 3$ with 
 ```python
 eps = 0.01
 delta = eps / 2
-worst = max(abs((2 * (3 + h) + 1) - 7) for h in [delta * k / 1000 for k in range(-1000, 1001)])
+worst = max(abs((2 * (3 + h) + 1) - 7) for h in [delta * k / 1000 for k in range(-999, 1000)])  # strictly inside the window
 print(f"largest |f(x) - 7| = {worst:.4f} (below epsilon)")  # prints: largest |f(x) - 7| = 0.0100 (below epsilon)
 ```
 
-In words: the largest error over the window is exactly $0.0100$, which equals $\varepsilon$ at the edge of the window. Anything closer than $\delta$ gives an error less than $\varepsilon$.
+In words: inside the window the largest error is just under $0.01$; it would reach $\varepsilon$ only at the excluded edge $|x - 3| = \delta$. Every $x$ strictly closer than $\delta$ gives an error less than $\varepsilon$.
 
 <Callout type="pitfall">
 A limit describes behaviour near $a$, not at $a$. $\lim_{x \to 2} \frac{x^2 - 4}{x - 2} = 4$ even though the expression is undefined at $x = 2$. Cancelling the common factor is legitimate here, because the function agrees with $x + 2$ everywhere except that single point.
@@ -79,15 +83,43 @@ The limit $\lim_{n \to \infty} \left(1 + \frac{1}{n}\right)^n$ defines the numbe
 import math
 
 for n in [10, 1000, 100000]:
-    print(f"n = {n:>6}: (1 + 1/n)^n = {(1 + 1 / n) ** n:.6f}")  # prints: n = 10: (1 + 1/n)^n = 2.593742 ...
-print("e =", round(math.e, 6))  # prints: e = 2.718282
+    print(f"n = {n:>6}: (1 + 1/n)^n = {(1 + 1 / n) ** n:.6f}")
+print("e =", round(math.e, 6))
+# n =     10: (1 + 1/n)^n = 2.593742
+# n =   1000: (1 + 1/n)^n = 2.716924
+# n = 100000: (1 + 1/n)^n = 2.718268
+# e = 2.718282
 ```
 
-In words: at $n = 100000$ the expression is $2.718268$, within a few millionths of $e = 2.718282$. Growth in the limit is slow, which is why $e$ is hard to reach by brute force, and why the exact definition matters.
+In words: at $n = 100000$ the expression is $2.718268$, about $1.4 \times 10^{-5}$ below $e = 2.718282$. The gap shrinks only like $e/(2n)$, which is why $e$ is hard to reach by brute force, and why the exact definition matters.
 
 ## Limits at infinity
 
 The same idea works when $x$ grows without bound. As $x$ increases, $\frac{1}{x}$ gets smaller and smaller, so $\lim_{x \to \infty} \frac{1}{x} = 0$. Rational functions behave like their leading terms at infinity: $\frac{3x^2 + 1}{x^2}$ tends to $3$, because the $1$ is swamped by $x^2$.
+
+## Continuity
+
+A function is **continuous** at $a$ when its limit there equals its value: $\lim_{x \to a} f(x) = f(a)$. Three things must hold: $f(a)$ is defined, the limit exists, and the two agree. Polynomials, $\sin$, $\cos$ and $e^x$ are continuous everywhere, and sums, products and compositions of continuous functions are continuous. A jump fails because the limits from the two sides differ, and $\frac{\sin x}{x}$ fails at $0$ only because it is undefined there; defining $f(0) = 1$ repairs it.
+
+```python
+import math
+
+step = lambda x: 0.0 if x < 0 else 1.0
+for h in (0.1, 0.001, 1e-6):
+    print(f"h = {h:g}: step(-h) = {step(-h)}, step(+h) = {step(h)}")
+# h = 0.1: step(-h) = 0.0, step(+h) = 1.0
+# h = 0.001: step(-h) = 0.0, step(+h) = 1.0
+# h = 1e-06: step(-h) = 0.0, step(+h) = 1.0
+```
+
+In words: however close to $0$ you look, the step function is $0$ on the left and $1$ on the right. The **one-sided limits** $\lim_{x \to 0^-}$ and $\lim_{x \to 0^+}$ disagree, so no two-sided limit exists, and no $\delta$ can keep both sides within $\varepsilon = 0.4$ of a single value.
+
+Continuity on a closed interval buys two guarantees that the rest of calculus uses constantly:
+
+- **Intermediate value theorem.** If $f$ is continuous on $[a, b]$, it takes every value between $f(a)$ and $f(b)$. So a continuous function that changes sign has a root, which is why bisection always finds one.
+- **Extreme value theorem.** A continuous function on a closed interval attains a maximum and a minimum. That is why the [Applications of Derivatives](../applications-of-derivatives/) note can find the best value by checking critical points and endpoints.
+
+<EpsilonDeltaGame />
 
 ## Where limits are used
 

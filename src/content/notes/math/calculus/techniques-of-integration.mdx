@@ -1,5 +1,5 @@
 ---
-title: "Techniques of integration"
+title: "Techniques of Integration"
 description: "Substitution, integration by parts and partial fractions: the three methods that turn a hard integral into one you can evaluate."
 order: 5
 tier: core
@@ -32,6 +32,7 @@ Take $\int_0^1 2x\cos(x^2)\,dx$. The factor $2x$ is the derivative of $x^2$, so 
 import numpy as np
 
 def integrate(f, a, b, n=200000):
+    # trapezoid rule on a fine grid; scipy.integrate.quad below does this adaptively
     xs = np.linspace(a, b, n)
     return np.trapezoid(f(xs), xs)
 
@@ -54,13 +55,10 @@ The method works when $\int v\,du$ is easier than the original integral. For $\i
 
 ```python
 import numpy as np
+from scipy.integrate import quad
 
-def integrate(f, a, b, n=200000):
-    xs = np.linspace(a, b, n)
-    return np.trapezoid(f(xs), xs)
-
-v2 = integrate(lambda x: x * np.exp(x), 0, 1)
-print("by parts numeric:", round(v2, 6), " exact = 1")  # prints: by parts numeric: 1.0  exact = 1
+v2, err = quad(lambda x: x * np.exp(x), 0, 1)  # adaptive quadrature, with an error estimate
+print("by parts numeric:", round(v2, 6), " estimated error:", f"{err:.0e}", " exact = 1")  # prints: by parts numeric: 1.0  estimated error: 1e-14  exact = 1
 ```
 
 In words: the boundary term $e$ cancels against the integral $e - 1$, leaving $1$, which the numerical integral confirms. A good choice of $u$ is one that gets simpler when differentiated: $x$ becomes $1$, while $e^x$ stays $e^x$.
@@ -82,17 +80,39 @@ Each term integrates to a logarithm, so $\int \frac{1}{x^2 - 1}\,dx = \frac{1}{2
 
 ```python
 import numpy as np
+from scipy.integrate import quad
 
-def integrate(f, a, b, n=200000):
-    xs = np.linspace(a, b, n)
-    return np.trapezoid(f(xs), xs)
-
-v3 = integrate(lambda x: 1 / (x ** 2 - 1), 2, 3)
+v3, _ = quad(lambda x: 1 / (x ** 2 - 1), 2, 3)
 antider = lambda x: 0.5 * np.log(abs((x - 1) / (x + 1)))
 print("partial fractions numeric:", round(v3, 6), " antiderivative difference:", round(antider(3) - antider(2), 6))  # prints: partial fractions numeric: 0.202733  antiderivative difference: 0.202733
 ```
 
 In words: the numerical integral and the difference of the antiderivative agree to six places, $0.202733$. The split into two simple fractions is what made the antiderivative possible.
+
+## A short table and a symbolic check
+
+Every rule above starts from a handful of antiderivatives, each a derivative read backwards:
+
+| Integrand | Antiderivative | Check by differentiating |
+| --- | --- | --- |
+| $x^n$, $n \ne -1$ | $\frac{x^{n+1}}{n+1}$ | power rule |
+| $\frac{1}{x}$ | $\ln\lvert x\rvert$ | $\frac{d}{dx}\ln x = \frac{1}{x}$, and $\ln(-x)$ covers $x < 0$ |
+| $e^{ax}$ | $\frac{1}{a}e^{ax}$ | chain rule |
+| $\sin x$, $\cos x$ | $-\cos x$, $\sin x$ | derivatives of $\cos$ and $\sin$ |
+| $\frac{1}{1 + x^2}$ | $\arctan x$ | derivative of the inverse of $\tan$ |
+
+A computer algebra system does the same rewriting exactly, and it is a good second check on the three worked examples:
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+print(sp.integrate(2 * x * sp.cos(x**2), (x, 0, 1)))   # prints: sin(1)
+print(sp.integrate(x * sp.exp(x), (x, 0, 1)))          # prints: 1
+print(sp.apart(1 / (x**2 - 1)))                        # prints: -1/(2*(x + 1)) + 1/(2*(x - 1))
+```
+
+In words: SymPy returns the exact values $\sin 1$ and $1$ found by substitution and by parts, and the same partial-fraction split. Run it with `uv run --with sympy`.
 
 ## Checking your work
 

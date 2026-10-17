@@ -1,7 +1,7 @@
 ---
-title: "The chain rule (multivariable)"
+title: "Multivariable Chain Rule"
 description: "The chain rule for functions of several variables: how derivatives combine along a path, and the layer-by-layer computation that backpropagation performs."
-order: 9
+order: 10
 tier: core
 takeaways:
   - "If $z = f(x, y)$ with $x(t)$ and $y(t)$, then $\\frac{dz}{dt} = \\frac{\\partial f}{\\partial x}\\frac{dx}{dt} + \\frac{\\partial f}{\\partial y}\\frac{dy}{dt}$. Each route from $z$ back to $t$ contributes one product."
@@ -69,12 +69,14 @@ dzdw = a + w * 2
 print("chain-rule gradient dL/dw:", round(dLdz * dzdw, 4))  # prints: chain-rule gradient dL/dw: -10.0
 ```
 
-In words: $dL/dz = 2(0.5 - 3) = -5$ and $dz/dw = a + 2w = 2$, so $dL/dw = -10$. The loss drops if $w$ increases, which the sign tells you. Backpropagation computes exactly this, one local derivative at a time, and it stores $a$ and $z$ from the forward pass so they need not be recomputed.
+In words: $dL/dz = 2(0.5 - 3) = -5$. The weight reaches $z = wa$ by two routes, directly and through $a = 2w$, so $dz/dw$ is a sum of two terms: $a$ from the direct route plus $w \cdot 2$ through $a$, giving $1 + 1 = 2$. So $dL/dw = -10$. The loss drops if $w$ increases, which the sign tells you. Backpropagation computes exactly this, one local derivative at a time, and it stores $a$ and $z$ from the forward pass so they need not be recomputed.
 
 <Callout type="pitfall">
 When one variable feeds into a function through several paths, add the contributions. A common bug is to follow only one path, which gives a plausible-looking but wrong gradient. Check with a numerical derivative whenever a path has a fork.
 </Callout>
 
 ## Why backpropagation runs backward
+
+<ForwardReverseCost />
 
 For a scalar loss, multiplying the Jacobians from the output end keeps the intermediate result a row vector: one number per input. Going forward would produce a large matrix at every step. Working backward reuses the same intermediate products for every weight, so the cost of the whole gradient is a small multiple of the cost of computing the output. That efficiency is the reason deep learning is practical.

@@ -1,5 +1,5 @@
 ---
-title: "Gradients, Jacobians, and Hessians"
+title: "Jacobians and Hessians"
 description: "The gradient points in the direction of steepest ascent, the Jacobian is the derivative of a vector-valued function, and the Hessian describes the curvature that decides whether a critical point is a minimum."
 order: 8
 tier: core
@@ -90,16 +90,21 @@ For $f(x, y) = x^2 + 3y^2$ the Hessian is the constant matrix $\operatorname{dia
 
 ```python
 import numpy as np
+import sympy as sp
 
-H = np.diag([2.0, 6.0])
-print("Hessian eigenvalues:", np.linalg.eigvalsh(H))  # prints: Hessian eigenvalues: [2. 6.]
+x, y = sp.symbols("x y")
+H = sp.hessian(x**2 + 3 * y**2, (x, y))           # second partial derivatives, computed symbolically
+print("Hessian:", H.tolist())                      # prints: Hessian: [[2, 0], [0, 6]]
+print("Hessian eigenvalues:", np.linalg.eigvalsh(np.array(H, dtype=float)))  # prints: Hessian eigenvalues: [2. 6.]
 ```
 
-In words: both eigenvalues are positive, so the bowl curves upward in every direction. The eigenvalue $6$ is steeper than $2$, so the function is more sharply curved in the $y$ direction, which is why gradient descent takes smaller steps along $y$.
+In words: both eigenvalues are positive, so the bowl curves upward in every direction. The eigenvalue $6$ is larger than $2$, so the function is more sharply curved in the $y$ direction. That steep direction caps the learning rate: gradient descent is stable only for $\eta < 2/6$, and at such a rate the flatter $x$ direction, with curvature $2$, converges slowly.
 
 <Callout type="pitfall">
 The gradient of a function with several outputs is not defined; the Jacobian is the right object. Writing "the gradient of $\mathbf{F}$" and meaning its Jacobian is common, but the two differ when the output is a vector.
 </Callout>
+
+The test is the positive-definiteness test of the [Quadratic Forms](../../linear-algebra/quadratic-forms/) note: near a critical point $f(\mathbf{x}_0 + \mathbf{h}) \approx f(\mathbf{x}_0) + \frac{1}{2}\mathbf{h}^\top H\mathbf{h}$, and the figure there shows how the eigenvalues of $H$ turn that quadratic into a bowl, a saddle or a ridge.
 
 ## Why this matters for training
 

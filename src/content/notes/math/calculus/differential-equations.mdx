@@ -1,7 +1,7 @@
 ---
-title: "Differential equations"
+title: "Differential Equations"
 description: "Equations that relate a function to its derivatives, the separable and linear first-order cases you can solve by hand, and Euler's method for when you cannot."
-order: 11
+order: 12
 tier: core
 takeaways:
   - "A **differential equation** relates a function to its derivatives, such as $y' = ky$. Its solution is a function, not a number, and an initial condition $y(0) = y_0$ picks out one solution."
@@ -43,8 +43,12 @@ f = lambda y: -2 * y
 exact = math.exp(-2 * 1.0)
 for steps in [10, 100, 1000]:
     approx = euler(f, 1.0, 1.0, steps)
-    print(f"Euler with {steps:>4} steps: y(1) = {approx:.6f}, error {abs(approx - exact):.2e}")  # prints: Euler with 10 steps: y(1) = 0.107374, error 2.80e-02 ...
-print("exact y(1) = e^-2 =", round(exact, 6))  # prints: exact y(1) = e^-2 = 0.135335
+    print(f"Euler with {steps:>4} steps: y(1) = {approx:.6f}, error {abs(approx - exact):.2e}")
+print("exact y(1) = e^-2 =", round(exact, 6))
+# Euler with   10 steps: y(1) = 0.107374, error 2.80e-02
+# Euler with  100 steps: y(1) = 0.132620, error 2.72e-03
+# Euler with 1000 steps: y(1) = 0.135065, error 2.71e-04
+# exact y(1) = e^-2 = 0.135335
 ```
 
 In words: with $10$ steps the approximation is off by $0.028$, with $100$ by $0.0027$, and with $1000$ by $0.00027$. The error falls roughly tenfold for each tenfold increase in steps. Euler's method is first-order accurate, so it is slow, but it works for equations with no closed-form solution.
@@ -65,19 +69,74 @@ For $y' = y^2$ with $y(0) = 1$, the separated form is $\frac{dy}{y^2} = dt$, so 
 The check below evaluates that solution at $t = 0.5$, where the formula gives $2$.
 
 ```python
-t = 0.5
-print("solution y(0.5) =", 1 / (1 - t))  # prints: solution y(0.5) = 2.0
+def euler(f, y0, t_end, steps):
+    h, y = t_end / steps, y0
+    for _ in range(steps):
+        y = y + h * f(y)
+    return y
+
+for t_end in (0.5, 0.9, 0.99):
+    print(f"t = {t_end}: Euler (10000 steps) = {euler(lambda y: y * y, 1.0, t_end, 10000):.3f}, exact 1/(1 - t) = {1 / (1 - t_end):.3f}")
+# t = 0.5: Euler (10000 steps) = 2.000, exact 1/(1 - t) = 2.000
+# t = 0.9: Euler (10000 steps) = 9.979, exact 1/(1 - t) = 10.000
+# t = 0.99: Euler (10000 steps) = 95.684, exact 1/(1 - t) = 100.000
 ```
 
-In words: the formula gives $y(0.5) = 2$. Between $t = 0$ and $t = 1$ the solution grows from $1$ to infinity, so the equation has no solution beyond $t = 1$.
+In words: the numerical solution follows $\frac{1}{1 - t}$ and climbs ever faster as $t$ approaches $1$. Between $t = 0$ and $t = 1$ the solution grows from $1$ to infinity, so the equation has no solution beyond $t = 1$, and a numerical solver falls further behind the closer it gets.
 
 <Callout type="pitfall">
 When you divide by $h(y)$, you may lose solutions where $h(y) = 0$. For $y' = y^2$, the constant solution $y = 0$ satisfies the equation but is not in the family $y = \frac{1}{1-t}$. Check for such constant solutions before you finish.
 </Callout>
 
+## Stability of Euler's method
+
+A small step is not only about accuracy. For $y' = ky$ with $k < 0$, one Euler step multiplies $y$ by $1 + hk$. The true solution decays, but the numbers decay only when $|1 + hk| < 1$, that is $h < 2/|k|$. With a larger step the method oscillates and blows up, however simple the equation.
+
+```python
+def euler(k, h, steps, y=1.0):
+    for _ in range(steps):
+        y = y + h * k * y          # each step multiplies y by (1 + h k)
+    return y
+
+for h in (0.1, 0.9, 1.1):
+    print(f"h = {h}: factor 1 + hk = {1 - 2 * h:+.1f}, y after 20 steps = {euler(-2, h, 20):.3g}")
+# h = 0.1: factor 1 + hk = +0.8, y after 20 steps = 0.0115
+# h = 0.9: factor 1 + hk = -0.8, y after 20 steps = 0.0115
+# h = 1.1: factor 1 + hk = -1.2, y after 20 steps = 38.3
+```
+
+In words: for $y' = -2y$ the limit is $h < 1$. At $h = 0.9$ the iterates flip sign every step but still shrink; at $h = 1.1$ they grow without bound, although the true solution decays to zero. This is the same condition as the step-size limit $\eta < 2/a$ in the [Gradient Descent](../../optimization/gradient-descent/) note, because gradient descent is Euler's method on the flow $\mathbf{x}' = -\nabla f(\mathbf{x})$.
+
+<EulerStability />
+
+## Systems and second-order equations
+
+Most models have several interacting quantities. A linear system $\mathbf{y}' = A\mathbf{y}$ is solved by the [eigenvalues](../../linear-algebra/eigenvalues-and-eigenvectors/) of $A$: along each eigenvector the solution is $e^{\lambda t}$ times that vector, so negative real parts decay, positive ones grow, and complex pairs oscillate. A second-order equation becomes a system by naming the derivative: the oscillator $y'' = -\omega^2 y$ is $\mathbf{y} = (y, y')$ with $A = \begin{pmatrix} 0 & 1 \\ -\omega^2 & 0 \end{pmatrix}$, whose eigenvalues $\pm i\omega$ give $\cos \omega t$ and $\sin \omega t$.
+
+In practice a library solver chooses the steps adaptively and uses higher-order formulas:
+
+```python
+import numpy as np
+import sympy as sp
+from scipy.integrate import solve_ivp
+
+sol = solve_ivp(lambda t, y: [y[1], -4 * y[0]], (0, np.pi), [1.0, 0.0], rtol=1e-9, atol=1e-12)
+print("y(pi) for y'' = -4y, y(0) = 1:", round(sol.y[0, -1], 6), " exact cos(2 pi) = 1")
+print("eigenvalues of A:", np.linalg.eigvals([[0, 1], [-4, 0]]))
+
+t = sp.symbols("t")
+y = sp.Function("y")
+print(sp.dsolve(sp.Eq(y(t).diff(t), y(t) ** 2), ics={y(0): 1}))
+# y(pi) for y'' = -4y, y(0) = 1: 1.0  exact cos(2 pi) = 1
+# eigenvalues of A: [0.+2.j 0.-2.j]
+# Eq(y(t), -1/(t - 1))
+```
+
+In words: `solve_ivp` (an adaptive Runge–Kutta method by default) follows the oscillation through a full period to $y(\pi) = 1$, the eigenvalues $\pm 2i$ explain the frequency $2$, and SymPy's `dsolve` reproduces the separable solution $y = \frac{1}{1 - t}$ found by hand above. Run it with `uv run --with numpy --with scipy --with sympy`.
+
 ## Why numerical methods matter
 
-Most differential equations have no closed-form solution. Engineers solve them with Euler's method or its more accurate relatives, which trade computing time for precision. The step size controls the error, and the art of numerical integration is choosing steps that keep the error small without wasting work.
+Most differential equations have no closed-form solution. Engineers solve them with Euler's method or its more accurate relatives, such as the Runge–Kutta family inside `solve_ivp`, which trade computing time for precision. Step size controls both the error and, as shown above, the stability.
 
 ## Where differential equations are used
 

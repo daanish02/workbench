@@ -1,0 +1,115 @@
+---
+title: "Matrix Calculus"
+description: "Derivatives of expressions in vectors and matrices: the gradient of a linear term, a quadratic form and a squared norm, the layout convention, and the least-squares and linear-layer gradients derived without coordinates."
+order: 9
+tier: core
+takeaways:
+  - "Matrix calculus differentiates whole vector expressions at once. The rule of thumb: write the first-order change $df$ and read the gradient off as the thing dotted with $d\\mathbf{x}$."
+  - "Three gradients cover most of machine learning: $\\nabla_{\\mathbf{x}} (\\mathbf{a}^\\top \\mathbf{x}) = \\mathbf{a}$, $\\nabla_{\\mathbf{x}} (\\mathbf{x}^\\top A \\mathbf{x}) = (A + A^\\top)\\mathbf{x}$, and $\\nabla_{\\mathbf{x}} \\|A\\mathbf{x} - \\mathbf{b}\\|^2 = 2A^\\top(A\\mathbf{x} - \\mathbf{b})$."
+  - "Setting the least-squares gradient to zero gives the normal equations $A^\\top A\\mathbf{x} = A^\\top \\mathbf{b}$, the same answer the Projections note found by geometry."
+  - "For a linear layer $\\mathbf{y} = W\\mathbf{x}$ with upstream gradient $\\mathbf{g} = \\partial L / \\partial \\mathbf{y}$, the weight gradient is the outer product $\\mathbf{g}\\mathbf{x}^\\top$, and the input gradient is $W^\\top \\mathbf{g}$."
+  - "Shapes are the main check: a gradient with respect to $\\mathbf{x}$ has the shape of $\\mathbf{x}$. A finite-difference check catches the transposes that shape-checking misses."
+resources:
+  - title: "The Matrix Cookbook (Petersen and Pedersen)"
+    url: "https://www.math.uwaterloo.ca/~hwolkowi/matrixcookbook.pdf"
+    note: "The standard lookup table of matrix derivatives and identities."
+  - title: "Matrix calculus (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Matrix_calculus"
+    note: "Layout conventions and the main identities, with their pitfalls."
+  - title: "The Matrix Calculus You Need For Deep Learning (Parr and Howard)"
+    url: "https://explained.ai/matrix-calculus/"
+    note: "A gentle derivation of the gradients used in neural networks."
+---
+
+Writing a gradient one partial derivative at a time works, but it hides the structure and is slow for anything with matrices in it. Matrix calculus treats a whole vector or matrix as one variable and differentiates the expression directly. The results are short formulas, such as the gradient of a least-squares loss, that appear in every derivation of a model's training rule. This note builds them from one idea, the first-order change $df$, and checks each one numerically. It assumes the gradient and Jacobian of the [Jacobians and Hessians](../gradients-jacobians-and-hessians/) note.
+
+## The differential trick
+
+For a scalar function $f(\mathbf{x})$ of a vector, a small change $d\mathbf{x}$ changes $f$ by
+
+$$
+df = \nabla f(\mathbf{x})^\top d\mathbf{x}
+
+$$
+
+to first order. So to find a gradient, expand $f(\mathbf{x} + d\mathbf{x})$, keep the terms linear in $d\mathbf{x}$, and write them as something dotted with $d\mathbf{x}$; that something is the gradient. This uses only the product rule and avoids indices.
+
+- **Linear term.** $f = \mathbf{a}^\top \mathbf{x}$ gives $df = \mathbf{a}^\top d\mathbf{x}$, so $\nabla f = \mathbf{a}$.
+- **Quadratic form.** $f = \mathbf{x}^\top A\mathbf{x}$ gives $df = d\mathbf{x}^\top A\mathbf{x} + \mathbf{x}^\top A\, d\mathbf{x} = \big((A + A^\top)\mathbf{x}\big)^\top d\mathbf{x}$, so $\nabla f = (A + A^\top)\mathbf{x}$, which is $2A\mathbf{x}$ for symmetric $A$.
+- **Squared norm of a residual.** $f = \|A\mathbf{x} - \mathbf{b}\|^2 = \mathbf{r}^\top \mathbf{r}$ with $\mathbf{r} = A\mathbf{x} - \mathbf{b}$ gives $df = 2\mathbf{r}^\top A\, d\mathbf{x}$, so $\nabla f = 2A^\top(A\mathbf{x} - \mathbf{b})$.
+
+The script below checks all three against central differences at a random point.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+A, b, a, x = rng.normal(size=(4, 3)), rng.normal(size=4), rng.normal(size=3), rng.normal(size=3)
+S = rng.normal(size=(3, 3))
+
+def num_grad(f, x, h=1e-6):
+    return np.array([(f(x + h * e) - f(x - h * e)) / (2 * h) for e in np.eye(len(x))])
+
+checks = {
+    "a^T x": (lambda x: a @ x, a),
+    "x^T S x": (lambda x: x @ S @ x, (S + S.T) @ x),
+    "||Ax - b||^2": (lambda x: np.sum((A @ x - b) ** 2), 2 * A.T @ (A @ x - b)),
+}
+for name, (f, formula) in checks.items():
+    print(f"{name:>13}: formula matches finite differences: {np.allclose(num_grad(f, x), formula, atol=1e-6)}")
+#         a^T x: formula matches finite differences: True
+#       x^T S x: formula matches finite differences: True
+#  ||Ax - b||^2: formula matches finite differences: True
+```
+
+In words: all three formulas agree with the numerical gradient, including the quadratic form with a non-symmetric $S$, where the answer is $(S + S^\top)\mathbf{x}$ and not $2S\mathbf{x}$.
+
+## Least squares without geometry
+
+Setting $\nabla \|A\mathbf{x} - \mathbf{b}\|^2 = 2A^\top(A\mathbf{x} - \mathbf{b})$ to zero gives
+
+$$
+A^\top A\,\mathbf{x} = A^\top \mathbf{b},
+
+$$
+
+the normal equations that the [Projections](../../linear-algebra/projections/) note derived from the perpendicular residual. Calculus and geometry give the same answer, and the Hessian $2A^\top A$ is positive semidefinite, so the stationary point is a minimum.
+
+## Gradients with respect to a matrix
+
+For a scalar loss $L$ of a matrix $W$, the gradient $\frac{\partial L}{\partial W}$ is the matrix of partial derivatives with the same shape as $W$, and $dL = \operatorname{tr}\big(\frac{\partial L}{\partial W}^\top dW\big)$. The most important case is a linear layer $\mathbf{y} = W\mathbf{x}$ inside a network, with the gradient $\mathbf{g} = \frac{\partial L}{\partial \mathbf{y}}$ arriving from the layers above. Then $dL = \mathbf{g}^\top dW\,\mathbf{x}$, which gives
+
+$$
+\frac{\partial L}{\partial W} = \mathbf{g}\,\mathbf{x}^\top, \qquad \frac{\partial L}{\partial \mathbf{x}} = W^\top \mathbf{g}.
+
+$$
+
+In words: the weight gradient is the outer product of the upstream gradient and the input, and the gradient passed further back is the upstream gradient multiplied by the transposed weights. These two lines are the backward pass of every dense layer.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(1)
+W, x, target = rng.normal(size=(2, 3)), rng.normal(size=3), rng.normal(size=2)
+L = lambda W: 0.5 * np.sum((W @ x - target) ** 2)   # loss of a single linear layer
+g = W @ x - target                                  # dL/dy for this loss
+
+h, num = 1e-6, np.zeros_like(W)
+for i in range(2):
+    for j in range(3):
+        E = np.zeros_like(W)
+        E[i, j] = h
+        num[i, j] = (L(W + E) - L(W - E)) / (2 * h)
+print("dL/dW = g x^T:", np.allclose(num, np.outer(g, x)), " shape:", np.outer(g, x).shape)
+# dL/dW = g x^T: True  shape: (2, 3)
+```
+
+In words: the finite-difference gradient of every weight matches $\mathbf{g}\mathbf{x}^\top$, and its shape is $(2, 3)$, the shape of $W$, as it must be.
+
+<Callout type="pitfall">
+Two layout conventions exist: some texts write the derivative of a scalar by a column vector as a row vector (numerator layout), others as a column (denominator layout). Formulas from different sources can differ by a transpose. Fix one convention, here gradients shaped like the variable, and check any borrowed formula by shape and by a finite difference.
+</Callout>
+
+## Where it is used
+
+Every training rule in the [Optimization](../../optimization/gradient-descent/) section starts from one of these gradients: least squares, logistic regression and each layer of a neural network. Automatic differentiation, covered in the deep learning notes, computes the same quantities mechanically, and the formulas here are what it produces for each operation.

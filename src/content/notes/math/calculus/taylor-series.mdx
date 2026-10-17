@@ -1,5 +1,5 @@
 ---
-title: "Taylor series"
+title: "Taylor Series"
 description: "Approximating a smooth function by a polynomial built from its derivatives at one point, how the error shrinks as terms are added, and the expansions that appear everywhere."
 order: 6
 tier: core
@@ -8,7 +8,7 @@ takeaways:
   - "Each added term makes the approximation better near $a$. For $e^x$ at $0$, degree $8$ is already accurate to about $3 \\times 10^{-6}$ at $x = 1$."
   - "**Taylor's theorem** bounds the error. If $|f^{(n+1)}| \\le M$ on an interval, the error of the degree-$n$ polynomial is at most $\\frac{M}{(n+1)!}|x-a|^{n+1}$."
   - "Common expansions include $e^x = \\sum \\frac{x^k}{k!}$, $\\sin x = x - \\frac{x^3}{3!} + \\frac{x^5}{5!} - \\cdots$, and $\\frac{1}{1-x} = \\sum x^k$ for $|x| < 1$."
-  - "Taylor polynomials are how computers evaluate $\\sin$, $\\exp$ and $\\log$ internally. They turn hard functions into the only operations a processor does quickly: additions and multiplications."
+  - "Polynomials are how computers evaluate $\\sin$, $\\exp$ and $\\log$: after reducing the argument to a small range, libraries use polynomial fits (usually minimax rather than raw Taylor) built only from additions and multiplications."
 resources:
   - title: "Taylor series (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Taylor_series"
@@ -46,8 +46,13 @@ def taylor_exp(x, n):
 
 x = 1.0
 for n in [1, 2, 4, 8]:
-    print(f"e^x, degree {n}: {taylor_exp(x, n):.8f} error {abs(math.exp(x) - taylor_exp(x, n)):.2e}")  # prints: e^x, degree 1: 2.00000000 error 7.18e-01 ...
-print("exact e =", round(math.e, 8))  # prints: exact e = 2.71828183
+    print(f"e^x, degree {n}: {taylor_exp(x, n):.8f} error {abs(math.exp(x) - taylor_exp(x, n)):.2e}")
+print("exact e =", round(math.e, 8))
+# e^x, degree 1: 2.00000000 error 7.18e-01
+# e^x, degree 2: 2.50000000 error 2.18e-01
+# e^x, degree 4: 2.70833333 error 9.95e-03
+# e^x, degree 8: 2.71827877 error 3.06e-06
+# exact e = 2.71828183
 ```
 
 In words: degree $1$ gives $2$, degree $2$ gives $2.5$, and degree $8$ gives $2.71827877$, within $3 \times 10^{-6}$ of $e$. Each term is smaller than the one before, so the series settles quickly for $x = 1$. The error falls off like $\frac{1}{(n+1)!}$, which is why factorial growth in the denominator makes these series so effective.
@@ -61,10 +66,15 @@ def taylor_sin(x, n):
     return sum((-1) ** k * x ** (2 * k + 1) / math.factorial(2 * k + 1) for k in range(n // 2 + 1))
 
 for n in [1, 3, 5]:
-    print(f"sin(1), degree {n}: {taylor_sin(1.0, n):.8f} error {abs(math.sin(1.0) - taylor_sin(1.0, n)):.2e}")  # prints: sin(1), degree 1: 1.00000000 error 1.59e-01 ...
+    print(f"sin(1), degree {n}: {taylor_sin(1.0, n):.8f} error {abs(math.sin(1.0) - taylor_sin(1.0, n)):.2e}")
+# sin(1), degree 1: 1.00000000 error 1.59e-01
+# sin(1), degree 3: 0.83333333 error 8.14e-03
+# sin(1), degree 5: 0.84166667 error 1.96e-04
 ```
 
 In words: the degree-$5$ polynomial already matches $\sin 1$ to about $2 \times 10^{-4}$, using only the terms $x$, $x^3/3!$ and $x^5/5!$.
+
+The figure uses the sine expansion from the script above. Raise the degree and watch the range where the polynomial is accurate grow, while it still fails far from $0$, the behaviour the pitfall below describes for $e^x$.
 
 <TaylorApprox />
 
@@ -82,11 +92,15 @@ n = 6
 print("error at degree 6 is below e/7! :", abs(math.e - taylor_exp(1, n)) <= math.e / math.factorial(n + 1))  # prints: error at degree 6 is below e/7! : True
 ```
 
-In words: the bound holds, so the degree-$6$ polynomial is guaranteed to be within $e/7! \approx 0.00052$ of $e$ on $[0, 1]$. A bound like this is what lets an engineer choose the number of terms in advance.
+In words: the bound holds, so the degree-$6$ polynomial is guaranteed to be within $e/7! \approx 0.00052$ of $e^x$ for every $x$ in $[0, 1]$. A bound like this is what lets an engineer choose the number of terms in advance.
 
 <Callout type="pitfall">
 A Taylor polynomial is accurate near its centre $a$ and can be terrible far away. The degree-$8$ polynomial for $e^x$ is excellent at $x = 1$, but at $x = 10$ it is off by thousands. Check the interval where you need the approximation.
 </Callout>
+
+## Big-O notation for error
+
+The error of the degree-$n$ polynomial is often written $O\big((x - a)^{n+1}\big)$: as $x \to a$ it is at most a constant times $(x - a)^{n+1}$. So $e^x = 1 + x + \frac{x^2}{2} + O(x^3)$ says the error of the quadratic shrinks like $x^3$ near $0$: halve $x$ and it falls by about eight. A **little-o** term $o\big((x-a)^n\big)$ means the error shrinks faster than $(x - a)^n$. The same notation counts steps in algorithm analysis, as $n \to \infty$ instead of $x \to a$; see the [Big-O notation](../../../cs/algorithms/big-o-notation/) note.
 
 ## Common expansions
 
@@ -94,8 +108,22 @@ These are worth knowing by heart:
 
 - $e^x = \sum_{k=0}^{\infty} \frac{x^k}{k!}$ for all $x$.
 - $\sin x = \sum_{k=0}^{\infty} (-1)^k \frac{x^{2k+1}}{(2k+1)!}$ for all $x$.
+- $\cos x = \sum_{k=0}^{\infty} (-1)^k \frac{x^{2k}}{(2k)!}$ for all $x$.
+- $\ln(1 + x) = \sum_{k=1}^{\infty} (-1)^{k+1} \frac{x^k}{k}$ for $-1 < x \le 1$.
 - $\frac{1}{1-x} = \sum_{k=0}^{\infty} x^k$ for $|x| < 1$.
+
+SymPy produces any of these directly, which is a quick way to check a hand expansion:
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+print(sp.series(sp.exp(x), x, 0, 4))      # prints: 1 + x + x**2/2 + x**3/6 + O(x**4)
+print(sp.series(sp.log(1 + x), x, 0, 4))  # prints: x - x**2/2 + x**3/3 + O(x**4)
+```
+
+In words: the output lists the polynomial and the order of the error that remains, the $O(x^4)$ of the previous section. Run it with `uv run --with sympy`.
 
 ## Where Taylor series are used
 
-Every calculator and math library evaluates $\sin$, $\exp$ and $\log$ with polynomials of this kind, usually after reducing the argument to a small range. Physics uses the first few terms to linearise nonlinear systems, which is why a pendulum swinging at small angles behaves like a simple harmonic oscillator. Numerical methods and gradient-based optimisation are built on the same idea: approximate locally, then improve.
+Math libraries evaluate $\sin$, $\exp$ and $\log$ with polynomials after reducing the argument to a small range. They usually use minimax polynomials, which spread the error evenly over that range, rather than Taylor polynomials, but the Taylor series is where the idea starts. Physics uses the first few terms to linearise nonlinear systems, which is why a pendulum swinging at small angles behaves like a simple harmonic oscillator. Numerical methods and gradient-based optimisation are built on the same idea: approximate locally, then improve.

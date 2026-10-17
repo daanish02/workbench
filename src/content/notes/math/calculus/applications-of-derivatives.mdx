@@ -1,5 +1,5 @@
 ---
-title: "Applications of derivatives"
+title: "Applications of Derivatives"
 description: "Using the derivative to find maxima and minima, sketch the shape of a curve from its critical points and its second derivative, and turn a word problem into an optimisation."
 order: 3
 tier: core
@@ -28,6 +28,17 @@ The derivative is a tool for finding the best value of something: the largest ar
 A **critical point** of $f$ is a value $c$ where $f'(c) = 0$, or where $f'$ does not exist. At a smooth interior maximum or minimum the curve is flat, so the derivative vanishes there. The converse is not true: a flat point can be neither a maximum nor a minimum, as in $f(x) = x^3$ at $x = 0$.
 
 To find the maximum of a function on a closed interval, check the critical points inside it and the two endpoints, then take the largest value.
+
+## The mean value theorem
+
+If $f$ is continuous on $[a, b]$ and differentiable inside, some point $c$ between them has
+
+$$
+f'(c) = \frac{f(b) - f(a)}{b - a}.
+
+$$
+
+In words: somewhere the instantaneous slope equals the average slope. If a car covers $100$ km in one hour, at some moment the speedometer read exactly $100$ km/h. The theorem is what turns derivative facts into function facts: if $f' > 0$ everywhere on an interval, any two points have $f(b) - f(a) = f'(c)(b - a) > 0$, so $f$ is increasing.
 
 ## An optimisation problem
 
@@ -75,10 +86,40 @@ In words: at $x = -1$ the curve peaks at height $2$, and at $x = 1$ it dips to $
 A zero of $f'$ does not guarantee an extremum. At $x = 0$ the function $x^3$ has $f'(0) = 0$ and $f''(0) = 0$, and it is increasing straight through. When the second derivative test is inconclusive, look at the sign of $f'$ on either side instead.
 </Callout>
 
+## Limits by derivatives: L'Hôpital's rule
+
+When a limit has the form $\frac{0}{0}$ or $\frac{\infty}{\infty}$, and $f$ and $g$ are differentiable near $a$, **L'Hôpital's rule** says
+
+$$
+\lim_{x \to a} \frac{f(x)}{g(x)} = \lim_{x \to a} \frac{f'(x)}{g'(x)}
+
+$$
+
+whenever the right side exists. For $\frac{\sin x}{x}$ at $0$ it gives $\frac{\cos 0}{1} = 1$, and for $\frac{e^x - 1 - x}{x^2}$ it needs two rounds:
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+f, g = sp.exp(x) - 1 - x, x**2
+print("f/g at 0 is 0/0:", f.subs(x, 0), g.subs(x, 0))
+print("after one round:", sp.diff(f, x) / sp.diff(g, x), " still 0/0")
+print("after two rounds:", sp.diff(f, x, 2) / sp.diff(g, x, 2), "->", sp.limit(f / g, x, 0))
+# f/g at 0 is 0/0: 0 0
+# after one round: (exp(x) - 1)/(2*x)  still 0/0
+# after two rounds: exp(x)/2 -> 1/2
+```
+
+In words: the ratio is $\frac{0}{0}$ at $0$, still $\frac{0}{0}$ after one differentiation, and $\frac{e^x}{2} \to \frac{1}{2}$ after two, which SymPy's `limit` confirms. The answer matches the Taylor view: $e^x - 1 - x \approx \frac{x^2}{2}$ near $0$.
+
+<Callout type="pitfall">
+L'Hôpital's rule applies only to $\frac{0}{0}$ and $\frac{\infty}{\infty}$ forms. Applied to $\lim_{x \to 0} \frac{x + 1}{x + 2} = \frac{1}{2}$, it would give the wrong answer $1$. Check the form before differentiating.
+</Callout>
+
 ## Related rates
 
 When two quantities are linked, their rates of change are linked too. For a sphere, $V = \frac{4}{3}\pi r^3$, so $\frac{dV}{dt} = 4\pi r^2 \frac{dr}{dt}$. The chain rule turns a known rate of the radius into the rate of volume. This is the same composition of functions as in the [Derivatives](../derivatives/) note, now with time as the outer variable.
 
 ## Where this is used
 
-Gradient descent is optimisation by the derivative: step against the slope until it is flat. Engineers use optimisation to minimise material or cost, and physicists find the path of least action as a critical point of an integral. The shape of a graph, read from its derivatives, is also how a plotting library decides where to put the interesting points.
+Gradient descent is optimisation by the derivative: step against the slope until it is flat. Engineers use optimisation to minimise material or cost, and physicists find the path of least action as a critical point of an integral.

@@ -47,8 +47,12 @@ def f(x):
 
 a = 2.0
 for h in [0.1, 0.001, 0.00001]:
-    print(f"h = {h:>8}: difference quotient = {(f(a + h) - f(a)) / h:.6f}")  # prints: h = 0.1: difference quotient = 12.610000 ...
-print("exact f'(2) = 12")  # prints: exact f'(2) = 12
+    print(f"h = {h:>8}: difference quotient = {(f(a + h) - f(a)) / h:.6f}")
+print("exact f'(2) = 12")
+# h =      0.1: difference quotient = 12.610000
+# h =    0.001: difference quotient = 12.006001
+# h =    1e-05: difference quotient = 12.000060
+# exact f'(2) = 12
 ```
 
 In words: at $h = 0.1$ the quotient is $12.61$, at $h = 0.00001$ it is $12.00006$. The error shrinks roughly in proportion to $h$, and the limit is $12$.
@@ -65,7 +69,16 @@ Computing limits of difference quotients by hand is slow, so calculus gives rule
 - **Quotient rule:** $\left(\frac{f}{g}\right)' = \frac{f'g - fg'}{g^2}$.
 - **Chain rule:** $(f \circ g)'(x) = f'(g(x))\,g'(x)$.
 
-The product and chain rules are the ones to check numerically, since they are easy to misapply. The script below checks both at $x = 1.5$ with $f(x) = x^3$, $g(x) = \sin x$, and the composition $\sin(x^2)$.
+Together with a few basic derivatives, these rules differentiate almost every formula you will meet:
+
+| Function | Derivative | Why |
+| --- | --- | --- |
+| $e^x$ | $e^x$ | the defining property of $e$ |
+| $\ln x$ | $\frac{1}{x}$ | inverse of $e^x$: if $y = \ln x$ then $x = e^y$ and $\frac{dx}{dy} = x$ |
+| $\sin x$, $\cos x$ | $\cos x$, $-\sin x$ | from $\frac{\sin h}{h} \to 1$ in the [Limits](../limits/) note (radians only) |
+| $\tan x$ | $\sec^2 x = \frac{1}{\cos^2 x}$ | quotient rule on $\frac{\sin x}{\cos x}$ |
+
+The product and chain rules are the ones to check numerically, since they are easy to misapply. The script below checks both at $x = 1.5$ with $f(x) = x^3$, $g(x) = \sin x$, and the composition $\sin(x^2)$. It uses the **central difference** $\frac{f(x + h) - f(x - h)}{2h}$ rather than the one-sided quotient above: the errors on the two sides cancel, so its error shrinks like $h^2$ instead of $h$.
 
 ```python
 import math
@@ -91,11 +104,24 @@ print("chain rule holds:", math.isclose(num, 2 * x0 * math.cos(x0 * x0), rel_tol
 
 In words: both checks pass. The chain rule for $\sin(x^2)$ says the derivative is $2x\cos(x^2)$: the outer derivative $\cos$ evaluated at the inner function, times the inner derivative $2x$. Numerical differentiation confirms the formula without trusting the algebra.
 
+A computer algebra system applies the same rules symbolically, which is the quickest way to check a hand derivation:
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+print(sp.diff(x**3 * sp.sin(x), x))        # prints: x**3*cos(x) + 3*x**2*sin(x)
+print(sp.diff(sp.sin(x**2), x))            # prints: 2*x*cos(x**2)
+print(sp.diff(sp.tan(x), x).equals(sp.sec(x)**2))  # prints: True
+```
+
+In words: SymPy returns the product rule's two terms, the chain rule's $2x\cos(x^2)$, and confirms the $\tan$ entry of the table. Run it with `uv run --with sympy`.
+
 <Callout type="pitfall">
 Forgetting the inner derivative in the chain rule is the most common error. $\frac{d}{dx} \sin(x^2)$ is $\cos(x^2)$ only if you also multiply by $2x$. Ask of every composed function: what is the inside, and what is its derivative?
 </Callout>
 
-<StaticTangentDiagram />
+<DiffError />
 
 ## What the derivative tells you
 
