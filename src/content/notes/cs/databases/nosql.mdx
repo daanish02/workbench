@@ -1,0 +1,290 @@
+---
+title: "NoSQL"
+description: "Document, key-value, column, graph and vector databases, and when relational isn't the fit."
+order: 6
+tier: core
+takeaways:
+  - "**NoSQL** is a family of data models other than relational tables; none is inherently faster or better, each makes *some* operations easy."
+  - "**Document** stores keep a record as one nested document; **key-value** stores fetch values by key; **wide-column** stores partition data by a key for distributed scale."
+  - "**Graph** databases store relationships as first-class data, so multi-hop questions (friends of friends, fraud rings) follow links instead of chaining joins."
+  - "**Vector** databases index **embeddings** and answer \"what is most similar to this?\" with **approximate nearest-neighbour** search, trading a little recall for large speed-ups; they power semantic search and RAG."
+  - "Design NoSQL data **around your queries**: the partition or lookup key decides what is cheap, and unplanned queries can be impossible or full scans."
+  - "NoSQL does not mean schema-free, transaction-free or automatically scalable; those depend on the specific product."
+  - "**Polyglot persistence** (right store per workload) trades performance for operational and consistency complexity."
+resources:
+  - title: "MongoDB: Data modeling"
+    url: "https://www.mongodb.com/docs/manual/data-modeling/"
+    note: "Embedding vs referencing, with worked schemas."
+  - title: "Redis: Data types"
+    url: "https://redis.io/docs/latest/develop/data-types/"
+    note: "A key-value store whose values are strings, lists, sets, hashes and more."
+  - title: "Amazon DynamoDB paper"
+    url: "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+    note: "The Dynamo design that inspired Cassandra and many key-value stores."
+  - title: "Neo4j: Graph database concepts"
+    url: "https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/"
+    note: "Nodes, relationships, properties and the property-graph model."
+  - title: "pgvector"
+    url: "https://github.com/pgvector/pgvector"
+    note: "Vector search inside PostgreSQL: a good first vector database."
+  - title: "Malkov and Yashunin: HNSW"
+    url: "https://arxiv.org/abs/1603.09320"
+    note: "The paper behind the most widely used approximate-nearest-neighbour index."
+  - title: "NoSQL (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/NoSQL"
+---
+
+**NoSQL** is a broad family of database designs that organize data differently from the relational model. **Document** stores keep records as structured documents, **key-value** stores retrieve values by key, **wide-column** stores organize data around partition keys and column families, **graph** databases store relationships as first-class data, and **vector** databases find items by similarity of meaning. They are useful when an application's access patterns, scale, data shape or availability requirements make a conventional relational design inconvenient. The point is not that NoSQL is faster or better than SQL: different data models make different operations easy, and the best choice depends on how the application reads, writes and relates its data.
+
+## Relational Is a Strong Default, Not a Universal Fit
+
+A relational database represents data as tables linked by keys. That is excellent when data has meaningful relationships, constraints must be enforced and queries must combine records in flexible ways. In an online store, customers, orders, products and categories are separate tables joined through foreign keys; transactions keep related updates together; and SQL can answer new reporting questions as they arise.
+
+Not every workload fits. A service that always reads and writes a user's whole profile (preferences, notification settings, UI configuration) as one unit gains little from spreading it over several tables. A system that stores billions of time-ordered events and fetches them by device and time range needs a layout shaped for that access pattern, not arbitrary joins. Relational databases can handle many such workloads too; the question is whether their strengths match the workload, or another model makes the *common* operations simpler, cheaper or easier to scale.
+
+## Document Stores Keep Related Information Together
+
+A **document database** stores records as documents, usually JSON-like, which can contain scalar values, nested objects and arrays:
+
+```json
+{
+  "product_id": 42,
+  "name": "Mechanical Keyboard",
+  "price": 89.99,
+  "specifications": { "layout": "ANSI", "switches": "Tactile" },
+  "tags": ["wireless", "compact"]
+}
+```
+
+The specifications and tags live beside the main attributes, so one lookup retrieves the whole product instead of reassembling it from several tables. This suits natural **aggregates**: user profiles, product catalogs, content management and application configuration. Documents can also differ in shape, which helps when the domain evolves.
+
+The trade-off is **duplication**. If supplier details are copied into thousands of product documents, changing an address means updating thousands of them. Relationships across documents are awkward, and joins or multi-document transactions are less convenient or more limited, depending on the product. Document stores work best when the document is a natural unit of retrieval and update.
+
+## Key-Value Stores Optimize Lookup by Key
+
+A **key-value store** offers one abstraction: given a key, return its value; given a key and a value, store it.
+
+```text
+"user:101:session" → session data
+"product:42:stock" → 17
+"config:homepage"  → configuration data
+```
+
+The value may be opaque or structured, depending on the product; the defining feature is that **the key is the access path**. That makes key-value stores ideal for caching, sessions, rate-limit counters and temporary tokens: workloads dominated by predictable lookups, with no joins or predicates to evaluate. Many add expiry (TTL), atomic increments or conditional updates.
+
+The limit follows from the model: if you do not know the key, you may have no efficient way to find the value.
+
+```python
+import json
+
+order = {"order_id": 9001, "customer": {"id": 101, "name": "Maya"},
+         "items": [{"sku": "KB-42", "qty": 1, "price": 89.99}, {"sku": "MS-07", "qty": 2, "price": 19.5}]}
+print("document: one read ->", json.dumps(order)[:90] + "...")
+total = sum(i["qty"] * i["price"] for i in order["items"])
+print("order total computed from the single document:", round(total, 2))
+
+kv = {"session:101": {"user": "Maya", "ttl": 1800}, "stock:KB-42": 17}
+kv["stock:KB-42"] -= 1                                     # the key is the access path: no key, no lookup
+print("key-value:", kv["stock:KB-42"], "| 'sessions of user Maya'? needs a scan:", [k for k, v in kv.items() if isinstance(v, dict) and v.get("user") == "Maya"])
+# document: one read -> {"order_id": 9001, "customer": {"id": 101, "name": "Maya"}, "items": [{"sku": "KB-42", "qt...
+# order total computed from the single document: 128.99
+# key-value: 16 | 'sessions of user Maya'? needs a scan: ['session:101']
+```
+
+Asking for "every session belonging to Maya" forced a scan of **every** entry. Real systems avoid it by maintaining a second key (`user:101:sessions`), which is a hand-built index.
+
+## Wide-Column Stores Organize Data Around Access Patterns
+
+**Wide-column** (column-family) databases such as Cassandra and HBase distribute data across many machines using a **partition key**; within a partition, rows are kept sorted. They suit workloads with high write volume and predictable queries: event histories, telemetry, time series.
+
+Take sensor readings. A partition key of `(device_id, day)` puts one device's day of readings together, sorted by timestamp, so "recent history for device X" reads one partition sequentially. The crucial design step is choosing the key **from the queries you will run**. A good key spreads load evenly and makes common reads cheap; a poor one creates **hot partitions**, uneven storage, or queries that must touch every node.
+
+There is no unrestricted join model. Developers typically design **one table per query shape** and duplicate data on purpose, shifting work from query time to modelling time. (Not to be confused with *columnar analytical engines*, which store columns together to scan quickly; the names overlap but the purpose differs.) The distribution mechanics behind this are covered in [Replication](../../distributed-systems/replication/) and [Consistent Hashing](../../system-design/consistent-hashing/).
+
+## Graph Databases Store Relationships as Data
+
+A **graph database** models data as **nodes** (things: people, accounts, products) and **relationships** (typed, directed links between them: `FRIEND_OF`, `PAID`, `DEPENDS_ON`). In the common **property graph** model, both nodes and relationships carry labels and key-value properties. Examples: Neo4j, Amazon Neptune, ArangoDB and JanusGraph, queried with languages such as Cypher or the standard GQL (Gremlin and SPARQL are used by other graph models).
+
+Graphs shine when the **connections** are the question: friends of friends, "people who bought this also bought", fraud rings that share phones and addresses, knowledge graphs, network and dependency analysis, routing. In a relational database each hop is another **join**: "friends of friends" is a self-join on the friendship table, "within four hops" is four, and the work grows quickly with depth. A graph database stores each node's neighbours directly (often called **index-free adjacency**), so a traversal costs in proportion to the part of the graph it visits, not to the size of the whole dataset.
+
+```cypher
+// friends of friends of Ana who are not already her friends
+MATCH (a:Person {name: 'Ana'})-[:FRIEND]-()-[:FRIEND]-(f:Person)
+WHERE f <> a AND NOT (a)-[:FRIEND]-(f)
+RETURN DISTINCT f.name
+```
+
+The pattern in the `MATCH` line *draws* the shape of the question. Try it: pick a start person, widen the number of hops, and compare how many people are reached with how many rows the equivalent SQL self-joins would build:
+
+<GraphTraversalDb />
+
+The same question in SQL and as a plain traversal, on that same graph (real SQLite and Python output):
+
+```python
+import sqlite3
+from collections import deque
+
+EDGES = [("Ana", "Ben"), ("Ana", "Cy"), ("Ben", "Dee"), ("Cy", "Dee"), ("Dee", "Eli"),
+         ("Eli", "Fay"), ("Fay", "Gus"), ("Cy", "Hal"), ("Hal", "Ivy"), ("Ivy", "Jo"), ("Gus", "Jo")]
+
+# Relational version: friendships are rows. Each extra hop is another self-join.
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE friends (a TEXT, b TEXT)")
+db.executemany("INSERT INTO friends VALUES (?, ?)", EDGES + [(b, a) for a, b in EDGES])     # store both directions
+db.execute("CREATE INDEX idx_a ON friends (a)")
+
+two_hops = db.execute("""
+SELECT DISTINCT f2.b
+FROM friends f1 JOIN friends f2 ON f1.b = f2.a      -- one self-join per extra hop
+WHERE f1.a = 'Ana' AND f2.b <> 'Ana'
+  AND f2.b NOT IN (SELECT b FROM friends WHERE a = 'Ana')
+ORDER BY f2.b
+""").fetchall()
+print("friends of friends of Ana (SQL):", [r[0] for r in two_hops])
+
+# Graph version: keep each node's neighbours directly, and just follow them (what a graph database stores natively).
+adj = {}
+for a, b in EDGES:
+    adj.setdefault(a, set()).add(b)
+    adj.setdefault(b, set()).add(a)
+
+def within(start, hops):
+    seen, frontier = {start}, {start}
+    for _ in range(hops):
+        frontier = {n for f in frontier for n in adj[f]} - seen
+        seen |= frontier
+    return seen - {start}
+
+print("within 2 hops of Ana (traversal):", sorted(within("Ana", 2)))
+
+def shortest_path(src, dst):
+    prev, q = {src: None}, deque([src])
+    while q:
+        cur = q.popleft()
+        if cur == dst:
+            path = []
+            while cur:
+                path.append(cur)
+                cur = prev[cur]
+            return path[::-1]
+        for n in sorted(adj[cur]):
+            if n not in prev:
+                prev[n] = cur
+                q.append(n)
+
+print("shortest Ana -> Jo:", " -> ".join(shortest_path("Ana", "Jo")))
+# friends of friends of Ana (SQL): ['Dee', 'Hal']
+# within 2 hops of Ana (traversal): ['Ben', 'Cy', 'Dee', 'Hal']
+# shortest Ana -> Jo: Ana -> Cy -> Hal -> Ivy -> Jo
+```
+
+The traversal is a few lines, and the shortest-path search is a built-in operation in graph databases, whereas in SQL it needs a recursive query. With a handful of rows the two feel similar; the gap opens as the data and the number of hops grow.
+
+Graph databases are **not** a general replacement for tables. Whole-dataset aggregates (sum of all sales) are better served by relational or columnar engines, splitting a graph across machines is hard because edges cross the cut, and a **supernode** (a celebrity with millions of followers) makes any traversal through it expensive. Use a graph when relationships and path-shaped questions dominate.
+
+## Vector Databases Find Things by Meaning
+
+A **vector database** stores **embeddings**: lists of numbers (typically hundreds to a few thousand) produced by a machine-learning model so that items with similar meaning end up **close together**. Text, images, audio and code can all be embedded. The core query is not "rows where x = 5" but **"the k items nearest to this vector"**, which is how **semantic search**, recommendations, duplicate detection and **retrieval-augmented generation (RAG)** (fetching relevant passages for a language model) work.
+
+Nearness is measured with a **similarity metric**: **cosine similarity** (the angle between vectors, ignoring length), **dot product**, or **Euclidean distance**.
+
+$$\cos(\mathbf{a},\mathbf{b}) = \frac{\mathbf{a}\cdot\mathbf{b}}{\lVert\mathbf{a}\rVert\,\lVert\mathbf{b}\rVert}$$
+
+In words: 1 means the vectors point the same way (very similar), 0 means unrelated. Explore a tiny 2-D version below, including what an approximate search can miss:
+
+<VectorSearchViz />
+
+### Exact search is expensive, so indexes approximate
+
+Comparing a query with every stored vector (**brute force**) is exact but costs $O(n \cdot d)$ per query for $n$ vectors of $d$ dimensions. That is fine for thousands of vectors and painful for hundreds of millions. **Approximate nearest-neighbour (ANN)** indexes skip most of the data and accept that they may occasionally miss a true neighbour. The common families:
+
+- **HNSW** (Hierarchical Navigable Small World): a layered graph. Sparse upper layers give long jumps, dense lower layers give precision; the search hops greedily toward the query and descends. The most widely used index.
+- **IVF** (inverted file): cluster the vectors once, then search only the few clusters closest to the query.
+- **Quantization** (e.g. product quantization): compress each vector into a few bytes to shrink memory and speed up scans, at some loss of accuracy.
+
+Watch an HNSW search descend through its layers:
+
+<HnswWalk />
+
+The same ideas on 200,000 real-sized vectors (128 dimensions), showing brute force, then an IVF-style search that scans only a few clusters:
+
+```python
+import numpy as np
+
+# 1. Similarity search = nearest neighbours of an embedding. Hand-made 3-D "embeddings" for illustration.
+docs = {"cat": [0.9, 0.1, 0.0], "kitten": [0.85, 0.2, 0.05], "dog": [0.8, 0.3, 0.0],
+        "car": [0.05, 0.9, 0.2], "truck": [0.0, 0.85, 0.3]}
+docs = {k: np.array(v) for k, v in docs.items()}
+
+def cosine(a, b):
+    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))     # 1 = same direction, 0 = unrelated
+
+query = np.array([0.88, 0.15, 0.02])                                   # an embedding that "means" cat-ish
+for name, score in sorted(((n, cosine(query, v)) for n, v in docs.items()), key=lambda x: -x[1])[:3]:
+    print(f"{name:<7} cosine = {score:.3f}")
+# cat     cosine = 0.998
+# kitten  cosine = 0.997
+# dog     cosine = 0.982
+
+# 2-3. Brute force scans everything; IVF clusters first and scans only the closest clusters (nprobe of them).
+#   brute force over 200,000 vectors: 12 ms
+#   nprobe= 1: scanned  0.3% of the data, recall@10 = 80%, 0.3 ms
+#   nprobe= 5: scanned  2.4% of the data, recall@10 = 100%, 2.1 ms
+#   nprobe=20: scanned  9.7% of the data, recall@10 = 100%, 5.4 ms     (timings vary by machine)
+```
+
+(The query was deliberately placed between two topics, the hard case.) Scanning 0.3% of the data found 8 of the true 10 neighbours; scanning 2.4% found all 10. That dial, **recall versus speed versus memory**, is the central tuning decision in a vector database, usually exposed as parameters such as `nprobe` or HNSW's `ef_search`.
+
+### Using a vector database in practice
+
+- **Metadata filtering and hybrid search.** Real queries mix meaning with rules ("similar to this, but in stock and under 50"), and often combine vector similarity with keyword (BM25) search, since exact terms such as product codes embed poorly.
+- **Where it lives.** Dedicated systems (Pinecone, Qdrant, Weaviate, Milvus, Chroma), vector features inside general databases (**pgvector** for PostgreSQL, MongoDB Atlas Vector Search, Redis, Elasticsearch), and libraries (FAISS, hnswlib) you embed in your own code. For moderate scale, a vector column in the database you already run is often enough.
+- **Memory is the bill.** $n$ vectors of $d$ float32 numbers take $4nd$ bytes: 10 million 768-dimensional vectors need about 31 GB before the index overhead.
+
+<Callout type="pitfall">
+A vector database retrieves what the **embedding model** considers similar, not what is true or relevant to your user. Poor chunking or a mismatched model gives confident-looking nonsense, changing the model means **re-embedding everything**, and ANN search is approximate by design. Evaluate retrieval quality on real queries, not just latency.
+</Callout>
+
+## The Model Decides the Trade-Offs
+
+The same order data, four ways. Choose an operation and see which models make it a single step and which make it expensive:
+
+<DataModelCompare />
+
+| Model | Examples | Best when | Watch out for |
+| --- | --- | --- | --- |
+| **Document** | MongoDB, Couchbase | Records are nested and retrieved as a unit | Duplicated facts, cross-document relationships |
+| **Key-value** | Redis, DynamoDB (key-oriented use) | The key is known and lookups must be fast | No ad hoc queries without extra structures |
+| **Wide-column** | Cassandra, HBase | Huge distributed data with known queries | Partition key design, no joins |
+| **Graph** | Neo4j, Neptune | Questions are about connections and paths | Whole-dataset analytics, supernodes, sharding |
+| **Vector** | pgvector, Pinecone, Qdrant | Similarity and semantic search over embeddings | Approximate results, embedding-model quality, memory cost |
+
+These categories are abstractions, not walls. Products blur them: DynamoDB stores key-value and document-style items with its own partitioning rules, and Redis offers data structures well beyond strings.
+
+## When NoSQL Is a Better Fit
+
+| Requirement | Model worth considering | Why |
+| --- | --- | --- |
+| Retrieve nested records as a unit | Document | Related fields stored together |
+| Fetch values by predictable identifier | Key-value | Direct key access is the main operation |
+| Spread high-volume events over many nodes | Wide-column | Partitioned storage fits known access patterns |
+| Traverse relationships many hops deep | Graph | Following stored links beats chains of joins |
+| Find the most similar items by meaning | Vector | Nearest-neighbour indexes over embeddings |
+| Many constraints and flexible joins | Relational | Relationships and ad hoc queries are first-class |
+| Multi-step financial updates | Relational (or a store with strong transactions) | Transaction semantics are central |
+
+NoSQL does **not** automatically mean schema-free (document databases can enforce schemas), transaction-free (many support transactions) or horizontally scalable (relational systems can scale out with the right architecture). The real differences are guarantees, query capability, operational complexity and scaling behaviour **of the specific product**. "We need to scale" is too vague to choose on. Start from the most frequent and important queries, the consistency you need (see [CAP Theorem](../../distributed-systems/cap-theorem/)), the expected data volume, and how the system must behave when machines or networks fail.
+
+<Callout type="pitfall">
+"Schemaless" really means the schema lives in your **application code** instead of the database. Old documents with old shapes do not go away, and every reader must cope with them. A schema you do not declare is a schema you must remember.
+</Callout>
+
+## Polyglot Persistence
+
+A system need not use one database for everything. Orders and payments might live in a relational database, hot data in a key-value cache, telemetry in a wide-column or time-series store. This is **polyglot persistence**: each technology where its strengths fit.
+
+It can improve performance and simplify access, but costs real operational effort: data must be synchronized between stores, failures leave them temporarily inconsistent, and the team must understand several backup, monitoring, security and recovery stories.
+
+<Callout type="key">
+The question is never "SQL or NoSQL?" in the abstract. It is whether this workload benefits enough from a specialized data model to justify its constraints and operational overhead. Relational stays the strong default when relationships, integrity, transactions and flexible queries matter.
+</Callout>

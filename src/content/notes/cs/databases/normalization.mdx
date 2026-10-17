@@ -1,0 +1,163 @@
+---
+title: "Normalization"
+description: "1NF, 2NF and 3NF: removing redundancy and update anomalies from tables."
+order: 3
+tier: core
+takeaways:
+  - "**Normalization** organizes tables so each fact is stored once, in the table whose key determines it, preventing update, insertion and deletion **anomalies**."
+  - "**1NF:** every cell holds one value. **2NF:** every non-key attribute depends on the **whole** key. **3NF:** non-key attributes depend on **nothing but** the key."
+  - "The checks are about **functional dependencies** (X → Y), not about whether values merely look repeated."
+  - "2NF only matters with a **composite key**; a 1NF table whose keys are all single columns is automatically 2NF."
+  - "Normalize by default, **denormalize** deliberately and measurably, and keep the duplicates consistent."
+resources:
+  - title: "William Kent: A Simple Guide to Five Normal Forms"
+    url: "https://www.bkent.net/Doc/simple5.htm"
+    note: "Short classic: 'the key, the whole key, and nothing but the key'."
+  - title: "Database normalization (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Database_normalization"
+    note: "Formal definitions, plus BCNF and the higher normal forms."
+  - title: "Functional dependency (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Functional_dependency"
+---
+
+**Normalization** is the process of organizing relational tables so that each fact is stored in the right place and dependencies between attributes are represented correctly. Its purpose is to reduce redundant data and prevent **anomalies** when rows are inserted, updated or deleted. The first three normal forms constrain a design progressively: **1NF** requires well-formed individual values, **2NF** removes partial dependencies on a composite key, and **3NF** removes dependencies between non-key attributes. The unifying slogan: *each fact should depend on the key, the whole key, and nothing but the key.*
+
+Walk one table through all three forms before reading the details:
+
+<NormalFormSteps />
+
+## 1NF: Each Field Holds One Value
+
+**First normal form** requires every cell to contain a single value from its domain, not a list or repeating group. A table that stores several courses in one field:
+
+| student_id | student_name | courses |
+| --- | --- | --- |
+| 101 | Maya | CS101, MA201 |
+| 102 | Omar | CS101 |
+
+is awkward: searching for students in `MA201`, counting enrollments or changing one course means manipulating a string. In 1NF there is one enrollment per row:
+
+| student_id | student_name | course_id |
+| --- | --- | --- |
+| 101 | Maya | CS101 |
+| 101 | Maya | MA201 |
+| 102 | Omar | CS101 |
+
+A natural key is the composite `(student_id, course_id)`. The cost is already visible: Maya's name is now repeated. 1NF does not remove all redundancy, only gives rows and attributes a consistent structure. "Atomic" does not mean never subdividable: a full name or address can be one attribute if the application treats it as one value. What matters is that a field should not hide a collection of independently meaningful values you need to query or constrain.
+
+## 2NF: Every Non-Key Attribute Depends on the Whole Key
+
+**Second normal form** builds on 1NF: every non-key attribute must depend on the **entire** candidate key, not on just part of a composite key.
+
+| student_id | course_id | student_name | course_name | grade |
+| --- | --- | --- | --- | --- |
+| 101 | CS101 | Maya | Programming | 90 |
+| 101 | MA201 | Maya | Calculus | 85 |
+| 102 | CS101 | Omar | Programming | 92 |
+
+With key `(student_id, course_id)`:
+
+- `student_name` depends only on `student_id`,
+- `course_name` depends only on `course_id`,
+- `grade` depends on **both**: it is one student's result in one course.
+
+The first two are **partial dependencies**, and they cause the repetition. The fix is to separate the facts by what determines them:
+
+**Students**
+
+| student_id | student_name |
+| --- | --- |
+| 101 | Maya |
+| 102 | Omar |
+
+**Courses**
+
+| course_id | course_name |
+| --- | --- |
+| CS101 | Programming |
+| MA201 | Calculus |
+
+**Enrollments**
+
+| student_id | course_id | grade |
+| --- | --- | --- |
+| 101 | CS101 | 90 |
+| 101 | MA201 | 85 |
+| 102 | CS101 | 92 |
+
+2NF matters mainly for tables with a composite key. If every candidate key is a single attribute, there is no *part* of a key to depend on, so a 1NF table is automatically in 2NF.
+
+## 3NF: Non-Key Attributes Do Not Depend on Other Non-Key Attributes
+
+**Third normal form** removes **transitive** dependencies. Formally, a table is in 3NF when it is in 2NF and, for every nontrivial functional dependency $X \to A$, either $X$ is a superkey or $A$ is a prime attribute (part of some candidate key). In everyday design the central issue is a non-key attribute determined by another non-key attribute.
+
+| student_id | student_name | department_id | department_name |
+| --- | --- | --- | --- |
+| 101 | Maya | D10 | Computer Science |
+| 102 | Omar | D20 | Mathematics |
+| 103 | Lina | D10 | Computer Science |
+
+These dependencies hold:
+
+$$\text{student\_id} \to \text{department\_id}, \qquad \text{department\_id} \to \text{department\_name}$$
+
+so, transitively,
+
+$$\text{student\_id} \to \text{department\_id} \to \text{department\_name}$$
+
+In words: the student determines the department, and the department determines its name, so the name depends on the student only *through* the department. It describes the department, not the student, and repeating it per student invites inconsistency. Split it out:
+
+**Students**
+
+| student_id | student_name | department_id |
+| --- | --- | --- |
+| 101 | Maya | D10 |
+| 102 | Omar | D20 |
+| 103 | Lina | D10 |
+
+**Departments**
+
+| department_id | department_name |
+| --- | --- |
+| D10 | Computer Science |
+| D20 | Mathematics |
+
+The department name is stored once, where its determinant is the key. `Students` keeps `department_id` as a **foreign key**. 3NF is not about removing duplicated text; it is about putting each non-key fact in the relation whose key determines it.
+
+## Why Bother: Anomalies
+
+Redundant data goes wrong in three ways. All three can be reproduced on the un-normalized `flat` table (student_id, name, dept_id, dept_name):
+
+- **Update anomaly:** a department is renamed but only some rows are changed.
+- **Insertion anomaly:** a department cannot be recorded until a student belongs to it.
+- **Deletion anomaly:** deleting the last student of a department erases the only record that the department exists.
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE flat (student_id INT, name TEXT, dept_id TEXT, dept_name TEXT);
+INSERT INTO flat VALUES (101,'Maya','D10','Computer Science'), (102,'Omar','D20','Mathematics'), (103,'Lina','D10','Computer Science');
+""")
+db.execute("UPDATE flat SET dept_name = 'CS' WHERE student_id = 101")      # a partial update: the name changed in only one row
+print("update anomaly:", db.execute("SELECT DISTINCT dept_id, dept_name FROM flat WHERE dept_id = 'D10'").fetchall())
+db.execute("DELETE FROM flat WHERE student_id = 102")                      # deleting the only Mathematics student
+print("deletion anomaly, Mathematics still known?", db.execute("SELECT COUNT(*) FROM flat WHERE dept_id = 'D20'").fetchone()[0] > 0)
+# update anomaly: [('D10', 'CS'), ('D10', 'Computer Science')]
+# deletion anomaly, Mathematics still known? False
+```
+
+Department D10 now has two names, and Mathematics is gone entirely. With the normalized design each of these operations is one row in `departments`.
+
+<Callout type="key">
+Each normal form is a **question you ask of every non-key attribute**. 1NF: is it a single value? 2NF: does it need the *whole* key? 3NF: does it depend on *only* the key, not on another non-key attribute?
+</Callout>
+
+## Normalization and Performance
+
+Normalized designs need more joins, and sometimes a hot query is better served by a copy of the data. **Denormalizing** is a legitimate optimization, but treat it as one: start from a normalized logical design, measure real performance, and add redundancy only for a demonstrated need, with a plan (triggers, application logic, or periodic rebuilds) for keeping the copies in agreement.
+
+<Callout type="pitfall">
+Beyond 3NF there are stricter forms (**BCNF**, 4NF, 5NF) that deal with unusual key and multi-valued situations. 3NF is the practical target for most application schemas; and normal forms are judged from the *dependencies in the data*, not from whether some sample rows happen to look repetitive.
+</Callout>

@@ -1,0 +1,142 @@
+---
+title: "Indexes"
+description: "How indexes speed up lookups, and the write-speed trade-off."
+order: 4
+tier: core
+takeaways:
+  - "An **index** is an extra, ordered structure (usually a **B-tree**) that lets the database jump to matching rows instead of scanning the whole table: about O(log n) instead of O(n)."
+  - "A **composite index** on (a, b) serves queries on `a` or on `a` and `b`, but not efficiently on `b` alone (the **leftmost-prefix** rule)."
+  - "Every index must be updated on every relevant write, so **more indexes mean slower inserts and updates**, more storage and memory pressure."
+  - "The optimizer decides whether to use an index; for queries returning a large share of the table a scan can be cheaper."
+  - "Create indexes for **measured** slow queries, check plans with `EXPLAIN`, and remove unused ones."
+resources:
+  - title: "Use The Index, Luke"
+    url: "https://use-the-index-luke.com/"
+    note: "Free, vendor-neutral guide to indexing for developers. The best single resource."
+  - title: "SQLite: The query planner"
+    url: "https://www.sqlite.org/queryplanner.html"
+    note: "How indexes are chosen, with worked examples."
+  - title: "PostgreSQL: Indexes"
+    url: "https://www.postgresql.org/docs/current/indexes.html"
+---
+
+A database **index** is an auxiliary data structure that helps the database find rows without scanning the entire table. Like the index of a book, it maps a searchable value to where the associated data lives, turning a lookup that might inspect millions of rows into one that follows a short search path. The trade-off is that indexes consume storage and must be kept in step with the table: **every write gets more expensive**. An index improves reads by adding structure that every relevant write must also maintain.
+
+## An Index Avoids Scanning Every Row
+
+A `Users` table with a million rows, and a query for one email:
+
+```sql
+SELECT * FROM Users WHERE email = 'maya@example.com';
+```
+
+With no index on `email`, the database performs a **full table scan**, examining rows until it finds matches or reaches the end: potentially all one million. With an index it searches a compact structure for the email and follows the entry to the row. A scan does work that grows linearly with the table, $O(n)$; a balanced-tree index finds a key in about $O(\log n)$ steps.
+
+That is a simplified model. Real cost depends on memory versus disk, the number of matching rows, index layout, caching and the plan chosen. Here is a measurement on 300,000 rows, with the plan the database reports:
+
+```python
+import sqlite3
+import time
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, name TEXT)")
+db.executemany("INSERT INTO users (email, name) VALUES (?, ?)", ((f"user{i}@example.com", f"U{i}") for i in range(300_000)))
+query = "SELECT * FROM users WHERE email = 'user299999@example.com'"
+print(db.execute("EXPLAIN QUERY PLAN " + query).fetchall()[0][3])
+t = time.perf_counter(); [db.execute(query).fetchall() for _ in range(20)]; scan = (time.perf_counter() - t) / 20
+db.execute("CREATE INDEX idx_email ON users (email)")
+print(db.execute("EXPLAIN QUERY PLAN " + query).fetchall()[0][3])
+t = time.perf_counter(); [db.execute(query).fetchall() for _ in range(20)]; idx = (time.perf_counter() - t) / 20
+print(f"scan {scan * 1000:.2f} ms  ->  index {idx * 1000:.3f} ms  ({scan / idx:,.0f}x faster)")
+# SCAN users
+# SEARCH users USING INDEX idx_email (email=?)
+# scan 9.48 ms  ->  index 0.003 ms  (3,219x faster)       (timings vary by machine)
+```
+
+The plan changed from `SCAN` to `SEARCH ... USING INDEX`, which is what produced the speed-up. Move the slider to see how the gap grows with table size, and what the same index costs on every insert:
+
+<IndexCost />
+
+## B-Trees Make Searches Efficient
+
+Most relational databases use **B-tree**-family indexes for equality and range queries. They keep keys in sorted order inside a balanced tree where each node holds *many* keys and has many children (high **fan-out**). At each level the search discards most of the remaining keys; with hundreds of keys per page, even a table of billions of rows needs only three or four levels. (See [Skip Lists & B-Trees](../../data-structures/skip-lists-and-b-trees/) for how the structure itself works.)
+
+Because the keys are ordered, B-tree indexes also support **range queries**:
+
+```sql
+SELECT * FROM Orders
+WHERE order_date >= '2026-01-01' AND order_date < '2027-01-01';
+```
+
+The database seeks to the start of the range and reads index entries in order until the end, instead of checking every order. The same ordering can serve `ORDER BY` and some grouping. Not every index is a B-tree: **hash indexes** serve equality lookups only, and specialized structures support full-text and spatial search.
+
+## The Index Must Match the Query
+
+An index helps only if the query's conditions can use it. Take a **composite** index:
+
+```sql
+CREATE INDEX idx_orders_customer_date ON Orders (customer_id, order_date);
+```
+
+Entries are sorted by `customer_id`, and within each customer by `order_date`. It serves:
+
+```sql
+WHERE customer_id = 101                                   -- yes: leading column
+WHERE customer_id = 101 AND order_date >= '2026-01-01'    -- yes: both columns
+WHERE order_date >= '2026-01-01'                          -- poorly: skips the leading column
+```
+
+This is the **leftmost-prefix** rule for conventional B-tree composite indexes (details vary by engine): the index is only useful from its first column onward, just as a phone book sorted by surname then first name is useless for finding everyone called "Maya". Column *order* is therefore a design decision. Indexes pay off when their keys match frequent filters, joins, sorts or groupings; a column with very few distinct values (a yes/no flag) often helps little, since each value still matches a large share of the table.
+
+<Callout type="key">
+An index is a **sorted copy** of some columns, with pointers to the rows. It helps exactly the queries that can exploit that sort order: equality or range on its leading columns, matching `ORDER BY`, or joins on those columns.
+</Callout>
+
+## Every Index Makes Writes More Expensive
+
+An index is a second representation of part of the table, so every change to the table must be applied to every affected index. Inserting a user into a table with indexes on `user_id`, `email` and `name` updates three index structures as well as the row.
+
+- **Insert:** add an entry to each index.
+- **Delete:** remove (or mark) the entry in each index.
+- **Update:** change index entries whenever an indexed column changes.
+
+Maintaining a balanced tree can mean finding the right leaf, modifying it, and occasionally **splitting** or reorganizing pages, all while writing recovery information to a log (see [Transactions & ACID](../transactions-and-acid/)). The overhead is more than CPU: indexes add disk use, compete for cache memory and amplify writes. Measured on 100,000 inserts:
+
+```python
+import random
+import sqlite3
+import time
+
+def insert_time(extra_indexes):
+    d = sqlite3.connect(":memory:")
+    d.execute("CREATE TABLE t (a INT, b INT, c INT, d INT)")
+    for i in range(extra_indexes):
+        d.execute(f"CREATE INDEX i{i} ON t ({'abcd'[i]})")
+    rows = [(random.random(), random.random(), random.random(), random.random()) for _ in range(100_000)]
+    s = time.perf_counter(); d.executemany("INSERT INTO t VALUES (?,?,?,?)", rows); return time.perf_counter() - s
+
+base = insert_time(0)
+for k in (0, 2, 4):
+    print(f"{k} indexes: 100k inserts take {insert_time(k) / base:.1f}x the unindexed time")
+# 0 indexes: 100k inserts take 1.0x the unindexed time
+# 2 indexes: 100k inserts take 3.3x the unindexed time
+# 4 indexes: 100k inserts take 5.8x the unindexed time      (ratios vary by machine)
+```
+
+## More Indexes Are Not Always Better
+
+The right set balances the queries you must serve against the cost of maintaining the structures they need.
+
+| Workload | Likely strategy |
+| --- | --- |
+| Frequent lookups by unique id | Index the id (usually the primary key) |
+| Filtering by customer and date | Composite index in that column order |
+| Large analytical scans | Often faster *without* an index |
+| Heavy insert/update load | Avoid redundant or unused indexes |
+| Frequent sorting or range filtering | Ordered index on those columns |
+
+Ten poorly chosen indexes can make a table slower to maintain than three well-chosen ones. The practical process: identify the important queries, read their execution plans, measure, and add indexes for demonstrated bottlenecks; then review as the data and queries change, and drop indexes nothing uses.
+
+<Callout type="pitfall">
+An index does not eliminate work, it **moves** work from every read to every write. A good index pays for itself when the reads it accelerates outweigh the storage and write costs it adds. Also remember the optimizer may legitimately ignore an index: see [Query Optimization](../query-optimization/).
+</Callout>

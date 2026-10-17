@@ -1,0 +1,145 @@
+---
+title: "Query Optimization"
+description: "How a query planner chooses an execution path, and why indexes matter."
+order: 7
+tier: optional
+takeaways:
+  - "SQL says *what* you want; the **optimizer** picks *how*: access paths (scan or index), join order and join algorithms, by estimating the cost of alternatives."
+  - "Estimates rely on **statistics** and a cost model, so a plan is a prediction, not a proof of the fastest option."
+  - "An index is **not always faster**: when a query needs a large share of the table, a sequential scan is cheaper than many random lookups."
+  - "Join algorithms differ: **nested loop** (small input plus an index), **hash join** (large equality joins), **merge join** (sorted inputs)."
+  - "Bad **cardinality estimates** cause bad plans. Read `EXPLAIN` / `EXPLAIN ANALYZE`, compare estimated and actual rows, change one thing, measure again."
+resources:
+  - title: "PostgreSQL: Using EXPLAIN"
+    url: "https://www.postgresql.org/docs/current/using-explain.html"
+    note: "How to read plans, costs, estimated vs actual rows."
+  - title: "SQLite: EXPLAIN QUERY PLAN"
+    url: "https://www.sqlite.org/eqp.html"
+  - title: "Use The Index, Luke: the execution plan"
+    url: "https://use-the-index-luke.com/sql/explain-plan"
+---
+
+A database **query optimizer** decides how to execute a SQL query without changing the result it must produce. The same query might run by scanning a table, using an index, joining tables in different orders, or choosing different algorithms to combine rows. The optimizer estimates the cost of these alternatives using table **statistics**, index information and a model of the engine, then picks the plan it expects to be cheapest. SQL describes the desired result; the **execution plan** describes how the database intends to get it.
+
+## The Planner Separates Meaning from Execution
+
+Customers who placed expensive orders:
+
+```sql
+SELECT c.name, o.total
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id
+WHERE o.total > 1000;
+```
+
+The query states three requirements: combine customers with their orders, keep orders over 1,000, return the name and total. It does not say whether to scan `Orders` first, use an index, or in what order to join. Those are implementation decisions. The optimizer starts from the *logical meaning* and considers equivalent strategies; filtering expensive orders **before** joining is often far cheaper than joining everything and filtering afterwards.
+
+A plan is a tree of operators: scan `Orders` (filter `total > 1000`), scan or look up `Customers`, join them, project the columns. The most readable SQL is not necessarily the most efficient sequence of operations; a declarative query gives the optimizer room to choose a better one.
+
+## The Optimizer Estimates Work Before Running Anything
+
+A database cannot try every plan and keep the fastest. It **estimates** cost beforehand from two inputs:
+
+- **Statistics:** estimated row counts, value distributions, distinct-value counts and similar summaries of the data.
+- **Cost model:** the estimated work of reading pages, processing rows, comparing, sorting, hashing and moving data between operators.
+
+If `Orders` has ten million rows and statistics say 0.1% exceed 1,000, about 10,000 rows qualify, so finding them first and joining only those to `Customers` looks cheap. If the optimizer wrongly believed half the orders qualified, it would choose differently. It is making a **prediction**, not proving anything about your hardware and load; cache state, concurrent work and storage latency also affect real time.
+
+## Index Scans vs Table Scans
+
+An index is not automatically faster; the optimizer compares expected costs. With an index on `customer_id`, finding one customer's orders touches only a few entries. But if a query wants 80% of all orders, using the index means many **random** row lookups scattered over the table, while reading the table **sequentially** can be cheaper.
+
+The deciding factor is **selectivity**: the fraction of rows a condition keeps, together with row width, index design, caching and storage. Slide it yourself in a simple cost model (PostgreSQL's default constants):
+
+<ScanVsIndexPlanner />
+
+This is why creating an index does not guarantee it is used. You can watch the planner's decision in a real database:
+
+```python
+import random
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE customers (customer_id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE orders (order_id INTEGER PRIMARY KEY, customer_id INT, total REAL);
+""")
+db.executemany("INSERT INTO customers VALUES (?, ?)", ((i, f"C{i}") for i in range(1000)))
+db.executemany("INSERT INTO orders (customer_id, total) VALUES (?, ?)", ((random.randrange(1000), random.random() * 1000) for _ in range(100_000)))
+join = "SELECT c.name, o.total FROM customers c JOIN orders o ON c.customer_id = o.customer_id WHERE o.customer_id = 7"
+print("no index :", [r[3] for r in db.execute("EXPLAIN QUERY PLAN " + join)])
+db.execute("CREATE INDEX idx_orders_customer ON orders (customer_id)")
+db.execute("ANALYZE")                                       # refresh the statistics the planner relies on
+print("index    :", [r[3] for r in db.execute("EXPLAIN QUERY PLAN " + join)])
+# no index : ['SEARCH c USING INTEGER PRIMARY KEY (rowid=?)', 'SCAN o']
+# index    : ['SEARCH c USING INTEGER PRIMARY KEY (rowid=?)', 'SEARCH o USING INDEX idx_orders_customer (customer_id=?)']
+```
+
+Before the index, the plan scans every order (`SCAN o`); after it, the planner switches to an index `SEARCH` on its own. `ANALYZE` refreshes the statistics those decisions depend on.
+
+## Join Order and Join Algorithm
+
+Joining several tables raises two separate questions: **which tables first**, and **how to perform each join**. If a filter cuts ten million orders to a few hundred, applying it early shrinks every later join. The number of possible join orders grows explosively with the number of tables, so optimizers use search strategies and heuristics, not exhaustive enumeration.
+
+They also choose among **join algorithms**:
+
+| Algorithm | How it works | Good when |
+| --- | --- | --- |
+| **Nested loop** | For each row of one input, look up matches in the other | One input is small and the other has a useful index; poor without an efficient lookup |
+| **Hash join** | Build a hash table from one input, probe it with the other | Large equality joins; costly if the hash table spills to disk |
+| **Merge join** | Walk two inputs sorted on the join key in step | Inputs are already sorted (e.g. from indexes) or cheap to sort |
+
+None is universally best: a nested loop that is terrible on millions of rows is ideal for a handful; a hash join is fast on big inputs unless memory runs out; a merge join exploits ordering that already exists.
+
+## Cardinality Estimates Connect Statistics to Plans
+
+A **cardinality estimate** is the optimizer's prediction of how many rows an operation produces. It influences nearly every decision: join order, algorithm, index use, sorting and memory. If it predicts 100 rows and gets 500,000, it may pick repeated index lookups, an undersized hash table, or a join order that is ruinous at the real scale.
+
+Estimates go wrong because of **skewed** data, **correlated** columns, **stale** statistics, or limits of the model. Consider:
+
+```sql
+WHERE country = 'AE' AND city = 'Dubai'
+```
+
+If the optimizer assumes the two conditions are independent, it multiplies their selectivities, but country and city are strongly related: knowing the country is the UAE makes Dubai far more likely than in the whole dataset, so the real result is much bigger than estimated. Depending on the engine, extended statistics, histograms or more frequent `ANALYZE` runs can fix this.
+
+<Callout type="pitfall">
+Stale statistics are a classic cause of a query that was fast last month and is slow today. After large data loads or deletes, refresh statistics (`ANALYZE`, or the equivalent in your engine) before hunting for exotic fixes.
+</Callout>
+
+## Execution Plans Reveal What the Optimizer Expects
+
+Most databases offer `EXPLAIN` (the chosen plan with *estimated* rows and costs) and a variant that actually runs the query and reports *measured* rows and time; in PostgreSQL:
+
+```sql
+EXPLAIN ANALYZE
+SELECT c.name, o.total
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id
+WHERE o.total > 1000;
+```
+
+Questions to ask of a slow plan:
+
+- Is a big table scanned although few rows qualify?
+- Are **estimated** and **actual** row counts far apart?
+- Does a join produce many more rows than expected?
+- Does a sort or hash spill to disk?
+- Is an expensive inner operation repeated many times (`loops`)?
+- Do the indexes match the filters and join conditions?
+
+A plan is evidence of where the work happens, not just a diagram of the SQL. The biggest table or the most complicated operator is not necessarily the bottleneck: row counts, loops and actual time show where cost accumulates.
+
+## Optimization Is a Feedback Loop
+
+1. Inspect the plan and find the expensive operators.
+2. Compare estimated with actual row counts.
+3. Check that indexes and statistics match the query and the current data.
+4. Make **one** targeted change: an index, a rewritten predicate, fresher statistics.
+5. Measure again on representative data.
+
+Sometimes the fix is an index (see [Indexes](../indexes/)); sometimes better statistics, a more selective filter, a simpler join, or asking for fewer rows. Occasionally the query is fine and the real problem is memory, storage latency or contention from other work.
+
+<Callout type="key">
+The optimizer is solving a **search problem under uncertainty**: equivalence rules generate candidate plans, a cost model ranks them. Good statistics and a sensible schema help it choose well; `EXPLAIN` and measurements tell you when its assumptions failed.
+</Callout>

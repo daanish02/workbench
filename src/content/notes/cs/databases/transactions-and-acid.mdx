@@ -1,0 +1,173 @@
+---
+title: "Transactions & ACID"
+description: "Atomicity, consistency, isolation, and durability, with concrete failure examples."
+order: 5
+tier: core
+takeaways:
+  - "A **transaction** groups operations into one unit of work: it commits as a whole or leaves no partial result."
+  - "**ACID**: **Atomicity** (all or nothing), **Consistency** (constraints hold), **Isolation** (concurrent work doesn't interfere unsafely), **Durability** (committed data survives crashes)."
+  - "**Isolation levels** trade correctness for concurrency: weaker levels allow anomalies (dirty, non-repeatable and phantom reads, lost updates, write skew)."
+  - "Durability comes from a **write-ahead log**: the commit is acknowledged only after log records reach durable storage."
+  - "If the connection drops during `COMMIT`, you **cannot know** whether it committed: use idempotency keys to retry safely."
+resources:
+  - title: "PostgreSQL: Transaction isolation"
+    url: "https://www.postgresql.org/docs/current/transaction-iso.html"
+    note: "Each level, each anomaly, and what PostgreSQL really does."
+  - title: "SQLite: Atomic commit"
+    url: "https://www.sqlite.org/atomiccommit.html"
+    note: "How a small database achieves atomicity and durability with a journal."
+  - title: "Hermitage: isolation level tests"
+    url: "https://github.com/ept/hermitage"
+    note: "Martin Kleppmann's comparison of what each database's levels actually allow."
+---
+
+A **transaction** groups operations into one logical unit of work: either all the intended changes succeed together, or the database prevents a partial result from being treated as complete. **ACID** names four properties that make this possible: **atomicity, consistency, isolation, durability**. They matter most when something goes wrong: an application crashes, two users edit the same record, a constraint is violated, or power fails right after the database reports success. Transactions keep such failures from leaving data invalid or misleading.
+
+## Atomicity: All the Changes Happen, or None Do
+
+Transfer $100 from Alice (balance $500) to Bob ($200). It takes two updates: subtract from Alice, add to Bob. The correct result is Alice $400, Bob $300, total still $700. Without atomicity, the database might debit Alice and crash before crediting Bob: $100 vanishes.
+
+```sql
+BEGIN;
+UPDATE Accounts SET balance = balance - 100 WHERE account_id = 'Alice';
+UPDATE Accounts SET balance = balance + 100 WHERE account_id = 'Bob';
+COMMIT;
+```
+
+If the transaction cannot complete, the database **rolls back** its changes instead of leaving one side committed. Crash the server mid-transfer and compare:
+
+<TransferAtomicity />
+
+The same behaviour in code, using real SQLite transactions:
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:", isolation_level=None)       # manage BEGIN/COMMIT ourselves
+db.executescript("""
+CREATE TABLE accounts (id TEXT PRIMARY KEY, balance INTEGER CHECK (balance >= 0));
+INSERT INTO accounts VALUES ('Alice', 500), ('Bob', 200);
+""")
+def balances(): return dict(db.execute("SELECT id, balance FROM accounts"))
+
+db.execute("BEGIN")
+db.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 'Alice'")
+db.execute("ROLLBACK")                                       # simulate a crash before the credit: nothing sticks
+print("after rollback:", balances())
+
+db.execute("BEGIN")
+db.execute("UPDATE accounts SET balance = balance - 100 WHERE id = 'Alice'")
+db.execute("UPDATE accounts SET balance = balance + 100 WHERE id = 'Bob'")
+db.execute("COMMIT")
+print("after commit:  ", balances())
+# after rollback: {'Alice': 500, 'Bob': 200}
+# after commit:   {'Alice': 400, 'Bob': 300}
+```
+
+Atomicity applies to the transaction as a **unit**, not to each statement. Two individually successful updates are not enough if the whole operation fails halfway. It does not validate business rules, though: your code must still check that the accounts exist and that Alice has enough money.
+
+## Consistency: Committed Transactions Preserve the Rules
+
+**Consistency** means a transaction moves the database from one valid state to another, preserving the integrity constraints it is required to enforce. If a balance must never be negative:
+
+```sql
+ALTER TABLE Accounts ADD CONSTRAINT nonnegative_balance CHECK (balance >= 0);
+```
+
+an attempt to withdraw $800 from an account holding $500 cannot commit, and the transaction is rolled back:
+
+```python
+db.execute("BEGIN")
+try:
+    db.execute("UPDATE accounts SET balance = balance - 800 WHERE id = 'Alice'")   # would go negative
+    db.execute("UPDATE accounts SET balance = balance + 800 WHERE id = 'Bob'")
+    db.execute("COMMIT")
+except sqlite3.IntegrityError as e:
+    db.execute("ROLLBACK")
+    print("rejected:", e, "->", balances())
+# rejected: CHECK constraint failed: balance >= 0 -> {'Alice': 400, 'Bob': 300}
+```
+
+Consistency is only as good as the rules you define. The database can enforce nonnegative balances yet still record a transfer without its audit entry, if your transaction forgot to write one. (The "C" in ACID is different from the "C" in [CAP](../../distributed-systems/cap-theorem/), which is about replicas agreeing.)
+
+## Isolation: Concurrent Transactions Don't Interfere Unsafely
+
+Transactions overlap. **Isolation** governs what each one may observe of the others' work. One unit of stock remains, and two customers try to buy it at the same moment:
+
+```text
+A reads stock = 1        B reads stock = 1
+A decides: available     B decides: available
+A writes stock = 0       B writes stock = 0     → sold twice
+```
+
+Each decision was valid *when made*, but the read and the write were not one atomic step: a **race condition** (a lost update). Replay the interleaving yourself, then fix it with one conditional statement:
+
+<LastItemRace />
+
+```sql
+UPDATE Inventory SET stock = stock - 1
+WHERE product_id = 42 AND stock > 0;     -- check and decrement in one atomic statement
+```
+
+The application checks how many rows were affected: 1 means the unit was reserved, 0 means none was left. The database coordinates conflicting updates itself:
+
+```python
+db.execute("CREATE TABLE inventory (product INT PRIMARY KEY, stock INT)")
+db.execute("INSERT INTO inventory VALUES (42, 1)")
+claimed = [db.execute("UPDATE inventory SET stock = stock - 1 WHERE product = 42 AND stock > 0").rowcount for _ in range(2)]
+print("two buyers, one unit -> rows updated:", claimed)
+# two buyers, one unit -> rows updated: [1, 0]
+```
+
+### Isolation levels and anomalies
+
+Perfect isolation is expensive, so databases offer **levels**, each preventing more anomalies at higher cost in locking, validation or retries:
+
+| Level (SQL standard) | Dirty read | Non-repeatable read | Phantom read |
+| --- | :---: | :---: | :---: |
+| Read uncommitted | possible | possible | possible |
+| Read committed | prevented | possible | possible |
+| Repeatable read | prevented | prevented | possible |
+| Serializable | prevented | prevented | prevented |
+
+- **Dirty read:** reading another transaction's uncommitted change, which may be rolled back.
+- **Non-repeatable read:** reading the same row twice and getting different committed values.
+- **Phantom read:** re-running a query and seeing new rows that match.
+- **Lost update** and **write skew** (two transactions each read overlapping data, then write different rows, together breaking a rule) are not in the classic table but occur at weaker levels.
+
+Real engines differ from the table: PostgreSQL's *repeatable read* is snapshot isolation (it blocks phantoms but still allows write skew), and its *read uncommitted* behaves like read committed. **Serializable** guarantees the outcome of concurrent transactions equals *some* serial order. Check your database's documentation, not the textbook table.
+
+<Callout type="key">
+A transaction does not make concurrent code safe by itself. Safety depends on the **isolation level** and on writing statements so that the check and the change cannot be separated (a conditional `UPDATE`, `SELECT … FOR UPDATE`, or a unique constraint).
+</Callout>
+
+## Durability: Committed Data Survives Failure
+
+**Durability** means that once the database confirms a commit, the changes survive later failures within its guarantees. If a shop shows "Payment recorded" and the server loses power an instant later, the order must still exist after restart.
+
+The standard mechanism is the **write-ahead log (WAL)**: before acknowledging a commit, the database ensures the log records describing the change have reached durable storage (`fsync`). Data pages can be written later; after a crash, **recovery** replays committed changes from the log and undoes unfinished ones. That one rule is also what makes atomicity possible.
+
+Durability depends on configuration and the fault model: volatile disk caches, misconfigured hardware or **asynchronous replication** can all weaken it. A successful commit on one server does not mean a replica has the change yet (see [Replication](../../distributed-systems/replication/)).
+
+## How the Four Properties Fit Together
+
+| | Failure mode it addresses | Example |
+| --- | --- | --- |
+| **A**tomicity | Partial work | A crash halfway through a transfer leaves no debit-only state |
+| **C**onsistency | Invalid states | A withdrawal cannot commit a negative balance |
+| **I**solation | Concurrent interference | Two customers cannot both claim the last unit |
+| **D**urability | Loss after commit | An acknowledged order survives a power cut |
+
+One property can hold without the others. A transaction can be atomic and durable yet record a bad business outcome if the application enforced no rule, or preserve constraints while allowing an unsafe interleaving under weak isolation.
+
+## Commit, Rollback and the Ambiguous Commit
+
+A transaction ends with `COMMIT` (changes become final under the database's guarantees) or `ROLLBACK` (uncommitted changes are discarded), or it fails before either, and recovery decides which work counts.
+
+A subtle case: the client loses its connection **during `COMMIT`**. The database may have committed even though the client never heard back. From the client's side, success and failure are indistinguishable (the same ambiguity as in [Distributed Basics](../../distributed-systems/distributed-basics/)). The usual remedy is an **idempotency key**: retry with the same unique request id, and the system can detect that the operation was already applied rather than charging twice.
+
+<Callout type="practice">
+Keep transactions **short**. Long ones hold locks or old snapshots, block other work and make deadlocks and retries more likely. Do slow things (network calls, user input) *outside* the transaction, and be ready to retry on serialization failures. ACID gives you the building blocks; the workflow still has to be designed carefully.
+</Callout>
+
+Transactions that span several databases need extra coordination: see [Distributed Transactions](../../distributed-systems/distributed-transactions/).

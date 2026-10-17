@@ -1,0 +1,185 @@
+---
+title: "SQL Fundamentals"
+description: "SELECT, JOIN, WHERE and GROUP BY, the core of everyday SQL."
+order: 2
+tier: core
+takeaways:
+  - "SQL is **declarative**: you describe the result, the database chooses how to produce it."
+  - "**WHERE** filters rows *before* grouping; **HAVING** filters groups *after* aggregation."
+  - "A **JOIN** produces one row per matching pair, so one-to-many joins multiply rows. Inner joins drop unmatched rows, outer joins keep them with `NULL`s."
+  - "Logical evaluation order is **FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT**, not the order you write it."
+  - "`NULL` means unknown: `x = NULL` is never true. Use `IS NULL`."
+resources:
+  - title: "SQLite: SELECT"
+    url: "https://www.sqlite.org/lang_select.html"
+    note: "Precise semantics of every clause, with railroad diagrams."
+  - title: "PostgreSQL tutorial: The SQL language"
+    url: "https://www.postgresql.org/docs/current/tutorial-sql.html"
+  - title: "SQL Murder Mystery"
+    url: "https://mystery.knightlab.com/"
+    note: "Learn joins and filters by solving a case."
+---
+
+SQL lets you describe **what** data you want from a relational database while the database decides **how** to retrieve it. Four operations form the backbone of most queries: `WHERE` filters individual rows, `JOIN` combines related tables, `GROUP BY` collects rows into groups, and `SELECT` defines the output. Knowing how they relate, and the *logical order* in which SQL evaluates them, makes complex queries much easier to reason about. (All outputs below come from real SQLite runs.)
+
+## SELECT Chooses What the Query Returns
+
+`SELECT` lists the columns or expressions in the result; `FROM` names the source table. Given a `Students` table:
+
+| student_id | name | age | major |
+| --- | --- | --- | --- |
+| 101 | Maya | 20 | CS |
+| 102 | Omar | 22 | Math |
+| 103 | Lina | 19 | CS |
+
+```sql
+SELECT name, major
+FROM Students;
+```
+
+The result has only the requested columns; the table is unchanged. You can compute expressions and rename outputs with `AS`:
+
+```sql
+SELECT name, age + 1 AS age_next_year
+FROM Students;
+```
+
+`SELECT *` returns every column, but naming columns is clearer and survives schema changes. `SELECT` describes the *shape* of the result; it does not decide which rows are included.
+
+## WHERE Filters Rows Before Grouping
+
+`WHERE` keeps only rows that satisfy a condition:
+
+```sql
+SELECT name, major
+FROM Students
+WHERE age >= 20
+  AND major = 'CS';
+```
+
+Operators: `=`, `<>`, `<`, `>`, `<=`, `>=`, `AND`, `OR`, `NOT`, plus `IN`, `BETWEEN` and `LIKE` for sets, ranges and patterns.
+
+SQL has a third truth value, **UNKNOWN**, which appears whenever `NULL` is involved. `WHERE grade = NULL` never matches anything, even rows whose grade is missing, because "unknown equals unknown" is itself unknown. Use `IS NULL` / `IS NOT NULL`:
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE employees (emp TEXT, dept_id INTEGER);
+INSERT INTO employees VALUES ('Ana', 10), ('Ben', 10), ('Cy', 20), ('Dee', NULL);
+""")
+print(db.execute("SELECT COUNT(*) FROM employees WHERE dept_id = NULL").fetchone())    # (0,)
+print(db.execute("SELECT COUNT(*) FROM employees WHERE dept_id IS NULL").fetchone())   # (1,)
+```
+
+<Callout type="pitfall">
+`= NULL` and `<> NULL` are always "unknown", so rows silently vanish from the result. Also beware `NOT IN (subquery)` when the subquery can return a `NULL`: it can make the whole condition unknown and return nothing.
+</Callout>
+
+## JOIN Combines Related Tables
+
+Relational designs split information across tables; a **join** recombines rows by matching values. With `Enrollments(student_id, course_id, grade)`:
+
+```sql
+SELECT Students.name, Enrollments.course_id, Enrollments.grade
+FROM Students
+JOIN Enrollments
+  ON Students.student_id = Enrollments.student_id;
+```
+
+The `ON` condition says which rows match. Maya appears twice because she has two enrollments: a join yields **one row per matching combination**, not one per student. If one student matches five enrollment rows, that student contributes five rows, which matters when you later count or sum.
+
+The join types differ in what happens to rows with **no match**:
+
+- **INNER JOIN**: only rows matched on both sides.
+- **LEFT JOIN**: every left row; right columns are `NULL` when nothing matches.
+- **RIGHT JOIN**: the mirror image. **FULL JOIN** keeps unmatched rows from both sides.
+- **CROSS JOIN**: every pairing, no condition (m × n rows).
+
+Try them on a small example where one employee has no department and one department has no employees:
+
+<JoinVisualizer />
+
+```python
+# continuing with the employees table above, plus departments(dept_id, name)
+q = "SELECT e.emp, d.name FROM employees e {} departments d ON e.dept_id = d.dept_id ORDER BY e.emp, d.name"
+for kind in ("INNER JOIN", "LEFT JOIN", "FULL JOIN"):
+    print(f"{kind:<10}", db.execute(q.format(kind)).fetchall())
+# INNER JOIN [('Ana', 'Eng'), ('Ben', 'Eng'), ('Cy', 'Sales')]
+# LEFT JOIN  [('Ana', 'Eng'), ('Ben', 'Eng'), ('Cy', 'Sales'), ('Dee', None)]
+# FULL JOIN  [(None, 'Legal'), ('Ana', 'Eng'), ('Ben', 'Eng'), ('Cy', 'Sales'), ('Dee', None)]
+```
+
+## GROUP BY Turns Rows into Groups
+
+`GROUP BY` partitions rows that share the same value (or combination of values) so **aggregate functions** can compute one result per group:
+
+```sql
+SELECT course_id, COUNT(*) AS enrollment_count
+FROM Enrollments
+GROUP BY course_id;
+```
+
+| Aggregate | Computes |
+| --- | --- |
+| `COUNT(*)` | number of rows |
+| `COUNT(col)` | number of non-`NULL` values |
+| `SUM(col)`, `AVG(col)` | total and mean of non-`NULL` values |
+| `MIN(col)`, `MAX(col)` | smallest and largest non-`NULL` value |
+
+A grouped query may generally select only grouping columns and aggregates. Selecting an individual student's name while grouping by course is invalid: a course group contains many names, and the database cannot pick one.
+
+## HAVING Filters Groups After Aggregation
+
+`WHERE` and `HAVING` both filter, at different stages. `WHERE` filters **input rows** before grouping; `HAVING` filters **finished groups** after aggregation:
+
+```sql
+SELECT course_id, COUNT(*) AS enrollment_count
+FROM Enrollments
+GROUP BY course_id
+HAVING COUNT(*) >= 2;
+```
+
+`WHERE COUNT(*) >= 2` is invalid because the count does not exist yet when `WHERE` runs. A quick test: are you filtering individual records, or a summary of records?
+
+## The Logical Order of Evaluation
+
+A query *starts* with `SELECT`, but SQL conceptually evaluates the clauses in a different order:
+
+1. **FROM / JOIN**: identify the source rows and combine tables.
+2. **WHERE**: remove rows that fail the condition.
+3. **GROUP BY**: partition what remains into groups.
+4. **HAVING**: remove groups that fail aggregate conditions.
+5. **SELECT**: compute the output expressions.
+6. **ORDER BY**: sort the result.
+7. **LIMIT**: cut it down to the requested number of rows.
+
+This is the *logical* order. The optimizer may reorder real execution when the result is unchanged. It explains many rules: `WHERE` cannot see aggregates (not computed yet), and `ORDER BY` can use a `SELECT` alias (it runs after `SELECT`). Step through a full example, watching the rows disappear at each stage:
+
+<SqlLogicalOrder />
+
+```python
+db.executescript("""
+CREATE TABLE enr (student TEXT, major TEXT, course TEXT, grade INTEGER);
+INSERT INTO enr VALUES ('Maya','CS','CS101',90), ('Maya','CS','MA201',85), ('Omar','Math','MA201',92),
+                       ('Lina','CS','CS101',78), ('Omar','Math','CS101',81), ('Zed','Math','MA201',70), ('Kim','Art','AR100',95);
+""")
+print(db.execute("""
+SELECT major, COUNT(*) AS n, AVG(grade) AS avg_grade
+FROM enr
+WHERE grade >= 80            -- filters rows first
+GROUP BY major
+HAVING COUNT(*) >= 2         -- then filters whole groups
+ORDER BY avg_grade DESC
+""").fetchall())
+# [('CS', 2, 87.5), ('Math', 2, 86.5)]
+```
+
+Art disappears at `HAVING` (one qualifying row), Lina and Zed at `WHERE`. Note that `COUNT(*)` counts **rows**, not distinct students: a student with two qualifying enrollments counts twice.
+
+<Callout type="practice">
+When a query gives surprising numbers, build it up in the logical order: run just `FROM`/`JOIN` and count the rows, add `WHERE`, then `GROUP BY`. Most wrong answers come from a join that multiplied rows, or a filter applied at the wrong stage.
+</Callout>
+
+Most everyday SQL is a composition of these few rules: which rows enter, how joins change their number, when filtering happens, and what each group represents.

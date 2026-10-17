@@ -1,0 +1,157 @@
+---
+title: "Relational Model"
+description: "Tables, rows, and keys: the model behind relational databases."
+order: 1
+tier: core
+takeaways:
+  - "The **relational model** stores data as **relations** (tables of rows and columns) linked by **matching values**, not by physical pointers."
+  - "A **key** uniquely identifies a row; the **primary key** is the chosen candidate key and must be unique and non-null; a **composite key** uses several columns."
+  - "A **foreign key** points at another table's key, and **referential integrity** forbids pointing at a row that does not exist."
+  - "**Selection**, **projection** and **join** are the core operations: queries describe *what* you want, and the engine decides *how*."
+  - "**Constraints** (domain, key, referential, business) keep invalid data out at the database, not just in application code."
+resources:
+  - title: "Codd (1970): A Relational Model of Data for Large Shared Data Banks"
+    url: "https://www.seas.upenn.edu/~zives/03f/cis550/codd.pdf"
+    note: "The paper that started it. Surprisingly readable."
+  - title: "SQLite: Foreign key support"
+    url: "https://www.sqlite.org/foreignkeys.html"
+    note: "Clear explanation of how referential integrity is enforced and what the actions mean."
+  - title: "PostgreSQL: Constraints"
+    url: "https://www.postgresql.org/docs/current/ddl-constraints.html"
+---
+
+The **relational model** organizes data into **relations**, commonly drawn as tables, where each row describes an entity or relationship and each column an attribute. Its central idea is that data can be connected through **values** rather than physical pointers between records. **Keys** identify rows and relate tables, while relational operations retrieve and combine data without depending on how it is stored. This separation between **logical structure and physical storage** is one of the foundations of relational databases.
+
+## Tables Represent Relations
+
+A table of students:
+
+| student_id | name | age |
+| --- | --- | --- |
+| 101 | Maya | 20 |
+| 102 | Omar | 22 |
+| 103 | Lina | 19 |
+
+Each column is an attribute such as `name` or `age`; each row describes one student; each cell holds one value. In the formal model a **relation is a set of tuples** over specified attributes, which means:
+
+- each attribute has a defined **domain** (integers, text, dates),
+- a tuple has a value for every attribute, subject to constraints,
+- there is **no meaningful row order**,
+- duplicate tuples are not allowed.
+
+SQL tables resemble this model but differ from it. Query results have no guaranteed order without `ORDER BY`, tables can hold duplicate rows unless a constraint forbids it, and SQL uses `NULL` for missing or unknown values, which breaks ordinary two-valued logic (`NULL = NULL` is not true). The model describes the *meaning* of the data, not how bytes are laid out on disk.
+
+## Keys Identify Rows
+
+A **key** is an attribute, or set of attributes, that uniquely identifies a row. `student_id` identifies each student; a name does not, since two students can both be called Maya. Related terms:
+
+- **Superkey:** any set of attributes that is unique, even if it contains unnecessary ones.
+- **Candidate key:** a *minimal* superkey: remove any attribute and uniqueness is lost.
+- **Primary key:** the candidate key chosen as the table's main identifier. It must be unique and non-null.
+- **Alternate key:** a candidate key that was not chosen.
+
+A key can have several attributes. An enrollment table might use `(student_id, course_id)` as a **composite** primary key: a student takes many courses, but should have only one enrollment record per course. Keys are not just labels. They are identity constraints the database enforces, without which it could not unambiguously update, delete or connect records.
+
+## Foreign Keys Connect Tables
+
+Rather than one enormous table, relational databases separate entities and link them through matching values.
+
+**Students**
+
+| student_id | name |
+| --- | --- |
+| 101 | Maya |
+| 102 | Omar |
+
+**Enrollments**
+
+| student_id | course_id |
+| --- | --- |
+| 101 | CS101 |
+| 101 | MA201 |
+| 102 | CS101 |
+
+`student_id` is the primary key of `Students`; in `Enrollments` it refers back to the student who owns each enrollment. That reference is a **foreign key**. It imposes **referential integrity**: a non-null foreign-key value must match an existing key in the referenced table, so an enrollment cannot point at a student who does not exist. The link is a **data value**, not a hard-coded pointer, so the logical structure does not depend on the storage layout.
+
+Foreign keys also express **cardinality**: one student has many enrollments (one-to-many), while each enrollment belongs to one student. Here is what the database actually does when the rules are broken (SQLite, which enforces foreign keys once you turn them on):
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("PRAGMA foreign_keys = ON")                      # SQLite only enforces foreign keys when asked
+db.executescript("""
+CREATE TABLE students (student_id INTEGER PRIMARY KEY, name TEXT NOT NULL, age INTEGER CHECK (age >= 0));
+CREATE TABLE enrollments (
+    student_id INTEGER NOT NULL REFERENCES students(student_id),
+    course_id  TEXT NOT NULL,
+    PRIMARY KEY (student_id, course_id)                     -- composite key: one row per student per course
+);
+INSERT INTO students VALUES (101, 'Maya', 20), (102, 'Omar', 22), (103, 'Lina', 19);
+INSERT INTO enrollments VALUES (101, 'CS101'), (101, 'MA201'), (102, 'CS101');
+""")
+for sql in ("INSERT INTO students VALUES (101, 'Dup', 30)",            # duplicate primary key
+            "INSERT INTO enrollments VALUES (999, 'CS101')",           # foreign key to a student that doesn't exist
+            "INSERT INTO students VALUES (104, 'Neg', -5)"):           # CHECK constraint
+    try:
+        db.execute(sql)
+    except sqlite3.IntegrityError as e:
+        print("rejected:", e)
+# rejected: UNIQUE constraint failed: students.student_id
+# rejected: FOREIGN KEY constraint failed
+# rejected: CHECK constraint failed: age >= 0
+```
+
+Try to break a database yourself, and see what each rule protects:
+
+<RelationalKeys />
+
+<Callout type="key">
+The database, not the application, rejects the bad rows. Integrity is part of the **structure**: every query, script and future developer is held to the same rules.
+</Callout>
+
+## Relational Operations Retrieve and Combine Data
+
+The model gives queries a mathematical foundation. A query says *which* information is wanted, not where records live. Two basic operations:
+
+- **Selection** keeps the rows that satisfy a condition.
+- **Projection** keeps particular columns.
+
+```sql
+SELECT name          -- projection: which columns
+FROM Students
+WHERE age > 20;      -- selection: which rows
+```
+
+The third foundational operation is the **join**, which combines rows from two relations by a condition:
+
+```sql
+SELECT Students.name, Enrollments.course_id
+FROM Students
+JOIN Enrollments
+  ON Students.student_id = Enrollments.student_id;
+```
+
+A join reassembles information that was deliberately stored apart: data lives in separate relations and is recombined when needed. A query describes the desired *result*, so the **optimizer** is free to choose indexes, join algorithms and access paths (see [Query Optimization](../query-optimization/)). The next note, [SQL Fundamentals](../sql-fundamentals/), turns these into working queries.
+
+## Constraints Preserve the Meaning of Data
+
+Tables and keys give structure; **constraints** define which database states are valid:
+
+| Constraint | Rule |
+| --- | --- |
+| **Domain** | Values must belong to the allowed type or domain |
+| **Key** | Candidate-key values are unique |
+| **Entity integrity** | Primary-key attributes are never null |
+| **Referential integrity** | A foreign key refers to an existing row |
+| **Business rule** | Application-specific, e.g. `CHECK (capacity >= 0)` |
+
+They matter because a database is shared by many queries, users and applications. If each application had to enforce every rule itself, inconsistent data would be much easier to create.
+
+## Normalization Reduces Redundancy
+
+If a student's name is stored in every enrollment row, one fact appears many times. Change it in nine rows out of ten and the database now holds two versions of the truth: an **update anomaly**. **Normalization** uses the dependencies between attributes to decide how to split relations: if `student_id` determines a name, that fact belongs in `Students`, once. The result is separate relations for students, courses and enrollments, each with proper keys, and joins to put them back together. The rules are the subject of [Normalization](../normalization/).
+
+<Callout type="pitfall">
+Normalization does not mean "as many tables as possible". It makes dependencies explicit to avoid anomalies. Deliberate redundancy for speed (**denormalization**) is legitimate, but it comes with the obligation to keep the copies consistent.
+</Callout>
