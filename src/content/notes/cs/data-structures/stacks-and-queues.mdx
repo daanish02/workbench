@@ -1,0 +1,100 @@
+---
+title: "Stacks & Queues"
+description: "LIFO and FIFO collections, and where each one shows up in practice."
+order: 3
+tier: core
+takeaways:
+  - "A **stack** is LIFO: push and pop happen at the same end, so the newest item leaves first."
+  - "A **queue** is FIFO: enqueue at the rear, dequeue from the front, so the oldest item leaves first."
+  - "Both give O(1) add and remove. An array-backed queue needs a **circular buffer** to avoid shifting on every dequeue."
+  - "The structure is a **policy for what happens next**: a stack drives depth-first search and the call stack, a queue drives breadth-first search and scheduling."
+resources:
+  - title: "Stack (abstract data type)"
+    url: "https://en.wikipedia.org/wiki/Stack_(abstract_data_type)"
+  - title: "Circular buffer"
+    url: "https://en.wikipedia.org/wiki/Circular_buffer"
+    note: "How front and rear indices wrap around a fixed array."
+  - title: "collections.deque (Python docs)"
+    url: "https://docs.python.org/3/library/collections.html#collections.deque"
+    note: "Python's O(1) double-ended queue, the right tool for FIFO queues."
+---
+
+Stacks and queues are data structures that control how elements enter and leave a collection. A **stack** follows last in, first out (**LIFO**), so the most recently added element is removed first. A **queue** follows first in, first out (**FIFO**), so the earliest added element is removed first. These simple rules make them useful for managing execution history, processing tasks, handling requests, and organizing many other computational processes.
+
+## Stacks: last in, first out
+
+A stack behaves like a pile of plates: you add a plate to the top and remove the top plate first. Both insertion and removal happen at the same end, called the top.
+
+The two fundamental operations are `push`, which adds an element, and `pop`, which removes and returns the top element. A `peek` or `top` operation reads the top element without removing it. A stack may also provide an `isEmpty` check to determine whether any elements remain.
+
+Example: push A, then B, then C.
+
+```
+top →  C
+       B
+       A   ← bottom
+```
+
+The next pop returns C, then B, then A.
+
+Stacks are useful when the most recent operation needs to be handled first. A text editor can use a stack to support undo: each new edit is recorded, and undo retrieves the most recent edit to reverse it. Function calls also use a call stack to track active functions, their local variables, and where execution should resume after a function returns.
+
+A stack can be implemented using an array or a linked list. With a suitable implementation, `push` and `pop` both take $O(1)$ time, though a dynamic array may occasionally need to resize.
+
+## Queues: first in, first out
+
+A queue behaves like a line of people waiting for service. New elements join at the rear, and elements leave from the front. The earliest element added is therefore the first one removed.
+
+The core operations are `enqueue`, which adds an element to the rear, and `dequeue`, which removes and returns the front element. A `front` or `peek` operation reads the next element without removing it.
+
+Example: enqueue A, then B, then C.
+
+```
+front (leaves first) →  A  B  C  ← rear (joins here)
+```
+
+The next dequeue returns A, then B, then C.
+
+Queues are useful when tasks should be processed in arrival order. A printer queue, for example, can hold documents waiting to be printed. Queues also appear in network systems, event processing, and breadth-first search, where nodes are explored in layers.
+
+A queue can be implemented with a linked list that tracks both the front and rear, allowing enqueue and dequeue in $O(1)$ time. An array-based queue can also achieve constant-time operations using a **circular buffer**, which reuses positions as elements leave instead of shifting every remaining element after each dequeue.
+
+<StackQueueViz />
+
+<Callout type="pitfall" title="A Python list is a stack, not a queue">
+
+`list.append` and `list.pop()` work at the end of the array, so they are O(1). `list.pop(0)` removes from the front and shifts every remaining element: O(n) per dequeue. Use `collections.deque`, which is O(1) at both ends.
+
+```python
+from collections import deque
+
+stack, queue = [], deque()
+for item in "ABC":
+    stack.append(item)   # push onto the top
+    queue.append(item)   # enqueue at the rear
+print(stack.pop(), queue.popleft())   # C A   newest out vs oldest out
+print(stack, list(queue))             # ['A', 'B'] ['B', 'C']
+```
+
+</Callout>
+
+## The key difference
+
+| Property         | Stack                              | Queue                                            |
+| ---------------- | ---------------------------------- | ------------------------------------------------ |
+| Ordering rule    | LIFO                               | FIFO                                             |
+| Add operation    | `push` at the top                  | `enqueue` at the rear                            |
+| Remove operation | `pop` from the top                 | `dequeue` from the front                         |
+| Typical use      | Undo, function calls, backtracking | Task scheduling, buffering, breadth-first search |
+
+<Callout type="key">
+The difference is not how the data is stored, but which element is selected next. A stack prioritizes the newest element; a queue preserves arrival order. Either structure can be built from arrays or linked lists, so the abstract behavior is independent of the underlying implementation.
+</Callout>
+
+## How they shape algorithms
+
+Consider a maze-solving algorithm. A depth-first search can use a stack to explore one path deeply before returning to earlier choices. A breadth-first search uses a queue to explore nearby positions first, then positions farther away. In an unweighted graph, breadth-first search can find a path with the fewest edges because it visits nodes in increasing distance from the starting node.
+
+The same principle appears in program execution. When one function calls another, the newest call usually becomes the active one, matching stack behavior. When independent jobs wait for a worker, a queue can preserve the order in which they arrived.
+
+Stacks and queues therefore do more than store collections. They encode a policy for what happens next. Choosing the appropriate policy often makes an algorithm simpler and helps guarantee the behavior it needs.

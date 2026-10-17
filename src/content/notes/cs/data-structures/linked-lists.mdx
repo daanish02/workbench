@@ -1,0 +1,122 @@
+---
+title: "Linked Lists"
+description: "Singly and doubly linked lists: nodes, pointers, and their trade-offs against arrays."
+order: 2
+tier: core
+takeaways:
+  - "A linked list keeps order through **references between nodes**, not through memory position."
+  - "Insert or delete is O(1) **once you hold the right node**; finding that node is still an O(n) walk from head."
+  - "Singly linked nodes cannot look back, so deleting needs the **predecessor**. Doubly linked nodes pay an extra pointer to remove themselves in O(1)."
+  - "Rewire in the right order: point the new node at its successor **before** redirecting the predecessor."
+  - "On real hardware, pointer chasing costs **cache misses**, so arrays often win even where the big-O favours lists."
+resources:
+  - title: "Linked list"
+    url: "https://en.wikipedia.org/wiki/Linked_list"
+  - title: "VisuAlgo: linked list, stack, queue, deque"
+    url: "https://visualgo.net/en/list"
+    note: "Animated insert and remove on singly and doubly linked lists."
+---
+
+Linked lists are data structures that store elements in separate nodes connected by references rather than requiring all elements to occupy one contiguous block of memory. A singly linked list connects each node to the next, while a doubly linked list connects each node to both its predecessor and successor. This structure makes insertion and deletion efficient when the relevant node is already known, but accessing an element by position is slower than in an array because the list must be traversed node by node.
+
+## Nodes and links
+
+A linked list is built from **nodes**, each containing a value and one or more references to other nodes. In a **singly linked list**, each node holds a value and a reference to the next node.
+
+```
+head → [A | next] → [B | next] → [C | next] → null
+```
+
+Each node points forward. The final node points to null, indicating the end.
+
+The list maintains a reference to its first node, called the **head**. To find a later node, the program follows references from the head until it reaches the desired position. The final node points to `null` because no node follows it.
+
+Unlike an array, a linked list does not need its nodes to occupy adjacent memory addresses. Each node can be stored wherever memory allocation places it, as long as its references correctly connect the nodes. The logical order comes from the links, not from physical memory order.
+
+## Singly linked lists
+
+A singly linked list stores one forward reference per node. It supports sequential traversal from the head toward the tail, but cannot move backward directly.
+
+To insert a new node after a known node, the program redirects references. If node A is followed by node B, inserting node X between them requires setting X's next reference to B and A's next reference to X.
+
+<Callout type="pitfall" title="Order of assignments">
+The order of these assignments matters: overwriting A's reference before preserving the link to B could disconnect the rest of the list. If nothing else refers to B, every node from B onward is lost.
+</Callout>
+
+Deletion follows a similar principle. To remove B from A → B → C, update A's next reference to C. The node B is no longer part of the chain; its memory can be reclaimed automatically or explicitly, depending on the language and memory-management model.
+
+These operations can take $O(1)$ time when the relevant predecessor or insertion point is already known. However, finding that position may take $O(n)$ time. A singly linked list also makes deleting the tail inconvenient because the program must find the node immediately before it.
+
+In Python, where variables are references, both operations are a single assignment each:
+
+```python
+class Node:
+    def __init__(self, value, next=None):
+        self.value, self.next = value, next
+
+def insert_after(node, value):
+    # The new node is built already pointing at node.next, so the old successor
+    # is never left without a reference while node.next is overwritten.
+    node.next = Node(value, node.next)
+
+def delete_after(node):
+    # The skipped node is no longer reachable; the garbage collector reclaims it.
+    node.next = node.next.next
+
+def to_list(head):
+    out = []
+    while head:                 # the only way to reach item i is to walk i links
+        out.append(head.value)
+        head = head.next
+    return out
+
+head = Node("A", Node("B", Node("C")))
+insert_after(head, "X")
+print(to_list(head))   # ['A', 'X', 'B', 'C']
+delete_after(head.next)
+print(to_list(head))   # ['A', 'X', 'C']
+```
+
+## Doubly linked lists
+
+A **doubly linked list** gives each node two references: `next` and `prev`. The first node's `prev` and the last node's `next` are typically `null`.
+
+```
+null ← [prev | A | next] ⇄ [prev | B | next] ⇄ [prev | C | next] → null
+```
+
+Links work in both directions, allowing traversal forward and backward.
+
+Bidirectional links make some operations easier. If the program already holds a reference to a node, it can move to its predecessor without starting at the head. Removing a known node can also be performed in constant time by connecting its predecessor to its successor and updating both directions, assuming the list's boundary cases are handled.
+
+The cost is additional memory and bookkeeping. Every insertion or deletion must maintain both sets of links correctly. If only one reference is updated when two should change, the forward and backward traversals can disagree or become broken.
+
+<LinkedListViz />
+
+## Performance and trade-offs
+
+The main difference between arrays and linked lists is the relationship between position and access. An array can calculate an element's location directly from its index, while a linked list must follow references.
+
+| Operation                        | Array                                     | Singly linked list |
+| -------------------------------- | ----------------------------------------- | ------------------ |
+| Access by index                  | $O(1)$                                | $O(n)$         |
+| Search by value                  | $O(n)$                                | $O(n)$         |
+| Insert at the front              | $O(n)$ for a typical contiguous array | $O(1)$         |
+| Insert after a known node        | Usually $O(n)$ due to shifting        | $O(1)$         |
+| Delete after a known predecessor | Usually $O(n)$ due to shifting        | $O(1)$         |
+
+These are typical costs, not guarantees for every implementation. Dynamic arrays usually have amortized $O(1)$ insertion at the end, while resizing or shifting can still cost $O(n)$. Linked-list insertion is only $O(1)$ once the required location is known; searching for it is not free.
+
+<Callout type="practice" title="Big-O is not the whole story">
+Arrays also tend to have better **cache locality** because neighboring elements are stored close together in memory. Linked-list traversal involves following pointers to potentially scattered nodes, which can cause more cache misses. Consequently, a linked list can be slower in practice even when its insertion or deletion complexity looks better on paper.
+</Callout>
+
+## When linked lists are useful
+
+Linked lists are useful when a program frequently inserts or removes elements at known positions and does not need fast random access. Doubly linked lists are especially useful when elements must be removed from either end or traversed in both directions, such as in some implementations of deques, navigation histories, and least-recently-used (LRU) caches.
+
+They are less suitable when the dominant task is retrieving elements by index, scanning large collections efficiently, or minimizing per-element memory overhead. In those cases, arrays or dynamic arrays are often the better choice.
+
+<Callout type="key">
+The essential insight is that a linked list trades direct positional access for flexible connections between nodes. The links make rearranging a sequence relatively cheap when the relevant nodes are known, but they do not make locating those nodes any faster.
+</Callout>

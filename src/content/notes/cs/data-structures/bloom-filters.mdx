@@ -1,0 +1,112 @@
+---
+title: "Bloom Filters"
+description: "Probabilistic set membership with no false negatives, at tiny memory cost."
+order: 10
+tier: optional
+takeaways:
+  - "A **Bloom filter** is m bits plus k hash functions: insert sets k bits, query checks those k bits."
+  - "Any 0 bit means **definitely absent**; all 1s means only **maybe present**. No false negatives, some false positives."
+  - "False-positive rate p ≈ (1 − e^(−kn/m))^k: it rises as more items n fill a fixed m."
+  - "Best k ≈ (m/n)·ln 2. About 10 bits per item with k = 7 gives under 1% false positives."
+  - "Standard filters cannot delete or list items. Use them as a cheap **\"no, skip it\"** check before an expensive exact lookup."
+resources:
+  - title: "Bloom filter"
+    url: "https://en.wikipedia.org/wiki/Bloom_filter"
+    note: "Derivation of the false-positive formula and many variants."
+  - title: "Bloom filters by example"
+    url: "https://llimllib.github.io/bloomfilter-tutorial/"
+    note: "Interactive tutorial with a live bit array."
+  - title: "Bloom filter calculator"
+    url: "https://hur.st/bloomfilter/"
+    note: "Solve for m, k, n or p given the other three."
+---
+
+A **Bloom filter** is a space-efficient probabilistic data structure that tests whether an item may belong to a set. It can definitively report that an item has not been inserted, but a positive result means only that the item might be present. This trade-off—allowing false positives but never false negatives under normal operation—makes Bloom filters useful when memory is limited and checking a full dataset would be expensive. They are often used to avoid unnecessary database lookups, disk reads, or network requests.
+
+## How a Bloom filter works
+
+A Bloom filter consists of a bit array of $m$ bits, initially set to zero, and $k$ hash functions. Each hash function maps an item to a position in the array.
+
+To insert an item, the filter computes all $k$ hash positions and sets those bits to 1. To test an item, it computes the same positions. If any of those bits is 0, the item definitely was not inserted. If all are 1, the item may have been inserted.
+
+For example, suppose inserting the word `apple` sets bits 2, 5, and 9. Inserting another word might set some of those same bits. When testing `orange`, if its hash positions are 2, 5, and 9, all three bits are already 1—even if `orange` was never inserted. The filter reports a possible match: a false positive.
+
+The reason is that a Bloom filter remembers which bit positions have been set, not which item set them. Many different items can contribute to the same pattern of bits.
+
+<BloomFilterViz />
+
+## False positives and false negatives
+
+Bloom filters have an asymmetric error model.
+
+- **False positive**: an item was never inserted, but the filter reports that it may be present.
+- **False negative**: an item was inserted, but the filter reports that it is absent.
+
+<Callout type="key">
+A standard Bloom filter does not produce false negatives, provided it has not been incorrectly modified and membership checks use the same hashing scheme. A zero bit proves that at least one required position was never set, so the item could not have been inserted.
+</Callout>
+
+A positive result is less certain because another combination of items may have set all the required bits. This is why Bloom filters are useful when an occasional unnecessary follow-up lookup is acceptable, but they cannot replace an exact data structure when positive membership must be guaranteed.
+
+## How the false-positive rate is determined
+
+The probability of a false positive depends primarily on the bit-array size $m$, the number of inserted items $n$, and the number of hash functions $k$.
+
+After inserting $n$ items, the approximate probability that any particular bit remains zero is
+
+$$
+\left(1-\frac{1}{m}\right)^{kn} \approx e^{-kn/m}
+$$
+
+In words: each of the $kn$ hash evaluations misses a given bit with probability $1-\frac{1}{m}$, and the bit stays zero only if every one of them misses. The approximation assumes the usual idealized hashing model. Therefore, the probability that a bit is set is approximately $1-e^{-kn/m}$. A false positive occurs when all $k$ positions for a queried item are set, giving the familiar estimate
+
+$$
+p \approx \left(1-e^{-kn/m}\right)^k
+$$
+
+In words: take the fraction of bits that are set, and raise it to the power $k$, because a false positive needs all $k$ independent positions to land on set bits.
+
+This formula explains why a filter becomes less reliable as more items are inserted into a fixed-size bit array: more bits become set, so an unrelated item is more likely to find all its positions already occupied.
+
+For a given $m$ and $n$, the approximate optimal number of hash functions is
+
+$$
+k_{\text{opt}}=\frac{m}{n}\ln 2
+$$
+
+In words: use more hash functions when you have more bits per item. At this point, the estimated false-positive rate is minimized, and about half of the bits end up set. The result also shows that Bloom-filter design is a trade-off between memory consumption, the number of hash operations, and acceptable error probability.
+
+Plugging in real numbers shows how small a useful filter is:
+
+```python
+from math import exp, log
+
+def false_positive_rate(m, n, k):
+    return (1 - exp(-k * n / m)) ** k
+
+n = 1_000_000          # items to remember
+m = 10 * n             # 10 bits per item
+k = round(m / n * log(2))
+print(k)                                        # 7   the optimal number of hashes
+print(f"{false_positive_rate(m, n, k):.4f}")    # 0.0082   under 1% false positives
+print(f"{false_positive_rate(m, n, 2):.4f}")    # 0.0329   too few hashes: 4x worse
+print(f"{m / 8 / 1e6:.2f} MB")                  # 1.25 MB  for a million items of any size
+```
+
+## Where Bloom filters are useful
+
+Bloom filters are particularly valuable as a preliminary check before an expensive operation. A database system might use one to determine whether a disk page could contain a key. If the filter says the key is definitely absent, the system can skip the page; if it says the key may exist, it performs the exact lookup.
+
+They can also reduce unnecessary requests in distributed systems, help identify potentially repeated items in large streams, and support membership checks in storage engines and network services. In each case, the filter does not need to hold the actual items, only enough information to rule out most absent ones.
+
+<Callout type="pitfall" title="No deletes">
+There are limitations. A standard Bloom filter cannot enumerate its stored items or recover their original values. It also does not support ordinary deletion: clearing a bit could accidentally make another inserted item appear absent. **Counting Bloom filters** address deletion by tracking counts instead of individual bits, at the cost of additional memory.
+</Callout>
+
+## The deeper trade-off
+
+<Callout type="key">
+A Bloom filter deliberately sacrifices certainty about positive results to gain compact storage and fast membership checks. Its most valuable answer is not “yes, this item exists,” but “no, you can safely stop looking.” When the filter reports a possible match, an exact source must still verify it if correctness matters.
+</Callout>
+
+This makes Bloom filters a useful example of probabilistic data structures: structures that provide controlled uncertainty in exchange for improvements in memory or performance.

@@ -1,0 +1,93 @@
+---
+title: "Hash Tables"
+description: "Hashing, collisions, and load factor, and how they affect lookup speed."
+order: 4
+tier: core
+takeaways:
+  - "A **hash function** turns a key into a slot index, i = h(k) mod m, so lookup jumps straight to a small part of the table."
+  - "**Collisions** are unavoidable. Chaining keeps a list per slot; open addressing probes for another free slot."
+  - "The **load factor** α = n/m predicts crowding. Linear probing slows sharply as α → 1, so tables resize well before that."
+  - "Resizing is O(n) but rare, so inserts stay **amortized O(1)**. Worst case, with everything colliding, is O(n)."
+  - "Hash tables give up **ordering**: no sorted traversal, range queries or cheap min/max."
+resources:
+  - title: "Hash table"
+    url: "https://en.wikipedia.org/wiki/Hash_table"
+  - title: "VisuAlgo: hash table"
+    url: "https://visualgo.net/en/hashtable"
+    note: "Step through linear probing, quadratic probing, double hashing and chaining."
+  - title: "Linear probing"
+    url: "https://en.wikipedia.org/wiki/Linear_probing"
+    note: "Primary clustering and the expected probe counts quoted in this note."
+---
+
+Hash tables are data structures that store key–value pairs and use a hash function to make lookup, insertion, and deletion fast. Instead of searching through every stored item, a hash table transforms a key into a number that helps determine where its value belongs. The main challenge is that different keys can map to the same location, creating collisions. Hash functions, collision-resolution strategies, and load factor work together to make hash tables efficient as the collection grows.
+
+## Hashing: turning keys into locations
+
+A hash table stores values under keys, much like a dictionary associates words with definitions. A key might be a username, an integer ID, or a filename; the associated value might be a user record, an object, or file metadata.
+
+A **hash function** transforms a key into a numerical hash value. The table then uses that value to determine an index in its underlying storage.
+
+For a table with $m$ slots, a simplified indexing scheme is
+
+$$
+i = h(k) \bmod m
+$$
+
+where $k$ is the key, $h(k)$ is its hash value, and $i$ is the resulting slot index. The modulo operation ensures that the index falls between $0$ and $m-1$.
+
+Imagine a table with 10 slots and a hash function that maps the key `42` to the number 142. The resulting index is $142 \bmod 10=2$, so the table uses slot 2. Real hash functions for strings and other complex keys are more sophisticated, but the basic idea is the same.
+
+A good hash function is deterministic: the same key, under the same hashing configuration, produces the same hash. It should also distribute the expected keys reasonably evenly across the table. If many keys map to a small number of slots, the table loses much of its performance advantage.
+
+## Collisions: when keys share a slot
+
+A **collision** occurs when two different keys map to the same table index. This is unavoidable in a typical hash table because the set of possible keys is much larger than the set of available slots.
+
+For example, suppose the table uses $h(k)=k \bmod 10$. The keys 12, 22, and 32 all map to slot 2. A hash table therefore needs a collision-resolution strategy that allows all three entries to be stored and retrieved correctly.
+
+Two common approaches are separate chaining and open addressing.
+
+With **separate chaining**, each slot holds a collection of entries, often represented by a linked list or another small data structure. If several keys map to slot 2, they are stored in that slot's collection. A lookup first computes the slot, then searches the entries within it.
+
+With **open addressing**, every entry is stored directly in the table's array. When the intended slot is occupied, the algorithm probes other positions according to a defined rule. **Linear probing**, for example, checks the next slot, then the next, wrapping around at the end. Lookup must follow the same probing sequence to find the entry.
+
+Both strategies can work well, but their performance depends on the hash distribution, table occupancy, and implementation. Long chains make separate chaining slower; crowded open-addressed tables can require many probes before finding an empty slot or the desired key.
+
+<HashTableViz />
+
+## Load factor: how full the table is
+
+The **load factor** measures how many entries are stored relative to the table's capacity:
+
+$$
+\alpha = \frac{n}{m}
+$$
+
+Here, $n$ is the number of entries and $m$ is the number of slots. In words: $\alpha$ is the average number of entries per slot. If a table has 75 entries and 100 slots, its load factor is $0.75$, or 75%.
+
+Load factor helps predict how crowded the table is, but its interpretation depends on the collision strategy. With separate chaining, the load factor represents the average number of entries per slot, so it can exceed 1. With open addressing, the table generally cannot hold more entries than it has slots, and performance often degrades sharply as the load factor approaches 1.
+
+Under the idealized assumption that keys hash uniformly, the expected cost of an unsuccessful search (one that ends at an empty slot) is about $1+\alpha$ entries examined with chaining, but with linear probing it is about
+
+$$
+\frac{1}{2}\left(1+\frac{1}{(1-\alpha)^2}\right)
+$$
+
+In words: probing cost blows up as the table fills, because occupied slots clump into runs that every new key must walk past. At $\alpha=0.5$ a miss probes about 2.5 slots; at $\alpha=0.9$, about 50.
+
+Implementations commonly use a threshold to trigger resizing. When the table becomes too full, it allocates a larger storage area and redistributes the entries according to the new capacity. This redistribution is usually called **rehashing**, even if the underlying hash values themselves can be reused. Resizing costs $O(n)$ time for that operation, but if it happens occasionally as the table grows, insertions can still have amortized $O(1)$ time.
+
+## Performance and limitations
+
+With a well-distributed hash function and a suitable collision strategy, hash-table lookup, insertion, and deletion are typically $O(1)$ on average. That does not mean every operation takes the same amount of time: collisions, resizing, and poor hash distributions can increase the work.
+
+In the worst case, many keys may collide, causing an operation to examine $O(n)$ entries. Hash tables also generally do not preserve keys in sorted order, so they are not ideal when an application needs ordered traversal, range queries, or the smallest or largest key efficiently.
+
+<Callout type="pitfall" title="Fast is not the same as secure">
+Hash functions also have different purposes. A hash table's hash function is designed primarily for efficient indexing and distribution, not necessarily for security. Password storage and protection against malicious inputs require additional considerations; a fast general-purpose hash is not a substitute for a purpose-built password-hashing algorithm.
+</Callout>
+
+<Callout type="key">
+The key insight is that a hash table gains speed by using a key to narrow the search to a small part of its storage. Collisions are the unavoidable cost of mapping a huge key space into a limited table, while good distribution, collision handling, and controlled load factor keep that cost manageable.
+</Callout>

@@ -1,0 +1,87 @@
+---
+title: "Skip Lists, B-Trees"
+description: "Two ways to keep a large sorted collection fast to search and update."
+order: 11
+tier: advanced
+takeaways:
+  - "A **skip list** is a sorted linked list with randomly built express lanes: expected O(log n) search, no rebalancing."
+  - "Skip-list search: move right while the next key does not overshoot the target, otherwise drop a level."
+  - "A **B-tree** packs many keys per node, so its height is about log_b n for branching factor b: shallow even for billions of keys."
+  - "B-trees grow by **splitting** full nodes and promoting a key upward, so every leaf stays at the same depth."
+  - "B-trees (and B+ trees) dominate databases and filesystems because **one node = one disk page read**."
+resources:
+  - title: "Skip Lists: A Probabilistic Alternative to Balanced Trees (Pugh, 1990)"
+    url: "https://15721.courses.cs.cmu.edu/spring2018/papers/08-oltpindexes1/pugh-skiplists-cacm1990.pdf"
+    note: "The original paper; short and readable."
+  - title: "B-tree"
+    url: "https://en.wikipedia.org/wiki/B-tree"
+  - title: "Use The Index, Luke: the search tree"
+    url: "https://use-the-index-luke.com/sql/anatomy/the-tree"
+    note: "How real database indexes use B+ trees, with page-level diagrams."
+  - title: "B-tree visualization (USF, David Galles)"
+    url: "https://www.cs.usfca.edu/~galles/visualization/BTree.html"
+---
+
+Skip lists and B-trees are data structures designed to keep searching, inserting, and deleting efficient as a sorted collection grows. A skip list uses multiple levels of linked-list connections to let searches jump over many elements, while a B-tree organizes keys into a balanced multiway search tree with several keys per node. Both provide $O(\log n)$ search and update operations under their usual assumptions, but they suit different environments: skip lists offer a relatively simple, probabilistically balanced structure, while B-trees are especially effective for databases and storage systems that read and write data in blocks.
+
+## Skip lists: linked lists with express lanes
+
+A standard sorted linked list must examine elements one by one to find a value, taking $O(n)$ time in the worst case. A **skip list** speeds this up by adding higher levels of links that skip over portions of the list.
+
+At the bottom level, every element appears in sorted order. Higher levels contain selected elements, allowing a search to make large jumps before dropping down to a more detailed level.
+
+<SkipListViz />
+
+To search for 55, the algorithm starts at the highest level and moves right while the next value is not greater than 55. Once the next jump would overshoot the target, it descends a level and continues. It eventually reaches 55 without inspecting every element.
+
+The levels are usually assigned randomly when nodes are inserted. This randomization gives skip lists expected $O(\log n)$ search, insertion, and deletion time, with $O(n)$ expected space. Unlike AVL or red-black trees, a skip list does not enforce a strict balance invariant; its efficiency comes from the expected distribution of levels. A poor random arrangement can produce linear-time behavior, though that is unlikely under a suitable randomized design.
+
+The usual rule promotes a node to each next level with probability $\tfrac12$, like repeated coin flips. Then level $\ell$ holds about $n/2^{\ell}$ nodes, so there are about $\log_2 n$ levels, and a search moves right only about twice per level before dropping. In words: halving the candidates at every level is the same idea as binary search, built from randomness instead of a fixed layout.
+
+Skip lists are attractive because their operations are conceptually straightforward: search records the predecessor at each level, insertion adjusts the relevant links, and deletion removes the node's links. They are useful in ordered collections, concurrent systems, and in-memory indexes where implementation simplicity matters.
+
+## B-trees: many keys per node
+
+A **B-tree** is a balanced search tree designed to keep its height small by storing multiple sorted keys in each node. Instead of allowing only two children per node, a B-tree can have many children. Each internal node's keys divide the values into ranges, with a child subtree corresponding to each range.
+
+For example, a node containing keys `[20, 50]` can have up to three child subtrees: one with keys below 20, one with keys between 20 and 50, and one with keys above 50. Searching follows the appropriate range at each node until it reaches the target or a leaf where the key would belong.
+
+B-trees maintain rules governing how many keys and children each node may contain. Nodes are kept sufficiently full, and all leaves remain at the same depth. When insertion overfills a node, the node is split and a key is promoted to its parent. If deletion leaves a node too empty, keys may be redistributed between siblings or nodes may be merged. These operations preserve balance as the collection changes.
+
+<BTreeViz />
+
+<Callout type="key">
+The high **branching factor** is the defining advantage. If each node holds many keys and has many children, a tree containing millions of records can have only a small number of levels. The number of node visits for search, insertion, and deletion is $O(\log n)$, with the branching factor determining the logarithm's base.
+</Callout>
+
+With branching factor $b$, the height is roughly
+
+$$
+h \approx \log_b n = \frac{\log_2 n}{\log_2 b}
+$$
+
+In words: every extra level multiplies capacity by $b$. With $b=500$, a billion keys need $\log_{500} 10^9 \approx 3.3$, so 4 levels, where a balanced binary tree needs about 30.
+
+## Why B-trees suit storage systems
+
+The structure of a B-tree is especially valuable when accessing a node is expensive. On a disk or in a database storage engine, reading a block may take far longer than comparing several keys already loaded into memory. A B-tree can place many keys and child references in one block, allowing each read to eliminate a large portion of the remaining search space.
+
+<Callout type="practice" title="Why your database uses B+ trees">
+This reduces the number of storage accesses compared with a binary tree whose nodes might each occupy separate blocks. B-tree variants, including **B+ trees**, are common in database indexes and filesystems. In a B+ tree, records or record pointers are typically stored in leaves, and linked leaves support efficient ordered and range scans.
+</Callout>
+
+The trade-off is more complex node management. Insertions and deletions may require splits, merges, or redistribution, and node layout must be chosen to work well with the storage medium. But when the cost of accessing a block dominates the cost of comparisons, this complexity is worthwhile.
+
+## Comparing skip lists and B-trees
+
+| Property                    | Skip list                                         | B-tree                                         |
+| --------------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| Structure                   | Layered linked lists                              | Multiway search tree                           |
+| Balance                     | Expected, through random levels                   | Guaranteed by structural invariants            |
+| Search, insertion, deletion | $O(\log n)$ expected                          | $O(\log n)$ worst case                     |
+| Main strength               | Simple ordered operations                         | Shallow tree and efficient block access        |
+| Typical applications        | In-memory ordered indexes, concurrent collections | Database indexes, filesystems, storage engines |
+
+Both structures maintain sorted order, but they obtain efficient search in different ways. A skip list adds shortcuts to a linked sequence; a B-tree reduces the number of levels by increasing the number of keys and children per node.
+
+The choice depends on the environment. Skip lists can be easier to implement and modify in memory. B-trees are often better when the system must minimize disk or page reads, or when range queries need to traverse large sorted datasets efficiently.

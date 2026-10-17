@@ -1,0 +1,95 @@
+---
+title: "Tries"
+description: "Prefix trees and autocomplete: storing strings by their shared prefixes."
+order: 8
+tier: core
+takeaways:
+  - "A **trie** stores strings character by character, so words with a common prefix share one path."
+  - "A **terminal marker** distinguishes a stored word from a prefix that only leads to longer words."
+  - "Finding a prefix costs O(p) for a prefix of length p, independent of how many words are stored."
+  - "Autocomplete = walk to the prefix node, then collect every terminal node below it."
+  - "The price is **memory**: many small nodes. Radix trees compress single-child chains to cut it."
+resources:
+  - title: "Trie"
+    url: "https://en.wikipedia.org/wiki/Trie"
+  - title: "Radix tree"
+    url: "https://en.wikipedia.org/wiki/Radix_tree"
+    note: "The compressed trie used in routers and many key-value stores."
+  - title: "Trie visualization (USF, David Galles)"
+    url: "https://www.cs.usfca.edu/~galles/visualization/Trie.html"
+    note: "Insert, find and delete words with animation."
+---
+
+A **trie**, or **prefix tree**, is a tree-based data structure that stores strings by sharing the paths formed by their common prefixes. Instead of treating each word as an independent key, it organizes words character by character, making it efficient to find words that begin with a given sequence. This structure is particularly useful for autocomplete, dictionaries, prefix search, and search suggestions, where the goal is often to find every word that starts with the same characters.
+
+## How a trie represents words
+
+Each edge in a trie represents a character, and each path from the root represents a sequence of characters. A node typically records whether the path ending there forms a complete word.
+
+Suppose a trie stores `car`, `care`, `cat`, and `dog`. The words `car` and `care` share the path `c → a → r`, while `cat` shares the initial `c → a` path. The shared structure avoids storing those common prefixes separately.
+
+<TrieViz />
+
+<Callout type="key">
+The important distinction is between a path and a complete word. The path `c → a → r` represents the prefix `car`, but a **terminal marker** tells the trie whether `car` itself is stored. Without that marker, the structure could not distinguish a complete word from a prefix that only leads to longer words.
+</Callout>
+
+A trie can store strings over many alphabets, not just lowercase English letters. Its children may be represented by arrays, maps, or other structures depending on the character set and memory requirements.
+
+## Prefix search and autocomplete
+
+Autocomplete is a natural application of tries because a query usually asks for words beginning with a particular prefix. To find suggestions for `ca`, the trie follows the edges for `c` and then `a`. If that path exists, every complete word reachable below the corresponding node is a potential suggestion.
+
+A simple autocomplete algorithm works in two stages:
+
+1. Locate the prefix node. Traverse the trie one character at a time. If any required edge is missing, no stored word matches the prefix.
+2. Collect completions. Starting at that node, traverse its descendants and report paths that end at terminal nodes.
+
+A dictionary of dictionaries is enough for a working version; the `"$"` key plays the role of the terminal marker:
+
+```python
+def insert(root, word):
+    node = root
+    for ch in word:
+        node = node.setdefault(ch, {})   # reuse the existing child, or create it
+    node["$"] = True                     # mark: a word ends here, not just a prefix
+
+def complete(root, prefix):
+    node = root
+    for ch in prefix:                    # stage 1: O(p) walk to the prefix node
+        if ch not in node:
+            return []
+        node = node[ch]
+    out, stack = [], [(node, prefix)]    # stage 2: depth-first collection below it
+    while stack:
+        node, path = stack.pop()
+        if node.get("$"):
+            out.append(path)
+        for ch, child in node.items():
+            if ch != "$":
+                stack.append((child, path + ch))
+    return sorted(out)
+
+root = {}
+for w in ["car", "care", "cat", "dog"]:
+    insert(root, w)
+print(complete(root, "ca"))    # ['car', 'care', 'cat']
+print(complete(root, "car"))   # ['car', 'care']   car is a word and a prefix
+print(complete(root, "x"))     # []                fails on the first character
+```
+
+For a prefix of length $p$, locating the node takes $O(p)$ time under typical child-lookup assumptions. Collecting suggestions adds work proportional to the subtree explored and the amount of output produced. If the subtree contains many words, returning every completion can still be expensive; a production autocomplete system may limit the number of suggestions or store ranked suggestions at nodes.
+
+Autocomplete can also rank results by frequency, recency, or user preference. A basic trie establishes which words match the prefix, but it does not inherently determine which suggestion should appear first. Ranking requires additional information or a separate scoring process.
+
+## Complexity and trade-offs
+
+Let $L$ be the length of a query string. With efficient child lookup, searching for that exact prefix generally takes $O(L)$ time, regardless of how many unrelated words are stored. This is the main advantage over checking every word individually, which may require examining many strings.
+
+However, tries can consume substantial memory. Every character position may create a separate node, and each node needs some way to store its outgoing edges. A trie using a full array of possible children at every node can waste memory when most characters are absent. Map-based children use space more selectively but introduce their own overhead.
+
+Compressed tries, such as **radix trees**, combine chains of nodes with only one child into longer edge labels. This reduces structural overhead while preserving prefix-search behavior, though traversal must then compare characters within edge labels.
+
+<Callout type="practice" title="Trie or hash table?">
+Tries are most useful when prefix queries are central to the task. A hash table may be better for exact-key lookup, while a trie offers a more natural way to discover all keys sharing a prefix.
+</Callout>

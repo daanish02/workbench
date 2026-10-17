@@ -1,0 +1,122 @@
+---
+title: "Balanced Trees"
+description: "AVL and red-black trees, which keep height logarithmic under updates."
+order: 7
+tier: core
+takeaways:
+  - "An unbalanced BST fed sorted keys becomes a chain with O(n) search. Balanced trees keep height **O(log n)**."
+  - "A **rotation** reshapes a few links in O(1) while keeping inorder (sorted) order intact."
+  - "**AVL**: every node's subtree heights differ by at most 1. Four cases (LL, RR, LR, RL) fixed by one or two rotations."
+  - "**Red-black**: colour rules cap height at about 2·log₂(n + 1). Looser balance, often cheaper updates."
+  - "Both guarantee O(log n) worst case. Which is faster in practice depends on the workload."
+resources:
+  - title: "AVL tree"
+    url: "https://en.wikipedia.org/wiki/AVL_tree"
+  - title: "Red–black tree"
+    url: "https://en.wikipedia.org/wiki/Red%E2%80%93black_tree"
+    note: "All insertion and deletion repair cases, with diagrams."
+  - title: "AVL tree visualization (USF, David Galles)"
+    url: "https://www.cs.usfca.edu/~galles/visualization/AVLtree.html"
+    note: "Insert your own keys and watch every rotation."
+---
+
+Balanced trees are search trees designed to prevent their height from growing linearly as elements are inserted and removed. Without balancing, a binary search tree can degenerate into a chain, making search and updates as slow as operations on a linked list. AVL trees and red-black trees prevent this by enforcing structural rules and performing rotations when necessary. Both guarantee $O(\log n)$ search, insertion, and deletion, but they make different trade-offs between how strictly they balance the tree and how much restructuring updates require.
+
+## Why balancing matters
+
+A binary search tree organizes keys so that smaller values lie to the left of a node and larger values lie to the right. The efficiency of searching depends on the tree's height $h$, because each step moves down one level.
+
+For a well-balanced tree containing $n$ nodes, the height is proportional to $\log n$. A search can therefore eliminate a large portion of the remaining possibilities at each step. But inserting already sorted values into an ordinary, unbalanced BST can produce a chain:
+
+```
+1
+ \
+  2
+   \
+    3
+     \
+      4
+       \
+        5
+```
+
+Searching this tree may require examining every node, giving $O(n)$ time. Balanced trees maintain additional invariants that prevent this degeneration, ensuring the height remains $O(\log n)$.
+
+## Rotations: changing shape without changing order
+
+The basic mechanism behind self-balancing trees is the **rotation**. A rotation rearranges a small part of the tree while preserving the binary search tree's ordering property.
+
+For example, if a node becomes too heavy on its right side, a left rotation can move its right child upward and the original node downward to the left. The nodes' relative sorted order remains unchanged; only their parent–child relationships change.
+
+```
+Before                  After a left rotation at 10
+  10                          20
+    \                        /
+     20                    10
+    /                        \
+  15                          15
+```
+
+Node 20 moves up, 10 moves down to its left, and 15, which was 20's left subtree, becomes 10's right subtree. The values remain in sorted order: 10, 15, 20. The rotation changes the shape, not the BST ordering.
+
+<Callout type="key">
+Rotations take $O(1)$ time because they modify only a constant number of references. The difficult part is deciding when to rotate and which rotation to perform. AVL and red-black trees solve that problem using different balancing rules.
+</Callout>
+
+## AVL trees: strict height balance
+
+An **AVL tree** maintains a height-balance condition at every node. The heights of a node's left and right subtrees may differ by at most one.
+
+The difference is commonly expressed as a **balance factor**:
+
+$$
+BF(v)=h(\text{left}(v))-h(\text{right}(v))
+$$
+
+In words: a positive balance factor means the left side is taller, a negative one means the right side is taller, and zero means the two subtrees have equal height.
+
+Every node must have a balance factor of $-1$, $0$, or $+1$. If an insertion or deletion pushes a node outside this range, the tree must be rebalanced.
+
+There are four basic imbalance patterns:
+
+- Left-left (LL): a single right rotation restores balance.
+- Right-right (RR): a single left rotation restores balance.
+- Left-right (LR): a left rotation on the child, followed by a right rotation on the unbalanced node.
+- Right-left (RL): a right rotation on the child, followed by a left rotation on the unbalanced node.
+
+<AvlViz />
+
+AVL trees maintain relatively strict balance, which keeps their height small and makes them particularly effective for lookup-heavy workloads. Their trade-off is that updates can require more rebalancing work, especially after deletions, and implementations must maintain node heights or balance factors.
+
+## Red-black trees: balance through color rules
+
+A **red-black tree** assigns each node a color, red or black, and maintains a set of invariants. In the standard formulation:
+
+- The root is black.
+- Null leaves are treated as black.
+- A red node cannot have a red child.
+- Every path from a node to its descendant null leaves contains the same number of black nodes.
+
+These rules do not force every subtree to have nearly identical heights, as AVL rules do. Instead, they limit how unbalanced the tree can become. A red-black tree's height is bounded by approximately $2\log_2(n+1)$, so its search, insertion, and deletion operations remain $O(\log n)$. In words: the longest root-to-leaf path can be at most twice the shortest, because red nodes can only be interleaved between black ones and every path has the same number of black nodes.
+
+When an update violates the invariants, the implementation repairs the tree through recoloring, rotations, or both. The exact repair depends on the surrounding node colors and structure. Red-black trees typically allow more structural flexibility than AVL trees, which often makes them attractive when insertions and deletions are frequent.
+
+## AVL versus red-black trees
+
+| Property               | AVL tree                              | Red-black tree                                 |
+| ---------------------- | ------------------------------------- | ---------------------------------------------- |
+| Balancing rule         | Subtree heights differ by at most one | Color and black-height invariants              |
+| Search                 | $O(\log n)$ worst case            | $O(\log n)$ worst case                     |
+| Insertion and deletion | $O(\log n)$ worst case            | $O(\log n)$ worst case                     |
+| Typical shape          | More strictly balanced                | More flexible balance                          |
+| Common trade-off       | Often attractive for frequent lookups | Often attractive for mixed updates and lookups |
+
+Both structures guarantee logarithmic worst-case operations. AVL trees are often shorter, which can reduce the number of comparisons during searches. Red-black trees may require less strict balancing during updates. These are tendencies rather than universal performance guarantees: implementation details, memory layout, key comparisons, and workload can change which performs better.
+
+## The deeper idea
+
+<Callout type="key">
+Self-balancing trees demonstrate how a local structural rule can guarantee a global performance bound. AVL trees monitor differences in subtree heights; red-black trees constrain paths through color invariants. Both use rotations to repair local violations while preserving sorted order.
+</Callout>
+
+The important distinction is not that one is balanced and the other is not. Both are balanced in the algorithmic sense. AVL trees enforce a tighter height condition, while red-black trees achieve a slightly looser bound through simpler structural constraints in many update scenarios.

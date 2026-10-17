@@ -1,0 +1,133 @@
+---
+title: "Arrays & Strings"
+description: "Contiguous memory, constant-time indexing, and strings as character arrays."
+order: 1
+tier: core
+takeaways:
+  - "An array is **contiguous**: element i lives at address B + i·w, so indexing is O(1) arithmetic, not a search."
+  - "Inserting or deleting in the middle shifts every later element: **O(n)**. Dynamic arrays make appending amortized O(1) by over-allocating."
+  - "Strings are sequences of encoded text. **Bytes, code points and visible characters** can all give different lengths."
+  - "Valid indices are 0 ≤ i < n. Most off-by-one bugs confuse the last index n − 1 with the length n."
+resources:
+  - title: "Array (data structure)"
+    url: "https://en.wikipedia.org/wiki/Array_(data_structure)"
+  - title: "Dynamic array"
+    url: "https://en.wikipedia.org/wiki/Dynamic_array"
+    note: "Geometric growth and why appends are amortized constant time."
+  - title: "Unicode HOWTO (Python docs)"
+    url: "https://docs.python.org/3/howto/unicode.html"
+    note: "Code points, encodings and UTF-8, explained with runnable examples."
+---
+
+Arrays and strings are fundamental ways of organizing and working with data in programming. An **array** stores a sequence of elements that can be accessed by position, while a **string** represents a sequence of characters used to handle text. Both let programs treat many individual values as one structured piece of data, making operations such as searching, updating, and processing information much easier. Their behavior depends on the programming language, especially when it comes to size, mutability, memory layout, and indexing.
+
+## Arrays: ordered collections of elements
+
+An array stores elements in a defined order, usually with each element accessible through an integer index. Consider an array containing five test scores:
+
+```
+scores = [82, 95, 71, 88, 90]
+```
+
+Each element has a position. In many common languages, indexing starts at zero, so `scores[0]` is `82`, `scores[1]` is `95`, and `scores[4]` is `90`. The index identifies a position, not the value stored there.
+
+Zero-based indexing is closely related to how memory addresses are calculated. If an array begins at address $B$, and each element occupies $w$ bytes, the address of element $i$ in a contiguous array is
+
+$$
+\text{address}(i)=B+i \cdot w
+$$
+
+In words: start at the base address and skip past $i$ whole elements of $w$ bytes each. For example, if a 32-bit integer occupies 4 bytes, element 3 begins 12 bytes after the start of the array.
+
+<Callout type="key">
+This is why accessing an array element by index can typically take constant time, $O(1)$: the system calculates its location directly instead of searching through preceding elements. Index 0 simply means "zero elements past the start".
+</Callout>
+
+Arrays are especially useful when data consists of many similarly structured values, such as temperatures recorded each hour, pixels in an image, or items in a sequence. In languages with fixed-size arrays, the number of elements is determined when the array is created. Other languages provide **dynamic arrays**, which can grow or shrink as needed, often by allocating a larger block of memory and copying elements when capacity is exhausted.
+
+## Indexing, traversal, and modification
+
+An array's elements can be accessed individually or processed as a group. **Traversal** means visiting elements systematically, usually with a loop.
+
+```
+total = 0
+
+FOR each score IN scores
+    total = total + score
+
+average = total / length(scores)
+```
+
+The loop accumulates the values, then divides by the number of elements. For an array of $n$ scores, the traversal takes $O(n)$ time because each element must be examined.
+
+Modification is similarly direct when the index is known:
+
+```
+scores[2] = 75
+```
+
+This changes the third element from 71 to 75 in a mutable array. However, inserting or deleting an element in the middle of a contiguous array can require shifting later elements, making those operations $O(n)$ in the general case.
+
+The distinction between accessing and searching is important. Retrieving `scores[3]` uses a known position and is typically $O(1)$. Finding whether a value exists may require checking every element, taking $O(n)$ time in an unsorted array. A sorted array can support faster search through binary search, but only if its ordering is maintained.
+
+## Strings: sequences of text
+
+A string represents text as a sequence of characters or character encodings. For example:
+
+```
+message = "hello"
+```
+
+Strings support operations such as indexing, concatenation, searching, extracting substrings, and measuring length. The details vary between languages: some treat strings as arrays of bytes, others as sequences of code units or Unicode code points, and some provide operations that account for **grapheme clusters**—the units that users perceive as individual characters.
+
+These distinctions matter because a visible character does not always correspond to one storage unit. The letter `A` can be represented by a single byte in UTF-8, while some emoji require multiple bytes and may consist of multiple Unicode code points. Consequently, a string's byte length, code-point count, and user-perceived character count can differ.
+
+<Callout type="example" title="Four lengths for one string">
+
+`"café👍🏽"` looks like five characters, but each layer of the system counts something different:
+
+```python
+word = "café👍🏽"
+print(len(word))                           # 6   code points: the emoji is 👍 plus a skin-tone modifier
+print(len(word.encode("utf-8")))           # 13  UTF-8 bytes: c, a, f take 1 each, é takes 2, each emoji part 4
+print(hex(ord(word[-1])))                  # 0x1f3fd  the "last character" by index is only the modifier
+print(len(word.encode("utf-16-le")) // 2)  # 8   UTF-16 code units: what Java and JavaScript report as length
+```
+
+</Callout>
+
+Strings are often **immutable**, meaning their contents cannot be changed after creation. In such languages, an operation that appears to modify a string may actually create a new string. Other languages provide mutable string buffers or character arrays. Immutability can simplify reasoning about shared text, but repeated concatenation may be inefficient if it repeatedly creates and copies new strings.
+
+## Working with strings and arrays
+
+Many string operations resemble array operations because both involve ordered sequences. You can traverse a string, inspect characters, search for a substring, or extract a portion of the sequence. For example, a program might count how many times a particular character appears:
+
+```
+count = 0
+
+FOR each character IN message
+    IF character == "l"
+        count = count + 1
+```
+
+For `"hello"`, the result is 2. The algorithm examines each character once, so its running time is $O(n)$, where $n$ is the length of the string under the chosen definition of length.
+
+Arrays and strings can also be combined. A program might split a sentence into words, store those words in an array, sort them, and then join them into a new string. This illustrates a common programming pattern: convert data into a structure that makes the intended operation easier, perform the operation, and convert the result back if necessary.
+
+The most important practical distinction is that arrays usually store collections of values, while strings represent text with language-specific encoding and character rules. They share the idea of an ordered sequence, but their valid operations and performance characteristics are not always identical.
+
+## Memory, boundaries, and common mistakes
+
+Array and string operations are constrained by their valid indices. For a sequence of length $n$ using zero-based indexing, the valid positions are
+
+$$
+0 \le i < n
+$$
+
+<Callout type="pitfall" title="Off by one">
+An attempt to access index $n$ is **out of bounds**. Depending on the language, this may raise an exception, trigger a runtime check, or cause unsafe behavior. **Off-by-one errors** often arise from confusing the last valid index, $n-1$, with the length, $n$.
+</Callout>
+
+Another source of errors is assuming that all languages treat arrays and strings the same way. Arrays may be fixed-size or dynamic, strings may be mutable or immutable, and indexing may count bytes, code units, code points, or other units. These differences affect both correctness and efficiency.
+
+A useful rule is to choose the data structure based on the operations the program needs. Arrays are effective for indexed collections and repeated traversal; strings are designed for text, where encoding, character boundaries, and immutability may matter. Understanding those details helps explain why a simple-looking operation can be fast in one context and expensive or error-prone in another.

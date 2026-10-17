@@ -1,0 +1,120 @@
+---
+title: "Heaps"
+description: "Min and max heaps, the priority queues they power, and their cheap insert and pop."
+order: 6
+tier: core
+takeaways:
+  - "A binary heap is a **complete** tree where every parent ≤ its children (min-heap) or ≥ them (max-heap)."
+  - "The order is only **parent-to-child**, not sorted: the minimum is always at the root, the rest is loosely arranged."
+  - "Stored in an array with no pointers: parent of i is ⌊(i − 1)/2⌋, children are 2i + 1 and 2i + 2."
+  - "Insert sifts up, extract-min sifts down: **O(log n)** each. Peek is O(1); building from n items is O(n)."
+  - "Heaps are the standard **priority queue**, behind Dijkstra, schedulers, heapsort and top-k."
+resources:
+  - title: "Binary heap"
+    url: "https://en.wikipedia.org/wiki/Binary_heap"
+    note: "Includes the proof that bottom-up heap construction is O(n)."
+  - title: "heapq: heap queue algorithm (Python docs)"
+    url: "https://docs.python.org/3/library/heapq.html"
+  - title: "VisuAlgo: binary heap"
+    url: "https://visualgo.net/en/heap"
+    note: "Animated insert, extract-max and heap building."
+---
+
+Heaps are tree-based data structures that make it efficient to retrieve the highest- or lowest-priority element. A min-heap keeps the smallest element at the root, while a max-heap keeps the largest there. They are commonly implemented using arrays and are the standard foundation for priority queues, where elements are processed according to priority rather than simply in the order they arrived. The key distinction is that a heap efficiently exposes the extreme element without keeping every element fully sorted.
+
+## The heap property
+
+A **binary heap** is a **complete binary tree**: every level is filled except possibly the last, which is filled from left to right. It also maintains a **heap property** that constrains the relationship between each parent and its children.
+
+In a **min-heap**, every parent is less than or equal to its children. The root therefore contains the minimum element. In a **max-heap**, every parent is greater than or equal to its children, so the root contains the maximum.
+
+```
+   Min-heap               Max-heap
+       2                     14
+      / \                   /  \
+     5   8                11    8
+    / \                  /  \
+  11   14               5    2
+smallest at the root   largest at the root
+```
+
+<Callout type="key">
+The heap property is local: it compares each parent with its children, not every element with every other element. A min-heap does not necessarily have its values sorted from left to right or from top to bottom. For example, one subtree can contain values larger than values in another subtree, as long as every parent respects its children.
+</Callout>
+
+This is why a heap is not the same as a binary search tree. A BST orders values across left and right subtrees to support searching for a particular key. A heap prioritizes access to one extreme value.
+
+## How a heap is stored in an array
+
+Because a binary heap is complete, its nodes can be stored compactly in an array without explicit pointers between parent and child nodes.
+
+Using zero-based indexing, the relationships are:
+
+$$
+\begin{aligned}
+\text{parent}(i) &= \left\lfloor \frac{i-1}{2} \right\rfloor \
+\text{left}(i) &= 2i+1 \
+\text{right}(i) &= 2i+2
+\end{aligned}
+$$
+
+In words: the tree is laid out level by level, so each level occupies the next block of the array, and moving down a level roughly doubles the index.
+
+These formulas let the implementation navigate the tree using index arithmetic. For example, the min-heap shown above could be stored as `[2, 5, 8, 11, 14]`. The first element is the root, and the remaining elements occupy the positions implied by the complete-tree layout.
+
+This representation avoids the extra memory needed for child pointers. It also tends to provide good memory locality because the elements are stored contiguously.
+
+## Insertion and removal
+
+Inserting a value into a heap begins by placing it at the next available position, preserving the complete-tree shape. The new element may violate the heap property, so it is compared with its parent and swapped upward as necessary. This process is called **sift up** or bubble up.
+
+For example, inserting `3` into the min-heap `[2, 5, 8, 11, 14]` initially places it at the end. It swaps with 8, then with 2 only if it is smaller than 2—which it is not. The resulting heap is `[2, 5, 3, 11, 14, 8]`, with 2 still at the root.
+
+Removing the minimum from a min-heap removes the root. The last element is moved into the root position, and then **sifted down** by swapping it with the smaller child whenever the heap property is violated. A max-heap uses the same procedure but compares in the opposite direction.
+
+<HeapViz />
+
+Since a complete binary tree has height $O(\log n)$, insertion and removal take $O(\log n)$ time. Reading the root without removing it takes $O(1)$. Building a heap from an existing array can be done in $O(n)$ time using bottom-up heap construction, which is faster than inserting all elements one at a time in the general case.
+
+## Priority queues
+
+A **priority queue** is an abstract data type that returns elements according to priority. It is not necessarily a first-in, first-out queue: the next element is determined by priority, not just by arrival time.
+
+A heap is a common implementation of a priority queue. For example, a task scheduler might assign each task a priority value and use a max-heap to retrieve the highest-priority task. A navigation algorithm might use a min-priority queue to process the currently known lowest-cost candidate first.
+
+Typical heap-backed priority queue operations are:
+
+| Operation                       | Typical time    |
+| ------------------------------- | --------------- |
+| Peek at minimum or maximum      | $O(1)$      |
+| Insert an element               | $O(\log n)$ |
+| Remove minimum or maximum       | $O(\log n)$ |
+| Build from $n$ elements     | $O(n)$      |
+| Search for an arbitrary element | $O(n)$      |
+
+Updating the priority of an existing element can be efficient if the implementation tracks its location, but otherwise finding that element may require linear search. A basic heap is optimized for access to its root, not arbitrary lookup.
+
+Python's `heapq` module treats a plain list as a min-heap with exactly these array formulas:
+
+```python
+import heapq
+
+h = [2, 5, 8, 11, 14]     # already satisfies the min-heap property
+heapq.heappush(h, 3)      # append, then sift up
+print(h)                  # [2, 5, 3, 11, 14, 8]   matches the worked example above
+print(heapq.heappop(h))   # 2   the root; the last element moves up and sifts down
+print(h)                  # [3, 5, 8, 11, 14]
+print(heapq.nsmallest(3, [9, 4, 7, 1, 8, 2]))  # [1, 2, 4]   top-k without a full sort
+```
+
+<Callout type="practice" title="Max-heap in Python">
+The plain `heapq` functions are min-heap only. Python 3.14 added `heappush_max` and `heappop_max`; on older versions the usual trick is to push negated priorities, `heappush(h, -p)`, and negate again on the way out.
+</Callout>
+
+## Heapsort and other applications
+
+A heap can also sort a collection. **Heapsort** repeatedly removes the extreme element from a heap, producing values in priority order. Its running time is $O(n\log n)$ in the worst case, and an in-place implementation can sort using $O(1)$ auxiliary space beyond the array, though heapsort is not stable by default.
+
+Heaps are useful whenever the next item must be selected by a ranking rule and the set changes over time. Examples include event simulation, job scheduling, graph algorithms such as Dijkstra's algorithm, and maintaining the largest or smallest $k$ values in a stream.
+
+The central trade-off is simple: a heap does not spend effort fully sorting all its elements. It maintains just enough structure to make the next minimum or maximum easy to retrieve, while keeping insertion and removal logarithmic.

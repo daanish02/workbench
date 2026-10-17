@@ -1,0 +1,122 @@
+---
+title: "Graphs"
+description: "Adjacency list vs. matrix; directed, undirected, and weighted graphs."
+order: 9
+tier: core
+takeaways:
+  - "A graph G = (V, E) is vertices plus edges; edges can be **directed** or not, **weighted** or not."
+  - "**Adjacency list**: O(V + E) space, fast neighbour iteration. The default for sparse graphs."
+  - "**Adjacency matrix**: O(V²) space, O(1) edge check. Worth it for dense graphs or constant edge queries."
+  - "The model (direction, weights) says what edges mean; the representation only says how they are stored."
+resources:
+  - title: "Graph (abstract data type)"
+    url: "https://en.wikipedia.org/wiki/Graph_(abstract_data_type)"
+    note: "Representations and their operation costs side by side."
+  - title: "Adjacency list"
+    url: "https://en.wikipedia.org/wiki/Adjacency_list"
+  - title: "VisuAlgo: graph data structures"
+    url: "https://visualgo.net/en/graphds"
+    note: "Draw a graph and see its adjacency matrix, list and edge list update live."
+---
+
+Graphs are data structures for representing relationships between entities. They consist of **vertices** (nodes) connected by **edges**, which may be directed, undirected, weighted, or unweighted. An adjacency list stores each vertex's neighbors, while an adjacency matrix records connections in a two-dimensional table. The choice of representation affects memory use and the speed of operations, while the type of graph determines what its connections mean. These ideas underpin route planning, social networks, dependency analysis, and network routing.
+
+## Vertices and edges
+
+A graph is commonly written as $G=(V,E)$, where $V$ is the set of vertices and $E$ is the set of edges. Vertices represent entities, and edges represent relationships between them.
+
+For example, a graph of cities might use cities as vertices and roads as edges. A social network might use people as vertices and friendships or follows as edges. Unlike a tree, a graph can contain cycles, multiple routes between vertices, and disconnected groups of vertices.
+
+The structure of the graph describes which relationships exist. Additional information, such as edge direction or weight, determines how those relationships should be interpreted.
+
+## Directed, undirected, and weighted graphs
+
+In an **undirected graph**, an edge connects two vertices symmetrically. If A is connected to B, then B is connected to A. A friendship network is a natural example when friendship is mutual.
+
+In a **directed graph**, each edge has a direction. An edge from A to B does not imply an edge from B to A. Following someone on a social platform, linking one webpage to another, or representing a one-way street can be modeled this way.
+
+A **weighted graph** assigns a value to each edge. The weight might represent distance, travel time, cost, or capacity. For example, a road between two cities might have a weight of 120 kilometers. Algorithms can then use those weights to find a lowest-cost or shortest path, depending on what the weights represent.
+
+These categories can be combined. A graph can be directed and weighted, undirected and weighted, or directed and unweighted. The correct model depends on the relationships being represented.
+
+## Adjacency lists
+
+An **adjacency list** stores, for each vertex, a collection of vertices directly connected to it. Consider an undirected graph with edges A–B, A–C, and B–C:
+
+```
+A: B, C
+B: A, C
+C: A, B
+```
+
+Each vertex lists its neighbors. In an undirected graph, each edge normally appears in both endpoints' lists. In a directed graph, a list typically contains the vertices reached by outgoing edges.
+
+Adjacency lists are memory-efficient for **sparse** graphs, where the number of edges is small relative to the number of possible connections. They require $O(V+E)$ space, since the structure stores the vertices and their edge references.
+
+Checking whether a particular edge exists may require searching through a vertex's neighbor list, taking $O(\deg(v))$ time in a straightforward implementation, where $\deg(v)$ is the number of neighbors. However, iterating over all neighbors is efficient, making adjacency lists a common choice for graph traversal algorithms such as breadth-first search and depth-first search.
+
+## Adjacency matrices
+
+An **adjacency matrix** represents a graph using a $V \times V$ table. Each row and column corresponds to a vertex. The entry at row $i$, column $j$ indicates whether an edge connects vertex $i$ to vertex $j$.
+
+For the same undirected graph:
+
+|   | A | B | C |
+| - | - | - | - |
+| A | 0 | 1 | 1 |
+| B | 1 | 0 | 1 |
+| C | 1 | 1 | 0 |
+
+Here, `1` means an edge exists and `0` means it does not. Because the graph is undirected, the matrix is symmetric: the entry for A–B matches the entry for B–A. In a weighted graph, entries can store edge weights instead, with a separate convention for representing missing edges.
+
+The main advantage is fast edge lookup. Checking whether an edge exists takes $O(1)$ time because the relevant cell can be accessed directly. The cost is memory: the matrix uses $O(V^2)$ space regardless of how many edges actually exist. It can therefore waste substantial space for sparse graphs, but is often suitable for **dense** graphs where many possible edges are present.
+
+Both representations of the triangle above, built from the same edge list:
+
+```python
+vertices = ["A", "B", "C"]
+edges = [("A", "B"), ("A", "C"), ("B", "C")]
+
+adj = {v: [] for v in vertices}
+for u, v in edges:          # undirected: record each edge at both endpoints
+    adj[u].append(v)
+    adj[v].append(u)
+
+index = {v: i for i, v in enumerate(vertices)}   # matrices need vertex -> row number
+matrix = [[0] * len(vertices) for _ in vertices]
+for u, v in edges:
+    matrix[index[u]][index[v]] = matrix[index[v]][index[u]] = 1
+
+print(adj)      # {'A': ['B', 'C'], 'B': ['A', 'C'], 'C': ['A', 'B']}
+print(matrix)   # [[0, 1, 1], [1, 0, 1], [1, 1, 0]]   symmetric, as expected
+print("C" in adj["A"], matrix[index["A"]][index["C"]] == 1)   # True True   scan vs direct cell
+```
+
+## Choosing a representation
+
+| Property                             | Adjacency list             | Adjacency matrix                     |
+| ------------------------------------ | -------------------------- | ------------------------------------ |
+| Space                                | $O(V+E)$               | $O(V^2)$                         |
+| Check whether an edge exists         | Typically $O(\deg(v))$ | $O(1)$                           |
+| Iterate through a vertex's neighbors | $O(\deg(v))$           | $O(V)$                           |
+| Best suited to                       | Sparse graphs              | Dense graphs or frequent edge checks |
+
+The number of possible edges explains the trade-off. A simple undirected graph with $V$ vertices can have at most $V(V-1)/2$ edges, while a directed graph without self-loops can have at most $V(V-1)$. When only a small fraction of these edges exists, an adjacency list avoids storing all the absent connections.
+
+<Callout type="example" title="A social network is sparse">
+With a million users who each have about 200 friends, an adjacency list stores roughly $2 \times 10^8$ neighbor entries. A matrix would need $10^{12}$ cells, almost all of them zero: about 125 GB even at one bit per cell.
+</Callout>
+
+Neither representation changes the graph's meaning; they are two ways to store the same relationships. The choice depends on which operations the application performs most often and how densely connected the graph is.
+
+## Why graph structure matters
+
+Graph algorithms operate on the relationships encoded by the data structure. Breadth-first search explores outward from a starting vertex and can find shortest paths in an unweighted graph. Depth-first search follows paths deeply before backtracking and is useful for exploring components, detecting cycles, and analyzing dependencies.
+
+<Callout type="pitfall" title="Fewest edges is not cheapest">
+Weighted graphs introduce another concern: the fewest edges may not correspond to the lowest total cost. Algorithms such as Dijkstra's algorithm use edge weights to find minimum-cost paths under suitable assumptions, including nonnegative edge weights.
+</Callout>
+
+<Callout type="key">
+The essential distinction is between the graph's model and its representation. Directedness, weights, and connectivity define what the relationships mean; adjacency lists and matrices determine how those relationships are stored and accessed.
+</Callout>

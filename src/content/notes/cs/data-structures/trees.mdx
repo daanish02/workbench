@@ -1,0 +1,117 @@
+---
+title: "Trees & BSTs"
+description: "Binary trees, binary search trees, and traversal orders."
+order: 5
+tier: core
+takeaways:
+  - "A tree is a hierarchy: one **root**, each node has one parent, and **leaves** have no children."
+  - "A **BST** keeps smaller keys left and larger keys right, so each comparison discards a whole subtree."
+  - "BST operations cost O(h). Balanced, h ≈ log₂ n; inserted in sorted order, the tree is a chain and h = n − 1."
+  - "**Inorder** traversal of a BST yields the keys in sorted order; preorder puts parents first, postorder puts children first."
+  - "Level-order traversal uses a **queue**; depth-first traversals use the call stack."
+resources:
+  - title: "Binary search tree"
+    url: "https://en.wikipedia.org/wiki/Binary_search_tree"
+  - title: "Tree traversal"
+    url: "https://en.wikipedia.org/wiki/Tree_traversal"
+    note: "Pre-, in-, post- and level-order with pseudocode for each."
+  - title: "VisuAlgo: binary search tree"
+    url: "https://visualgo.net/en/bst"
+    note: "Animated search, insert, delete and traversals."
+---
+
+Trees are hierarchical data structures made of nodes connected by edges, allowing data to be organized into parent–child relationships. A binary tree limits each node to at most two children, while a binary search tree (BST) adds an ordering rule that makes searching, insertion, and deletion efficient when the tree is well-shaped. Traversal orders determine how nodes are visited, revealing different ways to process the same structure. Together, these concepts underpin search structures, expression evaluation, file hierarchies, and many algorithms.
+
+## Trees: nodes, edges, and hierarchy
+
+A tree consists of nodes connected by edges. The topmost node is the **root**; nodes directly below another node are its **children**, and the node above them is their **parent**. A node with no children is a **leaf**. A **subtree** is a node together with all its descendants.
+
+Unlike a linked list, which forms a sequence, a tree branches. This makes it useful for representing relationships that naturally have multiple levels, such as folders inside folders or categories inside categories.
+
+A node's **depth** is the number of edges from the root to that node. Its **height** is the maximum number of edges from a node down to a leaf; the height of the whole tree is the height of its root. Some conventions define height using node counts instead, so the convention should be stated when exact values matter.
+
+## Binary trees
+
+A **binary tree** is a tree in which each node has at most two children, conventionally called the left child and the right child. Either child can be absent. The left and right positions are meaningful: swapping them can produce a different binary tree even if the same values remain present.
+
+Example binary tree:
+
+```
+      8
+     / \
+    3   10
+   / \
+  1   6
+```
+
+Binary trees come in several forms. A **full** binary tree has either zero or two children at every node. A **complete** binary tree has every level filled except possibly the last, which is filled from left to right. A **perfect** binary tree has every internal node with two children and all leaves at the same depth.
+
+These distinctions matter because tree shape affects efficiency. A balanced tree keeps its height relatively small as nodes are added, whereas a tree that repeatedly branches in only one direction can become almost as long as a linked list.
+
+## Binary search trees
+
+A **binary search tree** is a binary tree with an ordering property. In the common formulation, every key in a node's left subtree is smaller than the node's key, and every key in its right subtree is larger. Implementations must define how duplicate keys are handled—for example, by counting duplicates or consistently placing them on one side.
+
+For the example above, searching for 6 begins at 8. Since $6<8$, the search moves left to 3. Since $6>3$, it moves right and finds 6. Each comparison eliminates an entire subtree from consideration.
+
+The time required depends on tree height $h$. Search, insertion, and typical deletion take $O(h)$ time. In a reasonably balanced tree, $h$ is approximately $\log_2 n$, giving $O(\log n)$ operations.
+
+<Callout type="pitfall" title="Sorted input is the worst input">
+In a highly skewed tree, $h$ can approach $n-1$, making these operations $O(n)$ in the worst case. Inserting keys that are already sorted produces exactly this: every new key goes to the right of the last one.
+</Callout>
+
+A basic BST does not automatically rebalance itself. Self-balancing variants, such as AVL trees and red–black trees, maintain additional structural rules to keep the height logarithmic. Deletion is more involved than insertion because removing a node with two children requires preserving the ordering property, often by replacing its key with the inorder successor or predecessor.
+
+## Traversal orders
+
+A traversal visits the nodes of a tree in a systematic order. Different traversal orders are useful for different tasks. For the example tree, the values are:
+
+- Root: 8
+- Left subtree: 3, with children 1 and 6
+- Right subtree: 10
+
+The three depth-first traversals differ in when they visit a node relative to its children.
+
+**Preorder** visits the node first, then its left subtree, then its right subtree. For the example, the order is `8, 3, 1, 6, 10`. This is useful when a parent must be processed before its descendants, such as when serializing a tree structure.
+
+**Inorder** visits the left subtree, then the node, then the right subtree. The order is `1, 3, 6, 8, 10`. In a BST with the usual ordering rule, inorder traversal produces keys in sorted order.
+
+**Postorder** visits the left subtree, then the right subtree, then the node. The order is `1, 6, 3, 10, 8`. It is useful when children must be processed before their parent, such as when deleting a tree or evaluating certain expression trees.
+
+A fourth common traversal is **level-order**, which visits nodes one level at a time, starting from the root. For this tree, the order is `8, 3, 10, 1, 6`. Level-order traversal typically uses a queue, while recursive depth-first traversals use the call stack implicitly.
+
+The three depth-first orders are the same recursion with the "visit" moved:
+
+```python
+class Node:
+    def __init__(self, key, left=None, right=None):
+        self.key, self.left, self.right = key, left, right
+
+def preorder(n):   # node before its subtrees
+    return [n.key] + preorder(n.left) + preorder(n.right) if n else []
+
+def inorder(n):    # node between its subtrees
+    return inorder(n.left) + [n.key] + inorder(n.right) if n else []
+
+def postorder(n):  # node after its subtrees
+    return postorder(n.left) + postorder(n.right) + [n.key] if n else []
+
+root = Node(8, Node(3, Node(1), Node(6)), Node(10))
+print(preorder(root))    # [8, 3, 1, 6, 10]
+print(inorder(root))     # [1, 3, 6, 8, 10]   sorted, because this is a BST
+print(postorder(root))   # [1, 6, 3, 10, 8]
+```
+
+<BstViz />
+
+<Callout type="key">
+In a BST with the usual ordering rule, inorder traversal produces keys in sorted order. Everything in the left subtree is smaller and everything in the right subtree is larger, so "left, node, right" applied recursively is exactly ascending order.
+</Callout>
+
+## Why tree structure matters
+
+A tree's shape determines how much work is needed to reach a node. If a balanced BST stores $n$ values, its height grows roughly logarithmically; doubling the number of nodes adds only about one level. In a skewed tree, doubling the number of nodes can nearly double the search distance.
+
+Traversal also separates structure from processing order. Preorder is useful when parent information must come first, inorder reveals the sorted sequence of a BST, and postorder supports operations that depend on completed child results. Level-order is useful when proximity to the root matters.
+
+Trees therefore provide more than a way to store connected data. Their structure encodes relationships, their ordering rules enable efficient search, and their traversal strategies determine how algorithms process the hierarchy.
