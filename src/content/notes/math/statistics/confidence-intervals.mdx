@@ -1,5 +1,5 @@
 ---
-title: "Confidence intervals"
+title: "Confidence Intervals"
 description: "What a 95 percent confidence interval means in terms of repeated sampling, how to build one, and the common misreadings, checked by simulation."
 order: 3
 tier: core
@@ -64,13 +64,18 @@ In words: about $95\%$ of the intervals contain the true mean, close to the targ
 In practice $\sigma$ is estimated by the sample standard deviation $s$, and for small $n$ the normal critical value $1.96$ is too small. The $t$ distribution with $n - 1$ degrees of freedom replaces it, and its critical value is larger for small samples. For $n = 25$ the $t$ value is about $2.06$, against $1.96$ from the normal.
 
 ```python
-import math
+from scipy import stats
 
-t_crit_25 = 2.0639  # t critical value for 95%, 24 degrees of freedom, from a t table
-print("normal critical 1.96 vs t (24 df):", 1.96, t_crit_25, " width ratio:", round(t_crit_25 / 1.96, 3))  # prints: normal critical 1.96 vs t (24 df): 1.96 2.0639 width ratio: 1.053
+z = stats.norm.ppf(0.975)                      # two-sided 95%: 2.5% in each tail
+for n in (5, 25, 100):
+    t = stats.t.ppf(0.975, df=n - 1)
+    print(f"n = {n:>3}: t critical {t:.4f} vs normal {z:.4f}, width ratio {t / z:.3f}")
+# n =   5: t critical 2.7764 vs normal 1.9600, width ratio 1.417
+# n =  25: t critical 2.0639 vs normal 1.9600, width ratio 1.053
+# n = 100: t critical 1.9842 vs normal 1.9600, width ratio 1.012
 ```
 
-In words: the $t$ interval is about $5\%$ wider for $n = 25$. The gap shrinks as $n$ grows, because the $t$ distribution approaches the normal.
+In words: for $n = 25$ the $t$ value is $2.0639$ and the interval is about $5\%$ wider than the normal one. With only five observations it is $42\%$ wider, and by $n = 100$ the gap is about $1\%$, because the $t$ distribution approaches the normal. `scipy.stats.t.ppf` replaces the printed $t$ table; run it with `uv run --with scipy`.
 
 <Callout type="pitfall">
 Do not say 'there is a $95\%$ chance the true mean lies in this interval'. Once the data are fixed the interval either contains the mean or it does not. The probability belongs to the method, which captures the truth in $95\%$ of repeated samples.

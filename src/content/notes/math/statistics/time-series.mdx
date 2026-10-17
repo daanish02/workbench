@@ -1,5 +1,5 @@
 ---
-title: "Time series"
+title: "Time Series"
 description: "Data indexed by time: trend, seasonality, autocorrelation, and a simulated AR(1) process, with the sample autocorrelation checked against its theoretical value."
 order: 8
 tier: optional
@@ -89,6 +89,31 @@ A series with a strong trend has high autocorrelation at every lag even when its
 </Callout>
 
 <ARSimulator />
+
+## Library tools
+
+`statsmodels` provides the same autocorrelation and fits AR models directly, which is how the estimates would be made on real data:
+
+```python
+import numpy as np
+from statsmodels.tsa.ar_model import AutoReg
+from statsmodels.tsa.stattools import acf
+
+rng = np.random.default_rng(14)
+x = np.zeros(5000)
+for t in range(1, 5000):
+    x[t] = 0.8 * x[t - 1] + rng.normal()
+x = x[100:]
+print("acf at lags 1, 2, 5:", acf(x, nlags=5)[[1, 2, 5]].round(3))
+fit = AutoReg(x, lags=1).fit()
+print("fitted phi:", round(fit.params[1], 3), " one-step forecast:", round(fit.predict(len(x), len(x))[0], 3), " last value:", round(x[-1], 3))
+# acf at lags 1, 2, 5: [0.805 0.656 0.357]
+# fitted phi: 0.805  one-step forecast: 2.584  last value: 3.186
+```
+
+In words: the sample autocorrelations are close to $0.8$, $0.64$ and $0.33$ again, the fitted coefficient recovers $\phi \approx 0.8$, and the forecast for the next step is about $0.8$ times the last value, the rule from the AR(1) section. Run it with `uv run --with numpy --with statsmodels`.
+
+<TrendAcf />
 
 ## Why dependence matters
 

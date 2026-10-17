@@ -1,5 +1,5 @@
 ---
-title: "Bootstrap methods"
+title: "Bootstrap Methods"
 description: "Estimating uncertainty by resampling the data with replacement, the percentile bootstrap interval, and when the method can be trusted."
 order: 6
 tier: core
@@ -78,6 +78,26 @@ In words: the sample median is about $2.4$, and the bootstrap places a $95\%$ in
 The bootstrap cannot create information the sample does not contain. With $n = 5$ the resamples are very limited, and the percentile interval tends to be too narrow. The method also fails for statistics governed by the extremes, such as the maximum, where resamples cannot reach values beyond the sample.
 </Callout>
 
+## The library version
+
+SciPy implements the same procedure, including the better **BCa** interval, which corrects the percentile interval for bias and skewness:
+
+```python
+import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(33)
+sample = rng.exponential(4, size=60)
+for method in ("percentile", "BCa"):
+    res = stats.bootstrap((sample,), np.median, n_resamples=5000, method=method, rng=rng)
+    ci = res.confidence_interval
+    print(f"{method:>10}: median {np.median(sample):.3f}, 95% interval {ci.low:.3f} to {ci.high:.3f}")
+# percentile: median 2.865, 95% interval 1.534 to 4.259
+#        BCa: median 2.865, 95% interval 1.677 to 4.285
+```
+
+In words: both intervals bracket the sample median; the BCa interval is usually shifted slightly to account for the skew of the exponential data. Run it with `uv run --with numpy --with scipy`.
+
 ## Where it fits
 
-The bootstrap is a general way to get uncertainty when formulas are missing or assumptions are doubtful. It is cheap to compute and easy to explain, and it is the standard tool for model evaluation when there is only one dataset.
+The bootstrap is a general way to get uncertainty when formulas are missing or assumptions are doubtful. It is cheap to compute and easy to explain, and it is a standard way to put error bars on a model's test score when there is only one dataset.

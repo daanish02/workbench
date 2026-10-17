@@ -70,11 +70,30 @@ In words: the residuals are small, and R-squared is $0.9997$. This data was buil
 
 ## Reading the slope
 
-The slope $2.9667$ means that on average $y$ rises by about $3$ when $x$ rises by $1$, within this range of $x$. It is a statement about the data, and it is not a guarantee for other ranges, other groups, or a changed system. It also says nothing on its own about cause. A slope can be large because of a confounder, which the causal inference note treats.
+The slope $3.0073$ means that on average $y$ rises by about $3$ when $x$ rises by $1$, within this range of $x$. It is a statement about the data, and it is not a guarantee for other ranges, other groups, or a changed system. It also says nothing on its own about cause. A slope can be large because of a confounder, which the causal inference note treats.
 
 <Callout type="pitfall">
 A high R-squared does not prove the relationship is linear or causal. Plot the residuals against $x$: a curved pattern means the straight line is the wrong model even when R-squared looks high. Always look at the data before trusting the coefficients.
 </Callout>
+
+## How sure is the slope?
+
+A fit to noisy data gives a slope estimate, not the true slope. Under the usual model, independent errors with constant variance, the slope has a **standard error**, which gives a confidence interval and a test of whether the slope is zero. `scipy.stats.linregress` returns it with the fit:
+
+```python
+from scipy import stats
+
+x = list(range(1, 11))
+y = [5.1, 7.9, 11.2, 13.8, 17.1, 20.2, 22.8, 26.1, 29.0, 32.2]
+fit = stats.linregress(x, y)
+t = stats.t.ppf(0.975, df=len(x) - 2)
+print(f"slope {fit.slope:.4f} +/- {t * fit.stderr:.4f} (95%), intercept {fit.intercept:.4f}, r^2 {fit.rvalue ** 2:.4f}, p = {fit.pvalue:.1e}")
+# slope 3.0073 +/- 0.0421 (95%), intercept 2.0000, r^2 0.9997, p = 2.1e-15
+```
+
+In words: the same slope $3.0073$ comes with a $95\%$ interval of a few hundredths either side, so the data pin it down tightly, and the p-value for "the true slope is zero" is tiny. For several predictors and fuller diagnostics, `statsmodels.api.OLS` prints the same quantities for every coefficient. The geometry behind the fit is the projection of the [Projections](../../linear-algebra/projections/) note.
+
+<ResidualPattern />
 
 ## Extending the model
 

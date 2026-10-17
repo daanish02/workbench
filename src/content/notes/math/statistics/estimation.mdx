@@ -60,6 +60,21 @@ print("grid MLE:", best, " k/n =", k / n)  # prints: grid MLE: 0.7 k/n = 0.7
 
 In words: the grid search lands on $0.7$, the observed proportion. This is the usual answer for the Bernoulli model, and it is the one the grid is checking.
 
+With real sample sizes the product of many probabilities underflows to zero, so in practice you maximise the **log-likelihood** $\log L(\theta) = \sum_i \log f(x_i \mid \theta)$ instead. The logarithm is increasing, so it has the same maximiser, and sums are numerically safe. The check below uses $7000$ heads in $10000$ flips, where the raw likelihood is far below the smallest float.
+
+```python
+import math
+from scipy.optimize import minimize_scalar
+
+k, n = 7000, 10000
+print("raw likelihood at 0.7:", 0.7 ** k * 0.3 ** (n - k))     # prints: raw likelihood at 0.7: 0.0
+nll = lambda t: -(k * math.log(t) + (n - k) * math.log(1 - t))  # negative log-likelihood
+res = minimize_scalar(nll, bounds=(1e-9, 1 - 1e-9), method="bounded")
+print("MLE from the log-likelihood:", round(res.x, 4))         # prints: MLE from the log-likelihood: 0.7
+```
+
+In words: the raw likelihood underflows to exactly $0$, so a grid over it would find nothing, while the log-likelihood is an ordinary number and its minimiser is $0.7$. Run it with `uv run --with scipy`.
+
 <LikelihoodMLE />
 
 ## Maximum a posteriori
