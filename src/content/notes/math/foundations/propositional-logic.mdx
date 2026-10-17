@@ -1,13 +1,13 @@
 ---
-title: "Propositional logic"
+title: "Propositional Logic"
 description: "Statements that are true or false, the connectives that combine them, and the truth tables that define what each one means."
 order: 1
 tier: core
 takeaways:
   - "A **proposition** is a statement that is either true or false. \"2 + 2 = 4\" is one; \"close the door\" is not."
-  - "**AND**, **OR**, **NOT** and **implication** ($p \\to  q$) combine propositions. Implication is false in exactly one row: true premise, false conclusion."
+  - "**AND**, **OR**, **NOT** and **implication** ($p \\to q$) combine propositions. Implication is false in exactly one row: true premise, false conclusion."
   - "A **truth table** lists every combination of truth values. With $n$ propositions there are $2^{n}$ rows, so you can check any formula by brute force."
-  - "**De Morgan's laws** and the **contrapositive** are equivalences: $\\lnot (p \\land  q)$ equals $\\lnot p \\lor  \\lnot q$, and $p \\to  q$ equals $\\lnot q \\to  \\lnot p$."
+  - "**De Morgan's laws** and the **contrapositive** are equivalences: $\\lnot (p \\land q)$ equals $\\lnot p \\lor \\lnot q$, and $p \\to q$ equals $\\lnot q \\to \\lnot p$."
   - "Logic is the language of proofs and of `if` statements. The [Boolean Logic](../../../cs/foundations/boolean-logic/) note in Computer Science uses the same connectives for circuits."
 resources:
   - title: "Stanford Encyclopedia: Classical Logic"
@@ -36,12 +36,12 @@ A **connective** builds a new proposition from old ones. The standard five are b
 | Symbol | Name | Reads as | True when |
 | --- | --- | --- | --- |
 | $\lnot p$ | negation | not p | $p$ is false |
-| $p \land  q$ | conjunction | p and q | both are true |
-| $p \lor  q$ | disjunction | p or q | at least one is true |
-| $p \to  q$ | implication | if p then q | $p$ is false, or $q$ is true |
-| $p \leftrightarrow  q$ | biconditional | p if and only if q | $p$ and $q$ match |
+| $p \land q$ | conjunction | p and q | both are true |
+| $p \lor q$ | disjunction | p or q | at least one is true |
+| $p \to q$ | implication | if p then q | $p$ is false, or $q$ is true |
+| $p \leftrightarrow q$ | biconditional | p if and only if q | $p$ and $q$ match |
 
-Implication is the one people get wrong. $p \to  q$ says nothing about $p$ when $q$ is true, and it is true whenever $p$ is false. "If it rains, the ground is wet" is still true on a dry day, because the claim was about rain.
+Implication is the one people get wrong. $p \to q$ says nothing about $p$ when $q$ is true, and it is true whenever $p$ is false. "If it rains, the ground is wet" is still true on a dry day, because the claim was about rain.
 
 ## Truth tables
 
@@ -53,39 +53,46 @@ from itertools import product
 def implies(p, q):
     return (not p) or q
 
-print(f"{'p':>5} {'q':>5} {'p and q':>8} {'p or q':>7} {'p -> q':>7} {'p <-> q':>8}")  # prints: p q p and q p or q p -> q p <-> q
+print(f"{'p':>5} {'q':>5} {'p and q':>8} {'p or q':>7} {'p -> q':>7} {'p <-> q':>8}")
 for p, q in product([True, False], repeat=2):
-    print(f"{str(p):>5} {str(q):>5} {str(p and q):>8} {str(p or q):>7} {str(implies(p, q)):>7} {str(p == q):>8}")  # prints: True True True True True True | True False False True False False | ... (4 lines)
+    print(f"{str(p):>5} {str(q):>5} {str(p and q):>8} {str(p or q):>7} {str(implies(p, q)):>7} {str(p == q):>8}")
 
 # De Morgan's laws checked over every row
 ok = all((not (p and q)) == ((not p) or (not q)) and (not (p or q)) == ((not p) and (not q))
          for p, q in product([True, False], repeat=2))
-print("De Morgan holds on all rows:", ok)  # prints: De Morgan holds on all rows: True
+print("De Morgan holds on all rows:", ok)
 
 # Contrapositive: (p -> q) is equivalent to (not q -> not p)
 same = all(implies(p, q) == implies(not q, not p) for p, q in product([True, False], repeat=2))
-print("contrapositive equivalent:", same)  # prints: contrapositive equivalent: True
+print("contrapositive equivalent:", same)
+#     p     q  p and q  p or q  p -> q  p <-> q
+#  True  True     True    True    True     True
+#  True False    False    True   False    False
+# False  True    False    True    True    False
+# False False    False   False    True     True
+# De Morgan holds on all rows: True
+# contrapositive equivalent: True
 ```
 
-In words: the $p \to  q$ column is false in only one row, the one where $p$ is true and $q$ is false. The last two lines do not prove the laws for all propositions; they show that the laws hold on every assignment of two variables, which is a complete proof for two letters. For $n$ letters, the same method takes $2^{n}$ rows.
+In words: the $p \to q$ column is false in only one row, the one where $p$ is true and $q$ is false. The last two lines do not prove the laws for all propositions; they show that the laws hold on every assignment of two variables, which is a complete proof for two letters. For $n$ letters, the same method takes $2^{n}$ rows.
 
 <Callout type="pitfall">
-"Or" in everyday speech often means "one or the other, not both". The logical $\lor $ includes the case where both are true. When a rule says "you may have soup or salad", a logician reads that as allowing both unless told otherwise.
+"Or" in everyday speech often means "one or the other, not both". The logical $\lor$ includes the case where both are true. When a rule says "you may have soup or salad", a logician reads that as allowing both unless told otherwise.
 </Callout>
 
 ## Equivalences
 
 Two formulas are **logically equivalent** when they have the same truth value on every row. Equivalences let you rewrite a statement into a form that is easier to prove. The two that appear most are:
 
-- **De Morgan's laws:** $\lnot (p \land  q)$ is equivalent to $\lnot p \lor  \lnot q$, and $\lnot (p \lor  q)$ is equivalent to $\lnot p \land  \lnot q$. Negation swaps AND and OR.
-- **Contrapositive:** $p \to  q$ is equivalent to $\lnot q \to  \lnot p$. To prove "if $p$ then $q$", you may instead prove "if not $q$ then not $p$".
+- **De Morgan's laws:** $\lnot (p \land q)$ is equivalent to $\lnot p \lor \lnot q$, and $\lnot (p \lor q)$ is equivalent to $\lnot p \land \lnot q$. Negation swaps AND and OR.
+- **Contrapositive:** $p \to q$ is equivalent to $\lnot q \to \lnot p$. To prove "if $p$ then $q$", you may instead prove "if not $q$ then not $p$".
 
 The contrapositive is the basis of many proofs, covered in the [Proof Techniques](../proof-techniques/) note.
 
 ## Tautologies and contradictions
 
-A formula that is true on every row is a **tautology**, such as $p \lor  \lnot p$. One that is false on every row is a **contradiction**, such as $p \land  \lnot p$. A tautology needs no assumption, and a contradiction can never hold. Proof by contradiction assumes the statement is false and derives a contradiction, which is how the next note proves many results.
+A formula that is true on every row is a **tautology**, such as $p \lor \lnot p$. One that is false on every row is a **contradiction**, such as $p \land \lnot p$. A tautology needs no assumption, and a contradiction can never hold. Proof by contradiction assumes the statement is false and derives a contradiction, which is how the next note proves many results.
 
 ## Predicates are the next step
 
-Propositional logic cannot say "every number is even or odd", because that statement is about all numbers, not one fixed proposition. That needs quantifiers ($\forall $, $\exists $) and predicates, which extend propositional logic. Quantifiers are introduced in the [Sets](../sets/) and [Functions](../functions/) notes, where they are used to define the objects that mathematics works with.
+Propositional logic cannot say "every number is even or odd", because that statement is about all numbers, not one fixed proposition. That needs quantifiers ($\forall$, $\exists$) and predicates, which extend propositional logic. Quantifiers are introduced in the [Sets](../sets/) and [Functions](../functions/) notes, where they are used to define the objects that mathematics works with.

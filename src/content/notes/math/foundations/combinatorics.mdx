@@ -4,7 +4,7 @@ description: "Counting without listing: the product rule, permutations, combinat
 order: 9
 tier: core
 takeaways:
-  - "The **product rule**: if one choice has $m$ options and a second has $n$, the pair has $m \\cdot  n$ options. Most counting problems are this rule in disguise."
+  - "The **product rule**: if one choice has $m$ options and a second has $n$, the pair has $m \\cdot n$ options. Most counting problems are this rule in disguise."
   - "A **permutation** is an ordering: $P(n, k) = n! / (n - k)!$ ordered selections of $k$ from $n$. A **combination** ignores order: $C(n, k) = n! / (k! (n - k)!)$."
   - "**Pascal's rule** $C(n, k) = C(n-1, k-1) + C(n-1, k)$ builds the binomial coefficients row by row. Each entry is the sum of the two above it."
   - "The **binomial theorem** expands $(x + y)^{n}$ as a sum of $C(n, k) x^{k} y^{n-k}$ terms. The coefficients are the rows of Pascal's triangle."
@@ -25,7 +25,7 @@ Counting is the part of mathematics that most often hides an error. The number o
 
 ## The product rule
 
-If a task has two stages and the first has $m$ outcomes while the second has $n$ for each first outcome, the task has $m \cdot  n$ outcomes. Three choices with 4, 3 and 2 options give $4 \cdot  3 \cdot  2 = 24$ ways.
+If a task has two stages and the first has $m$ outcomes while the second has $n$ for each first outcome, the task has $m \cdot n$ outcomes. Three choices with 4, 3 and 2 options give $4 \cdot 3 \cdot 2 = 24$ ways.
 
 The rule extends to any number of stages, and it is the foundation for everything below. When a count looks hard, break it into stages and multiply.
 
@@ -36,7 +36,7 @@ Two questions decide which formula applies. Does order matter? Are items used up
 - A **permutation** is an ordered selection of $k$ items from $n$ with no repeats: $P(n, k) = n! / (n - k)!$. The first item has $n$ choices, the second $n - 1$, and so on.
 - A **combination** is an unordered selection of $k$ from $n$: $C(n, k) = n! / (k! (n - k)!)$. Each combination corresponds to $k!$ permutations, so we divide by $k!$.
 
-The factorial $n!$ is $n \cdot  (n - 1) \cdot  ... \cdot  1$, with $0! = 1$. The script below checks both formulas against brute-force enumeration of small cases, using `math.comb` and `math.perm` for the formulas.
+The factorial $n!$ is $n \cdot (n - 1) \cdot ... \cdot 1$, with $0! = 1$. The script below checks both formulas against brute-force enumeration of small cases, using `math.comb` and `math.perm` for the formulas.
 
 ```python
 from itertools import combinations, permutations
@@ -46,13 +46,38 @@ print("5 choose 2 =", comb(5, 2), "list size:", len(list(combinations(range(5), 
 print("P(5,2) =", perm(5, 2), "list size:", len(list(permutations(range(5), 2))))  # prints: P(5,2) = 20 list size: 20
 ```
 
-In words: choosing 2 of 5 ignoring order gives 10, and listing ordered pairs gives 20, which is $10 \cdot  2!$. Both enumerations agree with the formulas, so the formulas can be trusted for larger $n$ where listing is impossible.
+In words: choosing 2 of 5 ignoring order gives 10, and listing ordered pairs gives 20, which is $10 \cdot 2!$. Both enumerations agree with the formulas, so the formulas can be trusted for larger $n$ where listing is impossible.
+
+## The four counting formulas
+
+Allowing repetition adds two more cases. Choosing $k$ items from $n$ kinds with repeats allowed gives $n^k$ ordered results (each position has $n$ options) and $C(n + k - 1, k)$ unordered ones. The unordered count is the **stars and bars** argument: write the $k$ chosen items as stars and separate the $n$ kinds with $n - 1$ bars, so a selection is a choice of which $k$ of the $n + k - 1$ positions are stars.
+
+| | Order matters | Order does not matter |
+| --- | --- | --- |
+| No repetition | $P(n, k) = \frac{n!}{(n - k)!}$ | $C(n, k) = \frac{n!}{k!(n - k)!}$ |
+| Repetition allowed | $n^k$ | $C(n + k - 1, k)$ |
+
+```python
+from itertools import combinations_with_replacement, product
+from math import comb
+
+n, k = 4, 3
+print("ordered with repeats:", len(list(product(range(n), repeat=k))), " formula n^k:", n ** k)  # prints: ordered with repeats: 64  formula n^k: 64
+print("unordered with repeats:", len(list(combinations_with_replacement(range(n), k))), " formula C(n+k-1, k):", comb(n + k - 1, k))  # prints: unordered with repeats: 20  formula C(n+k-1, k): 20
+```
+
+In words: three scoops from four flavours give $64$ ordered sequences but only $20$ distinct cups when order is ignored, matching both formulas. Two questions, order and repetition, pick the row and column of the table.
+
+<CountingChooser />
 
 ## Repeated letters
 
 When items repeat, the permutation formula overcounts, because swapping two identical items gives the same arrangement. Divide by the factorial of each repeated group. The letters of `MISSISSIPPI` have 11 positions with $M$ once, $I$ four times, $S$ four times and $P$ twice, so the number of arrangements is
 
-$11! / (1! \cdot  4! \cdot  4! \cdot  2!) = 34650$.
+$$
+\frac{11!}{1! \cdot 4! \cdot 4! \cdot 2!} = 34650.
+
+$$
 
 The formula is the same as before with the repeated-letter factorials in the denominator, and it is a common source of mistakes in probability problems.
 
@@ -64,7 +89,10 @@ Counting a committee of two from $\{A, B, C\}$ as $P(3, 2) = 6$ double-counts, b
 
 Pascal's rule says that choosing $k$ from $n$ either includes a particular item (leaving $k - 1$ from the other $n - 1$) or excludes it (leaving $k$ from $n - 1$). So
 
-$C(n, k) = C(n - 1, k - 1) + C(n - 1, k)$.
+$$
+C(n, k) = C(n - 1, k - 1) + C(n - 1, k).
+
+$$
 
 Arranging the coefficients in rows, each entry is the sum of the two above it. Row 4 is $1, 4, 6, 4, 1$, the number of ways to choose 0, 1, 2, 3, or 4 items from 4. The check below confirms Pascal's rule over a range of $n$ and prints row 4.
 
@@ -84,9 +112,12 @@ In words: the rule is true for every pair tested, and the row sums to 16, which 
 
 Expanding $(x + y)^{n}$ multiplies out $n$ brackets. Each term picks either $x$ or $y$ from each bracket. A term with $k$ copies of $x$ arises from choosing which $k$ of the $n$ brackets contribute $x$, giving $C(n, k)$ ways. Hence
 
-$(x + y)^{n} = \sum _{k} C(n, k) x^{k} y^{n-k}$.
+$$
+(x + y)^{n} = \sum_{k=0}^{n} C(n, k)\, x^{k} y^{n-k}.
 
-The coefficients are row $n$ of Pascal's triangle. Setting $x = y = 1$ gives $2^{n} = \sum  C(n, k)$, which counts the subsets again. The script below checks the expansion at specific values.
+$$
+
+The coefficients are row $n$ of Pascal's triangle. Setting $x = y = 1$ gives $2^{n} = \sum C(n, k)$, which counts the subsets again. The script below checks the expansion at specific values.
 
 ```python
 from math import comb
@@ -96,7 +127,7 @@ print("(x+y)^n =", (x + y) ** n,
       " sum C(n,k) x^k y^(n-k) =", sum(comb(n, k) * x**k * y**(n - k) for k in range(n + 1)))  # prints: (x+y)^n = 625 sum C(n,k) x^k y^(n-k) = 625
 ```
 
-In words: $(2 + 3)^{4}$ is $625$, and summing the five weighted terms gives the same total, so the expansion is correct at these values. The same identity gives every polynomial multiplication with binomial factors.
+In words: $(2 + 3)^{4}$ is $625$, and summing the five weighted terms gives the same total, so the expansion is correct at these values. The same identity expands any power of a sum without multiplying out the brackets one by one.
 
 ## Counting in computing
 

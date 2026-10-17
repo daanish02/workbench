@@ -1,5 +1,5 @@
 ---
-title: "Number systems"
+title: "Number Systems"
 description: "Naturals, integers, rationals, reals and complex numbers: why each set was extended from the one before, and what each extension costs."
 order: 5
 tier: core
@@ -29,17 +29,17 @@ Mathematics did not start with the reals. It started with counting, and each new
 | --- | --- | --- | --- |
 | Naturals | $\mathbb{N}$ | $0, 1, 2, ...$ | counting |
 | Integers | $\mathbb{Z}$ | $..., -1, 0, 1, ...$ | $3 - 5$ has no natural answer |
-| Rationals | $\mathbb{Q}$ | $p/q$ with $q \ne  0$ | $3 \div  5$ has no integer answer |
-| Reals | $\mathbb{R}$ | all points on the line | $\sqrt 2$ and $\pi $ are not fractions |
+| Rationals | $\mathbb{Q}$ | $p/q$ with $q \ne 0$ | $3 \div 5$ has no integer answer |
+| Reals | $\mathbb{R}$ | all points on the line | $\sqrt 2$ and $\pi$ are not fractions |
 | Complex | $\mathbb{C}$ | $a + bi$ with $i^{2} = -1$ | $x^{2} = -1$ has no real solution |
 
-Each set contains the one before it: $\mathbb{N} \subset  \mathbb{Z} \subset  \mathbb{Q} \subset  \mathbb{R} \subset  \mathbb{C}$. Each step keeps the old operations and adds the ones that used to fail. Closure is the key idea: a set is **closed** under an operation when applying it to members always gives a member. The naturals are closed under addition but not subtraction; the rationals are closed under all four arithmetic operations (except division by zero).
+Each set contains the one before it: $\mathbb{N} \subset \mathbb{Z} \subset \mathbb{Q} \subset \mathbb{R} \subset \mathbb{C}$. Each step keeps the old operations and adds the ones that used to fail. Closure is the key idea: a set is **closed** under an operation when applying it to members always gives a member. The naturals are closed under addition but not subtraction; the rationals are closed under all four arithmetic operations (except division by zero).
 
 ## Rationals and irrationals
 
-A **rational** number is a ratio of integers, $p/q$ with $q \ne  0$. Its decimal expansion always terminates or eventually repeats: $1/4 = 0.25$, $1/3 = 0.333...$. The period can be long: $1/7$ repeats six digits.
+A **rational** number is a ratio of integers, $p/q$ with $q \ne 0$. Its decimal expansion always terminates or eventually repeats: $1/4 = 0.25$, $1/3 = 0.333...$. The period can be long: $1/7$ repeats six digits.
 
-An **irrational** number has a decimal expansion that never repeats. $\sqrt 2$ is irrational (the proof by contradiction is in [Proof Techniques](../proof-techniques/)), and so are $\pi $ and $e$.
+An **irrational** number has a decimal expansion that never repeats. $\sqrt 2$ is irrational (the proof by contradiction is in [Proof Techniques](../proof-techniques/)), and so are $\pi$ and $e$.
 
 The script below shows both kinds of number in exact and floating-point form. The `Fraction` type keeps the exact ratio, so the sum of two tenths is exactly $3/10$.
 
@@ -53,9 +53,13 @@ print("1/7 decimal, 20 places:", f"{1 / 7:.20f}")  # prints: 1/7 decimal, 20 pla
 
 In words: $1/3$ is exact as a fraction but a float only holds 16 or so significant digits, so the printed value stops there. $1/7$ shows the float's error at the twentieth decimal place: the digits after the first 16 or so are not the true expansion.
 
+## Rounding to integers
+
+Moving from a real number back to an integer needs a rule. The **floor** $\lfloor x \rfloor$ is the largest integer at most $x$, and the **ceiling** $\lceil x \rceil$ is the smallest integer at least $x$: $\lfloor 2.7 \rfloor = 2$, $\lceil 2.1 \rceil = 3$, and $\lfloor -2.7 \rfloor = -3$. Python's `math.floor` and `math.ceil` follow these definitions, while `int()` truncates toward zero, so `int(-2.7)` is `-2`. The difference matters for negative numbers, for index arithmetic such as $\lfloor (i - 1)/2 \rfloor$ in a heap, and for sample sizes that must be rounded up.
+
 ## Reals
 
-The reals are the completion of the rationals: every bounded set of reals with a supremum has one, and the rationals have gaps at every irrational. A real number is a point on the line, with a decimal expansion that may be infinite and non-repeating. You cannot write most reals down exactly, which is why every calculation with them is an approximation until a formula is used.
+The reals are the completion of the rationals: every nonempty set of reals that is bounded above has a least upper bound, while the rationals have gaps at every irrational. A real number is a point on the line, with a decimal expansion that may be infinite and non-repeating. You cannot write most reals down exactly, which is why every calculation with them is an approximation until a formula is used.
 
 ## Complex numbers
 
@@ -74,11 +78,46 @@ print("sqrt(2) squared in float:", math.sqrt(2) ** 2)  # prints: sqrt(2) squared
 print("float epsilon:", sys.float_info.epsilon)  # prints: float epsilon: 2.220446049250313e-16
 ```
 
-In words: $0.1 + 0.2$ should be $0.3$, but each operand was rounded on storage, and the rounding errors do not cancel. $sqrt(2)$ squared should be exactly 2; the float result is off by one unit in the last place. Machine epsilon, about $2.2 \times  10^{-16}$, is the gap between $1$ and the next float, and it bounds the relative error of a single operation.
+In words: $0.1 + 0.2$ should be $0.3$, but each operand was rounded on storage, and the rounding errors do not cancel. $\sqrt{2}$ squared should be exactly 2; the float result is off by one unit in the last place. Machine epsilon, about $2.2 \times 10^{-16}$, is the gap between $1$ and the next float, and it bounds the relative error of a single operation.
 
 <Callout type="pitfall">
-Never test floats for equality. Use a tolerance: `math.isclose(a, b)` or $abs(a - b) < \varepsilon $ with an $\varepsilon $ that fits the scale of the numbers. Money is the usual exception: store cents as integers, or use `decimal`.
+Never test floats for equality. Use a tolerance: `math.isclose(a, b)` or $\lvert a - b\rvert < \varepsilon$ with an $\varepsilon$ that fits the scale of the numbers. Money is the usual exception: store cents as integers, or use `decimal`.
 </Callout>
+
+## How floats are spaced
+
+A double-precision float has 53 significant bits, so the gap between neighbouring floats grows with their size: it is about $2.2 \times 10^{-16}$ near $1$ and exactly $2$ near $10^{16}$. `math.ulp(x)` (unit in the last place) gives the gap at $x$.
+
+```python
+import math
+
+for x in [1.0, 1e8, 1e16]:
+    print(f"gap between floats near {x:g}: {math.ulp(x):.3g}")
+print("1e16 + 1 == 1e16:", 1e16 + 1 == 1e16)
+# gap between floats near 1: 2.22e-16
+# gap between floats near 1e+08: 1.49e-08
+# gap between floats near 1e+16: 2
+# 1e16 + 1 == 1e16: True
+```
+
+In words: the relative gap is always about $10^{-16}$, but the absolute gap grows with the number. Near $10^{16}$ the floats are two apart, so adding $1$ changes nothing.
+
+<FloatSpacing />
+
+### Catastrophic cancellation
+
+Subtracting two nearly equal numbers keeps only the digits where they differ, which can be almost none. The script compares a naive and a rearranged computation of $\sqrt{x + 1} - \sqrt{x}$ for large $x$.
+
+```python
+import math
+
+x = 1e16
+naive = math.sqrt(x + 1) - math.sqrt(x)
+stable = 1 / (math.sqrt(x + 1) + math.sqrt(x))  # same value, multiplied through by the conjugate
+print("naive:", naive, " stable:", stable)  # prints: naive: 0.0 stable: 5e-09
+```
+
+In words: the exact value is about $5 \times 10^{-9}$. The naive subtraction returns $0$, because $x + 1$ rounds back to $x = 10^{16}$, so both square roots are equal and the difference is lost entirely. The rearranged form avoids the subtraction and returns $5 \times 10^{-9}$.
 
 ## Which system to use
 
