@@ -1,0 +1,131 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Set operations on a Venn diagram"
+  caption="The universe is 1 to 10. Pick an operation and the elements in its result light up. Every element sits in exactly one region: A only, both, B only, or neither."
+>
+  <sets-venn>
+    <svg class="vn-svg" viewBox="0 0 430 240" role="img" aria-label="Venn diagram of sets A and B inside the universe 1 to 10">
+      <circle cx="125" cy="120" r="84" class="vn-circle"></circle>
+      <circle cx="245" cy="120" r="84" class="vn-circle"></circle>
+      <text x="60" y="30" class="vn-name">A</text>
+      <text x="330" y="30" class="vn-name">B</text>
+      <g data-dots></g>
+    </svg>
+    <div class="ctl-row">
+      <button class="btn" data-op="union" aria-pressed="true">A ∪ B</button>
+      <button class="btn" data-op="intersection" aria-pressed="false">A ∩ B</button>
+      <button class="btn" data-op="difference" aria-pressed="false">A ∖ B</button>
+      <button class="btn" data-op="complement" aria-pressed="false">Aᶜ</button>
+    </div>
+    <p class="vn-result" data-result></p>
+  </sets-venn>
+</Figure>
+
+<style>
+  .vn-svg {
+    display: block;
+    width: 100%;
+    max-width: 430px;
+    margin: 0 auto;
+  }
+  .vn-circle {
+    fill: rgba(66, 133, 244, 0.08);
+    stroke: #5f6368;
+    stroke-width: 2;
+  }
+  .vn-name {
+    fill: var(--text-muted);
+    font: 600 15px var(--font-mono);
+  }
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .vn-svg :global(.vn-dot circle) {
+    fill: #1f1f1f;
+    stroke: #5f6368;
+    stroke-width: 1.5;
+    transition: fill 0.15s, stroke 0.15s;
+  }
+  .vn-svg :global(.vn-dot text) {
+    fill: var(--text-faint);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .vn-svg :global(.vn-dot.hit circle) {
+    fill: var(--g-blue);
+    stroke: var(--g-blue);
+  }
+  .vn-svg :global(.vn-dot.hit text) {
+    fill: #fff;
+  }
+  .vn-result {
+    margin: 12px 0 0;
+    text-align: center;
+    font: 0.875rem/1.5 var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const U = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const A = new Set([1, 2, 3, 4, 5]);
+  const B = new Set([4, 5, 6, 7]);
+
+  // Positions inside the diagram: A only (left), both (middle), B only (right), neither (outside).
+  const POS: Record<number, [number, number]> = {
+    1: [75, 85], 2: [75, 120], 3: [75, 155],
+    4: [185, 100], 5: [185, 140],
+    6: [295, 85], 7: [295, 155],
+    8: [395, 60], 9: [395, 120], 10: [395, 180],
+  };
+
+  const OPS: Record<string, { label: string; pick: (x: number) => boolean }> = {
+    union: { label: 'A ∪ B', pick: (x) => A.has(x) || B.has(x) },
+    intersection: { label: 'A ∩ B', pick: (x) => A.has(x) && B.has(x) },
+    difference: { label: 'A ∖ B', pick: (x) => A.has(x) && !B.has(x) },
+    complement: { label: 'Aᶜ', pick: (x) => !A.has(x) },
+  };
+
+  class SetsVenn extends HTMLElement {
+    op = 'union';
+
+    connectedCallback() {
+      const dots = this.querySelector('[data-dots]')!;
+      dots.innerHTML = U.map((x) => {
+        const [cx, cy] = POS[x];
+        return `<g class="vn-dot" data-x="${x}"><circle cx="${cx}" cy="${cy}" r="13"></circle><text x="${cx}" y="${cy}">${x}</text></g>`;
+      }).join('');
+      this.querySelectorAll<HTMLButtonElement>('[data-op]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.op = b.dataset.op!;
+          this.querySelectorAll('[data-op]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const { label, pick } = OPS[this.op];
+      const hits: number[] = [];
+      this.querySelectorAll<SVGGElement>('[data-x]').forEach((g) => {
+        const x = +g.dataset.x!;
+        const hit = pick(x);
+        g.classList.toggle('hit', hit);
+        if (hit) hits.push(x);
+      });
+      const fmt = hits.length ? `{${hits.join(', ')}}` : '∅';
+      this.querySelector('[data-result]')!.textContent = `${label} = ${fmt}`;
+    }
+  }
+  customElements.define('sets-venn', SetsVenn);
+</script>

@@ -1,0 +1,186 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Drag the point around the unit circle"
+  caption="The point sits at angle θ. Its horizontal coordinate is cos θ and its vertical coordinate is sin θ. Right: the same sine value as a wave. Drag the point and watch the wave follow it."
+>
+  <unit-circle>
+    <div class="uc-wrap">
+      <svg class="uc-circle" viewBox="-1.4 -1.4 2.8 2.8" role="img" aria-label="Unit circle with a draggable point at angle theta">
+        <g transform="scale(1, -1)">
+          <line x1="-1.3" y1="0" x2="1.3" y2="0" class="uc-axis"></line>
+          <line x1="0" y1="-1.3" x2="0" y2="1.3" class="uc-axis"></line>
+          <circle cx="0" cy="0" r="1" class="uc-ring"></circle>
+          <line data-cosline x1="0" y1="0" x2="1" y2="0" class="uc-cos"></line>
+          <line data-sinline x1="0" y1="0" x2="0" y2="0" class="uc-sin"></line>
+          <line data-radius x1="0" y1="0" x2="1" y2="0" class="uc-radius"></line>
+          <line data-tanline x1="1" y1="0" x2="1" y2="0" class="uc-tan"></line>
+          <circle data-point cx="1" cy="0" r="0.06" class="uc-point"></circle>
+        </g>
+      </svg>
+      <svg class="uc-wave" viewBox="0 0 300 200" role="img" aria-label="Graph of sine from 0 to 2 pi, with a marker at the current angle">
+        <line x1="10" y1="100" x2="290" y2="100" class="uc-axis"></line>
+        <path class="uc-curve" data-wavecurve></path>
+        <circle data-wavedot cx="10" cy="100" r="5" class="uc-point"></circle>
+        <line data-wavevert x1="10" y1="100" x2="10" y2="100" class="uc-sin"></line>
+      </svg>
+    </div>
+    <p class="uc-stat" data-stat></p>
+  </unit-circle>
+</Figure>
+
+<style>
+  .uc-wrap {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+    align-items: center;
+  }
+  @media (min-width: 640px) {
+    .uc-wrap {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .uc-circle,
+  .uc-wave {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+    touch-action: none;
+    cursor: grab;
+  }
+  .uc-axis {
+    stroke: #3c4043;
+    stroke-width: 0.01;
+  }
+  .uc-ring {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 0.012;
+  }
+  .uc-radius {
+    stroke: #9aa0a6;
+    stroke-width: 0.012;
+  }
+  .uc-cos {
+    stroke: var(--g-blue);
+    stroke-width: 0.03;
+  }
+  .uc-sin {
+    stroke: var(--g-red);
+    stroke-width: 0.03;
+  }
+  .uc-tan {
+    stroke: var(--g-yellow);
+    stroke-width: 0.012;
+    stroke-dasharray: 0.04 0.04;
+  }
+  .uc-point {
+    fill: var(--text);
+  }
+  .uc-curve {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2.5;
+    vector-effect: non-scaling-stroke;
+  }
+  .uc-wave .uc-sin {
+    stroke-width: 1.5;
+    stroke: var(--g-red);
+  }
+  .uc-wave .uc-point {
+    fill: var(--text);
+  }
+  .uc-stat {
+    margin: 12px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const CURVE_X0 = 10;
+  const CURVE_X1 = 290;
+  const WAVE_CY = 100;
+  const WAVE_AMP = 80;
+
+  class UnitCircle extends HTMLElement {
+    theta = Math.PI / 4;
+
+    connectedCallback() {
+      // one full sine period across the wave panel
+      const pts: string[] = [];
+      for (let i = 0; i <= 120; i++) {
+        const t = (i / 120) * 2 * Math.PI;
+        const x = CURVE_X0 + (i / 120) * (CURVE_X1 - CURVE_X0);
+        const y = WAVE_CY - Math.sin(t) * WAVE_AMP;
+        pts.push(`${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`);
+      }
+      this.querySelector('[data-wavecurve]')!.setAttribute('d', pts.join(' '));
+
+      const svg = this.querySelector<SVGSVGElement>('.uc-circle')!;
+      const down = (e: PointerEvent) => {
+        svg.setPointerCapture(e.pointerId);
+        this.setFromEvent(e, svg);
+      };
+      svg.addEventListener('pointerdown', down);
+      svg.addEventListener('pointermove', (e) => {
+        if (svg.hasPointerCapture(e.pointerId)) this.setFromEvent(e, svg);
+      });
+      this.draw();
+    }
+
+    setFromEvent(e: PointerEvent, svg: SVGSVGElement) {
+      const r = svg.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      // screen y grows downward; the drawing is flipped so the angle is counterclockwise from +x
+      this.theta = Math.atan2(-(e.clientY - cy), e.clientX - cx);
+      this.draw();
+    }
+
+    draw() {
+      const c = Math.cos(this.theta);
+      const s = Math.sin(this.theta);
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v.toFixed(4));
+      };
+      set('[data-point]', { cx: c, cy: s });
+      set('[data-radius]', { x2: c, y2: s });
+      set('[data-cosline]', { x2: c, y2: 0 });
+      set('[data-sinline]', { x1: c, y1: 0, x2: c, y2: s });
+
+      // tangent line: from (1,0) up to where the radius crosses x = 1
+      const tan = Math.abs(c) < 1e-9 ? null : s / c;
+      if (tan === null) {
+        set('[data-tanline]', { x2: 1, y2: 0 });
+      } else {
+        set('[data-tanline]', { x2: 1, y2: tan });
+      }
+
+      // sine wave marker: angle maps to x across one full turn
+      const frac = (((this.theta % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
+      const wx = CURVE_X0 + frac * (CURVE_X1 - CURVE_X0);
+      const wy = WAVE_CY - s * WAVE_AMP;
+      const dot = this.querySelector('[data-wavedot]')!;
+      dot.setAttribute('cx', wx.toFixed(1));
+      dot.setAttribute('cy', wy.toFixed(1));
+      const vert = this.querySelector('[data-wavevert]')!;
+      vert.setAttribute('x1', wx.toFixed(1));
+      vert.setAttribute('x2', wx.toFixed(1));
+      vert.setAttribute('y1', WAVE_CY.toString());
+      vert.setAttribute('y2', wy.toFixed(1));
+
+      const deg = (((this.theta * 180) / Math.PI) % 360 + 360) % 360;
+      const tanText = tan === null ? 'undefined' : tan.toFixed(3);
+      this.querySelector('[data-stat]')!.textContent =
+        `θ = ${deg.toFixed(1)}° = ${(this.theta).toFixed(3)} rad · cos θ = ${c.toFixed(3)} · sin θ = ${s.toFixed(3)} · tan θ = ${tanText}`;
+    }
+  }
+  customElements.define('unit-circle', UnitCircle);
+</script>

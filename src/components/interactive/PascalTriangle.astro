@@ -1,0 +1,127 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Build Pascal's triangle one row at a time"
+  caption="Each entry is the sum of the two entries above it. Click any entry to see Pascal's rule: C(n, k) = C(n−1, k−1) + C(n−1, k). The row sum is 2ⁿ, the number of subsets of an n-element set."
+>
+  <pascal-triangle>
+    <div class="ctl-row">
+      <label class="lbl">Rows <input type="range" min="1" max="10" value="6" data-rows /> <b data-rowsv>6</b></label>
+    </div>
+    <div class="tri" data-tri></div>
+    <p class="pt-stat" data-stat></p>
+  </pascal-triangle>
+</Figure>
+
+<style>
+  .ctl-row {
+    margin-bottom: 14px;
+  }
+  .lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    flex: 1;
+  }
+  .tri {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .tri :global(.pt-row) {
+    display: flex;
+    gap: 6px;
+  }
+  .tri :global(.pt-cell) {
+    min-width: 34px;
+    padding: 5px 4px;
+    text-align: center;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: #1a1a1a;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .tri :global(.pt-cell.parent) {
+    background: rgba(251, 188, 4, 0.2);
+    border-color: var(--g-yellow);
+  }
+  .tri :global(.pt-cell.sel) {
+    background: rgba(66, 133, 244, 0.35);
+    border-color: var(--g-blue);
+  }
+  .pt-stat {
+    margin: 12px 0 0;
+    text-align: center;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  class PascalTriangle extends HTMLElement {
+    sel: [number, number] | null = null;
+
+    connectedCallback() {
+      this.querySelector('[data-rows]')!.addEventListener('input', () => {
+        this.sel = null;
+        this.draw();
+      });
+      this.draw();
+    }
+
+    draw() {
+      const rows = +this.querySelector<HTMLInputElement>('[data-rows]')!.value;
+      this.querySelector('[data-rowsv]')!.textContent = String(rows);
+      const val = (n: number, k: number) => {
+        if (k < 0 || k > n) return 0;
+        let c = 1;
+        for (let i = 1; i <= k; i++) c = (c * (n - k + i)) / i;
+        return Math.round(c);
+      };
+      const tri = this.querySelector('[data-tri]')!;
+      const parents = this.sel && this.sel[0] > 0 ? [[this.sel[0] - 1, this.sel[1] - 1], [this.sel[0] - 1, this.sel[1]]] : [];
+      const isParent = (n: number, k: number) => parents.some(([pn, pk]) => pn === n && pk === k);
+
+      tri.innerHTML = Array.from({ length: rows + 1 }, (_, n) => {
+        const cells = Array.from({ length: n + 1 }, (_, k) => {
+          const cls = [
+            'pt-cell',
+            isParent(n, k) ? 'parent' : '',
+            this.sel && this.sel[0] === n && this.sel[1] === k ? 'sel' : '',
+          ].join(' ');
+          return `<span class="${cls}" data-n="${n}" data-k="${k}">${val(n, k)}</span>`;
+        }).join('');
+        return `<div class="pt-row">${cells}</div>`;
+      }).join('');
+
+      tri.querySelectorAll<HTMLElement>('[data-n]').forEach((cell) =>
+        cell.addEventListener('click', () => {
+          const n = +cell.dataset.n!;
+          const k = +cell.dataset.k!;
+          this.sel = this.sel && this.sel[0] === n && this.sel[1] === k ? null : [n, k];
+          this.draw();
+        }),
+      );
+
+      const stat = this.querySelector('[data-stat]')!;
+      if (!this.sel) {
+        const sum = Array.from({ length: rows + 1 }, (_, i) => val(rows, i)).reduce((a, b) => a + b, 0);
+        stat.textContent = `row ${rows} sums to ${sum} = 2${String(rows).replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d])}`;
+      } else {
+        const [n, k] = this.sel;
+        const parentText = n > 0 ? `${val(n - 1, k - 1)} + ${val(n - 1, k)}` : 'the top row is 1';
+        stat.textContent = `C(${n}, ${k}) = ${val(n, k)}` + (n > 0 ? ` = C(${n - 1}, ${k - 1}) + C(${n - 1}, ${k}) = ${parentText}` : '');
+      }
+    }
+  }
+  customElements.define('pascal-triangle', PascalTriangle);
+</script>

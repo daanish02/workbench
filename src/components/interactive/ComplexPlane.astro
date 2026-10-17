@@ -1,0 +1,148 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Multiplying complex numbers: scale and rotate"
+  caption="Drag z anywhere on the plane. Pick w, and the green point z·w appears. Its distance from the origin is |z|·|w|, and its angle is arg z + arg w. With w = i the point turns 90°."
+>
+  <complex-plane>
+    <div class="ctl-row">
+      <button class="btn" data-w="1+1i" aria-pressed="true">w = 1 + i</button>
+      <button class="btn" data-w="0+1i" aria-pressed="false">w = i</button>
+      <button class="btn" data-w="2+0i" aria-pressed="false">w = 2</button>
+    </div>
+    <svg class="cp-svg" viewBox="-3.2 -3.2 6.4 6.4" role="img" aria-label="Complex plane with draggable point z, fixed point w, and product z times w">
+      <g transform="scale(1, -1)">
+        <line x1="-3" y1="0" x2="3" y2="0" class="cp-axis"></line>
+        <line x1="0" y1="-3" x2="0" y2="3" class="cp-axis"></line>
+        <circle cx="0" cy="0" r="1" class="cp-unit"></circle>
+        <line data-zline x1="0" y1="0" x2="1" y2="1" class="cp-z"></line>
+        <line data-wline x1="0" y1="0" x2="1" y2="1" class="cp-w"></line>
+        <line data-pline x1="0" y1="0" x2="1" y2="1" class="cp-p"></line>
+        <circle data-zpt cx="1" cy="1" r="0.12" class="cp-zpt"></circle>
+        <circle data-wpt cx="1" cy="1" r="0.1" class="cp-wpt"></circle>
+        <circle data-ppt cx="1" cy="1" r="0.12" class="cp-ppt"></circle>
+      </g>
+    </svg>
+    <p class="cp-stat" data-stat></p>
+  </complex-plane>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+  .cp-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+    cursor: grab;
+  }
+  .cp-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .cp-unit {
+    fill: none;
+    stroke: #3c4043;
+    stroke-width: 0.015;
+    stroke-dasharray: 0.06 0.06;
+  }
+  .cp-z {
+    stroke: var(--g-blue);
+    stroke-width: 0.04;
+  }
+  .cp-w {
+    stroke: var(--g-yellow);
+    stroke-width: 0.04;
+  }
+  .cp-p {
+    stroke: var(--g-green);
+    stroke-width: 0.05;
+  }
+  .cp-zpt {
+    fill: var(--g-blue);
+  }
+  .cp-wpt {
+    fill: var(--g-yellow);
+  }
+  .cp-ppt {
+    fill: var(--g-green);
+  }
+  .cp-stat {
+    margin: 12px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type C = { re: number; im: number };
+  const mul = (a: C, b: C): C => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re });
+  const abs = (a: C) => Math.hypot(a.re, a.im);
+  const arg = (a: C) => Math.atan2(a.im, a.re);
+  const fmt = (a: C) => `${a.re.toFixed(2)}${a.im >= 0 ? ' + ' : ' − '}${Math.abs(a.im).toFixed(2)}i`;
+
+  class ComplexPlane extends HTMLElement {
+    z: C = { re: 1, im: 1 };
+    w: C = { re: 1, im: 1 };
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.cp-svg')!;
+      const set = (e: PointerEvent) => {
+        const r = svg.getBoundingClientRect();
+        const scale = 6.4 / r.width;
+        const re = (e.clientX - (r.left + r.width / 2)) * scale;
+        const im = -(e.clientY - (r.top + r.height / 2)) * scale;
+        this.z = { re: Math.max(-3, Math.min(3, re)), im: Math.max(-3, Math.min(3, im)) };
+        this.draw();
+      };
+      svg.addEventListener('pointerdown', (e) => {
+        svg.setPointerCapture(e.pointerId);
+        set(e);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (svg.hasPointerCapture(e.pointerId)) set(e);
+      });
+      this.querySelectorAll<HTMLButtonElement>('[data-w]').forEach((b) =>
+        b.addEventListener('click', () => {
+          const [re, im] = b.dataset.w!.split('+').map((p) => parseFloat(p));
+          this.w = { re, im };
+          this.querySelectorAll('[data-w]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const p = mul(this.z, this.w);
+      const pos = (sel: string, c: C) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute(el.tagName === 'line' ? 'x2' : 'cx', c.re.toFixed(3));
+        el.setAttribute(el.tagName === 'line' ? 'y2' : 'cy', c.im.toFixed(3));
+      };
+      pos('[data-zline]', this.z);
+      pos('[data-zpt]', this.z);
+      pos('[data-wline]', this.w);
+      pos('[data-wpt]', this.w);
+      pos('[data-pline]', p);
+      pos('[data-ppt]', p);
+
+      const deg = (x: number) => ((x * 180) / Math.PI).toFixed(1);
+      this.querySelector('[data-stat]')!.textContent =
+        `z = ${fmt(this.z)} · w = ${fmt(this.w)} · z·w = ${fmt(p)}\n` +
+        `|z||w| = ${(abs(this.z) * abs(this.w)).toFixed(2)} = |z·w| = ${abs(p).toFixed(2)} · ` +
+        `arg z + arg w = ${deg(arg(this.z) + arg(this.w))}° = arg(z·w) mod 360`;
+    }
+  }
+  customElements.define('complex-plane', ComplexPlane);
+</script>

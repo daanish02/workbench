@@ -1,0 +1,117 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Geometric partial sums approach a limit"
+  caption="Each bar is the partial sum of 1 + r + r² + ... up to that term. The dashed line is the limit 1 / (1 − r), which exists only when |r| < 1. The closer r is to 1, the slower the bars climb to it."
+>
+  <geometric-sums>
+    <div class="ctl-row">
+      <label class="lbl">Ratio r <input type="range" min="0.1" max="0.95" step="0.05" value="0.5" data-r /> <b data-rv>0.50</b></label>
+      <label class="lbl">Terms N <input type="range" min="1" max="30" step="1" value="8" data-n /> <b data-nv>8</b></label>
+    </div>
+    <svg class="gs-svg" viewBox="0 0 360 220" role="img" aria-label="Bar chart of geometric partial sums with a dashed line at the limit">
+      <line x1="30" y1="190" x2="350" y2="190" class="gs-axis"></line>
+      <line data-limit x1="30" y1="40" x2="350" y2="40" class="gs-limit"></line>
+      <text data-limitlab x="34" y="34" class="gs-lab">limit</text>
+      <g data-bars></g>
+    </svg>
+    <p class="gs-stat" data-stat></p>
+  </geometric-sums>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  input[type='range'] {
+    flex: 1;
+  }
+  .gs-svg {
+    display: block;
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  .gs-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .gs-limit {
+    stroke: var(--g-red);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+  .gs-lab {
+    fill: var(--g-red-l);
+    font: 0.75rem var(--font-mono);
+  }
+  .gs-svg :global(.gs-bar) {
+    fill: var(--g-blue);
+    opacity: 0.8;
+    transition: height 0.15s, y 0.15s;
+  }
+  .gs-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const TOP = 40;
+  const BASE = 190;
+  const sup = (n: number) => String(n).replace(/\d/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[+d]);
+  const sub = (n: number) => String(n).replace(/\d/g, (d) => '₀₁₂₃₄₅₆₇₈₉'[+d]);
+
+  class GeometricSums extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-r]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      const N = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(2);
+      this.querySelector('[data-nv]')!.textContent = String(N);
+
+      const limit = 1 / (1 - r);
+      // the vertical scale fits the limit (or the largest bar) into the plot height
+      const yMax = limit * 1.1;
+      const toY = (v: number) => BASE - (v / yMax) * (BASE - TOP);
+      const limY = toY(limit);
+      this.querySelector('[data-limit]')!.setAttribute('y1', limY.toFixed(1));
+      this.querySelector('[data-limit]')!.setAttribute('y2', limY.toFixed(1));
+      this.querySelector('[data-limitlab]')!.setAttribute('y', (limY - 6).toFixed(1));
+
+      const slot = 320 / N;
+      const barW = Math.max(2, slot * 0.7);
+      let s = 0;
+      let bars = '';
+      for (let k = 1; k <= N; k++) {
+        s += Math.pow(r, k - 1);
+        const y = toY(s);
+        const x = 30 + (k - 1) * slot + (slot - barW) / 2;
+        bars += `<rect class="gs-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${(BASE - y).toFixed(1)}"></rect>`;
+      }
+      this.querySelector('[data-bars]')!.innerHTML = bars;
+
+      const gap = Math.pow(r, N) / (1 - r);
+      this.querySelector('[data-stat]')!.textContent =
+        `S${sub(N)} = ${s.toFixed(4)} · limit = ${limit.toFixed(4)} · gap = r${sup(N)} / (1 − r) = ${gap.toFixed(4)}`;
+    }
+  }
+  customElements.define('geometric-sums', GeometricSums);
+</script>

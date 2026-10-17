@@ -1,0 +1,164 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Arrows from domain to codomain"
+  caption="Each arrow sends an input to its output. Pick a function, then click an input to highlight its arrow. Injective means no two arrows land on the same output. Surjective means every codomain element has an arrow arriving at it."
+>
+  <function-mapping>
+    <div class="ctl-row">
+      <button class="btn" data-f="sq" aria-pressed="true">f(x) = x²</button>
+      <button class="btn" data-f="abs" aria-pressed="false">f(x) = |x|</button>
+      <button class="btn" data-f="shift" aria-pressed="false">f(x) = x + 2</button>
+    </div>
+    <svg class="fm-svg" viewBox="0 0 360 260" role="img" aria-label="Arrow diagram from domain -2..2 to codomain 0..4">
+      <text x="60" y="20" class="fm-head">domain</text>
+      <text x="300" y="20" class="fm-head">codomain</text>
+      <g data-arrows></g>
+      <g data-dom></g>
+      <g data-cod></g>
+    </svg>
+    <p class="fm-stat" data-stat></p>
+  </function-mapping>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+  .fm-svg {
+    display: block;
+    width: 100%;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  .fm-svg :global(.fm-head) {
+    fill: var(--text-muted);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+  }
+  .fm-svg :global(.fm-arrow) {
+    stroke: #5f6368;
+    stroke-width: 1.6;
+    fill: none;
+    opacity: 0.55;
+    transition: opacity 0.15s, stroke 0.15s;
+  }
+  .fm-svg :global(.fm-arrow.hot) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.8;
+    opacity: 1;
+  }
+  .fm-svg :global(.fm-node circle) {
+    fill: #1f1f1f;
+    stroke: #5f6368;
+    stroke-width: 1.5;
+  }
+  .fm-svg :global(.fm-node.hit circle) {
+    fill: var(--g-blue);
+    stroke: var(--g-blue);
+  }
+  .fm-svg :global(.fm-node text) {
+    fill: var(--text);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .fm-svg :global(.fm-node.dom) {
+    cursor: pointer;
+  }
+  .fm-stat {
+    margin: 12px 0 0;
+    text-align: center;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const DOMAIN = [-2, -1, 0, 1, 2];
+  const CODOMAIN = [0, 1, 2, 3, 4];
+  const FUNCS: Record<string, (x: number) => number> = {
+    sq: (x) => x * x,
+    abs: (x) => Math.abs(x),
+    shift: (x) => x + 2,
+  };
+  const DX = 60;
+  const CX = 300;
+  const yFor = (i: number, n: number) => 50 + (i * 180) / (n - 1);
+  const DOM_Y = DOMAIN.map((_, i) => yFor(i, DOMAIN.length));
+  const COD_Y = CODOMAIN.map((_, i) => yFor(i, CODOMAIN.length));
+
+  class FunctionMapping extends HTMLElement {
+    f = 'sq';
+    picked: number | null = null;
+
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-f]').forEach((b) =>
+        b.addEventListener('click', () => {
+          this.f = b.dataset.f!;
+          this.picked = null;
+          this.querySelectorAll('[data-f]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+          this.draw();
+        }),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const fn = FUNCS[this.f];
+      const outs = DOMAIN.map((x) => fn(x));
+      const hitCod = new Set(outs);
+      const dom = this.querySelector('[data-dom]')!;
+      const cod = this.querySelector('[data-cod]')!;
+      const arrows = this.querySelector('[data-arrows]')!;
+
+      arrows.innerHTML = DOMAIN.map((x, i) => {
+        const j = CODOMAIN.indexOf(outs[i]);
+        if (j < 0) return '';
+        const hot = this.picked === x ? ' hot' : '';
+        return `<line class="fm-arrow${hot}" x1="${DX + 14}" y1="${DOM_Y[i]}" x2="${CX - 14}" y2="${COD_Y[j]}"></line>`;
+      }).join('');
+
+      dom.innerHTML = DOMAIN.map((x, i) => {
+        const hit = this.picked === x ? ' hit' : '';
+        return `<g class="fm-node dom${hit}" data-x="${x}"><circle cx="${DX}" cy="${DOM_Y[i]}" r="14"></circle><text x="${DX}" y="${DOM_Y[i]}">${x}</text></g>`;
+      }).join('');
+      cod.innerHTML = CODOMAIN.map((y, j) => {
+        const hit = hitCod.has(y) ? ' hit' : '';
+        return `<g class="fm-node${hit}"><circle cx="${CX}" cy="${COD_Y[j]}" r="14"></circle><text x="${CX}" y="${COD_Y[j]}">${y}</text></g>`;
+      }).join('');
+
+      this.querySelectorAll<SVGGElement>('[data-dom] .fm-node').forEach((g) =>
+        g.addEventListener('click', () => {
+          const x = +g.dataset.x!;
+          this.picked = this.picked === x ? null : x;
+          this.draw();
+        }),
+      );
+
+      const seen = new Map<number, number>();
+      let clash = '';
+      DOMAIN.forEach((x, i) => {
+        if (seen.has(outs[i]) && !clash) clash = `${seen.get(outs[i])} and ${x} both go to ${outs[i]}`;
+        else seen.set(outs[i], x);
+      });
+      const injective = clash === '';
+      const missed = CODOMAIN.filter((y) => !hitCod.has(y));
+      const surjective = missed.length === 0;
+      const outside = outs.some((y) => !CODOMAIN.includes(y));
+      const parts = [
+        `injective: ${injective ? 'yes' : 'no' + (clash ? ` (${clash})` : '')}`,
+        `surjective: ${surjective ? 'yes' : 'no (not reached: ' + missed.join(', ') + ')'}`,
+      ];
+      this.querySelector('[data-stat]')!.textContent = parts.join(' · ') + (outside ? ' · some outputs leave the codomain' : '');
+    }
+  }
+  customElements.define('function-mapping', FunctionMapping);
+</script>
