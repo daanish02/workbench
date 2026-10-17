@@ -1,0 +1,229 @@
+---
+title: "Synchronization"
+description: "Mutexes, semaphores, monitors, and the producer–consumer problem."
+order: 5
+tier: core
+takeaways:
+  - "Synchronization constrains which interleavings of concurrent operations are allowed, so shared state stays consistent."
+  - "A **mutex** gives mutual exclusion: one thread in the critical section at a time."
+  - "A **semaphore** counts permits; wait takes one (blocking at zero), signal returns one."
+  - "A **monitor** bundles data, a lock and condition variables; always re-check the condition in a loop after waking."
+  - "Producer–consumer needs both exclusion (mutex) and condition synchronization (empty/full semaphores)."
+resources:
+  - title: "OSTEP: Locks"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/threads-locks.pdf"
+    note: "How locks are built from atomic hardware instructions."
+  - title: "OSTEP: Semaphores"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/threads-sema.pdf"
+    note: "The bounded buffer solved step by step, including the wrong orderings."
+  - title: "Producer–consumer problem"
+    url: "https://en.wikipedia.org/wiki/Producer%E2%80%93consumer_problem"
+---
+
+Concurrency allows multiple tasks to make progress during overlapping periods, but it creates a problem when those tasks access shared state. The outcome can depend on the order in which their operations happen, even when each task is individually correct. Synchronization coordinates concurrent execution so that shared data remains consistent and tasks wait for the conditions they need. Mutexes, semaphores, and monitors provide different ways to enforce those rules; the producer–consumer problem shows why mutual exclusion alone is not enough.
+
+## Concurrency Creates Race Conditions
+
+Suppose two threads share a counter initialized to zero. Each increments it once.
+
+At first glance, the result should be two. But the operation `counter = counter + 1` is typically a sequence of steps: read the value, add one, then write the result.
+
+The threads might interleave like this:
+
+| Step | Thread A      | Thread B      | Counter |
+| ---- | ------------- | ------------- | ------- |
+| 1    | Read counter  |               | 0       |
+| 2    |               | Read counter  | 0       |
+| 3    | Compute 0 + 1 |               | 0       |
+| 4    |               | Compute 0 + 1 | 0       |
+| 5    | Write 1       |               | 1       |
+| 6    |               | Write 1       | 1       |
+
+The final value is 1, not 2. Both threads executed their increment logic, but one update was effectively lost.
+
+This is a **race condition**: correctness depends on the timing or ordering of concurrent operations. The shared counter is an example of a critical resource, and the code that accesses it is a **critical section**. (You can replay this interleaving yourself in [Processes & Threads](../processes-and-threads/).)
+
+Synchronization establishes constraints on the allowed execution order. For this counter, the requirement is that each increment behaves as one indivisible operation relative to other increments. A mutex can enforce that requirement.
+
+## Mutexes: One Thread at a Time
+
+A **mutex** (mutual-exclusion lock) protects a critical section by allowing only one thread at a time to hold the lock.
+
+The pattern is:
+
+```
+lock(mutex)
+
+counter = counter + 1
+
+unlock(mutex)
+```
+
+If Thread A acquires the mutex first, Thread B must wait until A releases it. B then performs its increment using the updated value.
+
+The key property is mutual exclusion: protected operations cannot overlap in a way that violates the lock's rules.
+
+A mutex is appropriate when multiple threads need exclusive access to shared state, such as a linked list, shared counter, or in-memory cache. The code must release the lock reliably, including when errors occur.
+
+Mutexes introduce their own risks:
+
+- **Deadlock:** Threads wait indefinitely for locks held by one another (see [Deadlocks](../deadlocks/)).
+- **Contention:** Threads spend time waiting rather than doing useful work.
+- **Priority inversion:** A lower-priority thread holding a lock delays a higher-priority thread that needs it.
+
+<Callout type="pitfall">
+A mutex does not automatically make an entire program thread-safe. **Every** conflicting access must follow the same synchronization discipline, and locks must be held over the right operations: one unlocked read of the shared data is enough to reintroduce the race.
+</Callout>
+
+## Semaphores: Control Access Through Permits
+
+A **semaphore** is a synchronization primitive that maintains a counter representing available permits. A thread performs a wait operation to acquire a permit and a signal operation to release one. If no permit is available, the wait operation blocks until a permit becomes available.
+
+A counting semaphore initialized to $N$ permits allows up to $N$ acquisitions to succeed concurrently, assuming each acquisition is matched by a release.
+
+For example, if a service has five identical connections available, a semaphore initialized to five can limit concurrent users of those connections.
+
+A binary semaphore has two states and can coordinate access to a resource, but it is not necessarily identical to a mutex. A mutex commonly has ownership semantics: the thread that locks it is expected to unlock it. Semaphores generally represent permits or events and do not inherently require the signaling thread to be the one that performed the wait.
+
+This makes semaphores useful for both resource counting and coordination between tasks. But a semaphore does not automatically protect arbitrary shared data: its correctness depends on how its waits and signals are placed.
+
+## Monitors: Combine Shared State and Synchronization
+
+A **monitor** is a higher-level construct that groups shared data with the operations allowed to access it and the synchronization rules governing those operations. In a classic monitor model, only one thread at a time executes inside the monitor.
+
+A monitor often uses **condition variables** to let a thread wait until a condition becomes true. For example, a thread accessing a bounded queue might wait while the queue is empty, then continue when an item becomes available.
+
+Conceptually:
+
+```
+monitor Queue:
+    shared queue
+
+    put(item):
+        wait until queue is not full
+        add item
+
+    get():
+        wait until queue is not empty
+        remove and return item
+```
+
+This is a conceptual sketch, not a complete implementation: the precise waiting and notification rules depend on the language or monitor design.
+
+<Callout type="pitfall" title="Wait in a loop, not an if">
+Condition variables are not stored Boolean flags. A waiting thread releases the monitor's lock while waiting, allowing another thread to enter and change the state. When notified, it must reacquire the lock and **check the condition again**, because another thread may have changed it first (and some systems allow spurious wake-ups). Write `while not condition: wait()`, never `if`.
+</Callout>
+
+Monitors make synchronization rules easier to encapsulate. Instead of requiring every caller to manage locks and counters correctly, the shared abstraction can enforce the rules internally.
+
+## Producer–Consumer: Why Mutual Exclusion Is Not Enough
+
+The producer–consumer problem involves two roles sharing a bounded buffer:
+
+- A producer creates items and inserts them into the buffer.
+- A consumer removes items and processes them.
+
+The buffer has a fixed capacity $N$. Three constraints must hold:
+
+1. Producers must not insert into a full buffer.
+2. Consumers must not remove items from an empty buffer.
+3. Concurrent modifications must not corrupt the buffer.
+
+The third requirement is mutual exclusion. The first two are **condition synchronization**. A mutex alone addresses the third requirement, but it does not automatically ensure that the buffer is neither overfilled nor read while empty.
+
+A common solution uses a mutex and two counting semaphores.
+
+- `empty` starts at $N$, counting available slots.
+- `full` starts at $0$, counting available items.
+- `mutex` protects the buffer's internal state.
+
+<BoundedBuffer />
+
+The producer follows this order:
+
+```
+wait(empty)
+wait(mutex)
+
+insert item into buffer
+
+signal(mutex)
+signal(full)
+```
+
+The consumer follows the complementary order:
+
+```
+wait(full)
+wait(mutex)
+
+remove item from buffer
+
+signal(mutex)
+signal(empty)
+```
+
+<Callout type="pitfall" title="The order matters">
+Swap `wait(empty)` and `wait(mutex)` in the producer and the system can deadlock: a producer holding the mutex sleeps on a full buffer, and the consumer can never get the mutex to make room.
+</Callout>
+
+The producer first reserves an available slot, then locks the buffer to insert the item. The consumer first reserves an available item, then locks the buffer to remove it. After the operation, each signals that the corresponding resource count has changed.
+
+For a buffer of capacity $N$, the counts satisfy the conceptual invariant
+
+$$
+\text{empty} + \text{full} = N
+$$
+
+In words: every slot is either free or holding an item. This equation describes the number of empty and occupied slots when the semaphore counts accurately reflect the buffer state and no slot or item is in the middle of a reserved operation. During an operation, a permit may already have been acquired before the corresponding buffer change occurs, so the equation is best understood as the stable-state relationship rather than an assertion about every instant of execution.
+
+The same design in Python, with `threading.Semaphore` and `threading.Lock`:
+
+```python
+import threading
+from collections import deque
+
+N = 3
+buffer = deque()
+empty = threading.Semaphore(N)   # free slots
+full = threading.Semaphore(0)    # items ready to take
+mutex = threading.Lock()         # protects the deque itself
+consumed = []
+
+def producer():
+    for item in range(8):
+        empty.acquire()          # wait(empty): block while the buffer is full
+        with mutex:
+            buffer.append(item)
+        full.release()           # signal(full): one more item available
+
+def consumer():
+    for _ in range(8):
+        full.acquire()           # wait(full): block while the buffer is empty
+        with mutex:
+            item = buffer.popleft()
+        empty.release()          # signal(empty): one more free slot
+        consumed.append(item)
+
+threads = [threading.Thread(target=producer), threading.Thread(target=consumer)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(consumed)  # [0, 1, 2, 3, 4, 5, 6, 7]: nothing lost, nothing duplicated, despite N = 3
+```
+
+In real Python code, `queue.Queue(maxsize=N)` packages exactly this pattern for you.
+
+## The Deeper Distinction: Exclusion, Resources, and Conditions
+
+These mechanisms solve related but different problems.
+
+| Mechanism          | Primary purpose                               | Typical question answered                                     |
+| ------------------ | --------------------------------------------- | ------------------------------------------------------------- |
+| Mutex              | Mutual exclusion                              | Who may access this shared state right now?                   |
+| Semaphore          | Permit counting and signaling                 | How many resources are available, or has an event occurred?   |
+| Monitor            | Encapsulated shared state and synchronization | How can an abstraction enforce safe access and waiting rules? |
+| Condition variable | Wait for a state to become true               | Can this thread sleep until the required condition may hold?  |
+
+The distinction is between preventing conflicting operations and coordinating when operations are allowed to proceed. A mutex prevents two threads from entering a protected critical section simultaneously. A semaphore can also regulate how many resources are in use or signal availability. A monitor packages these rules around shared state, often using locks and condition variables internally.
+
+The producer–consumer problem requires both exclusion and coordination: the buffer must be modified safely, producers must wait for space, and consumers must wait for items. Once these are treated as separate requirements, synchronization becomes a matter of stating and enforcing precise invariants rather than adding locks wherever a race might occur.

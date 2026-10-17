@@ -1,0 +1,139 @@
+---
+title: "System Calls"
+description: "The boundary between user space and kernel space, and how it's crossed."
+order: 2
+tier: core
+takeaways:
+  - "A **system call** is a controlled request from user space for a privileged kernel service: files, processes, memory, network."
+  - "Hardware privilege levels enforce the boundary; a trap instruction enters the kernel only at entry points the kernel defines."
+  - "The kernel **validates** every argument, because user programs are untrusted."
+  - "Crossing the boundary costs time, so batching many small operations into fewer calls (buffering) speeds programs up."
+  - "System calls are deliberate; interrupts come from devices; exceptions come from faulting instructions."
+resources:
+  - title: "OSTEP: Limited Direct Execution"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-mechanisms.pdf"
+    note: "How the trap into the kernel actually works, and why the OS needs it."
+  - title: "syscalls(2), Linux manual"
+    url: "https://man7.org/linux/man-pages/man2/syscalls.2.html"
+    note: "The full list of Linux system calls."
+  - title: "read(2), Linux manual"
+    url: "https://man7.org/linux/man-pages/man2/read.2.html"
+    note: "A real system call's contract: short reads, errors and blocking."
+---
+
+A system call is the controlled mechanism through which a user-space program requests a service that requires operating-system privileges. Applications cannot ordinarily access hardware, modify protected kernel memory, or perform privileged CPU operations directly. Instead, they request services such as reading a file, creating a process, allocating certain resources, or communicating over a network. The kernel validates these requests and performs the permitted operations on the application's behalf. The key distinction is that a system call is not merely a function call: it crosses a protection boundary between application code and the operating system.
+
+## Why User Space and Kernel Space Exist
+
+Modern operating systems separate execution into two broad protection domains.
+
+**User space** is where ordinary applications run. A process normally has access to its own virtual address space and only the resources permitted to it. If an application tries to write to protected kernel memory or execute a privileged instruction, the processor and operating system prevent the operation.
+
+**Kernel space** is where the operating-system kernel executes with elevated privileges. It manages processes, memory, device access, file systems, interrupts, and other core services. Kernel code can perform operations that ordinary applications cannot, subject to the architecture's protections and the kernel's own rules.
+
+This separation limits the damage a faulty or malicious application can cause. If an ordinary application crashes, it generally does not bring down the entire operating system. A kernel fault, by contrast, can affect the whole machine.
+
+<Callout type="key">
+The distinction is enforced by **hardware-supported privilege levels** and memory-access permissions, not merely by a convention that programmers are expected to follow.
+</Callout>
+
+## A System Call Crosses the Boundary
+
+Suppose a program wants to read data from a file. It cannot simply access arbitrary disk-controller registers or retrieve protected kernel buffers. It requests a read operation through an operating-system interface.
+
+<SyscallFlow />
+
+The typical sequence is:
+
+1. The application invokes an API, often through a library wrapper.
+2. The wrapper places the system-call number and arguments where the platform ABI expects them.
+3. A special CPU instruction transfers execution into the kernel through a controlled entry mechanism.
+4. The kernel identifies the requested service, validates arguments and permissions, and performs or initiates the operation.
+5. The kernel returns a result, and execution resumes in user space.
+
+The exact mechanism varies by CPU architecture and operating system. The important feature is that the transition is controlled by hardware and kernel rules, rather than allowing an application to jump arbitrarily into privileged code.
+
+## A System Call Is Not the Same as a Function Call
+
+An ordinary function call usually transfers control within the same process and privilege level. It may push a return address, change registers, and jump to another instruction, but it does not inherently cross a protection boundary.
+
+A system call requires a controlled transition into privileged execution. This involves a defined entry point, a calling convention, and validation of the requested operation.
+
+| Property             | Ordinary function call                        | System call                                        |
+| -------------------- | --------------------------------------------- | -------------------------------------------------- |
+| Typical destination  | Another function in the same execution domain | A kernel service                                   |
+| Privilege transition | No                                            | Yes, typically                                     |
+| Main overhead        | Call and return, plus function work           | Boundary transition and kernel handling            |
+| Permission checks    | Depend on the function and application        | Kernel validates privileged operations             |
+| Examples             | `strlen()`, a local helper function           | `read()`, `write()`, `open()` on Unix-like systems |
+
+A library function does not necessarily perform a system call. For example, `strlen()` can calculate a string's length entirely in user space. Conversely, a higher-level library API may internally perform one or more system calls.
+
+This distinction matters for performance: a program may call thousands of ordinary functions without entering the kernel, while file and network operations often require kernel services.
+
+Python's `os` module exposes thin wrappers that map almost one-to-one onto system calls, which makes the boundary easy to see:
+
+```python
+import os
+
+# os.write is a direct wrapper around write(2): no buffering, one kernel entry per call.
+# File descriptor 1 is standard output.
+n = os.write(1, b"hello from a system call\n")
+print(n)  # 25 -> the system call's return value: how many bytes the kernel accepted
+```
+
+Higher-level `print()` goes through a buffer first and only calls `write` when the buffer fills or is flushed, which is exactly the batching described below.
+
+## What Happens During a System Call
+
+A system call does not necessarily mean the CPU stops doing all other work. The transition itself changes execution context, but the kernel may complete the request quickly, wait for an event, or make the calling thread sleep.
+
+Consider a read request:
+
+```
+read(fd, buffer, 1024);
+```
+
+On a Unix-like system, this asks the kernel to read up to 1,024 bytes from a file descriptor into a buffer. The call may return fewer bytes than requested, return an error, or block while data becomes available, depending on the descriptor and conditions.
+
+The kernel must validate the descriptor, ensure the destination memory is accessible, check permissions and state, and coordinate with the relevant subsystem. If the operation requires device activity, the kernel may initiate I/O and put the calling thread to sleep until the result is ready. Another runnable thread can use the CPU in the meantime.
+
+When the operation completes, the kernel returns a result to user space. A system call therefore does not guarantee that the requested work happens immediately or synchronously; it guarantees a controlled interface to the operating system.
+
+## Why the Boundary Has a Cost
+
+Crossing from user space into kernel space requires processor and kernel work. The system must transfer control through a protected entry path, preserve the required execution state, validate the request, and eventually return to the application.
+
+The cost can include:
+
+- **Entry and return overhead:** State handling and privilege transitions consume CPU cycles.
+- **Validation and bookkeeping:** The kernel checks arguments, permissions, resource state, and accounting information.
+- **Synchronization:** Kernel subsystems may need locks or other coordination.
+- **Scheduling:** If the calling thread blocks, the scheduler may run another thread, and the original thread must later resume.
+- **Actual operation cost:** File-system work, network processing, and device I/O can dwarf the transition overhead.
+
+<Callout type="pitfall" title="A system call is not a context switch">
+A system call that completes immediately returns to the same thread without scheduling another one; it changes privilege mode, not the running thread. Only if the thread blocks does a scheduling decision, and possibly a [context switch](../context-switching/), follow.
+</Callout>
+
+<Callout type="practice">
+Reducing unnecessary system calls improves performance, especially in tight loops or high-throughput applications. **Buffering** many small operations into one larger request amortizes the cost of entering the kernel, although batching may increase latency or memory usage.
+</Callout>
+
+## System Calls, Interrupts, and Exceptions
+
+These mechanisms all transfer execution to the kernel, but they serve different purposes.
+
+- **System call:** A program deliberately requests a kernel service.
+- **Interrupt:** An event, often from hardware, signals that attention is required. The event is generally asynchronous relative to the currently executing instruction stream.
+- **Exception:** The processor encounters a condition during instruction execution, such as an invalid memory access or a page fault.
+
+A system call is a deliberate request; an interrupt is typically an external event; an exception arises from a condition associated with execution. All use controlled mechanisms to enter privileged code, but their causes and handling rules differ.
+
+For example, a program may issue a system call to read a file, the storage device may later raise an interrupt when data is ready, and a page fault may occur if the destination memory requires additional handling. These are separate events within one broader operation.
+
+## The Deeper Principle: Privilege Without Direct Access
+
+The user-space/kernel-space boundary lets applications use powerful system resources without receiving unrestricted control over them. The kernel exposes narrow, defined interfaces, checks requests, enforces isolation, and coordinates shared hardware and resources.
+
+The system-call mechanism is therefore both an interface and a security boundary. Its purpose is not merely to make operating-system services available, but to make them available under controlled rules.

@@ -1,0 +1,162 @@
+---
+title: "Memory Management"
+description: "Paging, segmentation, and address translation, step by step."
+order: 7
+tier: core
+takeaways:
+  - "Programs use **virtual addresses**; the MMU translates them to physical addresses using per-process mappings."
+  - "**Paging** splits memory into fixed-size pages and frames: address = page number + offset, and only the page number is translated."
+  - "**Segmentation** uses variable-size logical regions with base and limit; it causes external fragmentation, paging causes internal."
+  - "The **TLB** caches recent translations; a TLB miss is not a page fault."
+  - "Translation also enforces protection: read, write, execute and user/kernel permissions live in the mappings."
+resources:
+  - title: "OSTEP: Paging: Introduction"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-paging.pdf"
+    note: "Address translation worked through bit by bit."
+  - title: "OSTEP: Faster Translations (TLBs)"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-tlbs.pdf"
+  - title: "OSTEP: Segmentation"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-segmentation.pdf"
+---
+
+Memory management allows each process to operate as though it has its own organized memory space, while the operating system coordinates the physical RAM shared by all processes. The central problem is that a program uses addresses meaningful within its own execution environment, but the hardware must ultimately access locations in physical memory. Address translation bridges these two worlds. Paging divides memory into fixed-size blocks to simplify allocation, while segmentation organizes memory into logical regions such as code, data, and stacks.
+
+## Virtual Addresses Separate Programs from Physical Memory
+
+A process typically uses virtual addresses rather than directly referring to physical RAM locations. The operating system and memory-management hardware translate these virtual addresses into physical addresses.
+
+This separation provides three major benefits.
+
+- **Isolation:** One process cannot ordinarily access another process's memory without explicit permission or sharing arrangements.
+- **Flexibility:** A process's memory can be mapped to physical locations that are not contiguous.
+- **Abstraction:** Programs can use a consistent address space without needing to know where their data resides in RAM.
+
+For example, two processes may both use virtual address `0x1000`, yet that address can map to different physical locations. The numerical address alone does not identify a unique physical memory location; its meaning depends on the address space and translation rules.
+
+Virtual memory is therefore not simply a different name for RAM. It is an abstraction implemented through mappings, permissions, hardware support, and operating-system policies. Some virtual memory may also be backed by files or secondary storage rather than currently resident in RAM.
+
+## Paging: Divide Memory into Fixed-Size Blocks
+
+**Paging** divides a process's virtual address space into fixed-size **pages** and physical memory into equally sized **frames**. A page can be placed in any suitable physical frame, so a process does not need one contiguous block of physical memory.
+
+Suppose the page size is 4 KiB and a process accesses virtual address 10,000. The address can be divided into a virtual page number and an offset within that page:
+
+$$
+\text{virtual address} \;\longrightarrow\; (\text{page number}, \text{offset})
+$$
+
+For a page size $S$,
+
+$$
+\text{page number} = \left\lfloor \frac{A}{S} \right\rfloor
+\qquad
+\text{offset} = A \bmod S
+$$
+
+Here, $A$ is the virtual address and $S$ is the page size in bytes. In words: divide the address by the page size; the quotient says which page, the remainder says where inside it. Because $S$ is a power of two, hardware does this for free by splitting the address's bits.
+
+With $A=10{,}000$ and $S=4096$:
+
+- Page number: $2$
+- Offset: $1808$
+
+The operating system maintains **page tables** that map virtual pages to physical frames. If virtual page 2 maps to physical frame 7, the physical address is
+
+$$
+\text{physical address} = 7 \times 4096 + 1808 = 30480
+$$
+
+The offset remains unchanged because pages and frames have the same size. Only the page number is translated into a frame number.
+
+<PagingTranslator />
+
+The same translation in Python, first with division and then with the bit operations hardware actually uses:
+
+```python
+PAGE_SIZE = 4096                          # 2**12: the low 12 bits of an address are the offset
+page_table = {0: 3, 1: 5, 2: 7, 4: 1}     # virtual page -> physical frame (resident pages only)
+
+def translate(vaddr):
+    page, offset = divmod(vaddr, PAGE_SIZE)
+    if page not in page_table:
+        raise MemoryError(f"page fault: page {page} is not mapped")
+    return page_table[page] * PAGE_SIZE + offset
+
+print(translate(10_000))                  # 30480
+print(10_000 >> 12, 10_000 & 0xFFF)       # 2 1808  (shift gives the page, mask gives the offset)
+try:
+    translate(13_000)
+except MemoryError as e:
+    print(e)                              # page fault: page 3 is not mapped
+```
+
+Paging eliminates **external fragmentation** caused by needing contiguous physical memory for each allocation. However, it can cause **internal fragmentation**: a process may not use all the space in its final allocated page. Page tables also consume memory, and address translation requires hardware and software support.
+
+## Segmentation: Organize Memory by Meaning
+
+**Segmentation** divides a program's address space into variable-sized logical regions, such as code, global data, a heap, and a stack. Unlike paging, which divides memory into uniform blocks, segmentation reflects the logical structure of a program.
+
+A logical address in a simple segmentation model consists of a segment number and an offset:
+
+$$
+(\text{segment number}, \text{offset})
+$$
+
+Each segment has a **base** address and a **limit**. The base identifies its starting location, while the limit defines its size. Translation checks whether the offset is within the segment's bounds and then computes
+
+$$
+\text{physical address} = \text{base} + \text{offset} \qquad (\text{valid only if } 0 \le \text{offset} < \text{limit})
+$$
+
+provided the offset is valid and access permissions allow the operation.
+
+For example, suppose a data segment begins at physical address 20,000 and has a size of 2,000 bytes. An offset of 500 translates to physical address 20,500. An offset of 2,000 is outside the segment because valid byte offsets run from 0 through 1,999.
+
+Segmentation makes logical protection and sharing natural: code can have read-and-execute permissions, while data may be writable. But variable-sized allocation can create external fragmentation. Even if enough total free memory exists, it may be divided into holes too small to accommodate a new segment.
+
+Modern general-purpose systems commonly rely primarily on paging for virtual memory. Segmentation is important conceptually and historically, and some architectures retain limited segmentation mechanisms, but it is not generally the main mechanism used to organize application memory on contemporary 64-bit systems.
+
+## Paging vs. Segmentation
+
+| Property                   | Paging                              | Segmentation                          |
+| -------------------------- | ----------------------------------- | ------------------------------------- |
+| Unit of allocation         | Fixed-size page                     | Variable-size segment                 |
+| Reflects program structure | Not inherently                      | Yes, logically                        |
+| Address components         | Page number + offset                | Segment number + offset               |
+| Mapping metadata           | Page table                          | Segment table or equivalent mechanism |
+| Fragmentation              | Internal fragmentation possible     | External fragmentation possible       |
+| Bounds checking            | Page-level mappings and permissions | Segment bounds and permissions        |
+| Main advantage             | Flexible physical allocation        | Logical organization and protection   |
+| Main challenge             | Page-table and translation overhead | Variable-size allocation complexity   |
+
+The conceptual distinction is that paging organizes memory for efficient physical allocation, while segmentation organizes memory according to logical regions. They are not mutually exclusive in principle; a system can use segmentation to define regions and paging to map those regions onto physical frames.
+
+## Address Translation: From Virtual Address to RAM
+
+Address translation is the mechanism that turns a virtual address into a physical address. In a typical paged system, the CPU issues a virtual address, and the memory-management unit (MMU) uses the active address-space mappings to find the corresponding physical frame.
+
+The translation process generally works as follows:
+
+1. The CPU generates a virtual address.
+2. The MMU checks the translation lookaside buffer (TLB), a cache of recent address translations.
+3. If the translation is cached and permissions allow the access, the physical address can be obtained quickly.
+4. If the TLB misses, the hardware performs a page-table walk, or the architecture invokes operating-system assistance, to locate the mapping.
+5. If the mapping is valid and the access is permitted, execution continues. Otherwise, the access may trigger a page fault or another protection exception.
+
+<Callout type="pitfall" title="A TLB miss is not a page fault">
+A TLB miss means the translation is not in the translation cache; the mapping may still be present in the page table and in RAM, and hardware usually just walks the table. A **page fault** means the access requires operating-system handling, for example because the page is not currently resident, the mapping is invalid, or the access violates permissions.
+</Callout>
+
+If a valid page is not resident in RAM, the operating system may need to load its contents from a backing store before execution can continue. That can be far more expensive than a normal memory access. If the access is prohibited, the operating system may instead terminate the process or deliver an appropriate exception.
+
+## Why the Details Matter for Performance
+
+Paging creates flexibility, but address translation and memory placement influence performance. Page tables can be large, so systems often use multilevel page tables to allocate translation metadata only where needed. The TLB avoids repeatedly walking those tables for frequently accessed memory.
+
+Page size also matters. Larger pages can reduce the number of page-table entries and increase TLB reach, but they may waste more memory and make fine-grained allocation less flexible. Smaller pages offer finer granularity but can increase translation overhead.
+
+Memory protection is inseparable from translation. A mapping can specify whether memory is readable, writable, executable, or accessible from user mode. Translation therefore does more than find an address: it helps enforce the boundaries between processes and between different kinds of memory within a process.
+
+<Callout type="key">
+Virtual memory **decouples the addresses a program uses from the physical locations that hold its data**. Every other benefit (isolation, sharing, non-contiguous allocation, swapping) follows from that one indirection.
+</Callout>

@@ -1,0 +1,165 @@
+---
+title: "Page Replacement"
+description: "FIFO, LRU, and optimal, compared on the same reference string."
+order: 9
+tier: core
+takeaways:
+  - "When RAM is full, a page fault must **evict** a resident page; the policy decides which one."
+  - "**FIFO** evicts the oldest arrival, **LRU** the least recently used, **Optimal** the page needed furthest in the future."
+  - "Optimal is the theoretical minimum but needs the future, so it serves as a benchmark."
+  - "LRU usually wins thanks to temporal locality, but not always: on the classic string below FIFO beats it."
+  - "FIFO can suffer **Bélády's anomaly**: more frames, more faults. LRU and Optimal cannot."
+resources:
+  - title: "OSTEP: Beyond Physical Memory: Policies"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys-policy.pdf"
+    note: "FIFO, random, LRU and the clock algorithm with worked traces."
+  - title: "Page replacement algorithm"
+    url: "https://en.wikipedia.org/wiki/Page_replacement_algorithm"
+    note: "Including clock, second-chance and working-set variants used in practice."
+---
+
+Page replacement algorithms decide which memory page to evict when a process needs a frame and no free frame is available. Their goal is to reduce future page faults, because a fault can require operating-system work and potentially slow storage access. FIFO evicts the page that arrived earliest, LRU evicts the page that has gone unused for the longest time, and Optimal evicts the page whose next use is farthest in the future. Comparing them on the same reference string reveals why a simple rule can perform worse than a rule based on usage history—and why the optimal algorithm is a theoretical benchmark rather than a directly implementable general-purpose policy.
+
+## The Shared Test Case
+
+We will use the same page-reference string for all three algorithms, with 3 available frames. Each number represents a page the process accesses.
+
+Reference string (12 references, 3 frames):
+
+```
+1 2 3 4 1 2 5 1 2 3 4 5
+```
+
+A **page hit** occurs when the requested page is already in a frame. A **page fault** occurs when it is absent and must be brought into memory. Initially, all three frames are empty, so the first three distinct references fault.
+
+For each algorithm, we will count faults using the same starting conditions and the same reference order. This makes the comparison meaningful: only the replacement rule changes.
+
+## FIFO: Evict the Oldest Page
+
+First In, First Out (FIFO) replaces whichever page has been in memory the longest, regardless of how recently it was used. Think of the frames as a queue: when a new page must enter a full memory, the page at the front leaves.
+
+| Ref. | Page | Frames after access | Result |
+| ---- | ---- | ------------------- | ------ |
+| 1    | 1    | 1, –, –             | Fault  |
+| 2    | 2    | 1, 2, –             | Fault  |
+| 3    | 3    | 1, 2, 3             | Fault  |
+| 4    | 4    | 4, 2, 3             | Fault  |
+| 5    | 1    | 4, 1, 3             | Fault  |
+| 6    | 2    | 4, 1, 2             | Fault  |
+| 7    | 5    | 5, 1, 2             | Fault  |
+| 8    | 1    | 5, 1, 2             | Hit    |
+| 9    | 2    | 5, 1, 2             | Hit    |
+| 10   | 3    | 5, 3, 2             | Fault  |
+| 11   | 4    | 5, 3, 4             | Fault  |
+| 12   | 5    | 5, 3, 4             | Hit    |
+
+**Total: 9 faults and 3 hits out of 12 references.**
+
+FIFO is easy to implement because it needs to track arrival order. Its weakness is that age does not necessarily indicate whether a page is useful. A frequently accessed page can be evicted simply because it arrived early.
+
+## LRU: Evict the Least Recently Used Page
+
+Least Recently Used (LRU) replaces the page that has not been accessed for the longest time. Instead of tracking when a page entered memory, it tracks when the page was last used.
+
+For example, immediately before reference 3 at step 10, the frames contain pages 1, 2, and 5. Their most recent uses occurred at steps 8, 9, and 7, respectively. Page 5 is the least recently used, so LRU evicts it.
+
+| Ref. | Page | Frames after access | Result |
+| ---- | ---- | ------------------- | ------ |
+| 1    | 1    | 1, –, –             | Fault  |
+| 2    | 2    | 1, 2, –             | Fault  |
+| 3    | 3    | 1, 2, 3             | Fault  |
+| 4    | 4    | 4, 2, 3             | Fault  |
+| 5    | 1    | 4, 1, 3             | Fault  |
+| 6    | 2    | 4, 1, 2             | Fault  |
+| 7    | 5    | 5, 1, 2             | Fault  |
+| 8    | 1    | 5, 1, 2             | Hit    |
+| 9    | 2    | 5, 1, 2             | Hit    |
+| 10   | 3    | 3, 1, 2             | Fault  |
+| 11   | 4    | 3, 4, 2             | Fault  |
+| 12   | 5    | 3, 4, 5             | Fault  |
+
+**Total: 10 faults and 2 hits out of 12 references.**
+
+LRU often performs well because of temporal locality: pages accessed recently are often accessed again soon. However, recent use is only a clue about future use, not a guarantee. In this reference string, LRU actually performs worse than FIFO.
+
+## Optimal: Evict the Page Needed Furthest in the Future
+
+The Optimal (OPT) algorithm replaces the page whose next reference is farthest in the future. If a page will never be referenced again, it is an ideal candidate for eviction.
+
+Consider reference 4 at step 4. The frames initially contain pages 1, 2, and 3. Looking ahead, the remaining references are:
+
+`1, 2, 5, 1, 2, 3, 4, 5`
+
+Page 3 is not needed again until step 10, while pages 1 and 2 are needed immediately. OPT therefore evicts page 3.
+
+| Ref. | Page | Frames after access | Result |
+| ---- | ---- | ------------------- | ------ |
+| 1    | 1    | 1, –, –             | Fault  |
+| 2    | 2    | 1, 2, –             | Fault  |
+| 3    | 3    | 1, 2, 3             | Fault  |
+| 4    | 4    | 1, 2, 4             | Fault  |
+| 5    | 1    | 1, 2, 4             | Hit    |
+| 6    | 2    | 1, 2, 4             | Hit    |
+| 7    | 5    | 1, 2, 5             | Fault  |
+| 8    | 1    | 1, 2, 5             | Hit    |
+| 9    | 2    | 1, 2, 5             | Hit    |
+| 10   | 3    | 3, 2, 5             | Fault  |
+| 11   | 4    | 4, 3, 5             | Fault  |
+| 12   | 5    | 4, 3, 5             | Hit    |
+
+**Total: 7 faults and 5 hits out of 12 references.**
+
+OPT gives the minimum possible number of page faults for a fixed reference string and fixed number of frames. Its limitation is that a real operating system generally cannot know the exact future memory references. It is mainly used as a theoretical lower bound for evaluating practical algorithms.
+
+## Direct Comparison
+
+<PageReplacement refs="1 2 3 4 1 2 5 1 2 3 4 5" frames={3} />
+
+| Property                  | FIFO             | LRU                        | Optimal                             |
+| ------------------------- | ---------------- | -------------------------- | ----------------------------------- |
+| Eviction rule             | Earliest arrival | Least recent use           | Farthest next use                   |
+| Uses past history         | Arrival order    | Access history             | No; uses future references          |
+| Requires future knowledge | No               | No                         | Yes                                 |
+| Faults in this example    | 9                | 10                         | 7                                   |
+| Main advantage            | Simple           | Exploits temporal locality | Minimum possible faults             |
+| Main weakness             | Ignores usage    | Past use can mislead       | Not generally implementable exactly |
+
+<Callout type="pitfall" title="LRU is not always better">
+The surprising result is that FIFO beats LRU here: 9 faults versus 10. LRU is not guaranteed to outperform FIFO on every reference string, even though it usually benefits from locality.
+</Callout>
+
+LRU does have an important theoretical property that FIFO lacks: it is a stack algorithm, meaning its set of resident pages with $n$ frames is always contained in its resident set with $n+1$ frames, under the same reference string. Consequently, LRU cannot suffer Belady's anomaly, where adding more frames increases the number of page faults. FIFO can suffer that anomaly, and this very string shows it: press **+** in the simulator above to give FIFO 4 frames, and its faults rise from 9 to 10.
+
+All three policies fit in a few lines of Python; `OrderedDict` keeps pages in arrival order for FIFO, or in recency order for LRU once `move_to_end` is called on every hit:
+
+```python
+from collections import OrderedDict
+
+def faults(refs, frames, policy):
+    memory = OrderedDict()          # first key = next victim for FIFO and LRU
+    count = 0
+    for t, page in enumerate(refs):
+        if page in memory:
+            if policy == "LRU":
+                memory.move_to_end(page)   # a hit makes the page most recently used
+            continue
+        count += 1
+        if len(memory) == frames:
+            if policy == "OPT":            # evict the page whose next use is furthest away (or never)
+                future = refs[t + 1:]
+                victim = max(memory, key=lambda p: future.index(p) if p in future else len(future))
+                del memory[victim]
+            else:
+                memory.popitem(last=False)
+        memory[page] = True
+    return count
+
+refs = [1, 2, 3, 4, 1, 2, 5, 1, 2, 3, 4, 5]
+for policy in ("FIFO", "LRU", "OPT"):
+    print(policy, faults(refs, 3, policy), faults(refs, 4, policy))
+# FIFO 9 10   <- more frames, more faults: Belady's anomaly
+# LRU 10 8
+# OPT 7 6
+```
+
+Real kernels rarely run exact LRU, because updating a recency list on every memory access would be far too slow. They approximate it with the **clock** algorithm: a hardware-set "referenced" bit per page and a sweeping hand that evicts the first page whose bit is clear.

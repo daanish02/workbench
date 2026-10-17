@@ -1,0 +1,118 @@
+---
+title: "Virtual Memory"
+description: "The illusion of unlimited memory: page tables and page faults."
+order: 8
+tier: core
+takeaways:
+  - "Virtual memory separates the memory a program can **address** from the memory that is **resident** in RAM right now."
+  - "Page-table entries say where each page lives and whether it is present; the MMU uses them on every access."
+  - "**Demand paging** loads pages only when first touched; a **page fault** is the OS's chance to supply them."
+  - "Most page faults are normal; only accesses to unmapped or forbidden memory are errors."
+  - "When the working set no longer fits in RAM, the system **thrashes**: it spends its time moving pages, not computing."
+resources:
+  - title: "OSTEP: Beyond Physical Memory: Mechanisms"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys.pdf"
+    note: "Swap space, the present bit and the page-fault path."
+  - title: "OSTEP: Beyond Physical Memory: Policies"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/vm-beyondphys-policy.pdf"
+    note: "Replacement policies and thrashing."
+  - title: "Thrashing"
+    url: "https://en.wikipedia.org/wiki/Thrashing_(computer_science)"
+---
+
+Virtual memory allows each process to operate within its own address space without requiring all of that address space to reside in physical RAM at once. The operating system and memory-management hardware translate virtual addresses into physical locations, enforce access permissions, and arrange for missing pages to be loaded when needed. This creates the impression that a process has a large, continuous memory space, even though its data may be scattered across RAM, temporarily stored elsewhere, or not yet backed by physical memory at all. Virtual memory is not unlimited memory; it is a system for separating the memory a program can address from the physical memory currently available to hold it.
+
+## The Illusion: Address Space Is Not Physical Memory
+
+A program operates on virtual addresses. It does not ordinarily need to know which physical RAM locations contain its instructions, variables, or dynamically allocated objects.
+
+Suppose two processes both access virtual address `0x4000`. The operating system can map that address to different physical locations for each process. The same virtual address can therefore refer to different data depending on which address space is active.
+
+This separation gives the operating system considerable freedom. It can place a process's memory in non-contiguous physical frames, move pages between RAM and secondary storage, share selected pages between processes, and prevent one process from accessing another's private memory.
+
+The term illusion of unlimited memory is useful only as an analogy. A process may have a very large virtual address space, but actual allocation is constrained by physical RAM, backing storage, operating-system limits, address-space architecture, and resource commitments. Reserving a virtual address range also does not necessarily mean that physical memory has already been allocated for it.
+
+## Page Tables: Mapping Virtual Addresses to Physical Memory
+
+Virtual memory is commonly implemented using paging. The virtual address space is divided into fixed-size pages, while physical RAM is divided into equally sized frames.
+
+A **page table** records how virtual pages map to physical frames and includes relevant status and permission information. The memory-management unit (MMU) uses these mappings to translate addresses during memory access.
+
+For a page size $S$, a virtual address $A$ can be decomposed into a page number and an offset:
+
+$$
+p=\left\lfloor\frac{A}{S}\right\rfloor, \qquad d=A\bmod S
+$$
+
+The page number $p$ identifies the virtual page, and the offset $d$ identifies a byte within it. If page $p$ maps to physical frame $f$, the physical address is
+
+$$
+PA=f\,S+d
+$$
+
+In words: jump to the start of frame $f$, then move $d$ bytes in. The offset remains unchanged because pages and frames have the same size.
+
+<PagingTranslator address={13000} />
+
+Page tables can become large, so systems commonly use multilevel page tables rather than one enormous flat table. A translation lookaside buffer (TLB) caches recent translations, allowing many memory accesses to avoid a full page-table walk.
+
+A page-table entry can also indicate that a page is not currently resident in RAM. That state is crucial: the virtual address can remain valid even when its contents are temporarily absent from physical memory.
+
+## Demand Paging: Load Memory When It Is Needed
+
+A system does not need to load every possible page of a process into RAM before the process begins executing. With **demand paging**, a page is brought into physical memory when an access requires it.
+
+For example, a program may reserve a large virtual address range but initially touch only a small portion. The operating system can arrange for physical memory to be supplied as pages are first accessed, rather than allocating frames for the entire range upfront.
+
+This works well because programs often exhibit **locality of reference**: during a period of execution, they repeatedly access a relatively small set of instructions and data. The operating system can keep the currently useful pages in RAM while leaving other pages unallocated or nonresident.
+
+There is an important distinction between virtual memory being allocated and a page being physically resident. A valid virtual mapping may refer to a resident frame, a page that can be loaded from a file or swap space, or memory that will be supplied on first access. The precise behavior depends on the operating system and allocation policy.
+
+## Page Faults: When an Access Needs Operating-System Help
+
+A **page fault** is an exception raised when a memory access requires handling that cannot be completed through the current translation and permission state.
+
+<Callout type="key">
+A page fault is **not necessarily an error**. Most are the normal mechanism by which pages arrive: first touches of new memory, copy-on-write, and pages brought back from disk. Only an access to unmapped or forbidden memory is a bug.
+</Callout>
+
+When a process accesses a nonresident page, a typical demand-paging sequence is:
+
+1. The CPU issues a virtual memory access.
+2. The MMU detects that the page is not currently available through a valid resident mapping and raises a page fault.
+3. The operating system checks whether the access is legitimate and determines how the page should be supplied.
+4. If necessary, the OS obtains a free frame or reclaims one, loading the required contents from a file or backing store.
+5. It updates the page table and resumes the faulting instruction.
+
+The instruction is generally restarted so the process can continue as though the required memory had been available all along.
+
+Not all page faults require disk access. A fault may involve creating a page on demand, resolving copy-on-write, or handling another valid mapping condition. A fault caused by an illegal access may instead result in a protection error or process termination.
+
+The cost varies dramatically. A fault resolved using existing in-memory information can be relatively cheap; one requiring storage I/O can be many orders of magnitude slower than an ordinary memory access.
+
+## Page Replacement: When RAM Is Full
+
+Demand paging becomes more difficult when physical memory cannot hold all the pages processes currently need. The operating system must decide which resident pages to retain and which to reclaim. This is the page replacement problem.
+
+If a page is clean and can be reconstructed from its backing file, it may be discarded and loaded again later. If a page has been modified, its contents may need to be written to backing storage before its frame can be reused, unless another mechanism already preserves those changes.
+
+Replacement policies try to keep pages likely to be used again. Common conceptual policies include:
+
+- **LRU (Least Recently Used):** Replace the page that has gone the longest without being accessed, or approximate that choice.
+- **FIFO (First In, First Out):** Replace the page that has been resident the longest, regardless of recent use.
+- **Clock:** Use reference information to approximate LRU with relatively low overhead.
+
+No policy can guarantee the best outcome for every workload; [Page Replacement](../page-replacement/) compares them on the same reference string. Their performance depends on the pattern of memory accesses, available frames, and implementation details.
+
+If the system repeatedly evicts pages that are needed almost immediately, processes incur continual faults and storage traffic. This condition is called **thrashing**. The machine may spend more time moving pages than executing useful work. Virtual memory makes large workloads possible, but it cannot make an insufficient working set fit into RAM at no cost.
+
+## Why Virtual Memory Is Powerful—and Not Free
+
+Virtual memory provides isolation, flexible allocation, controlled sharing, and the ability to run workloads whose total virtual memory exceeds physical RAM. Those benefits come from mechanisms that introduce overhead: page tables consume memory, translation requires hardware support, faults require operating-system work, and replacement can trigger storage I/O.
+
+<Callout type="practice">
+On Linux, `free -h` shows RAM and swap use, and `vmstat 1` reports pages swapped in and out per second (the `si`/`so` columns). Sustained non-zero swap traffic while the machine feels slow is the signature of thrashing.
+</Callout>
+
+The distinction between address space and residency is the key to understanding the entire system.
+ A program can address memory that is not currently in RAM; page tables describe the mapping, the MMU translates addresses, and page faults let the operating system resolve accesses that need additional work. The system feels seamless when the needed pages are available at the right time—and becomes painfully slow when the active working set exceeds what memory can support.

@@ -1,0 +1,193 @@
+---
+title: "Deadlocks"
+description: "The four necessary conditions, prevention, detection, and the Banker's algorithm."
+order: 6
+tier: core
+takeaways:
+  - "A **deadlock** is a cycle of threads each waiting for a resource another one holds; waiting longer never helps."
+  - "All four **Coffman conditions** must hold: mutual exclusion, hold and wait, no preemption, circular wait."
+  - "**Prevention** breaks a condition (e.g. one global lock order); **avoidance** refuses unsafe allocations (Banker's); **detection** finds cycles and recovers."
+  - "A state is **safe** if some order lets every process finish; unsafe means no guarantee, not certain deadlock."
+resources:
+  - title: "OSTEP: Common Concurrency Problems"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/threads-bugs.pdf"
+    note: "Deadlock and atomicity bugs from real codebases, and how they were fixed."
+  - title: "Banker's algorithm"
+    url: "https://en.wikipedia.org/wiki/Banker%27s_algorithm"
+  - title: "Dining philosophers problem"
+    url: "https://en.wikipedia.org/wiki/Dining_philosophers_problem"
+    note: "The classic deadlock puzzle, and the lock-ordering fix."
+---
+
+A **deadlock** occurs when a group of processes or threads becomes permanently blocked because each is waiting for a resource or event that another member of the group must provide. The operating system cannot resolve the situation simply by waiting longer: the dependencies themselves prevent progress. Deadlock theory provides four conditions that must all hold for a deadlock to occur, while prevention, avoidance, and detection offer different ways to manage the risk. The central distinction is that prevention breaks a necessary condition, avoidance refuses unsafe allocations, and detection allows deadlocks to occur but looks for them afterward.
+
+## How a Deadlock Forms
+
+Imagine two threads and two mutexes:
+
+- Thread A acquires mutex $M_1$, then requests $M_2$.
+- Thread B acquires mutex $M_2$, then requests $M_1$.
+
+A holds $M_1$ and waits for B to release $M_2$. B holds $M_2$ and waits for A to release $M_1$. Neither can continue, so neither releases its resource.
+
+<DeadlockDemo />
+
+This illustrates why deadlocks are not simply slow operations. Each thread depends on another thread making progress, but the dependencies form a cycle that prevents either from doing so.
+
+## The Four Necessary Conditions
+
+The classic Coffman conditions describe the requirements for a deadlock. In the standard model, all four must hold simultaneously for deadlock to occur.
+
+1. **Mutual exclusion.** At least one resource can be held by only one process at a time. If a mutex is locked by one thread, another cannot acquire that same lock until it is released.
+
+2. **Hold and wait.** A process holds one or more resources while waiting to acquire additional resources. Thread A may hold $M_1$ while requesting $M_2$.
+
+3. **No preemption.** Resources cannot be forcibly taken away; the holder must release them voluntarily. The operating system generally cannot safely unlock an arbitrary mutex held by a thread in the middle of a critical section.
+
+4. **Circular wait.** There is a cycle of processes in which each waits for a resource held by the next process in the cycle.
+
+These conditions are necessary, not individually sufficient. A program may exhibit mutual exclusion and hold-and-wait without becoming deadlocked. Deadlock becomes possible when the conditions coincide in the relevant resource-allocation system.
+
+<Callout type="key">
+This gives prevention its central idea: **deliberately violate at least one condition** so that the deadlock structure cannot form.
+</Callout>
+
+## Prevention: Make a Deadlock Condition Impossible
+
+Deadlock prevention changes resource-allocation rules in advance. Each strategy attacks one of the four conditions.
+
+- **Reduce mutual exclusion:** Make resources shareable where possible. For example, multiple processes can read an immutable file concurrently. Some resources, such as mutexes protecting mutable state, inherently require exclusive access.
+- **Eliminate hold and wait:** Require a process to request all needed resources together, or require it to release its current resources before requesting more. This can reduce resource utilization and may cause unnecessary waiting.
+- **Allow preemption:** If a request cannot be satisfied, reclaim resources from a process where it is safe to do so. This works for some resources and operations, but arbitrary preemption of locks or partially completed updates can corrupt state.
+- **Break circular wait:** Impose a global ordering on resource types and require processes to acquire resources only in that order. If every thread acquires $M_1$ before $M_2$, the two-lock cycle cannot form.
+
+<Callout type="practice">
+The **lock-ordering** strategy is the one used most in real multithreaded code: document a global order for your locks and always acquire them in it. Linux's lockdep checker exists to catch violations of exactly this rule.
+</Callout>
+
+The resource-ordering strategy is particularly practical for multithreaded programs. If all code follows the same lock hierarchy, a thread holding a higher-ordered lock cannot request a lower-ordered lock and complete a cycle that violates the ordering.
+
+Prevention provides a structural guarantee, but often at the cost of flexibility or resource utilization.
+
+## Avoidance: Reject Unsafe Allocations
+
+Deadlock avoidance takes a different approach. Instead of making a condition impossible, the system examines each proposed allocation and grants it only if the resulting state remains safe.
+
+A state is **safe** if there exists some ordering of all processes such that each can obtain its remaining required resources, finish, and release its resources for the next process.
+
+A safe state does not mean every process can run immediately. It means there is at least one sequence in which all processes can complete.
+
+An **unsafe** state is not necessarily already deadlocked. It means the system can no longer guarantee completion under the assumed maximum resource demands.
+
+This distinction is important: avoidance tries to prevent the system from entering a state where deadlock could become unavoidable.
+
+## Banker's Algorithm: Test Whether an Allocation Is Safe
+
+Banker's algorithm is a classic deadlock-avoidance method for systems with multiple instances of each resource type. It assumes the system knows each process's maximum possible resource demand in advance.
+
+It maintains four data structures:
+
+- **Available:** The number of currently free instances of each resource type.
+- **Max:** The maximum number of each resource type each process may request.
+- **Allocation:** The resources currently assigned to each process.
+- **Need:** The remaining maximum demand of each process.
+
+The remaining need is calculated as
+
+$$
+\text{Need}_i = \text{Max}_i - \text{Allocation}_i
+$$
+
+In words: what a process may still ask for is its declared maximum minus what it already holds.
+
+When a process requests resources, the algorithm first checks that the request does not exceed its declared need or current availability. It then tentatively grants the request and runs a safety test. If the resulting state is safe, the allocation can be committed; otherwise, it is rolled back and the process must wait.
+
+### A worked example
+
+Suppose there are three resource types, A, B, and C, and five processes. The values below are resource instances, not execution times.
+
+| Process | Allocation (A, B, C) | Max (A, B, C) | Need (A, B, C) |
+| ------- | -------------------- | ------------- | -------------- |
+| P0      | (0, 1, 0)            | (7, 5, 3)     | (7, 4, 3)      |
+| P1      | (2, 0, 0)            | (3, 2, 2)     | (1, 2, 2)      |
+| P2      | (3, 0, 2)            | (9, 0, 2)     | (6, 0, 0)      |
+| P3      | (2, 1, 1)            | (2, 2, 2)     | (0, 1, 1)      |
+| P4      | (0, 0, 2)            | (4, 3, 3)     | (4, 3, 1)      |
+
+Let the currently available resources be
+
+$$
+\text{Available} = (3, 3, 2)
+$$
+
+The safety test searches for a process whose remaining need is no greater than the resources currently available. If it can finish, we assume it releases its allocated resources and add those resources to the available pool.
+
+One safe sequence is:
+
+1. P1 can finish. Its need $(1,2,2)$ fits within $(3,3,2)$. After releasing its allocation $(2,0,0)$, available becomes $(5,3,2)$.
+2. P3 can finish. Its need $(0,1,1)$ fits within $(5,3,2)$. Releasing $(2,1,1)$ gives $(7,4,3)$.
+3. P4 can finish. Its need $(4,3,1)$ fits within $(7,4,3)$. Releasing $(0,0,2)$ gives $(7,4,5)$.
+4. P0 can finish. Its need $(7,4,3)$ fits within $(7,4,5)$. Releasing $(0,1,0)$ gives $(7,5,5)$.
+5. P2 can finish. Its need $(6,0,0)$ fits within $(7,5,5)$. All processes can now complete.
+
+Safe sequence: **P1 → P3 → P4 → P0 → P2**
+
+<BankersSafety />
+
+The same safety test in Python:
+
+```python
+def is_safe(available, allocation, need):
+    work = list(available)               # resources free at this point in the imagined schedule
+    finished = [False] * len(allocation)
+    order = []
+    progress = True
+    while progress:                      # keep sweeping until a full pass finishes nobody
+        progress = False
+        for p in range(len(allocation)):
+            if not finished[p] and all(n <= w for n, w in zip(need[p], work)):
+                work = [w + a for w, a in zip(work, allocation[p])]  # p finishes, releases everything
+                finished[p] = True
+                order.append(f"P{p}")
+                progress = True
+    return all(finished), order
+
+allocation = [(0, 1, 0), (2, 0, 0), (3, 0, 2), (2, 1, 1), (0, 0, 2)]
+maximum    = [(7, 5, 3), (3, 2, 2), (9, 0, 2), (2, 2, 2), (4, 3, 3)]
+need = [tuple(m - a for m, a in zip(mx, al)) for mx, al in zip(maximum, allocation)]
+
+print(is_safe((3, 3, 2), allocation, need))  # (True, ['P1', 'P3', 'P4', 'P0', 'P2'])
+print(is_safe((2, 1, 0), allocation, need))  # (False, []): no process's need fits
+```
+
+Because at least one safe sequence exists, the state is safe. Notice that the algorithm does not need every process's entire maximum demand to be available at once. It only needs to find a sequence in which each process can finish using the resources available at its turn, including resources released by earlier processes.
+
+Banker's algorithm is theoretically useful, but its assumptions can be difficult to satisfy in general-purpose systems: maximum demands must be known, resource quantities must be tracked, and the system must check allocations as they occur.
+
+## Detection and Recovery: Find Deadlocks After They Occur
+
+Some systems do not prevent or avoid every deadlock. Instead, they periodically or selectively detect deadlocks and recover when necessary.
+
+For a system with one instance of each resource type, a **wait-for graph** can represent
+ dependencies between processes. An edge $P_i \rightarrow P_j$ means $P_i$ is waiting for a resource held by $P_j$. A cycle in this graph indicates deadlock under the single-instance resource model.
+
+With multiple instances of resource types, detection is more involved. The system tracks outstanding requests and allocations, then checks whether processes can finish with the available resources. Processes that cannot be shown to finish may be deadlocked, depending on the exact detection model.
+
+Recovery may involve:
+
+- Terminating one or more processes to break the cycle.
+- Preempting resources when safe and feasible.
+- Rolling a process back to a checkpoint and restarting it.
+- Choosing a victim based on cost, priority, progress, and resources held.
+
+Recovery is not free. Terminating a process may lose work, while preemption and rollback require support from the resource or application. A system that detects deadlocks must decide not only whether one exists, but also how to break it with acceptable damage.
+
+## Prevention vs. Avoidance vs. Detection
+
+| Strategy   | Core question                               | When it acts                                | Main trade-off                                |
+| ---------- | ------------------------------------------- | ------------------------------------------- | --------------------------------------------- |
+| Prevention | Can we break a necessary condition?         | Before deadlock can form                    | Restricts resource usage or acquisition       |
+| Avoidance  | Will this allocation preserve a safe state? | Before granting a request                   | Requires demand information and safety checks |
+| Detection  | Has a deadlock formed?                      | After allocation, periodically or on demand | Requires recovery and may lose work           |
+
+The four conditions explain how deadlock can arise. Prevention removes one of those conditions; Banker's algorithm avoids unsafe states using declared maximum demands; detection identifies existing deadlocks and attempts recovery. The choice depends on whether the system can constrain resource usage, predict future demand, or tolerate deadlocks and recover afterward.

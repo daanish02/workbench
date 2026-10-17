@@ -1,0 +1,145 @@
+---
+title: "CPU Scheduling"
+description: "FCFS, round robin, priority scheduling, and multilevel queues, compared directly."
+order: 4
+tier: core
+takeaways:
+  - "Scheduling picks which ready thread runs next; every policy trades **efficiency, responsiveness and fairness** against each other."
+  - "**FCFS** is simple but suffers the convoy effect; **SJF** minimises average waiting but needs to know burst lengths."
+  - "**Round Robin** gives everyone a time slice: good response, but the quantum trades responsiveness against switching overhead."
+  - "**Priority** scheduling gives control but can starve low priorities; **aging** fixes that."
+  - "Turnaround = completion − arrival; waiting = turnaround − burst."
+resources:
+  - title: "OSTEP: Scheduling: Introduction"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched.pdf"
+    note: "FIFO, SJF, STCF and RR with worked metrics."
+  - title: "OSTEP: The Multi-Level Feedback Queue"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched-mlfq.pdf"
+    note: "How real schedulers learn which jobs are interactive."
+  - title: "Scheduling (computing)"
+    url: "https://en.wikipedia.org/wiki/Scheduling_(computing)"
+---
+
+Process scheduling determines which ready process or thread gets CPU time and when. The central trade-off is between efficiency, responsiveness, fairness, and control: a system optimized to minimize average waiting time may respond poorly to interactive users, while one optimized for responsiveness may incur more context-switching overhead. FCFS, Round Robin, Priority Scheduling, and Multilevel Queue Scheduling make different choices about who runs next and how long they can run. Understanding their differences means understanding what each algorithm optimizes—and what it sacrifices.
+
+## FCFS: Run in Arrival Order
+
+First-Come, First-Served (FCFS) schedules processes in the order they enter the ready queue. Once a process gets the CPU, it runs until it finishes or blocks, assuming a non-preemptive implementation.
+
+FCFS is analogous to a queue at a service counter: whoever arrives first gets served first.
+
+Consider three processes arriving together:
+
+| Process | CPU burst |
+| ------- | --------- |
+| P1      | 8 ms      |
+| P2      | 2 ms      |
+| P3      | 1 ms      |
+
+The execution order is P1 → P2 → P3.
+
+<GanttChart title="FCFS: P1 → P2 → P3" segments="P1:0-8,P2:8-10,P3:10-11" />
+
+P2 waits 8 ms before running, and P3 waits 10 ms, so the average waiting time is $(0 + 8 + 10)/3 = 6$ ms. Although both need little CPU time, they are trapped behind the long-running P1.
+
+<Callout type="pitfall" title="The convoy effect">
+Short processes queue behind a long process, increasing waiting time and potentially delaying interactive work. Running the same three jobs shortest-first (P3, P2, P1) would cut the average wait from 6 ms to $(0 + 1 + 3)/3 \approx 1.3$ ms.
+</Callout>
+
+FCFS is simple, predictable, and has low scheduling overhead. Its weakness is that arrival order says nothing about how long a process needs or how urgently it should run.
+
+## Round Robin: Give Everyone a Turn
+
+Round Robin (RR) is designed for responsiveness and fairness. Each ready process receives up to a fixed time slice, called a **time quantum**. If it does not finish within that interval, it is preempted and placed at the back of the ready queue.
+
+Using the same processes with a 2 ms quantum:
+
+<GanttChart title="Round Robin, quantum = 2 ms" segments="P1:0-2,P2:2-4,P3:4-5,P1:5-7,P1:7-9,P1:9-11" />
+
+P1 runs for 2 ms, then P2 runs and finishes after 2 ms, then P3 runs and finishes after 1 ms. P1 still needs 6 ms, so it receives three more slices and finishes at 11 ms. Waiting times are now 3, 2 and 4 ms, an average of 3 ms: half of FCFS's, without knowing any burst lengths in advance.
+
+Round Robin prevents a CPU-bound process from monopolizing the processor indefinitely while other processes remain ready. This makes it useful for interactive and time-sharing systems.
+
+Its defining trade-off is the time quantum:
+
+- If the quantum is too large, Round Robin approaches FCFS.
+- If it is too small, context-switching overhead becomes significant.
+- If the quantum is chosen sensibly, processes receive frequent opportunities to run without excessive switching.
+
+Round Robin does not guarantee equal total CPU time forever. It provides turns among ready processes, while blocking, arrivals, priorities, and other scheduler rules can affect the actual allocation.
+
+## Priority Scheduling: Run the Most Important Process
+
+Priority Scheduling chooses the ready process with the highest scheduling priority. Priority may represent urgency, importance, deadlines, or system policy. Some implementations treat a smaller numerical value as a higher priority; others use the reverse convention.
+
+Priority scheduling can be preemptive or non-preemptive:
+
+- In non-preemptive scheduling, a running process keeps the CPU until it finishes or blocks.
+- In preemptive scheduling, a newly ready process with higher priority can interrupt the current process.
+
+The benefit is control: critical work can run before less important work.
+
+<Callout type="pitfall" title="Starvation">
+If high-priority processes keep arriving, a low-priority process may wait indefinitely. The standard remedy is **aging**: gradually increase the priority of processes that have waited a long time, so every process eventually runs.
+</Callout>
+
+Priority scheduling is not inherently more or less fair than Round Robin; fairness depends on the priority policy, preemption rules, and how priority changes over time.
+
+## Multilevel Queue Scheduling: Separate Classes of Work
+
+Multilevel Queue Scheduling divides the ready queue into distinct queues based on process class or role. For example, a system might maintain separate queues for interactive processes, batch jobs, and background tasks.
+
+Each queue can use its own scheduling algorithm. An interactive queue might use Round Robin, while a batch queue might use FCFS.
+
+The system also needs a rule for selecting between queues. It might always serve the higher-priority queue first, or allocate a fixed proportion of CPU time to each queue.
+
+| Queue | Priority | Policy inside the queue |
+| --- | --- | --- |
+| 1: Interactive | Highest | Round Robin |
+| 2: Batch | Medium | FCFS |
+| 3: Background | Lowest | FCFS or another policy |
+
+If higher queues always take precedence, lower queues can starve.
+
+The crucial feature is that processes are assigned to a queue according to a classification rule. In classic multilevel queue scheduling, a process generally stays in its assigned queue.
+
+This creates a useful separation of concerns: each class gets scheduling behavior suited to its needs. But strict queue priority can starve lower queues, and a poor classification can leave a process stuck with unsuitable scheduling treatment.
+
+**Multilevel Feedback Queue (MLFQ)** is a related but distinct algorithm. It allows processes to move between queues based on behavior or history. For example, a process that repeatedly uses its entire time slice may be moved to a lower-priority queue, while interactive or waiting-heavy work may retain higher priority. MLFQ adapts to observed behavior; a fixed multilevel queue does not necessarily do so.
+
+## Direct Comparison
+
+| Property          | FCFS                   | Round Robin                            | Priority                            | Multilevel Queue                                   |
+| ----------------- | ---------------------- | -------------------------------------- | ----------------------------------- | -------------------------------------------------- |
+| Selection rule    | Earliest arrival       | Next process in cyclic order           | Highest priority                    | Queue hierarchy, then queue policy                 |
+| Preemptive?       | Usually no             | Yes, at quantum expiry                 | Optional                            | Depends on queue and inter-queue rules             |
+| Main objective    | Simplicity             | Responsiveness and fair turns          | Urgency and importance              | Different treatment for different classes          |
+| Main weakness     | Convoy effect          | Context-switch overhead                | Starvation of low priorities        | Starvation of lower queues or rigid classification |
+| Key tuning choice | Usually none           | Time quantum                           | Priority policy                     | Queue assignment and CPU allocation                |
+| Typical fit       | Simple batch workloads | Time-sharing and interactive workloads | Systems with differentiated urgency | Workloads with distinct process classes            |
+
+## The Metrics That Explain the Trade-offs
+
+Scheduling algorithms are often evaluated using four measurements:
+
+- **Waiting time:** Total time a process spends in the ready queue.
+- **Turnaround time:** Time from arrival until completion.
+- **Response time:** Time from arrival until the process first gets CPU time.
+- **Throughput:** Number of processes completed per unit of time.
+
+These metrics can conflict. A policy that minimizes average waiting time may not provide the best response time for every process. A policy that frequently preempts processes may improve responsiveness but add overhead.
+
+For a process $P_i$, the basic relationships are:
+
+$$
+T_{\text{turnaround}} = T_{\text{completion}} - T_{\text{arrival}}
+$$
+
+$$
+T_{\text{waiting}} = T_{\text{turnaround}} - T_{\text{burst}}
+$$
+
+In words: turnaround is everything from arriving to finishing, and waiting is the part of it not spent on the CPU. The second equation assumes a simple single-CPU model in which the process's CPU burst is its total required CPU time. For processes that alternate between CPU bursts and I/O, total waiting time must be interpreted carefully because turnaround also includes time spent blocked.
+
+<SchedulerPlayground />
+

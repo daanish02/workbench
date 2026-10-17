@@ -1,0 +1,129 @@
+---
+title: "Processes & Threads"
+description: "What each is, why both exist, and the distinction that trips people up."
+order: 1
+tier: core
+takeaways:
+  - "A **process** is an isolation boundary: its own address space, permissions and open resources."
+  - "A **thread** is an execution path inside a process: its own registers and stack, but shared heap, globals and files."
+  - "Isolation costs communication; sharing costs safety. Real systems mix both: several processes, several threads each."
+  - "Shared memory makes **race conditions** possible: `counter += 1` is really read, add, write, and two threads can interleave them."
+  - "Concurrency (overlapping progress) is not parallelism (simultaneous execution on several cores)."
+resources:
+  - title: "OSTEP: The Abstraction: The Process"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-intro.pdf"
+    note: "Free textbook chapter; the clearest introduction to what a process really is."
+  - title: "OSTEP: Concurrency and Threads"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/threads-intro.pdf"
+    note: "Threads, shared data and the race condition, traced instruction by instruction."
+  - title: "Race condition"
+    url: "https://en.wikipedia.org/wiki/Race_condition"
+---
+
+A **process** is a running program with its own protected memory space and operating-system resources. A **thread** is a path of execution within a process: it has its own execution state and stack, but shares the process’s memory and resources with other threads in that process. Both exist because operating systems need to isolate programs from one another while also allowing work within a program to happen concurrently. The distinction that trips people up is that a process is primarily a resource and isolation boundary, while a thread is primarily an execution unit.
+
+## A process is an isolated running environment
+
+A program stored on disk is passive: it contains instructions, but nothing happens until the operating system runs it. When a program is launched, the operating system creates a process to represent that running instance.
+
+A process typically has its own virtual address space, security context, open-resource references, and other operating-system-managed state. Its memory contains regions such as executable code, global data, heap allocations, and stacks for its threads.
+
+The crucial property is isolation. Two processes generally cannot directly read or modify each other's memory. The operating system enforces this separation so that a bug in one program is less likely to corrupt another program's state.
+
+For example, a web browser and a music player may run as separate processes. If the music player crashes, the browser can often continue because the two do not ordinarily share writable memory.
+
+A process is not necessarily a single application in the everyday sense. A browser may use multiple processes for tabs, rendering, extensions, or other tasks. Conversely, several instances of the same program can run as separate processes, each with its own state.
+
+## A thread is an execution path
+
+A thread is the unit of execution that the operating system schedules on a CPU. Each thread has its own execution state, including a program counter, CPU registers, and stack. These determine what instructions it is executing, where it will resume, and what local function calls it has made.
+
+Threads belonging to the same process share the process's address space and many resources. They can access the same heap objects, global variables, and open files, subject to the relevant permissions and synchronization rules.
+
+Imagine a document editor. One thread might handle user interaction, another perform spell-checking, and another save the document in the background. These threads can work on different tasks while operating on the same document and application state.
+
+Sharing memory makes communication efficient: one thread can update a shared data structure and another can read it without sending the data through a separate process boundary. But that convenience introduces coordination problems. If two threads modify the same data at the same time, the result may depend on the order in which their operations execute.
+
+## Why both exist: isolation versus cooperation
+
+Processes and threads solve different problems, so neither simply replaces the other.
+
+- **Processes provide isolation.** Separate address spaces reduce accidental interference, allow different programs to run independently, and create a useful boundary for permissions and failure containment.
+- **Threads provide shared execution.** Multiple execution paths can cooperate inside one program, share data directly, and overlap tasks without each needing a separate process.
+
+Creating and switching between processes can involve more overhead than working with threads, although the actual costs depend on the operating system and workload. Communication between processes often requires explicit mechanisms such as pipes, sockets, shared-memory regions, or message queues. Threads can communicate through ordinary shared memory, but that requires careful synchronization.
+
+<Callout type="key">
+The design trade-off is fundamental: **isolation reduces interference; sharing reduces the cost of cooperation** but creates the possibility of interference.
+</Callout>
+
+You can see the difference directly in Python. A thread changes the parent's variable; a child process changes only its own copy:
+
+```python
+import threading, multiprocessing
+
+counter = 0
+
+def bump():
+    global counter
+    counter += 1
+
+if __name__ == "__main__":
+    t = threading.Thread(target=bump); t.start(); t.join()
+    print("after thread: ", counter)   # 1  (the thread wrote into our memory)
+
+    p = multiprocessing.Process(target=bump); p.start(); p.join()
+    print("after process:", counter)   # 1  (the child incremented its own copy; ours is untouched)
+```
+
+## The distinction that trips people up: memory versus execution
+
+A common misconception is that each thread has its own memory. More precisely, each thread has its own execution state and stack, but threads in the same process share the process's address space.
+
+<ProcessThreadDiagram />
+
+Suppose Thread 1 creates an object on the heap and stores a reference to it in a shared variable. Thread 2 can access that object through the same variable. But if Thread 1 creates a local variable inside a function, that variable ordinarily lives in Thread 1's stack frame and is not automatically visible to Thread 2.
+
+There is another subtlety: a thread's stack is separate, but that does not guarantee all data it references is private. A local variable can hold a pointer or reference to an object on the shared heap. The variable itself may be local while the referenced object is shared.
+
+This is why thread safety depends not simply on where a variable is declared, but on which threads can access the underlying data and how those accesses are coordinated.
+
+## Concurrency is not the same as parallelism
+
+Multiple threads can make progress concurrently without literally executing at the same instant.
+
+**Concurrency** means multiple tasks have overlapping lifetimes and the system can make progress on each. A single CPU core can switch between threads, allowing each to advance at different times.
+
+**Parallelism** means multiple tasks execute simultaneously, typically on different CPU cores.
+
+On a multicore machine, two threads in the same process can execute in parallel. Two separate processes can also execute in parallel. The process/thread distinction does not determine whether work is parallel; the available hardware, scheduler, and runtime behavior matter.
+
+Threads are also not guaranteed to speed up a program. If tasks constantly contend for a shared lock, or spend most of their time waiting for input, additional threads may offer little benefit. Parallel execution can even make a program slower when synchronization and scheduling costs exceed the work saved.
+
+## Shared memory creates race conditions
+
+Consider two threads incrementing the same shared counter:
+
+```
+counter = counter + 1
+```
+
+This looks like one operation, but it may involve reading the counter, adding one, and writing the result. If two threads interleave those steps, both might read `counter = 10`, both compute `11`, and both write `11`. The final value is 11 instead of the expected 12.
+
+This is a **race condition**: the result depends on the timing or ordering of concurrent operations.
+
+<RaceCondition />
+
+A mutex or another synchronization mechanism can protect the counter so that only one thread performs the relevant operation at a time. Atomic operations can also provide safe updates for supported operations. These mechanisms establish rules about access and ordering, but introduce their own costs and design constraints.
+
+Separate processes avoid many accidental shared-memory races because their ordinary memory is isolated. They do not eliminate all coordination problems: processes can still compete for files, databases, network resources, or explicitly shared memory.
+
+## Choosing the right boundary
+
+The choice between processes and threads follows from what needs to be isolated and what needs to be shared.
+
+<Callout type="practice">
+Use **separate processes** when independent failure boundaries, different permissions, or strong memory isolation matter. Use **threads** when tasks need to share substantial in-memory state or perform concurrent work inside one application. Real systems often combine both: a browser runs a process per site for isolation, with several threads inside each process for concurrency.
+</Callout>
+
+The central model is simple: the process defines an environment in which work runs; the thread defines an execution path through that work. Once memory ownership and execution state are separated in your mental model, most of the confusing details follow naturally.

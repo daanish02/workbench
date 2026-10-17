@@ -1,0 +1,124 @@
+---
+title: "Context Switching"
+description: "What gets saved and restored, and why it has a real cost."
+order: 3
+tier: core
+takeaways:
+  - "A **context switch** saves the running thread's CPU state (PC, stack pointer, registers, flags) and restores another's."
+  - "The state goes into the thread's kernel control block; memory such as the stack stays where it is."
+  - "Switching processes costs more than switching threads, because the address space (and TLB contents) changes too."
+  - "Indirect costs, mainly cold caches, often exceed the direct cost of saving registers."
+  - "Useful-work fraction ≈ q / (q + c): very short time slices waste the CPU on switching."
+resources:
+  - title: "OSTEP: Limited Direct Execution"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-mechanisms.pdf"
+    note: "Walks through a real context switch, including the timer interrupt that makes it possible."
+  - title: "Context switch"
+    url: "https://en.wikipedia.org/wiki/Context_switch"
+  - title: "Translation lookaside buffer"
+    url: "https://en.wikipedia.org/wiki/Translation_lookaside_buffer"
+    note: "Why switching address spaces disturbs cached translations."
+---
+
+A context switch occurs when the operating system stops executing one thread and transfers CPU execution to another. To do this, it must preserve enough of the outgoing thread's execution state to resume it later, then restore the incoming thread's state so it can continue from where it left off. This mechanism enables multitasking, but it is not free: saving and restoring state consumes CPU time, and switching between processes can also disrupt memory-related hardware caches and translation structures. The key insight is that a context switch preserves computational continuity, but the work required to preserve it competes with useful execution.
+
+## What a CPU Context Actually Contains
+
+A thread is not merely a sequence of instructions. At any instant, it has a particular execution state that determines what it should do next.
+
+The processor's architectural state commonly includes:
+
+- **Program counter (instruction pointer):** The address of the next instruction to execute, or the appropriate restart point.
+- **General-purpose registers:** Values currently held in registers, including intermediate calculations, pointers, and function arguments.
+- **Stack pointer:** The location of the thread's active stack, which stores function-call information, local variables, and return addresses as applicable.
+- **Processor status and control state:** Relevant flags and execution-mode information needed to resume correctly.
+- **Extended register state:** Depending on the architecture and operating system, this may include floating-point registers, vector registers, and other architectural state.
+
+Some state is saved directly during the switch; some may already be preserved in memory according to the calling convention or kernel's entry mechanism. The exact implementation depends on the CPU architecture and operating system.
+
+The important requirement is correctness: when a thread resumes, it must behave as though its execution had simply paused between instructions, except for the passage of time and any legitimate changes made by other threads.
+
+## How a Context Switch Happens
+
+Consider Thread A running when the operating system decides Thread B should run instead.
+
+1. **Thread A is executing.** The CPU holds A's current register values and execution position.
+2. **Enter the kernel.** A timer interrupt, blocking operation, or other scheduling event transfers control to operating-system code. An interrupt alone does not necessarily cause a context switch.
+3. **Preserve A's state.** The OS saves the state needed to resume A and updates its scheduling state, such as marking it ready or blocked.
+4. **Restore B's state.** The OS selects B, restores its saved execution state, and establishes any necessary address-space or processor configuration.
+5. **Resume Thread B.** The processor returns to the appropriate execution point and B continues.
+
+<ContextSwitchSteps />
+
+<Callout type="key">
+The scheduler's decision and the context switch are related but distinct. **The scheduler decides what should run; the context-switch mechanism makes that decision take effect.**
+</Callout>
+
+A timer interrupt may return to the same thread if the scheduler decides no switch is needed. Likewise, a system call may enter the kernel and return to the same thread without switching contexts.
+
+## Where the Saved State Lives
+
+The operating system needs a place to preserve each thread's state while it is not running. Typically, this information is stored in kernel-managed data structures associated with the thread, often including a saved register context and references to its stack and other resources.
+
+The thread's user-space stack usually remains allocated in memory while another thread runs. Its contents do not need to be copied wholesale during every context switch. The kernel preserves the relevant stack pointer and execution state so that the thread can use its existing stack when resumed.
+
+<Callout type="pitfall">
+The phrase "saving a context" can sound like the OS copies an entire program's memory. It generally does not: it saves a few hundred bytes of register state, while the stack, heap and code stay where they are.
+</Callout>
+
+For an ordinary thread switch within one process, the threads share the same address space. The operating system typically needs to preserve and restore execution state, not duplicate the process's heap, code, or global data.
+
+A process switch can require more work because the incoming process may have a different virtual address space. The kernel may need to change address-space configuration and manage associated memory-translation state. The details vary by architecture and implementation.
+
+## Why Context Switching Has a Real Cost
+
+The direct cost is the work required to stop one execution path and start another. But the full performance cost extends beyond the instructions executed during the switch.
+
+1\. **Direct CPU overhead.** Saving registers, updating kernel data structures, selecting a thread, restoring state, and returning to execution all consume processor cycles. During that time, the CPU is doing scheduling work rather than advancing the application's computation.
+
+2\. **Cache disruption.** A newly scheduled thread may access data and instructions different from those used by the previous thread. This can reduce the usefulness of the CPU's caches and cause more cache misses. The cost depends heavily on whether the threads share code and data and whether their working sets fit in cache.
+
+3\. **Memory-translation overhead.** Virtual addresses are translated to physical addresses using page tables and translation caches such as the TLB (translation lookaside buffer). Switching address spaces can reduce the usefulness of cached translations or require additional management. Modern processors use techniques such as address-space identifiers to retain some translations across switches, so a full TLB flush is not always necessary.
+
+4\. **Scheduling and coordination overhead.** Waking threads, handling synchronization, moving tasks between queues, and making scheduling decisions also consume time. These costs often accompany context switching but are not all part of the register save-and-restore operation itself.
+
+A useful conceptual model is:
+
+$$
+T_{\text{total}} = T_{\text{useful}} + T_{\text{switch}} + T_{\text{indirect}}
+$$
+
+Here, $T_{\text{useful}}$ is time spent doing the application's intended work, $T_{\text{switch}}$ is direct switching overhead, and $T_{\text{indirect}}$ represents secondary costs such as extra cache misses. This is an accounting model, not a universal timing formula: indirect costs can occur after the switch and may overlap with other work.
+
+## Thread Switch vs. Process Switch
+
+| Property                     | Switch between threads in one process | Switch between processes                      |
+| ---------------------------- | ------------------------------------- | --------------------------------------------- |
+| Register and execution state | Must be changed                       | Must be changed                               |
+| Address space                | Usually unchanged                     | Usually changes                               |
+| Heap and global data         | Shared between threads                | Normally separate                             |
+| Memory-translation effects   | Often smaller                         | Can be larger, depending on hardware and OS   |
+| Cache disruption             | Possible                              | Possible, often with less shared working data |
+| Isolation boundary           | Same process                          | Different processes                           |
+
+A thread switch is generally cheaper when both threads belong to the same process because the address space can remain unchanged. However, this is not a strict rule that every thread switch is cheap and every process switch is expensive. Cache behavior, register state, kernel activity, hardware features, and the specific implementation all influence the actual cost.
+
+Also, switching threads is not the same as switching CPU cores. If a thread migrates to another core, its new core may lack the useful cache contents accumulated on the old core. That migration can add costs beyond the ordinary context switch.
+
+## Why Smaller Time Slices Can Make a System Slower
+
+Context switching explains one of the central trade-offs in process scheduling.
+
+With Round Robin scheduling, a shorter time quantum gives ready threads more frequent opportunities to run. This can improve response time, particularly for interactive tasks. But if the quantum becomes too short relative to the work performed, the system spends a larger share of its time switching and recovering useful cache state.
+
+Suppose a simplified system incurs $c$ units of direct switching time and lets each thread run for $q$ units before switching. Ignoring blocking, scheduling irregularities, and indirect cache costs, the fraction of time spent doing useful work is approximately
+
+$$
+\frac{q}{q + c}
+$$
+
+In words: out of every $q + c$ milliseconds, only $q$ are spent running the thread. If $q=9$ ms and $c=1$ ms, the simplified useful-work fraction is $90\%$. If $q=1$ ms and $c=1$ ms, it falls to $50\%$.
+
+<SwitchOverhead />
+
+These numbers are illustrative, not typical benchmark measurements. Real switching costs vary, and indirect effects can make the outcome better or worse. The equation simply demonstrates why switching too frequently can consume a substantial share of available CPU time.

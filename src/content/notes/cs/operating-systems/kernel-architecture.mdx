@@ -1,0 +1,97 @@
+---
+title: "Kernel Architecture"
+description: "Monolithic kernels versus microkernels, and what each one trades off."
+order: 12
+tier: optional
+takeaways:
+  - "The architectural question is **which services run with kernel privilege** and which run as ordinary processes."
+  - "A **monolithic** kernel (Linux) puts drivers, file systems and networking in kernel space: fast direct calls, but one bug can crash everything."
+  - "A **microkernel** (seL4, QNX, MINIX 3) keeps only scheduling, memory and IPC in the kernel: faults are contained, at the cost of message passing."
+  - "Hybrid kernels (Windows NT, XNU) mix both; loadable modules do not make a kernel a microkernel."
+resources:
+  - title: "Microkernel"
+    url: "https://en.wikipedia.org/wiki/Microkernel"
+  - title: "The Tanenbaum–Torvalds debate"
+    url: "https://en.wikipedia.org/wiki/Tanenbaum%E2%80%93Torvalds_debate"
+    note: "The famous 1992 argument over exactly this trade-off."
+---
+
+A kernel is the privileged core of an operating system, responsible for managing hardware, memory, processes, and communication between software and devices. The central architectural question is which operating-system services should run inside the kernel and which should run outside it. A monolithic kernel places most core services in privileged kernel space, while a microkernel keeps the privileged core small and moves many services into separate user-space processes. This is a trade-off between direct communication and performance on one side, and isolation and fault containment on the other.
+
+## The Architectural Boundary
+
+Operating systems need services such as process scheduling, memory management, file systems, networking, and device drivers. These services must cooperate, but they do not all need the same level of privilege.
+
+The kernel architecture determines where those services execute and how they communicate.
+
+<KernelArchitecture />
+
+The diagram shows the broad design idea, not a universal list of services. Real systems vary in exactly which components run in kernel space.
+
+## Monolithic Kernels: Most Services Run Together
+
+In a **monolithic kernel**, major operating-system services execute within the same privileged kernel environment. This commonly includes the scheduler, virtual-memory subsystem, file systems, networking stack, and many device drivers.
+
+Because these components operate within one kernel address space, they can often communicate through direct function calls and shared data structures rather than passing messages between isolated processes.
+
+That arrangement has a performance advantage: frequent interactions can avoid some of the extra transitions and data handling associated with inter-process communication.
+
+The cost is that the privileged environment contains a large amount of code. A serious bug in a kernel-mode driver or another kernel component can corrupt shared kernel memory or crash the entire system. A monolithic design does not inherently isolate each driver from the rest of the kernel.
+
+Linux is a prominent example of a monolithic kernel with a modular design. Kernel modules can be loaded and unloaded dynamically, but a module running in kernel space still operates with kernel-level privileges. Modularity makes the kernel easier to extend; it does not turn those modules into isolated user-space services.
+
+## Microkernels: Keep the Privileged Core Small
+
+A **microkernel** aims to keep only essential mechanisms in kernel space. These commonly include low-level scheduling, basic address-space management, interrupt handling, and inter-process communication (IPC).
+
+Other services—often including device drivers, file systems, and networking—can run as separate user-space processes called servers.
+
+When an application needs a file operation, for example, it may communicate with a file-system server through IPC. That server can interact with a storage driver server, which coordinates with the hardware through the kernel's permitted mechanisms.
+
+The main advantage is fault containment. If a user-space driver crashes, the damage can often be confined to that driver process rather than corrupting arbitrary kernel memory. Depending on the design, the service may be restarted without rebooting the entire operating system.
+
+The trade-off is coordination overhead. Services may need to exchange messages, cross address-space boundaries, and perform additional scheduling or data-copying work. These costs depend on the IPC design, hardware support, and how frequently services communicate. Efficient microkernels can reduce them substantially.
+
+Microkernels also do not eliminate bugs or guarantee complete security. A faulty server can still disrupt the service it provides, and the kernel itself remains privileged code that must be protected.
+
+## The Direct Comparison
+
+| Property | Monolithic kernel | Microkernel |
+| --- | --- | --- |
+| Kernel-space code | Most core services and many drivers | Small set of essential mechanisms |
+| Service communication | Often direct calls and shared kernel data | Often message passing between isolated services |
+| Performance tendency | Lower overhead for many internal interactions | Potential IPC and scheduling overhead |
+| Fault containment | Kernel-component faults can affect the whole system | User-space service faults can be isolated more effectively |
+| Attack surface in privileged mode | Generally larger | Generally smaller |
+| Extensibility | Modules can extend the kernel | User-space servers can be added or replaced |
+| Main design priority | Efficient integration of services | Isolation and a minimal privileged core |
+
+These are architectural tendencies, not guarantees. A well-engineered microkernel can perform very well, while a monolithic kernel can still provide strong process isolation and a carefully controlled interface. The architecture changes the cost and consequences of interactions; it does not determine every aspect of performance or security by itself.
+
+## Hybrid Designs: The Boundary Is Not Always Binary
+
+Real operating systems do not always fit neatly into two categories. A **hybrid kernel** combines aspects of monolithic and microkernel designs, choosing where services run according to engineering requirements.
+
+Windows NT and Apple's XNU kernel are commonly described as hybrid designs, though their internal structures differ. Both retain substantial privileged functionality while incorporating architectural ideas associated with modularity and layered services.
+
+Linux, meanwhile, is generally classified as monolithic even though it supports loadable modules and a range of user-space services.
+
+<Callout type="pitfall" title="Modular is not micro">
+A modular monolithic kernel is not the same thing as a microkernel. Linux modules load at run time, but they still run in kernel space with full privileges.
+</Callout>
+
+The decisive question is whether components execute inside the privileged kernel environment or as isolated user-space processes.
+
+This distinction is useful because labels such as modular, layered, and hybrid describe different aspects of an operating system's design.
+
+## What the Trade-Off Really Means
+
+The choice is fundamentally about where to place boundaries.
+
+Putting services inside the kernel can make communication efficient, but it gives those services access to a shared privileged environment. Moving services into user space adds isolation and can improve fault recovery, but it requires carefully designed communication and resource-management mechanisms.
+
+Neither architecture is universally superior. Systems that prioritize strict isolation, reliability, or small trusted computing bases may favor microkernel principles. General-purpose systems may prioritize broad hardware support, compatibility, and efficient integration, while still adopting isolation techniques wherever practical.
+
+<Callout type="key">
+Kernel architecture determines **which failures can spread, which interactions pay boundary-crossing costs, and how much code must be trusted** with unrestricted privilege.
+</Callout>

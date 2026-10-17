@@ -1,0 +1,153 @@
+---
+title: "I/O Management"
+description: "Interrupts, device drivers, and polling vs. interrupt-driven I/O."
+order: 11
+tier: core
+takeaways:
+  - "The OS hides device differences behind abstractions (files, sockets); **drivers** translate them into device-specific commands."
+  - "**Polling** repeatedly checks device status: simple and low-latency, but wastes CPU on long waits."
+  - "**Interrupts** let the device signal completion so the CPU can do other work, at the cost of handler overhead."
+  - "High-rate devices often mix both: interrupt to start, poll while busy."
+  - "**DMA** moves bulk data without the CPU copying each byte; it is complementary to polling and interrupts."
+resources:
+  - title: "OSTEP: I/O Devices"
+    url: "https://pages.cs.wisc.edu/~remzi/OSTEP/file-devices.pdf"
+    note: "Polling, interrupts and DMA on a canonical device, with timelines."
+  - title: "Direct memory access"
+    url: "https://en.wikipedia.org/wiki/Direct_memory_access"
+---
+
+I/O management allows the CPU and operating system to communicate with devices such as keyboards, disks, network cards, and displays, even though those devices operate at different speeds and use different interfaces. Device drivers translate between the operating system's abstractions and a device's specific commands; polling and interrupts determine how the CPU learns that a device needs attention or has completed work. The central trade-off is between repeatedly checking for events, which is simple but can waste CPU time, and allowing devices to signal events, which is often more efficient but introduces interrupt-handling overhead and complexity.
+
+## Why I/O Needs an Operating-System Layer
+
+A CPU can execute instructions extremely quickly, while an I/O device may take much longer to respond. A disk operation, for example, might involve waiting for a storage controller or device to complete work rather than continuously executing CPU instructions.
+
+Without an I/O management layer, every application would need to understand the details of every device: command registers, status flags, data formats, error conditions, and hardware-specific protocols. This would make applications tightly coupled to hardware.
+
+The operating system instead provides abstractions such as files, sockets, and device interfaces. Applications request an operation through a system call or library, and the kernel routes the request through the relevant subsystem and driver.
+
+A simplified path looks like this:
+
+1. **Application:** requests input or output, usually through a [system call](../system-calls/).
+2. **Operating-system I/O subsystem:** validates, schedules, and routes the request.
+3. **Device driver and controller:** translate the request into device-specific operations.
+4. **Physical device:** performs the operation.
+
+The device controller is the hardware interface through which the system can issue commands, inspect status, and exchange data. The driver knows how to use that interface. They are related but distinct: the driver is software, while the controller is hardware or controller logic associated with the device.
+
+## Device Drivers: Hardware-Specific Logic Behind a Common Interface
+
+A **device driver** is software that allows the operating system to operate a particular device or class of devices. It translates generic requests into the commands, register operations, queues, and data transfers that the hardware understands.
+
+For example, an application may request that data be written to a file. The file-system and storage layers determine what must be written, while the storage driver communicates with the relevant controller and handles completion or error reporting.
+
+Drivers commonly handle tasks such as:
+
+- Initializing the device and configuring its operating mode.
+- Submitting commands and arranging data transfers.
+- Reading status and reporting errors.
+- Handling interrupts or coordinating with polling mechanisms.
+- Managing device-specific buffers, queues, and synchronization.
+
+Drivers matter because devices do not all behave alike. A keyboard produces small, event-driven inputs; a network interface may receive continuous streams of packets; a storage device handles block-oriented operations. The operating system exposes useful abstractions while drivers manage the differences.
+
+<Callout type="pitfall">
+Drivers often operate in privileged kernel context, so a faulty driver can corrupt memory, hang the system, or compromise security. Drivers have historically been the largest source of operating-system crashes, which is one motivation for the [microkernel](../kernel-architecture/) design.
+</Callout>
+
+## Polling: Keep Checking Until the Device Is Ready
+
+**Polling** means the CPU or a software routine repeatedly checks a device's status to determine whether an event has occurred or an operation has completed.
+
+Conceptually:
+
+```
+start device operation
+
+while device is not ready:
+    check device status
+
+read result
+```
+
+Polling is straightforward. The program or driver controls when the device is checked, and there is no need for the device to interrupt the CPU for every completion.
+
+The weakness is wasted work. If the device takes a long time to respond, repeated status checks consume CPU cycles that could otherwise run useful code.
+
+Polling can still be a good choice when:
+
+- The expected wait is extremely short.
+- Checking status is inexpensive.
+- Predictable response latency matters.
+- The system has dedicated CPU resources for monitoring.
+- The device or environment makes interrupts impractical.
+
+For instance, a low-latency system may briefly spin while waiting for a hardware event if the expected completion time is very short. This is called **busy-waiting**. It trades CPU usage for reduced waiting overhead.
+
+Polling is not always wasteful: if events occur frequently, checking status may be cheaper than handling a large number of interrupts. The best choice depends on event frequency, response-time requirements, and the cost of checking.
+
+## Interrupt-Driven I/O: Let the Device Signal the CPU
+
+With **interrupt-driven I/O**, the CPU starts an operation and can execute other work while the device operates. When the device needs attention or completes the operation, it raises an interrupt. The processor temporarily diverts execution to an interrupt handler, which acknowledges or services the event and arranges the next step.
+
+A simplified sequence is:
+
+1. The driver configures the device and starts an operation.
+2. The CPU continues executing other work instead of repeatedly checking the device.
+3. The device raises an interrupt when it needs service or has completed work.
+4. The processor saves the necessary execution state and transfers control to the interrupt handler.
+5. The handler processes the event, records completion, and may schedule deferred work.
+6. The operating system eventually allows the waiting task to resume or receive the result.
+
+The major advantage is that the CPU need not continuously check an idle device. This is especially valuable for devices with unpredictable or relatively infrequent completion times.
+
+Interrupts are not free. They require state transitions and handler execution, and frequent interrupts can create significant overhead. Operating systems often defer more expensive processing to a later context, and high-throughput devices may combine interrupts with batching or polling.
+
+An interrupt also does not necessarily mean that the interrupted application immediately resumes after the handler. The scheduler may run a different task, depending on what became ready and the system's scheduling policy.
+
+## Polling vs. Interrupt-Driven I/O
+
+| Property                     | Polling                                               | Interrupt-driven I/O                      |
+| ---------------------------- | ----------------------------------------------------- | ----------------------------------------- |
+| How events are detected      | Software checks device status                         | Device signals the CPU                    |
+| CPU usage while waiting      | Can be high due to repeated checks                    | Usually lower when events are infrequent  |
+| Response latency             | Can be very low with frequent checks                  | Includes interrupt delivery and handling  |
+| Overhead at high event rates | Repeated checks                                       | Potentially many interrupts               |
+| Implementation               | Often simpler                                         | Requires interrupt setup and handling     |
+| Good fit                     | Short waits, predictable checks, high-rate monitoring | Infrequent or unpredictable events        |
+| Main risk                    | Wasted CPU cycles                                     | Interrupt overhead and handler complexity |
+
+<PollingVsInterrupts />
+
+Neither method is universally better. Polling trades computation for control over when checks happen. Interrupt-driven I/O trades interrupt-handling work for the ability to do other things while waiting.
+
+Some systems combine them. A device may use interrupts to announce that work has arrived, then switch to polling temporarily to process a high volume of events efficiently. Network interfaces, for example, can use hybrid strategies to balance low latency at light load against throughput at heavy load.
+
+## Where DMA Fits: Moving Data Without Per-Byte CPU Work
+
+Polling and interrupts describe how the CPU learns about device status or completion. They do not, by themselves, determine how large amounts of data move between a device and memory.
+
+For that, systems often use **Direct Memory Access (DMA)**. A DMA-capable controller can transfer data between a device and memory with much less CPU involvement than copying every byte through ordinary CPU instructions.
+
+A typical storage read might work like this:
+
+1. The driver prepares a request and the memory buffers.
+2. The driver instructs the controller to transfer data using DMA.
+3. The CPU performs other work while the transfer proceeds.
+4. The controller signals completion, often through an interrupt.
+5. The driver completes the request and makes the result available.
+
+DMA reduces CPU involvement in data movement, but it does not eliminate coordination. The driver and operating system must ensure that buffers, permissions, caches, and device ownership are handled correctly.
+
+<Callout type="key">
+**DMA answers who moves the data; polling and interrupts answer how software learns that something happened.** They are complementary, and a typical disk read uses DMA for the transfer and an interrupt for the completion.
+</Callout>
+
+## The Deeper Principle: Overlap Work Instead of Waiting
+
+I/O management is largely about avoiding unnecessary CPU waiting while preserving correctness. Drivers provide a consistent interface to diverse devices; interrupts allow asynchronous notification; polling offers direct control over status checks; and DMA reduces the CPU's role in moving bulk data.
+
+These mechanisms can be combined according to the workload. A slow device with infrequent completions often benefits from interrupt-driven I/O. A device producing events at very high rates may benefit from batching or polling. A device transferring large buffers may use DMA regardless of which completion-notification strategy is chosen.
+
+The design objective is not simply to minimize interrupts or maximize polling. It is to minimize total overhead while meeting the system's requirements for throughput, latency, and reliability.

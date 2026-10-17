@@ -1,0 +1,117 @@
+---
+title: "Real-Time OS"
+description: "Operating systems where meeting deadlines is part of being correct."
+order: 13
+tier: advanced
+takeaways:
+  - "In a real-time system a correct answer delivered **too late is wrong**: deadlines are part of correctness."
+  - "Hard, firm and soft real-time differ in what a missed deadline costs."
+  - "What matters is the bounded **worst-case** response time, not average speed."
+  - "**Rate-monotonic** (fixed priorities by period) and **earliest-deadline-first** (dynamic) are the classic schedulers; EDF can use up to 100% of the CPU."
+  - "Shared locks can cause **priority inversion**; priority inheritance or ceilings bound the delay."
+resources:
+  - title: "Rate-monotonic scheduling"
+    url: "https://en.wikipedia.org/wiki/Rate-monotonic_scheduling"
+    note: "Including the Liu & Layland utilization bound."
+  - title: "Earliest deadline first scheduling"
+    url: "https://en.wikipedia.org/wiki/Earliest_deadline_first_scheduling"
+  - title: "FreeRTOS"
+    url: "https://www.freertos.org/"
+    note: "The most widely used open-source RTOS; its docs are a practical introduction to tasks, priorities and queues."
+---
+
+Real-time operating systems (RTOS) are designed for systems where correctness depends not only on what a program computes, but also on when it produces the result. Unlike general-purpose operating systems, which aim to balance responsiveness, throughput, and fairness, an RTOS prioritizes predictable timing and meeting deadlines. This makes it suitable for systems such as aircraft control, medical devices, industrial automation, and automotive braking, where a late result can be as harmful as an incorrect one.
+
+## Real-time correctness is about deadlines
+
+In an ordinary operating system, a task that takes slightly longer than expected is usually an inconvenience. In a real-time system, missing a deadline may violate a system requirement.
+
+A task can be described by its execution time, arrival time, and deadline. For example, a controller might need to read a sensor, calculate a correction, and update a motor before the next control cycle. Producing the right correction after that cycle has passed may no longer be useful.
+
+Real-time systems are commonly divided into three categories:
+
+- **Hard real-time:** Missing a deadline is considered a system failure. Examples include certain aircraft flight-control functions and safety-critical braking systems.
+- **Firm real-time:** A result arriving after its deadline has no value, but an occasional missed deadline may be tolerable. Some industrial inspection tasks fit this model.
+- **Soft real-time:** Late results are still useful, but their value decreases. Audio playback and video streaming are common examples.
+
+The distinction is not simply about speed. A fast system can still be unsuitable for hard real-time work if its timing is unpredictable.
+
+## Predictability matters more than average speed
+
+An RTOS is designed to make task execution and response times sufficiently predictable to meet timing requirements. This is often called determinism, although practical systems usually provide bounded or analyzable timing rather than perfectly identical execution times.
+
+Suppose a task must finish within $10\text{ ms}$. Two systems have these execution times:
+
+- System A usually finishes in $2\text{ ms}$, but occasionally takes $15\text{ ms}$.
+- System B consistently finishes within $6\text{ ms}$.
+
+System A has better typical performance, but System B is more suitable for a hard deadline of $10\text{ ms}$, assuming other sources of delay are also bounded.
+
+The important quantity is therefore not just average execution time, but the **worst-case response time**: the maximum time from a task becoming ready until it completes, under the conditions the system is designed to handle.
+
+That response time includes more than computation. It can include waiting for the CPU, higher-priority tasks, interrupt handling, synchronization delays, and other operating-system overhead.
+
+## Scheduling makes deadlines achievable
+
+An RTOS scheduler decides which task should run next. Most real-time systems use priority-based scheduling, where tasks with greater urgency can preempt less urgent tasks.
+
+Imagine a controller running three tasks:
+
+- A sensor task that must run every $1\text{ ms}$.
+- A motor-control task that must complete every $5\text{ ms}$.
+- A logging task that writes diagnostic information every $100\text{ ms}$.
+
+If the sensor task becomes ready while logging is running, the scheduler may interrupt logging and run the sensor task first. Logging resumes later. This prevents less urgent work from delaying time-critical work unnecessarily.
+
+Two common scheduling approaches are:
+
+- **Rate-monotonic scheduling (RMS):** Tasks with shorter periods receive higher fixed priorities. It works well when tasks are periodic and their timing assumptions fit the model.
+- **Earliest-deadline-first (EDF):** The task with the nearest absolute deadline receives the highest priority. Under ideal assumptions for independent, preemptible tasks on one processor, EDF can schedule workloads up to 100% CPU utilization when deadlines equal periods.
+
+For $n$ independent periodic tasks, where task $i$ needs $C_i$ units of CPU every $T_i$ units, the processor **utilization** is $U = \sum_{i=1}^{n} C_i / T_i$. Liu and Layland proved that RMS is guaranteed to meet every deadline when
+
+$$
+U = \sum_{i=1}^{n} \frac{C_i}{T_i} \;\le\; n\left(2^{1/n} - 1\right)
+$$
+
+In words: add up the fraction of the CPU each task needs; if the total stays under the bound (about 0.83 for two tasks, approaching $\ln 2 \approx 0.69$ for many), fixed priorities by period are always enough. EDF only needs $U \le 1$. Between those two limits RMS may or may not succeed, which the next example shows.
+
+<RtSchedule />
+
+Neither strategy automatically guarantees success in every real system. Blocking, shared resources, interrupt overhead, non-preemptible sections, and inaccurate execution-time estimates can all cause missed deadlines.
+
+## Interrupts and context switches must have bounded costs
+
+Real-time systems often react to external events through hardware interrupts. A sensor signals that new data is available, a timer expires, or a communication device reports a completed transfer. The processor suspends its current activity to handle the event.
+
+The interrupt handler should generally do only urgent, bounded work. More extensive processing can be delegated to a scheduled task so that interrupt handling does not monopolize the CPU.
+
+Switching between tasks also has a cost. During a [context switch](../context-switching/), the operating system saves the current task's execution state and restores another task's state. This consumes time without directly advancing either task's computation.
+
+In general-purpose systems, occasional variation in these costs may be acceptable. In an RTOS, excessive or unbounded interrupt latency and scheduling overhead can make a deadline impossible to guarantee. Predictable timing therefore depends on the whole execution path, not merely the scheduler's choice of task.
+
+## Shared resources can undermine priority scheduling
+
+Even when a scheduler gives urgent tasks high priority, a lower-priority task can delay them by holding a resource they need.
+
+Suppose a low-priority task locks a shared data structure. A high-priority task then becomes ready and tries to acquire the same lock. The high-priority task must wait until the lock is released. This is a form of **priority inversion**: a lower-priority task indirectly delays a higher-priority one.
+
+<Callout type="example" title="Mars Pathfinder, 1997">
+Days after landing, the Pathfinder lander began resetting itself. A low-priority meteorological task held a shared bus lock, medium-priority tasks kept preempting it, and a high-priority bus task waiting for that lock missed its deadline, triggering the watchdog reset. Engineers fixed it from Earth by enabling priority inheritance on that lock.
+</Callout>
+
+Real-time systems address this using synchronization protocols such as:
+
+- **Priority inheritance:** Temporarily raises the priority of the task holding a needed resource so it can finish and release the resource sooner.
+- **Priority-ceiling protocols:** Restrict
+ priority behavior around shared resources to control blocking and, under suitable assumptions, prevent certain forms of deadlock.
+
+These mechanisms help make blocking time analyzable. Without them, a seemingly minor shared-resource operation can introduce unpredictable delays into an otherwise carefully scheduled system.
+
+## An RTOS is a design discipline, not just an operating-system label
+
+An RTOS commonly provides task scheduling, timers, interrupt support, synchronization primitives, and predictable communication mechanisms. But using an RTOS does not automatically make an application real-time.
+
+Developers must also bound execution times, choose appropriate priorities, control resource contention, account for interrupts, and verify that worst-case response times fit within deadlines. Hardware behavior, device drivers, memory allocation, and external dependencies can all affect the result.
+
+Real-time capability is therefore a property of the complete system: hardware, operating system, application, and assumptions about workload. A general-purpose operating system can support some real-time workloads, while a system marketed as an RTOS can still miss deadlines if its application is poorly designed or its timing assumptions are wrong.
