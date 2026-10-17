@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The closest point on a line"
+  caption="The line is fixed through u. Drag the tip of b. The green point is the projection p: the closest point of the line to b. The dashed residual b − p is perpendicular to the line."
+>
+  <projection-explorer>
+    <svg class="pe-svg" viewBox="-6 -6 12 12" role="img" aria-label="A line, a draggable point b, its projection onto the line, and the residual">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="-3" x2="6" y2="3" class="pe-line"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="pe-axis"></line>
+        <line x1="-6" y1="0" x2="6" y2="0" class="pe-axis"></line>
+        <line data-res class="pe-res"></line>
+        <line data-b class="pe-b"></line>
+        <circle data-p r="0.2" class="pe-p"></circle>
+        <circle data-t r="0.22" class="pe-t"></circle>
+      </g>
+    </svg>
+    <p class="pe-stat" data-stat></p>
+  </projection-explorer>
+</Figure>
+
+<style>
+  .pe-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .pe-svg :global(circle) {
+    cursor: grab;
+  }
+  .pe-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .pe-line {
+    stroke: #9aa0a6;
+    stroke-width: 0.06;
+  }
+  .pe-b {
+    stroke: var(--g-blue);
+    stroke-width: 0.07;
+  }
+  .pe-res {
+    stroke: var(--g-red);
+    stroke-width: 0.05;
+    stroke-dasharray: 0.12 0.1;
+  }
+  .pe-p {
+    fill: var(--g-green);
+  }
+  .pe-t {
+    fill: var(--g-blue);
+  }
+  .pe-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // the line is the span of u = (2, 1)
+  const U = { x: 2, y: 1 };
+
+  class ProjectionExplorer extends HTMLElement {
+    b = { x: 1, y: 3 };
+    drag = false;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.pe-svg')!;
+      this.querySelector('[data-t]')!.addEventListener('pointerdown', (e) => {
+        this.drag = true;
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const r = svg.getBoundingClientRect();
+        const s = 12 / r.width;
+        this.b = {
+          x: Math.max(-5.5, Math.min(5.5, (e.clientX - (r.left + r.width / 2)) * s)),
+          y: Math.max(-5.5, Math.min(5.5, -(e.clientY - (r.top + r.height / 2)) * s)),
+        };
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = false));
+      this.draw();
+    }
+
+    draw() {
+      const { x, y } = this.b;
+      const k = (x * U.x + y * U.y) / (U.x * U.x + U.y * U.y);
+      const p = { x: k * U.x, y: k * U.y };
+      const set = (sel: string, attrs: Record<string, number>) => {
+        const el = this.querySelector(sel)!;
+        for (const [name, v] of Object.entries(attrs)) el.setAttribute(name, v.toFixed(3));
+      };
+      set('[data-b]', { x1: 0, y1: 0, x2: x, y2: y });
+      set('[data-t]', { cx: x, cy: y });
+      set('[data-p]', { cx: p.x, cy: p.y });
+      set('[data-res]', { x1: p.x, y1: p.y, x2: x, y2: y });
+
+      const resDot = (x - p.x) * U.x + (y - p.y) * U.y;
+      this.querySelector('[data-stat]')!.textContent =
+        `p = (${p.x.toFixed(2)}, ${p.y.toFixed(2)}) · coefficient k = ${k.toFixed(2)} · residual·u = ${resDot.toFixed(2)} (zero means perpendicular)`;
+    }
+  }
+  customElements.define('projection-explorer', ProjectionExplorer);
+</script>

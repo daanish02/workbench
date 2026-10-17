@@ -1,0 +1,117 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A matrix turns the circle into an ellipse"
+  caption="Grey is the unit circle. Blue is its image under the matrix. The ellipse's longest and shortest radii are the singular values, and they are perpendicular even when the matrix is not symmetric."
+>
+  <unit-circle-ellipse>
+    <div class="ce-grid">
+      <label>a <input type="range" min="-2" max="2" step="0.1" value="1.5" data-m="a" /><b data-v="a">1.5</b></label>
+      <label>b <input type="range" min="-2" max="2" step="0.1" value="0.5" data-m="b" /><b data-v="b">0.5</b></label>
+      <label>c <input type="range" min="-2" max="2" step="0.1" value="0" data-m="c" /><b data-v="c">0.0</b></label>
+      <label>d <input type="range" min="-2" max="2" step="0.1" value="1" data-m="d" /><b data-v="d">1.0</b></label>
+    </div>
+    <svg class="ce-svg" viewBox="-4 -4 8 8" role="img" aria-label="Unit circle and its image under a 2 by 2 matrix, an ellipse">
+      <g transform="scale(1, -1)">
+        <line x1="-4" y1="0" x2="4" y2="0" class="ce-axis"></line>
+        <line x1="0" y1="-4" x2="0" y2="4" class="ce-axis"></line>
+        <circle cx="0" cy="0" r="1" class="ce-circle"></circle>
+        <path data-ell class="ce-ell"></path>
+      </g>
+    </svg>
+    <p class="ce-stat" data-stat></p>
+  </unit-circle-ellipse>
+</Figure>
+
+<style>
+  .ce-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ce-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ce-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .ce-grid b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ce-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .ce-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .ce-circle {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 0.04;
+    stroke-dasharray: 0.12 0.1;
+  }
+  .ce-ell {
+    fill: rgba(66, 133, 244, 0.15);
+    stroke: var(--g-blue);
+    stroke-width: 0.06;
+  }
+  .ce-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class UnitCircleEllipse extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) =>
+        i.addEventListener('input', () => this.draw()),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const m: Record<string, number> = {};
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) => {
+        m[i.dataset.m!] = +i.value;
+        this.querySelector(`[data-v="${i.dataset.m}"]`)!.textContent = (+i.value).toFixed(1);
+      });
+      const { a, b, c, d } = m;
+      // image of (cos t, sin t) under [[a, b], [c, d]]
+      const pts: string[] = [];
+      for (let i = 0; i <= 180; i++) {
+        const t = (i / 180) * 2 * Math.PI;
+        const x = Math.cos(t), y = Math.sin(t);
+        const X = a * x + b * y, Y = c * x + d * y;
+        pts.push(`${i ? 'L' : 'M'}${X.toFixed(3)},${Y.toFixed(3)}`);
+      }
+      this.querySelector('[data-ell]')!.setAttribute('d', pts.join(' ') + ' Z');
+
+      // singular values: square roots of the eigenvalues of M^T M
+      const T = a * a + b * b + c * c + d * d;
+      const D = (a * d - b * c) ** 2;
+      const disc = Math.sqrt(Math.max(0, T * T - 4 * D));
+      const s1 = Math.sqrt((T + disc) / 2);
+      const s2 = Math.sqrt(Math.max(0, (T - disc) / 2));
+      this.querySelector('[data-stat]')!.textContent =
+        `singular values σ₁ = ${s1.toFixed(2)}, σ₂ = ${s2.toFixed(2)} · det = ${(a * d - b * c).toFixed(2)}`;
+    }
+  }
+  customElements.define('unit-circle-ellipse', UnitCircleEllipse);
+</script>

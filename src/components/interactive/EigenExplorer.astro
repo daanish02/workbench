@@ -1,0 +1,123 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which directions does A only stretch?"
+  caption="Drag the tip of v. The yellow arrow is Av. Most directions get bent. When v and Av point the same way (or exactly opposite), v is an eigenvector and the ratio of lengths is its eigenvalue. The dashed lines are the two eigen-directions of this matrix."
+>
+  <eigen-explorer>
+    <svg class="ee-svg" viewBox="-6 -6 12 12" role="img" aria-label="A draggable vector v and the image Av under a fixed matrix">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="ee-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="ee-axis"></line>
+        <line x1="-5" y1="-5" x2="5" y2="5" class="ee-eig"></line>
+        <line x1="-5" y1="5" x2="5" y2="-5" class="ee-eig"></line>
+        <line data-v x1="0" y1="0" x2="2" y2="1" class="ee-v"></line>
+        <line data-av x1="0" y1="0" x2="3" y2="3" class="ee-av"></line>
+        <circle data-t r="0.22" class="ee-t"></circle>
+      </g>
+    </svg>
+    <p class="ee-stat" data-stat></p>
+  </eigen-explorer>
+</Figure>
+
+<style>
+  .ee-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .ee-svg :global(circle) {
+    cursor: grab;
+  }
+  .ee-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .ee-eig {
+    stroke: #5f6368;
+    stroke-width: 0.03;
+    stroke-dasharray: 0.15 0.12;
+  }
+  .ee-v {
+    stroke: var(--g-blue);
+    stroke-width: 0.08;
+  }
+  .ee-av {
+    stroke: var(--g-yellow);
+    stroke-width: 0.08;
+  }
+  .ee-t {
+    fill: var(--g-blue);
+  }
+  .ee-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // fixed symmetric matrix A = [[2, 1], [1, 2]]: eigenvalues 3 and 1
+  const A = [[2, 1], [1, 2]];
+  const apply = (x: number, y: number): [number, number] => [A[0][0] * x + A[0][1] * y, A[1][0] * x + A[1][1] * y];
+
+  class EigenExplorer extends HTMLElement {
+    v = { x: 2, y: 1 };
+    drag = false;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.ee-svg')!;
+      this.querySelector('[data-t]')!.addEventListener('pointerdown', (e) => {
+        this.drag = true;
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const r = svg.getBoundingClientRect();
+        const s = 12 / r.width;
+        this.v = {
+          x: Math.max(-5.5, Math.min(5.5, (e.clientX - (r.left + r.width / 2)) * s)),
+          y: Math.max(-5.5, Math.min(5.5, -(e.clientY - (r.top + r.height / 2)) * s)),
+        };
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = false));
+      this.draw();
+    }
+
+    draw() {
+      const { x, y } = this.v;
+      const [ax, ay] = apply(x, y);
+      const set = (sel: string, x2: number, y2: number, circle = false) => {
+        const el = this.querySelector(sel)!;
+        if (circle) {
+          el.setAttribute('cx', x2.toFixed(3));
+          el.setAttribute('cy', y2.toFixed(3));
+        } else {
+          el.setAttribute('x2', x2.toFixed(3));
+          el.setAttribute('y2', y2.toFixed(3));
+        }
+      };
+      set('[data-v]', x, y);
+      set('[data-av]', ax, ay);
+      set('[data-t]', x, y, true);
+
+      // parallel when the cross product of v and Av is (almost) zero
+      const cross = x * ay - y * ax;
+      const len2 = x * x + y * y;
+      const stat = this.querySelector('[data-stat]')!;
+      if (len2 > 1e-6 && Math.abs(cross) < 0.05 * Math.sqrt(len2 * (ax * ax + ay * ay) + 1e-9)) {
+        const lam = (ax * x + ay * y) / len2;
+        stat.textContent = `v and Av are parallel: v is an eigenvector with eigenvalue λ = ${lam.toFixed(2)}`;
+      } else {
+        stat.textContent = `v is not an eigenvector: the direction of Av differs from v`;
+      }
+    }
+  }
+  customElements.define('eigen-explorer', EigenExplorer);
+</script>

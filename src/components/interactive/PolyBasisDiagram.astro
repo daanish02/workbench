@@ -1,0 +1,79 @@
+---
+import Figure from '../Figure.astro';
+
+// The basis 1, x, x^2 on [-1.5, 1.5]. Drawn in SVG coordinates (y points down), so y is negated.
+const xs = Array.from({ length: 121 }, (_, i) => -1.5 + (i / 120) * 3);
+const path = (f: (x: number) => number) =>
+  xs.map((x, i) => `${i ? 'L' : 'M'}${x.toFixed(3)},${(-f(x)).toFixed(3)}`).join(' ');
+const curves = [
+  { label: '1', d: path(() => 1), cls: 'pb-one' },
+  { label: 'x', d: path((x) => x), cls: 'pb-x' },
+  { label: 'x²', d: path((x) => x * x), cls: 'pb-sq' },
+];
+---
+
+<Figure
+  kind="Diagram"
+  title="The basis 1, x, x² of the polynomials of degree at most 2"
+  caption="Each polynomial of degree at most 2 is a combination a₀·1 + a₁·x + a₂·x². The three curves are that basis: no one of them can be written as a combination of the other two, which is why the space has dimension 3."
+>
+  <svg class="pb-svg" viewBox="-2 -3 4 4" role="img" aria-label="Three curves: the constant 1, the line x, and the parabola x squared, on the interval from minus 1.5 to 1.5">
+    <line x1="-2" y1="0" x2="2" y2="0" class="pb-axis"></line>
+    <line x1="0" y1="-3" x2="0" y2="1" class="pb-axis"></line>
+    {curves.map((c) => <path d={c.d} class={c.cls}></path>)}
+  </svg>
+  <div class="pb-key">
+    {curves.map((c) => <span class={c.cls}>{c.label}</span>)}
+  </div>
+</Figure>
+
+<style>
+  .pb-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .pb-svg path {
+    fill: none;
+    stroke-width: 0.05;
+  }
+  .pb-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .pb-one {
+    stroke: var(--g-blue);
+  }
+  .pb-x {
+    stroke: var(--g-green);
+  }
+  .pb-sq {
+    stroke: var(--g-red);
+  }
+  .pb-key {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 8px;
+    font: 0.8125rem var(--font-mono);
+  }
+  .pb-key span {
+    padding-left: 14px;
+    position: relative;
+    color: var(--text-muted);
+  }
+  .pb-key span::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 9px;
+    height: 3px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+  .pb-key .pb-one { color: var(--g-blue); }
+  .pb-key .pb-x { color: var(--g-green); }
+  .pb-key .pb-sq { color: var(--g-red); }
+</style>

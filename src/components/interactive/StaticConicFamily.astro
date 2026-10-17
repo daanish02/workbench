@@ -1,0 +1,115 @@
+---
+import Figure from '../Figure.astro';
+
+// Conics in polar form about a focus at the origin: r = L / (1 + e cos θ), with L = 2.
+// The y axis is flipped for the drawing: y points down in SVG, so we negate.
+const L = 2;
+const curve = (e: number) => {
+  const out: string[] = [];
+  let open = false;
+  for (let i = 0; i <= 720; i++) {
+    const th = (i / 720) * 2 * Math.PI;
+    const denom = 1 + e * Math.cos(th);
+    if (denom <= 0.02) {
+      open = false;
+      continue;
+    }
+    const r = L / denom;
+    const x = r * Math.cos(th);
+    const y = r * Math.sin(th);
+    out.push(`${open ? 'L' : 'M'}${x.toFixed(3)},${(-y).toFixed(3)}`);
+    open = true;
+  }
+  return out.join(' ');
+};
+const series = [
+  { e: 0.3, cls: 'scf-e1', label: 'e = 0.3' },
+  { e: 0.6, cls: 'scf-e2', label: 'e = 0.6' },
+  { e: 0.9, cls: 'scf-e3', label: 'e = 0.9' },
+  { e: 1.0, cls: 'scf-e4', label: 'e = 1 (parabola)' },
+];
+---
+
+<Figure kind="Diagram"
+  title="Conics around one focus, by eccentricity"
+  caption="All four curves share the focus at the origin and the same semi-latus rectum. As e grows from 0.3 to 1 the curve opens up until it becomes a parabola. Above 1 it splits into two branches, a hyperbola, which is not drawn here."
+>
+  <svg class="scf-svg" viewBox="-6 -6 12 12" role="img" aria-label="Ellipses and a parabola sharing a focus at the origin, for eccentricities 0.3, 0.6, 0.9 and 1">
+    <defs>
+      <clipPath id="scf-clip"><rect x="-6" y="-6" width="12" height="12"></rect></clipPath>
+    </defs>
+    <line x1="-6" y1="0" x2="6" y2="0" class="scf-axis"></line>
+    <line x1="0" y1="-6" x2="0" y2="6" class="scf-axis"></line>
+    <g clip-path="url(#scf-clip)">
+      {series.map((s) => <path d={curve(s.e)} class={s.cls}></path>)}
+    </g>
+    <circle cx="0" cy="0" r="0.12" class="scf-focus"></circle>
+    <text x="0.2" y="-0.2" class="scf-label">focus</text>
+  </svg>
+  <div class="scf-key">
+    {series.map((s) => <span class={s.cls}>{s.label}</span>)}
+  </div>
+</Figure>
+
+<style>
+  .scf-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .scf-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .scf-svg path {
+    fill: none;
+    stroke-width: 0.09;
+  }
+  .scf-e1 {
+    stroke: var(--g-blue);
+  }
+  .scf-e2 {
+    stroke: var(--g-green);
+  }
+  .scf-e3 {
+    stroke: var(--g-yellow);
+  }
+  .scf-e4 {
+    stroke: var(--g-red);
+  }
+  .scf-focus {
+    fill: var(--text);
+  }
+  .scf-label {
+    fill: var(--text-muted);
+    font: 0.3px var(--font-mono);
+  }
+  .scf-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 10px;
+    font: 0.8125rem var(--font-mono);
+  }
+  .scf-key span {
+    padding-left: 14px;
+    position: relative;
+    color: var(--text-muted);
+  }
+  .scf-key span::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 9px;
+    height: 3px;
+    border-radius: 2px;
+    background: currentColor;
+  }
+  .scf-key .scf-e1 { color: var(--g-blue); }
+  .scf-key .scf-e2 { color: var(--g-green); }
+  .scf-key .scf-e3 { color: var(--g-yellow); }
+  .scf-key .scf-e4 { color: var(--g-red); }
+</style>

@@ -1,0 +1,145 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Gram-Schmidt, one step at a time"
+  caption="Start from two independent vectors a₁ (blue) and a₂ (green). Step 1 normalises a₁ to q₁. Step 2 removes from a₂ its component along q₁, which leaves the dashed residual w, perpendicular to q₁; normalising w gives q₂."
+>
+  <gram-schmidt>
+    <svg class="gs-svg" viewBox="-5 -5 10 10" role="img" aria-label="Two vectors, the unit vector q1, and the residual step of Gram-Schmidt">
+      <g transform="scale(1, -1)">
+        <line x1="-5" y1="0" x2="5" y2="0" class="gs-axis"></line>
+        <line x1="0" y1="-5" x2="0" y2="5" class="gs-axis"></line>
+        <line data-a1 class="gs-a1"></line>
+        <line data-a2 class="gs-a2"></line>
+        <line data-q1 class="gs-q1"></line>
+        <line data-proj class="gs-proj"></line>
+        <line data-w class="gs-w"></line>
+        <line data-q2 class="gs-q2"></line>
+      </g>
+    </svg>
+    <div class="gs-ctl">
+      <button class="btn" data-prev>Back</button>
+      <span data-step class="gs-step"></span>
+      <button class="btn primary" data-next>Next</button>
+    </div>
+    <p class="gs-stat" data-stat></p>
+  </gram-schmidt>
+</Figure>
+
+<style>
+  .gs-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .gs-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .gs-a1 {
+    stroke: var(--g-blue);
+    stroke-width: 0.08;
+  }
+  .gs-a2 {
+    stroke: var(--g-green);
+    stroke-width: 0.08;
+  }
+  .gs-q1 {
+    stroke: var(--g-yellow);
+    stroke-width: 0.1;
+  }
+  .gs-proj {
+    stroke: #5f6368;
+    stroke-width: 0.05;
+    stroke-dasharray: 0.12 0.1;
+  }
+  .gs-w {
+    stroke: var(--g-red);
+    stroke-width: 0.08;
+  }
+  .gs-q2 {
+    stroke: var(--g-red);
+    stroke-width: 0.1;
+    stroke-dasharray: 0.02 0.12;
+  }
+  .gs-ctl {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    margin-top: 10px;
+  }
+  .gs-step {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+    min-width: 6em;
+    text-align: center;
+  }
+  .gs-stat {
+    margin: 8px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // fixed input vectors: a1 = (3, 1) and a2 = (1, 2)
+  const A1 = [3, 1];
+  const A2 = [1, 2];
+
+  class GramSchmidt extends HTMLElement {
+    step = 0;
+
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        this.step = Math.min(3, this.step + 1);
+        this.draw();
+      });
+      this.querySelector('[data-prev]')!.addEventListener('click', () => {
+        this.step = Math.max(0, this.step - 1);
+        this.draw();
+      });
+      this.draw();
+    }
+
+    draw() {
+      const dot = (p: number[], q: number[]) => p[0] * q[0] + p[1] * q[1];
+      const norm = (p: number[]) => Math.hypot(p[0], p[1]);
+      const q1 = A1.map((x) => x / norm(A1));
+      const c = dot(A2, q1);
+      const proj = [c * q1[0], c * q1[1]];
+      const w = [A2[0] - proj[0], A2[1] - proj[1]];
+      const q2 = [w[0] / norm(w), w[1] / norm(w)];
+
+      const seg = (sel: string, from: number[], to: number[], show: boolean) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('visibility', show ? 'visible' : 'hidden');
+        el.setAttribute('x1', from[0].toFixed(3));
+        el.setAttribute('y1', from[1].toFixed(3));
+        el.setAttribute('x2', to[0].toFixed(3));
+        el.setAttribute('y2', to[1].toFixed(3));
+      };
+      const O = [0, 0];
+      seg('[data-a1]', O, A1, true);
+      seg('[data-a2]', O, A2, true);
+      seg('[data-q1]', O, q1, this.step >= 1);
+      seg('[data-proj]', O, proj, this.step >= 2);
+      seg('[data-w]', proj, A2, this.step >= 2);
+      seg('[data-q2]', O, q2, this.step >= 3);
+
+      const names = ['start: a₁ and a₂', 'step 1: q₁ = a₁ / |a₁|', 'step 2: w = a₂ − (a₂·q₁) q₁', 'step 3: q₂ = w / |w|'];
+      this.querySelector('[data-step]')!.textContent = `${this.step} / 3`;
+      const stat =
+        this.step === 0 ? names[0] :
+        this.step === 1 ? `${names[1]} = (${q1[0].toFixed(2)}, ${q1[1].toFixed(2)})` :
+        this.step === 2 ? `${names[2]} = (${w[0].toFixed(2)}, ${w[1].toFixed(2)}), and q₁·w = ${dot(q1, w).toFixed(2)}` :
+        `${names[3]} = (${q2[0].toFixed(2)}, ${q2[1].toFixed(2)}), and q₁·q₂ = ${dot(q1, q2).toFixed(2)}`;
+      this.querySelector('[data-stat]')!.textContent = stat;
+    }
+  }
+  customElements.define('gram-schmidt', GramSchmidt);
+</script>

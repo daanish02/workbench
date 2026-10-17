@@ -1,0 +1,151 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Principal components: the axes of the cloud"
+  caption="Each dot is a data point. The blue arrow is the first principal component, the direction of greatest spread; the green arrow is the second, perpendicular to it. Slide the correlation to see how the cloud's shape sets the axes."
+>
+  <pca-scatter>
+    <div class="ps-ctl">
+      <label>correlation <input type="range" min="0" max="0.95" step="0.05" value="0.7" data-rho /><b data-rhov>0.70</b></label>
+    </div>
+    <svg class="ps-svg" viewBox="-7 -7 14 14" role="img" aria-label="Scatter of correlated points with the two principal axes">
+      <g transform="scale(1, -1)">
+        <line x1="-7" y1="0" x2="7" y2="0" class="ps-axis"></line>
+        <line x1="0" y1="-7" x2="0" y2="7" class="ps-axis"></line>
+        <g data-dots></g>
+        <line data-pc1 class="ps-pc1"></line>
+        <line data-pc2 class="ps-pc2"></line>
+      </g>
+    </svg>
+    <p class="ps-stat" data-stat></p>
+  </pca-scatter>
+</Figure>
+
+<style>
+  .ps-ctl {
+    margin-bottom: 10px;
+  }
+  .ps-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ps-ctl input {
+    flex: 1;
+  }
+  .ps-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ps-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .ps-svg :global(.ps-dot) {
+    fill: #9aa0a6;
+  }
+  .ps-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .ps-pc1 {
+    stroke: var(--g-blue);
+    stroke-width: 0.1;
+  }
+  .ps-pc2 {
+    stroke: var(--g-green);
+    stroke-width: 0.1;
+  }
+  .ps-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // fixed seed so every visit shows the same cloud
+  function rng(seed: number) {
+    let s = seed;
+    return () => {
+      s = (s * 1664525 + 1013904223) % 4294967296;
+      return s / 4294967296;
+    };
+  }
+  function gauss(r: () => number) {
+    const u = Math.max(1e-9, r()), v = r();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  const R = rng(7);
+  const Z = Array.from({ length: 120 }, () => [gauss(R), gauss(R)] as [number, number]);
+
+  class PcaScatter extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-rho]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const rho = +this.querySelector<HTMLInputElement>('[data-rho]')!.value;
+      this.querySelector('[data-rhov]')!.textContent = rho.toFixed(2);
+      // x has spread 2, y = rho x + sqrt(1 - rho^2) * noise: correlation rho
+      const pts = Z.map(([z1, z2]) => {
+        const x = 2 * z1;
+        const y = 2 * (rho * z1 + Math.sqrt(1 - rho * rho) * z2);
+        return [x, y] as [number, number];
+      });
+      const n = pts.length;
+      const mx = pts.reduce((s, p) => s + p[0], 0) / n;
+      const my = pts.reduce((s, p) => s + p[1], 0) / n;
+      let sxx = 0, syy = 0, sxy = 0;
+      for (const [x, y] of pts) {
+        sxx += (x - mx) ** 2;
+        syy += (y - my) ** 2;
+        sxy += (x - mx) * (y - my);
+      }
+      sxx /= n - 1; syy /= n - 1; sxy /= n - 1;
+
+      this.querySelector('[data-dots]')!.innerHTML = pts
+        .map(([x, y]) => `<circle class="ps-dot" cx="${x.toFixed(3)}" cy="${y.toFixed(3)}" r="0.12"></circle>`)
+        .join('');
+
+      // eigenvalues of the 2x2 covariance matrix [[sxx, sxy], [sxy, syy]]
+      const tr = sxx + syy;
+      const disc = Math.sqrt((sxx - syy) ** 2 + 4 * sxy * sxy);
+      const l1 = (tr + disc) / 2;
+      const l2 = (tr - disc) / 2;
+      const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      const L = 6;
+      const set = (sel: string, sgn: number, lambda: number) => {
+        const el = this.querySelector(sel)!;
+        const len = Math.sqrt(Math.max(lambda, 0)) * 2;
+        el.setAttribute('x1', (mx - sgn * len * Math.cos(ang)).toFixed(3));
+        el.setAttribute('y1', (my - sgn * len * Math.sin(ang)).toFixed(3));
+        el.setAttribute('x2', (mx + sgn * len * Math.cos(ang)).toFixed(3));
+        el.setAttribute('y2', (my + sgn * len * Math.sin(ang)).toFixed(3));
+      };
+      void L;
+      set('[data-pc1]', 1, l1);
+      // second axis is perpendicular to the first
+      const ang2 = ang + Math.PI / 2;
+      const el2 = this.querySelector('[data-pc2]')!;
+      const len2 = Math.sqrt(Math.max(l2, 0)) * 2;
+      el2.setAttribute('x1', (mx - len2 * Math.cos(ang2)).toFixed(3));
+      el2.setAttribute('y1', (my - len2 * Math.sin(ang2)).toFixed(3));
+      el2.setAttribute('x2', (mx + len2 * Math.cos(ang2)).toFixed(3));
+      el2.setAttribute('y2', (my + len2 * Math.sin(ang2)).toFixed(3));
+
+      this.querySelector('[data-stat]')!.textContent =
+        `variances along the axes: ${l1.toFixed(2)} and ${l2.toFixed(2)} · first component keeps ${(100 * l1 / (l1 + l2)).toFixed(1)}% of the variance`;
+    }
+  }
+  customElements.define('pca-scatter', PcaScatter);
+</script>

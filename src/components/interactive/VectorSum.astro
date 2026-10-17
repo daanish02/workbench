@@ -1,0 +1,144 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Adding vectors: place them head to tail"
+  caption="Drag the tips of u (blue) and v (green). The sum u + v (yellow) is the diagonal of the parallelogram they span. The dot product tells you the angle between them, and it is zero when they are perpendicular."
+>
+  <vector-sum>
+    <svg class="vs-svg" viewBox="-6 -6 12 12" role="img" aria-label="Two draggable vectors, their sum, and the parallelogram between them">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="vs-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="vs-axis"></line>
+        <line data-pu1 class="vs-guide"></line>
+        <line data-pu2 class="vs-guide"></line>
+        <line data-u class="vs-u"></line>
+        <line data-v class="vs-v"></line>
+        <line data-s class="vs-s"></line>
+        <circle data-tu r="0.22" class="vs-tu"></circle>
+        <circle data-tv r="0.22" class="vs-tv"></circle>
+      </g>
+    </svg>
+    <p class="vs-stat" data-stat></p>
+  </vector-sum>
+</Figure>
+
+<style>
+  .vs-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    touch-action: none;
+  }
+  .vs-svg :global(circle) {
+    cursor: grab;
+  }
+  .vs-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .vs-guide {
+    stroke: #5f6368;
+    stroke-width: 0.03;
+    stroke-dasharray: 0.15 0.12;
+  }
+  .vs-u,
+  .vs-v,
+  .vs-s {
+    stroke-width: 0.08;
+  }
+  .vs-u {
+    stroke: var(--g-blue);
+  }
+  .vs-v {
+    stroke: var(--g-green);
+  }
+  .vs-s {
+    stroke: var(--g-yellow);
+  }
+  .vs-tu {
+    fill: var(--g-blue);
+  }
+  .vs-tv {
+    fill: var(--g-green);
+  }
+  .vs-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type P = { x: number; y: number };
+
+  class VectorSum extends HTMLElement {
+    u: P = { x: 3, y: 1 };
+    v: P = { x: 1, y: 3 };
+    drag: 'u' | 'v' | null = null;
+
+    connectedCallback() {
+      const svg = this.querySelector<SVGSVGElement>('.vs-svg')!;
+      const world = (e: PointerEvent): P => {
+        const r = svg.getBoundingClientRect();
+        const s = 12 / r.width;
+        return {
+          x: Math.max(-5.5, Math.min(5.5, (e.clientX - (r.left + r.width / 2)) * s)),
+          y: Math.max(-5.5, Math.min(5.5, -(e.clientY - (r.top + r.height / 2)) * s)),
+        };
+      };
+      this.querySelector('[data-tu]')!.addEventListener('pointerdown', (e) => {
+        this.drag = 'u';
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      this.querySelector('[data-tv]')!.addEventListener('pointerdown', (e) => {
+        this.drag = 'v';
+        svg.setPointerCapture((e as PointerEvent).pointerId);
+      });
+      svg.addEventListener('pointermove', (e) => {
+        if (!this.drag) return;
+        const w = world(e);
+        if (this.drag === 'u') this.u = w;
+        else this.v = w;
+        this.draw();
+      });
+      svg.addEventListener('pointerup', () => (this.drag = null));
+      this.draw();
+    }
+
+    draw() {
+      const { u, v } = this;
+      const s = { x: u.x + v.x, y: u.y + v.y };
+      const seg = (sel: string, a: P, b: P) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('x1', a.x.toFixed(3));
+        el.setAttribute('y1', a.y.toFixed(3));
+        el.setAttribute('x2', b.x.toFixed(3));
+        el.setAttribute('y2', b.y.toFixed(3));
+      };
+      const origin = { x: 0, y: 0 };
+      seg('[data-u]', origin, u);
+      seg('[data-v]', origin, v);
+      seg('[data-s]', origin, s);
+      seg('[data-pu1]', u, s);
+      seg('[data-pu2]', v, s);
+      const set = (sel: string, p: P) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('cx', p.x.toFixed(3));
+        el.setAttribute('cy', p.y.toFixed(3));
+      };
+      set('[data-tu]', u);
+      set('[data-tv]', v);
+
+      const len = (p: P) => Math.hypot(p.x, p.y);
+      const dot = u.x * v.x + u.y * v.y;
+      const angle = (Math.acos(Math.max(-1, Math.min(1, dot / (len(u) * len(v))))) * 180) / Math.PI;
+      this.querySelector('[data-stat]')!.textContent =
+        `|u| = ${len(u).toFixed(2)} · |v| = ${len(v).toFixed(2)} · |u+v| = ${len(s).toFixed(2)} · u·v = ${dot.toFixed(2)} · angle ${angle.toFixed(1)}°`;
+    }
+  }
+  customElements.define('vector-sum', VectorSum);
+</script>

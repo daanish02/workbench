@@ -1,0 +1,150 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A rank-3 tensor as a stack of matrices"
+  caption="The tensor T has shape 2 × 3 × 4: four slices, one for each value of the last index k, each a 2 × 3 matrix. Pick a value of k to see that slice. Contracting with a vector w sums the slices with weights w₁ to w₄, giving one 2 × 3 matrix."
+>
+  <tensor-slices>
+    <div class="ts-slices" data-slices></div>
+    <div class="ts-ctl">
+      <label>slice k <input type="range" min="1" max="4" step="1" value="1" data-k /><b data-kv>1</b></label>
+    </div>
+    <div class="ts-row">
+      <div>
+        <p class="ts-h">slice T[:, :, k]</p>
+        <div class="ts-mat" data-slice></div>
+      </div>
+      <div>
+        <p class="ts-h">contraction with w = (1, 0, −1, 2)</p>
+        <div class="ts-mat" data-contract></div>
+      </div>
+    </div>
+    <p class="ts-stat" data-stat></p>
+  </tensor-slices>
+</Figure>
+
+<style>
+  .ts-slices {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .ts-slices :global(.ts-card) {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .ts-slices :global(.ts-card.on) {
+    border-color: var(--g-blue);
+    color: var(--text);
+  }
+  .ts-slices :global(.ts-card div) {
+    margin-top: 3px;
+    line-height: 1.5;
+  }
+  .ts-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ts-ctl input {
+    flex: 1;
+  }
+  .ts-ctl b {
+    min-width: 2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ts-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    justify-items: center;
+    margin-top: 12px;
+  }
+  @media (min-width: 640px) {
+    .ts-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .ts-h {
+    margin: 0 0 6px;
+    text-align: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .ts-mat {
+    display: grid;
+    grid-template-columns: repeat(3, 48px);
+    gap: 4px;
+  }
+  .ts-mat :global(span) {
+    display: grid;
+    place-items: center;
+    height: 34px;
+    border-radius: 6px;
+    background: #1a1a1a;
+    border: 1px solid var(--border);
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+  }
+  .ts-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // T[i][j][k] = 6 * k + 3 * i + j  (so entries run 0..23, matching the note's arange example)
+  const SHAPE = { I: 2, J: 3, K: 4 };
+  const T = (i: number, j: number, k: number) => 6 * k + 3 * i + j;
+  const W = [1, 0, -1, 2];
+
+  class TensorSlices extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-slices]')!.innerHTML = Array.from({ length: SHAPE.K }, (_, k) =>
+        `<div class="ts-card" data-card="${k + 1}">slice k = ${k + 1}<div>${Array.from({ length: SHAPE.I }, (_, i) =>
+          Array.from({ length: SHAPE.J }, (_, j) => T(i, j, k)).join(' ')).join('<br>')}</div></div>`,
+      ).join('');
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-kv]')!.textContent = String(k);
+      this.querySelectorAll<HTMLElement>('[data-card]').forEach((c) =>
+        c.classList.toggle('on', +c.dataset.card! === k),
+      );
+
+      const cell = (v: number) => `<span>${v}</span>`;
+      this.querySelector('[data-slice]')!.innerHTML = Array.from({ length: SHAPE.I }, (_, i) =>
+        Array.from({ length: SHAPE.J }, (_, j) => cell(T(i, j, k - 1))).join(''),
+      ).join('');
+
+      // contraction over the last index: sum over k of T[i][j][k] * w[k]
+      const C = Array.from({ length: SHAPE.I }, (_, i) =>
+        Array.from({ length: SHAPE.J }, (_, j) => {
+          let s = 0;
+          for (let kk = 0; kk < SHAPE.K; kk++) s += T(i, j, kk) * W[kk];
+          return s;
+        }),
+      );
+      this.querySelector('[data-contract]')!.innerHTML = C.map((row) => row.map((v) => cell(v)).join('')).join('');
+
+      this.querySelector('[data-stat]')!.textContent =
+        `shape of the result: (${SHAPE.I}, ${SHAPE.J}) · rank drops from 3 to 2 because the summed index k is gone`;
+    }
+  }
+  customElements.define('tensor-slices', TensorSlices);
+</script>

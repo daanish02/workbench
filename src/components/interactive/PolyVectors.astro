@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Polynomials add like vectors"
+  caption="Each polynomial is a coefficient vector (a₀, a₁, a₂). Adding two polynomials adds their coefficients, and the graph of the sum is the sum of the two graphs at every x. The yellow curve is p + q; its coefficients are the sums of the others."
+>
+  <poly-vectors>
+    <div class="pv-grid">
+      <div>
+        <p class="pv-h p">p (blue)</p>
+        <label>a₀ <input type="range" min="-3" max="3" step="0.5" value="2" data-p="0" /><b data-pv="0">2</b></label>
+        <label>a₁ <input type="range" min="-3" max="3" step="0.5" value="-1" data-p="1" /><b data-pv="1">-1</b></label>
+        <label>a₂ <input type="range" min="-3" max="3" step="0.5" value="3" data-p="2" /><b data-pv="2">3</b></label>
+      </div>
+      <div>
+        <p class="pv-h q">q (green)</p>
+        <label>a₀ <input type="range" min="-3" max="3" step="0.5" value="0" data-q="0" /><b data-qv="0">0</b></label>
+        <label>a₁ <input type="range" min="-3" max="3" step="0.5" value="4" data-q="1" /><b data-qv="1">4</b></label>
+        <label>a₂ <input type="range" min="-3" max="3" step="0.5" value="1" data-q="2" /><b data-qv="2">1</b></label>
+      </div>
+    </div>
+    <svg class="pv-svg" viewBox="-3 -8 6 8.5" role="img" aria-label="Graphs of p, q and their sum on the interval from minus 2 to 2">
+      <line x1="-3" y1="0" x2="3" y2="0" class="pv-axis"></line>
+      <line x1="0" y1="-8" x2="0" y2="0.5" class="pv-axis"></line>
+      <path data-cp class="pv-p"></path>
+      <path data-cq class="pv-q"></path>
+      <path data-cs class="pv-s"></path>
+    </svg>
+    <p class="pv-stat" data-stat></p>
+  </poly-vectors>
+</Figure>
+
+<style>
+  .pv-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+  }
+  @media (min-width: 640px) {
+    .pv-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .pv-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pv-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .pv-grid b {
+    min-width: 2.4em;
+    text-align: right;
+    color: var(--text);
+  }
+  .pv-h {
+    margin: 0 0 4px;
+    font: 600 0.75rem var(--font-mono);
+  }
+  .pv-h.p {
+    color: var(--g-blue);
+  }
+  .pv-h.q {
+    color: var(--g-green);
+  }
+  .pv-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .pv-svg path {
+    fill: none;
+    stroke-width: 0.07;
+  }
+  .pv-axis {
+    stroke: #3c4043;
+    stroke-width: 0.02;
+  }
+  .pv-p {
+    stroke: var(--g-blue);
+  }
+  .pv-q {
+    stroke: var(--g-green);
+  }
+  .pv-s {
+    stroke: var(--g-yellow);
+    stroke-width: 0.1;
+  }
+  .pv-stat {
+    margin: 8px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const X0 = -2, X1 = 2, STEPS = 120;
+
+  class PolyVectors extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+
+    coeffs(prefix: 'p' | 'q'): number[] {
+      return [0, 1, 2].map((k) => +this.querySelector<HTMLInputElement>(`[data-${prefix}="${k}"]`)!.value);
+    }
+
+    // SVG path for a0 + a1 x + a2 x^2 over [X0, X1]; y is negated for the drawing
+    path(c: number[]): string {
+      const pts: string[] = [];
+      for (let i = 0; i <= STEPS; i++) {
+        const x = X0 + ((X1 - X0) * i) / STEPS;
+        const y = c[0] + c[1] * x + c[2] * x * x;
+        pts.push(`${i ? 'L' : 'M'}${x.toFixed(3)},${(-y).toFixed(3)}`);
+      }
+      return pts.join(' ');
+    }
+
+    draw() {
+      const p = this.coeffs('p');
+      const q = this.coeffs('q');
+      p.forEach((v, k) => (this.querySelector(`[data-pv="${k}"]`)!.textContent = String(v)));
+      q.forEach((v, k) => (this.querySelector(`[data-qv="${k}"]`)!.textContent = String(v)));
+      const s = p.map((v, k) => v + q[k]);
+      this.querySelector('[data-cp]')!.setAttribute('d', this.path(p));
+      this.querySelector('[data-cq]')!.setAttribute('d', this.path(q));
+      this.querySelector('[data-cs]')!.setAttribute('d', this.path(s));
+      this.querySelector('[data-stat]')!.textContent =
+        `p + q has coefficients (${s.join(', ')}): the coefficient vectors (${p.join(', ')}) + (${q.join(', ')})`;
+    }
+  }
+  customElements.define('poly-vectors', PolyVectors);
+</script>

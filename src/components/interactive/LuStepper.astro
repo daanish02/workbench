@@ -1,0 +1,168 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="LU elimination, one row operation at a time"
+  caption="Each step clears one entry below a pivot. The multiplier used goes into L in the same position, and the matrix you see is U once every entry below the diagonal is zero. Multiplying L and U back together returns the original matrix."
+>
+  <lu-stepper>
+    <div class="lu-row">
+      <div>
+        <p class="lu-h">current matrix (becoming U)</p>
+        <div class="lu-mat" data-u></div>
+      </div>
+      <div>
+        <p class="lu-h">multipliers (becoming L)</p>
+        <div class="lu-mat" data-l></div>
+      </div>
+    </div>
+    <div class="lu-ctl">
+      <button class="btn" data-prev>Back</button>
+      <span data-step class="lu-step"></span>
+      <button class="btn primary" data-next>Next</button>
+    </div>
+    <p class="lu-stat" data-stat></p>
+  </lu-stepper>
+</Figure>
+
+<style>
+  .lu-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+    justify-items: center;
+  }
+  @media (min-width: 640px) {
+    .lu-row {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .lu-h {
+    margin: 0 0 6px;
+    text-align: center;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .lu-mat {
+    display: grid;
+    grid-template-columns: repeat(3, 44px);
+    gap: 4px;
+  }
+  .lu-mat :global(span) {
+    display: grid;
+    place-items: center;
+    height: 36px;
+    border-radius: 6px;
+    background: #1a1a1a;
+    border: 1px solid var(--border);
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+  }
+  .lu-mat :global(span.pivot) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 4, 0.18);
+  }
+  .lu-mat :global(span.zero) {
+    color: var(--text-faint);
+  }
+  .lu-mat :global(span.changed) {
+    border-color: var(--g-blue);
+    background: rgba(66, 133, 244, 0.2);
+  }
+  .lu-ctl {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+    margin-top: 12px;
+  }
+  .lu-step {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+    min-width: 6em;
+    text-align: center;
+  }
+  .lu-stat {
+    margin: 8px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // A = [[2, 1, 1], [4, -6, 0], [-2, 7, 2]]; the three steps clear the entries below each pivot
+  const A0 = [[2, 1, 1], [4, -6, 0], [-2, 7, 2]];
+
+  // returns the matrices after k steps (k = 0..3), with the multipliers used so far
+  function run(k: number) {
+    const U = A0.map((r) => r.slice());
+    const L = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const changed: [number, number][] = [];
+    let step = 0;
+    for (let col = 0; col < 2; col++) {
+      for (let row = col + 1; row < 3; row++) {
+        if (step >= k) return { U, L, changed };
+        const m = U[row][col] / U[col][col];
+        L[row][col] = m;
+        for (let j = 0; j < 3; j++) U[row][j] -= m * U[col][j];
+        changed.push([row, col]);
+        step++;
+      }
+    }
+    return { U, L, changed };
+  }
+
+  class LuStepper extends HTMLElement {
+    step = 0;
+
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        this.step = Math.min(3, this.step + 1);
+        this.draw();
+      });
+      this.querySelector('[data-prev]')!.addEventListener('click', () => {
+        this.step = Math.max(0, this.step - 1);
+        this.draw();
+      });
+      this.draw();
+    }
+
+    grid(M: number[][], pivotCells: number[][], changedCells: number[][], zeroBelow: boolean) {
+      let html = '';
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) {
+          const isPivot = pivotCells.some(([a, b]) => a === i && b === j);
+          const isChanged = changedCells.some(([a, b]) => a === i && b === j);
+          const isZero = zeroBelow && i > j;
+          const cls = isPivot ? 'pivot' : isChanged ? 'changed' : isZero ? 'zero' : '';
+          const v = Math.abs(M[i][j]) < 1e-9 ? '0' : Number.isInteger(M[i][j]) ? String(M[i][j]) : M[i][j].toFixed(2);
+          html += `<span class="${cls}">${v}</span>`;
+        }
+      }
+      return html;
+    }
+
+    draw() {
+      const { U, L, changed } = run(this.step);
+      const pivot = this.step === 0 ? [[0, 0]] : this.step <= 2 ? [[0, 0], [1, 1]] : [[0, 0], [1, 1], [2, 2]];
+      const last = changed.length ? changed[changed.length - 1] : [];
+      const lastCells = last.length ? [last] : [];
+      // show the multipliers used so far in L; the one just made is highlighted
+      const lCells = changed.map(([i, j]) => [i, j]);
+      this.querySelector('[data-u]')!.innerHTML = this.grid(U, pivot.map(([i, j]) => [i, j]), lastCells, true);
+      this.querySelector('[data-l]')!.innerHTML = this.grid(L, [], lCells.slice(-1), false);
+      this.querySelector('[data-step]')!.textContent = `step ${this.step} / 3`;
+
+      const names = [
+        'start: A is the matrix to factor',
+        'step 1: clear the entry below pivot 2 (multiplier 2)',
+        'step 2: clear the entry below the first pivot (multiplier −1)',
+        'step 3: clear the entry below the second pivot (multiplier −1)',
+      ];
+      this.querySelector('[data-stat]')!.textContent = names[this.step];
+    }
+  }
+  customElements.define('lu-stepper', LuStepper);
+</script>

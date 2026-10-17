@@ -1,0 +1,146 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A system of two equations is two lines"
+  caption="Each line is a x + b y = c. Change the numbers and watch the lines. They meet at the solution, which is the only one unless the lines are parallel: then there is no solution, or, if they coincide, infinitely many."
+>
+  <line-intersection>
+    <div class="li-grid">
+      <label>a₁ <input type="range" min="-3" max="3" step="0.5" value="1" data-a1 /><b data-a1v>1</b></label>
+      <label>b₁ <input type="range" min="-3" max="3" step="0.5" value="1" data-b1 /><b data-b1v>1</b></label>
+      <label>c₁ <input type="range" min="-6" max="6" step="0.5" value="3" data-c1 /><b data-c1v>3</b></label>
+      <label>a₂ <input type="range" min="-3" max="3" step="0.5" value="1" data-a2 /><b data-a2v>1</b></label>
+      <label>b₂ <input type="range" min="-3" max="3" step="0.5" value="-1" data-b2 /><b data-b2v>-1</b></label>
+      <label>c₂ <input type="range" min="-6" max="6" step="0.5" value="1" data-c2 /><b data-c2v>1</b></label>
+    </div>
+    <svg class="li-svg" viewBox="-6 -6 12 12" role="img" aria-label="Two lines in the plane and their intersection point">
+      <g transform="scale(1, -1)">
+        <line x1="-6" y1="0" x2="6" y2="0" class="li-axis"></line>
+        <line x1="0" y1="-6" x2="0" y2="6" class="li-axis"></line>
+        <line data-l1 class="li-l1"></line>
+        <line data-l2 class="li-l2"></line>
+        <circle data-x r="0.22" class="li-x" visibility="hidden"></circle>
+      </g>
+    </svg>
+    <p class="li-stat" data-stat></p>
+  </line-intersection>
+</Figure>
+
+<style>
+  .li-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px 12px;
+    margin-bottom: 10px;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .li-grid label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .li-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .li-grid b {
+    min-width: 2.2em;
+    text-align: right;
+    color: var(--text);
+  }
+  .li-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .li-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .li-l1 {
+    stroke: var(--g-blue);
+    stroke-width: 0.07;
+  }
+  .li-l2 {
+    stroke: var(--g-red);
+    stroke-width: 0.07;
+  }
+  .li-x {
+    fill: var(--g-yellow);
+  }
+  .li-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // a x + b y = c as a segment across the view: foot point plus or minus a direction
+  function lineSeg(a: number, b: number, c: number): [number, number, number, number] | null {
+    const n2 = a * a + b * b;
+    if (n2 < 1e-9) return null;
+    const px = (a * c) / n2;
+    const py = (b * c) / n2;
+    const dx = -b;
+    const dy = a;
+    const k = 8 / Math.hypot(dx, dy);
+    return [px - dx * k, py - dy * k, px + dx * k, py + dy * k];
+  }
+
+  class LineIntersection extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+
+    draw() {
+      const v = (sel: string) => +this.querySelector<HTMLInputElement>(sel)!.value;
+      const a1 = v('[data-a1]'), b1 = v('[data-b1]'), c1 = v('[data-c1]');
+      const a2 = v('[data-a2]'), b2 = v('[data-b2]'), c2 = v('[data-c2]');
+      for (const [sel, val] of [['[data-a1v]', a1], ['[data-b1v]', b1], ['[data-c1v]', c1],
+                                ['[data-a2v]', a2], ['[data-b2v]', b2], ['[data-c2v]', c2]] as const) {
+        this.querySelector(sel)!.textContent = String(val);
+      }
+
+      const draw = (sel: string, seg: ReturnType<typeof lineSeg>) => {
+        const el = this.querySelector(sel)!;
+        if (!seg) {
+          el.setAttribute('visibility', 'hidden');
+          return;
+        }
+        el.setAttribute('visibility', 'visible');
+        el.setAttribute('x1', seg[0].toFixed(3));
+        el.setAttribute('y1', seg[1].toFixed(3));
+        el.setAttribute('x2', seg[2].toFixed(3));
+        el.setAttribute('y2', seg[3].toFixed(3));
+      };
+      draw('[data-l1]', lineSeg(a1, b1, c1));
+      draw('[data-l2]', lineSeg(a2, b2, c2));
+
+      const det = a1 * b2 - a2 * b1;
+      const dot = this.querySelector('[data-x]')!;
+      let text: string;
+      if (Math.abs(det) > 1e-9) {
+        const x = (c1 * b2 - c2 * b1) / det;
+        const y = (a1 * c2 - a2 * c1) / det;
+        dot.setAttribute('visibility', 'visible');
+        dot.setAttribute('cx', x.toFixed(3));
+        dot.setAttribute('cy', y.toFixed(3));
+        text = `det = ${det.toFixed(2)} ≠ 0 → one solution x = ${x.toFixed(2)}, y = ${y.toFixed(2)}`;
+      } else {
+        dot.setAttribute('visibility', 'hidden');
+        const same = Math.abs(a1 * c2 - a2 * c1) < 1e-9 && Math.abs(b1 * c2 - b2 * c1) < 1e-9;
+        text = same ? 'det = 0 and the lines coincide → infinitely many solutions'
+                    : 'det = 0 and the lines are parallel → no solution';
+      }
+      this.querySelector('[data-stat]')!.textContent = text;
+    }
+  }
+  customElements.define('line-intersection', LineIntersection);
+</script>

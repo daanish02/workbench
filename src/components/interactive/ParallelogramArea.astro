@@ -1,0 +1,105 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The determinant is the signed area of the parallelogram"
+  caption="The columns of the matrix are where the unit square's edges land. The grey square is the unit square; the shaded parallelogram is its image. Its area is |det|, and a negative determinant means the picture has been flipped."
+>
+  <parallelogram-area>
+    <div class="pa-grid">
+      <label>a <input type="range" min="-3" max="3" step="0.1" value="2" data-m="a" /><b data-v="a">2.0</b></label>
+      <label>c <input type="range" min="-3" max="3" step="0.1" value="1" data-m="c" /><b data-v="c">1.0</b></label>
+      <label>b <input type="range" min="-3" max="3" step="0.1" value="1" data-m="b" /><b data-v="b">1.0</b></label>
+      <label>d <input type="range" min="-3" max="3" step="0.1" value="2" data-m="d" /><b data-v="d">2.0</b></label>
+    </div>
+    <svg class="pa-svg" viewBox="-5 -5 10 10" role="img" aria-label="Unit square and its image under a 2 by 2 matrix, a parallelogram">
+      <g transform="scale(1, -1)">
+        <line x1="-5" y1="0" x2="5" y2="0" class="pa-axis"></line>
+        <line x1="0" y1="-5" x2="0" y2="5" class="pa-axis"></line>
+        <polygon points="0,0 1,0 1,1 0,1" class="pa-unit"></polygon>
+        <polygon data-para class="pa-para"></polygon>
+      </g>
+    </svg>
+    <p class="pa-stat" data-stat></p>
+  </parallelogram-area>
+</Figure>
+
+<style>
+  .pa-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pa-grid label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pa-grid input {
+    flex: 1;
+    min-width: 0;
+  }
+  .pa-grid b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .pa-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .pa-axis {
+    stroke: #3c4043;
+    stroke-width: 0.03;
+  }
+  .pa-unit {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 0.04;
+    stroke-dasharray: 0.12 0.1;
+  }
+  .pa-para {
+    fill: rgba(251, 188, 4, 0.25);
+    stroke: var(--g-yellow);
+    stroke-width: 0.06;
+  }
+  .pa-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class ParallelogramArea extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) =>
+        i.addEventListener('input', () => this.draw()),
+      );
+      this.draw();
+    }
+
+    draw() {
+      const m: Record<string, number> = {};
+      this.querySelectorAll<HTMLInputElement>('[data-m]').forEach((i) => {
+        m[i.dataset.m!] = +i.value;
+        this.querySelector(`[data-v="${i.dataset.m}"]`)!.textContent = (+i.value).toFixed(1);
+      });
+      // columns of the matrix [[a, b], [c, d]] are the images of the two unit vectors
+      const { a, b, c, d } = m;
+      const pts = [[0, 0], [a, c], [a + b, c + d], [b, d]];
+      this.querySelector('[data-para]')!.setAttribute('points', pts.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(' '));
+      const det = a * d - b * c;
+      const orient = det < 0 ? 'negative: the picture is flipped' : det === 0 ? 'zero: the parallelogram is flat' : 'positive: orientation kept';
+      this.querySelector('[data-stat]')!.textContent = `det = ${det.toFixed(2)} · area = |det| = ${Math.abs(det).toFixed(2)} · ${orient}`;
+    }
+  }
+  customElements.define('parallelogram-area', ParallelogramArea);
+</script>

@@ -1,0 +1,65 @@
+---
+import Figure from '../Figure.astro';
+
+// Common angles on the unit circle: point (cos θ, sin θ), drawn in SVG coordinates (y points down).
+const angles = [0, 30, 45, 60, 90];
+const pts = angles.map((deg) => {
+  const t = (deg * Math.PI) / 180;
+  return { deg, x: Math.cos(t), y: Math.sin(t) };
+});
+const labelDx = { 0: 0.08, 30: 0.1, 45: 0.1, 60: 0.08, 90: -0.12 } as Record<number, number>;
+const labelDy = { 0: 0.16, 30: -0.06, 45: -0.1, 60: -0.12, 90: -0.08 } as Record<number, number>;
+---
+
+<Figure kind="Diagram"
+  title="The unit circle at the common angles"
+  caption="Each point is (cos θ, sin θ): its horizontal coordinate is the cosine and its vertical coordinate the sine. At 30°, 45° and 60° the values are the familiar √3/2, √2/2 and 1/2 in different places."
+>
+  <svg class="suc-svg" viewBox="-1.35 -1.35 2.7 2.7" role="img" aria-label="Unit circle with the points at 0, 30, 45, 60 and 90 degrees labelled with their coordinates">
+    <line x1="-1.3" y1="0" x2="1.3" y2="0" class="suc-axis"></line>
+    <line x1="0" y1="-1.3" x2="0" y2="1.3" class="suc-axis"></line>
+    <circle cx="0" cy="0" r="1" class="suc-ring"></circle>
+    {pts.map((p) => (
+      <g>
+        <line x1="0" y1="0" x2={p.x.toFixed(4)} y2={(-p.y).toFixed(4)} class="suc-spoke"></line>
+        <circle cx={p.x.toFixed(4)} cy={(-p.y).toFixed(4)} r="0.04" class="suc-dot"></circle>
+        <text
+          x={(p.x + labelDx[p.deg]).toFixed(3)}
+          y={(-p.y + labelDy[p.deg]).toFixed(3)}
+          class="suc-label"
+        >
+          {p.deg}° ({p.x.toFixed(2)}, {p.y.toFixed(2)})
+        </text>
+      </g>
+    ))}
+  </svg>
+</Figure>
+
+<style>
+  .suc-svg {
+    display: block;
+    width: 100%;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .suc-axis {
+    stroke: #3c4043;
+    stroke-width: 0.012;
+  }
+  .suc-ring {
+    fill: none;
+    stroke: #5f6368;
+    stroke-width: 0.016;
+  }
+  .suc-spoke {
+    stroke: #9aa0a6;
+    stroke-width: 0.01;
+  }
+  .suc-dot {
+    fill: var(--g-blue);
+  }
+  .suc-label {
+    fill: var(--text-muted);
+    font: 0.075px var(--font-mono);
+  }
+</style>
