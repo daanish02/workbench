@@ -1,5 +1,5 @@
 ---
-title: "Conic sections"
+title: "Conic Sections"
 description: "Circles, ellipses, parabolas and hyperbolas as slices of a cone, as equations, and as shapes defined by distances to a focus."
 order: 3
 tier: core
@@ -102,19 +102,64 @@ print("hyperbola error |PF1 - PF2| - 2a:", f"{worst_h:.2e}")  # prints: hyperbol
 
 In words: the error is about $7 \times 10^{-15}$, so every sampled point has the constant difference. The right branch is the points closer to the right focus, and the left branch is the mirror image.
 
-The parabola's check is similar. The focus is $(0, 1)$ and the directrix is $y = -1$ for $y = x^2/4$, and every point is equally far from both. The script in the parabola case reports an error of about $4 \times 10^{-16}$.
+The parabola's check is the same idea with one focus. For $y^2 = 4px$ with $p = 1$, the focus is $(1, 0)$ and the directrix is $x = -1$, and every point is equally far from both.
+
+```python
+import math
+
+p = 1.0
+worst_p = max(abs(math.dist((t * t / (4 * p), t), (p, 0.0)) - (t * t / (4 * p) + p))
+              for t in [i / 10 for i in range(-50, 51)])  # points (y^2/4p, y)
+print("parabola error |PF - dist(P, directrix)|:", f"{worst_p:.1e}")
+# parabola error |PF - dist(P, directrix)|: 4.4e-16
+```
+
+In words: the distance to the focus equals the distance to the directrix at every sampled point, up to rounding, which is the $e = 1$ case of the focus–directrix definition.
 
 ## Explore the family
 
 Slide the eccentricity below. Watch how the curve changes shape as $e$ crosses $0$, $1$ and $2$. The dots mark the foci where they exist; a parabola has one focus and no second.
-
-<StaticConicFamily />
 
 <ConicExplorer />
 
 <Callout type="key">
 The four conics are one family. Changing a single number, the eccentricity, moves you from one to the next. This is why a single formula can describe a planet's orbit, a comet's path and a bullet's trajectory, depending on the energy involved.
 </Callout>
+
+## The general quadratic equation
+
+Every conic is a degree-two equation $Ax^2 + Bxy + Cy^2 + Dx + Ey + F = 0$, and its type can be read without completing squares. The quadratic part $Ax^2 + Bxy + Cy^2$ is a [quadratic form](../../linear-algebra/quadratic-forms/) with matrix $\begin{pmatrix} A & B/2 \ B/2 & C \end{pmatrix}$, so the sign of its determinant, or equivalently of the **discriminant** $B^2 - 4AC$, decides the shape:
+
+| $B^2 - 4AC$ | Eigenvalues of the form | Curve (non-degenerate case) |
+| --- | --- | --- |
+| $< 0$ | same sign | ellipse (a circle when $A = C$ and $B = 0$) |
+| $= 0$ | one zero | parabola |
+| $> 0$ | opposite signs | hyperbola |
+
+The $Bxy$ term only rotates the curve; the eigenvectors of the matrix are its axes.
+
+```python
+import numpy as np
+
+def classify(A, B, C):
+    disc = B * B - 4 * A * C
+    kind = "ellipse" if disc < 0 else "parabola" if disc == 0 else "hyperbola"
+    axes = np.linalg.eigh(np.array([[A, B / 2], [B / 2, C]]))[1]
+    tilt = np.degrees(np.arctan2(axes[1, 0], axes[0, 0])) % 180
+    return disc, kind, tilt
+
+for coeffs in [(1, 0, 4), (1, 2, 1), (1, 3, 1), (5, 4, 2)]:
+    disc, kind, tilt = classify(*coeffs)
+    print(f"A, B, C = {coeffs}: B^2 - 4AC = {disc:>3} -> {kind}, axis at {tilt:.1f} deg")
+# A, B, C = (1, 0, 4): B^2 - 4AC = -16 -> ellipse, axis at 0.0 deg
+# A, B, C = (1, 2, 1): B^2 - 4AC =   0 -> parabola, axis at 135.0 deg
+# A, B, C = (1, 3, 1): B^2 - 4AC =   5 -> hyperbola, axis at 135.0 deg
+# A, B, C = (5, 4, 2): B^2 - 4AC = -24 -> ellipse, axis at 116.6 deg
+```
+
+In words: $x^2 + 4y^2$ is an ellipse with no tilt, $x^2 + 2xy + y^2 = (x + y)^2$ gives a parabola, $x^2 + 3xy + y^2$ a hyperbola, and $5x^2 + 4xy + 2y^2$ a tilted ellipse whose axes are the eigenvectors. Degenerate cases, such as a pair of lines or a single point, have the same discriminant as their family, so the test describes the shape when the equation has a curve at all.
+
+<ConicDiscriminant />
 
 ## Where conics appear
 

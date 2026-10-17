@@ -1,5 +1,5 @@
 ---
-title: "Polar and spherical coordinates"
+title: "Polar Coordinates"
 description: "Describing a point by its distance and angle instead of its horizontal and vertical position, extended to three dimensions, and when each system is the natural one."
 order: 5
 tier: core
@@ -105,11 +105,42 @@ print("spherical of (1, 1, sqrt 2): rho =", round(rho, 4), "theta =", round(th /
 print("spherical round trip:", tuple(round(v, 4) for v in from_spherical(rho, th, ph)))  # prints: spherical round trip: (1.0, 1.0, 1.4142)
 ```
 
-In words: $\rho = 2$, $\theta = \frac{\pi}{4}$ and $\varphi = \frac{\pi}{4}$, which is a point halfway from the north pole to the equator, a quarter turn around. The round trip returns the original $(1, 1, \sqrt{2})$.
+In words: $\rho = 2$, $\theta = \frac{\pi}{4}$ and $\varphi = \frac{\pi}{4}$, which is a point halfway from the north pole to the equator, an eighth of a turn around. The round trip returns the original $(1, 1, \sqrt{2})$.
 
 <Callout type="pitfall">
 Conventions differ. Physics often swaps $\theta$ and $\varphi$, using $\theta$ for the angle from the $z$-axis, so a formula copied from a physics text may be wrong in a maths text. Check which angle is which before using a formula.
 </Callout>
+
+## Integrating in polar coordinates
+
+Changing coordinates changes the size of the small pieces an integral adds up. A polar cell between radii $r$ and $r + dr$ and angles $\theta$ and $\theta + d\theta$ is nearly a rectangle with sides $dr$ and $r\,d\theta$, so its area is $r\,dr\,d\theta$, not $dr\,d\theta$. The extra factor $r$ is the determinant of the Jacobian of $(r, \theta) \mapsto (r\cos\theta, r\sin\theta)$, which is the general rule: $dA = |\det J|\,du\,dv$ for any change of variables.
+
+The classic payoff is the Gaussian integral. Squaring it turns a one-dimensional integral with no antiderivative into a two-dimensional one that polar coordinates solve:
+
+$$
+\left(\int_{-\infty}^{\infty} e^{-x^2} dx\right)^2 = \iint e^{-(x^2 + y^2)}\,dx\,dy = \int_0^{2\pi}\!\int_0^\infty e^{-r^2}\,r\,dr\,d\theta = \pi.
+
+$$
+
+The factor $r$ is what makes the inner integral easy: $\int_0^\infty e^{-r^2} r\,dr = \frac{1}{2}$.
+
+```python
+import math
+import sympy as sp
+from scipy.integrate import quad
+
+r, th = sp.symbols("r theta", positive=True)
+J = sp.Matrix([r * sp.cos(th), r * sp.sin(th)]).jacobian([r, th])
+print("det of the polar Jacobian:", sp.simplify(J.det()))
+value, _ = quad(lambda x: math.exp(-x * x), -math.inf, math.inf)
+print("Gaussian integral:", round(value, 10), " sqrt(pi):", round(math.sqrt(math.pi), 10))
+# det of the polar Jacobian: r
+# Gaussian integral: 1.7724538509  sqrt(pi): 1.7724538509
+```
+
+In words: SymPy confirms the area factor $r$, and numerical integration confirms that $\int e^{-x^2} dx = \sqrt{\pi}$, the constant in the normal density of the [Common Distributions](../../probability/common-distributions/) note. In spherical coordinates the same reasoning gives the volume element $\rho^2 \sin\varphi\,d\rho\,d\theta\,d\varphi$.
+
+<PolarAreaElement />
 
 ## Where each is used
 
