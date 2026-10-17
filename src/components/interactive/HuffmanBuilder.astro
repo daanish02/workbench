@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Build a Huffman code step by step"
+  caption="Source symbols a, b, c, d with probabilities 1/2, 1/4, 1/8, 1/8. Each step merges the two least likely items. Read the codes from the final tree: each merge adds one bit to the left and right branches."
+>
+  <huffman-builder>
+    <div class="hb-ctl">
+      <button type="button" data-next>next merge</button>
+      <button type="button" data-reset>reset</button>
+    </div>
+    <pre class="hb-out" data-out></pre>
+    <p class="hb-stat" data-stat></p>
+  </huffman-builder>
+</Figure>
+
+<style>
+  .hb-ctl {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .hb-ctl button {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    background: transparent;
+    border: 1px solid #3c4043;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+  }
+  .hb-out {
+    margin: 0;
+    min-height: 9em;
+    padding: 10px 12px;
+    background: #111;
+    border: 1px solid #2a2d31;
+    border-radius: 6px;
+    color: var(--text);
+    font: 0.8125rem/1.7 var(--font-mono);
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .hb-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type Node = { p: number; members: string[]; codes: Record<string, string> };
+
+  // Huffman merges on the note's source, recorded so each click shows one merge.
+  function buildSteps(): { text: string; codes: Record<string, string> }[] {
+    const start: Record<string, number> = { a: 0.5, b: 0.25, c: 0.125, d: 0.125 };
+    let nodes: Node[] = Object.entries(start).map(([k, v]) => ({ p: v, members: [k], codes: { [k]: '' } }));
+    const fmt = (ns: Node[]) =>
+      ns.map((n) => `${n.members.join('+')} (${n.p})`).join('   ');
+    const steps: { text: string; codes: Record<string, string> }[] = [
+      { text: `start: ${fmt(nodes)}`, codes: {} },
+    ];
+    let merged = 0;
+    while (nodes.length > 1) {
+      nodes.sort((x, y) => x.p - y.p);
+      const [n1, n2] = [nodes[0], nodes[1]];
+      const codes: Record<string, string> = {};
+      for (const k of n1.members) codes[k] = '0' + (n1.codes[k] ?? '');
+      for (const k of n2.members) codes[k] = '1' + (n2.codes[k] ?? '');
+      const node: Node = { p: n1.p + n2.p, members: [...n1.members, ...n2.members], codes };
+      nodes = [node, ...nodes.slice(2)];
+      merged++;
+      steps.push({ text: `merge ${merged}: ${n1.members.join('+')} and ${n2.members.join('+')} → ${node.members.join('+')} (${node.p})`, codes: { ...codes } });
+    }
+    return steps;
+  }
+
+  class HuffmanBuilder extends HTMLElement {
+    steps = buildSteps();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-next]')!.addEventListener('click', () => {
+        if (this.i < this.steps.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+
+    draw() {
+      const lines: string[] = [];
+      for (let k = 0; k <= this.i; k++) lines.push(this.steps[k].text);
+      this.querySelector('[data-out]')!.textContent = lines.join('\n');
+      const last = this.steps[this.i];
+      const codes = Object.keys(last.codes).length
+        ? Object.entries(last.codes).sort().map(([k, v]) => `${k}=${v}`).join('  ')
+        : 'codes appear when the tree is complete';
+      this.querySelector('[data-stat]')!.textContent = `${this.i === this.steps.length - 1 ? 'final' : 'current'} codes: ${codes}`;
+    }
+  }
+  customElements.define('huffman-builder', HuffmanBuilder);
+</script>

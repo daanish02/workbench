@@ -1,0 +1,107 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How much X tells you about Y"
+  caption="X and Y are fair coins. The slider sets how strongly they agree: at 0 they are independent, at 1 they are always equal. The bars show the joint probabilities, and the readout gives I(X;Y), the bits that knowing one reveals about the other."
+>
+  <mutual-info-explorer>
+    <div class="mi-ctl">
+      <label>agreement <input type="range" min="0" max="1" step="0.01" value="0.5" data-t /><b data-tv>0.50</b></label>
+    </div>
+    <svg class="mi-svg" viewBox="0 0 400 200" role="img" aria-label="Four joint probability bars for X and Y, with the two agreeing outcomes taller as agreement grows">
+      <line x1="40" y1="170" x2="380" y2="170" class="mi-axis"></line>
+      <rect data-c00 x="60" y="170" width="60" height="0" class="mi-b"></rect>
+      <rect data-c01 x="140" y="170" width="60" height="0" class="mi-w"></rect>
+      <rect data-c10 x="220" y="170" width="60" height="0" class="mi-w"></rect>
+      <rect data-c11 x="300" y="170" width="60" height="0" class="mi-b"></rect>
+      <text x="90" y="186" class="mi-t">X=0, Y=0</text>
+      <text x="170" y="186" class="mi-t">X=0, Y=1</text>
+      <text x="250" y="186" class="mi-t">X=1, Y=0</text>
+      <text x="330" y="186" class="mi-t">X=1, Y=1</text>
+    </svg>
+    <p class="mi-stat" data-stat></p>
+  </mutual-info-explorer>
+</Figure>
+
+<style>
+  .mi-ctl {
+    margin-bottom: 10px;
+  }
+  .mi-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .mi-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .mi-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .mi-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .mi-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .mi-b {
+    fill: var(--g-blue);
+  }
+  .mi-w {
+    fill: var(--g-yellow);
+    opacity: 0.8;
+  }
+  .mi-t {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .mi-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class MutualInfoExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = t.toFixed(2);
+      // marginals stay 1/2 and 1/2; agreeing outcomes gain weight as t grows
+      const same = (1 - t) * 0.25 + t * 0.5;
+      const diff = (1 - t) * 0.25;
+      const cells: [string, number][] = [
+        ['[data-c00]', same], ['[data-c01]', diff], ['[data-c10]', diff], ['[data-c11]', same],
+      ];
+      const H = 150 / 0.5; // scale: probability 0.5 fills 150 px
+      for (const [sel, v] of cells) {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('y', String(170 - v * H));
+        el.setAttribute('height', String(v * H));
+      }
+      // I(X;Y) = sum p(x,y) log2( p(x,y) / (p(x) p(y)) ), with p(x) = p(y) = 1/2
+      const I = 2 * same * Math.log2(same / 0.25) + 2 * (diff > 0 ? diff * Math.log2(diff / 0.25) : 0);
+      this.querySelector('[data-stat]')!.textContent =
+        `P(X=Y) = ${(2 * same).toFixed(2)} · I(X;Y) = ${I.toFixed(3)} bits${I < 0.005 ? ' · independent' : ''}`;
+    }
+  }
+  customElements.define('mutual-info-explorer', MutualInfoExplorer);
+</script>

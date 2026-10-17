@@ -1,0 +1,125 @@
+---
+import Figure from '../Figure.astro';
+
+// Binary entropy H(p) = −p log₂ p − (1 − p) log₂(1 − p), sampled for the static curve.
+const H = (p: number) => (p <= 0 || p >= 1 ? 0 : -p * Math.log2(p) - (1 - p) * Math.log2(1 - p));
+const xOf = (p: number) => 30 + p * 350;
+const yOf = (h: number) => 170 - h * 150;
+const pts: string[] = [];
+for (let i = 0; i <= 100; i++) {
+  const p = i / 100;
+  pts.push(`${i ? 'L' : 'M'}${xOf(p).toFixed(2)},${yOf(H(p)).toFixed(2)}`);
+}
+const curve = pts.join(' ');
+---
+
+<Figure
+  title="Entropy of a coin"
+  caption="Move the bias p = P(heads). The curve is H(p) in bits. A fair coin (p = 0.5) sits at the peak with one bit; a loaded coin is more predictable and has less entropy. A coin that always lands the same way has zero."
+>
+  <entropy-calculator>
+    <div class="ec-ctl">
+      <label>P(heads) <input type="range" min="0" max="1" step="0.01" value="0.5" data-p /><b data-pv>0.50</b></label>
+    </div>
+    <svg class="ec-svg" viewBox="0 0 400 190" role="img" aria-label="Binary entropy curve with a marker at the chosen bias">
+      <line x1="30" y1="170" x2="380" y2="170" class="ec-axis"></line>
+      <line x1="30" y1="20" x2="30" y2="170" class="ec-axis"></line>
+      <path d={curve} class="ec-curve"></path>
+      <line x1="30" y1="170" x2="30" y2="170" data-guide class="ec-guide"></line>
+      <circle cx="30" cy="170" r="5" data-dot class="ec-dot"></circle>
+      <text x="30" y="186" class="ec-t">0</text>
+      <text x="205" y="186" class="ec-t">bias p</text>
+      <text x="380" y="186" class="ec-t ec-end">1</text>
+    </svg>
+    <p class="ec-stat" data-stat></p>
+  </entropy-calculator>
+</Figure>
+
+<style>
+  .ec-ctl {
+    margin-bottom: 10px;
+  }
+  .ec-ctl label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ec-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .ec-ctl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ec-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ec-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ec-curve {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .ec-guide {
+    stroke: var(--g-yellow);
+    stroke-width: 1.2;
+    stroke-dasharray: 4 3;
+  }
+  .ec-dot {
+    fill: var(--g-yellow);
+  }
+  .ec-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: start;
+  }
+  .ec-end {
+    text-anchor: end;
+  }
+  .ec-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const H = (p: number) => (p <= 0 || p >= 1 ? 0 : -p * Math.log2(p) - (1 - p) * Math.log2(1 - p));
+  const xOf = (p: number) => 30 + p * 350;
+  const yOf = (h: number) => 170 - h * 150;
+
+  class EntropyCalculator extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      this.querySelector('[data-pv]')!.textContent = p.toFixed(2);
+      const h = H(p);
+      const dot = this.querySelector<SVGCircleElement>('[data-dot]')!;
+      dot.setAttribute('cx', xOf(p).toFixed(2));
+      dot.setAttribute('cy', yOf(h).toFixed(2));
+      const g = this.querySelector<SVGLineElement>('[data-guide]')!;
+      g.setAttribute('x1', xOf(p).toFixed(2));
+      g.setAttribute('x2', xOf(p).toFixed(2));
+      g.setAttribute('y1', yOf(h).toFixed(2));
+      g.setAttribute('y2', '170');
+      const verdict = Math.abs(p - 0.5) < 0.005 ? ' · fair coin' : p === 0 || p === 1 ? ' · no uncertainty' : '';
+      this.querySelector('[data-stat]')!.textContent = `H(${p.toFixed(2)}) = ${h.toFixed(3)} bits${verdict}`;
+    }
+  }
+  customElements.define('entropy-calculator', EntropyCalculator);
+</script>

@@ -1,0 +1,84 @@
+---
+import Figure from '../Figure.astro';
+
+// Twenty questions over eight equally likely objects: each yes/no answer halves the candidates.
+// Leaves sit at evenly spaced x positions; every parent is centred over its two children.
+const leafX = Array.from({ length: 8 }, (_, i) => 40 + i * 45);
+const level = (childX: number[]) => Array.from({ length: childX.length / 2 }, (_, k) => (childX[2 * k] + childX[2 * k + 1]) / 2);
+const l2 = level(leafX);   // 4 nodes, each holding 2 candidates
+const l1 = level(l2);      // 2 nodes, each holding 4 candidates
+const root = (l1[0] + l1[1]) / 2;
+const rows = [
+  { y: 22, xs: [root], size: 8 },
+  { y: 84, xs: l1, size: 4 },
+  { y: 146, xs: l2, size: 2 },
+  { y: 208, xs: leafX, size: 1 },
+];
+const edges: { x1: number; y1: number; x2: number; y2: number }[] = [];
+for (let r = 0; r < rows.length - 1; r++) {
+  const parents = rows[r], children = rows[r + 1];
+  parents.xs.forEach((px, k) => {
+    for (const cx of [children.xs[2 * k], children.xs[2 * k + 1]]) {
+      edges.push({ x1: px, y1: parents.y + 10, x2: cx, y2: children.y - 10 });
+    }
+  });
+}
+---
+
+<Figure
+  kind="Diagram"
+  title="Halving the candidates"
+  caption="Eight equally likely objects. Each yes/no question splits the remaining candidates in half, so three questions always identify the object. Three bits of entropy, three questions."
+>
+  <svg class="ht-svg" viewBox="0 0 400 236" role="img" aria-label="Tree: eight candidates split into four, then two, then one, in three halving steps">
+    {edges.map((e) => (
+      <line x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} class="ht-edge"></line>
+    ))}
+    {rows.map((r) =>
+      r.xs.map((x) => (
+        <g>
+          <circle cx={x} cy={r.y} r="10" class={r.size === 1 ? 'ht-end' : 'ht-node'}></circle>
+          <text x={x} y={r.y + 3.5} class={r.size === 1 ? 'ht-tend' : 'ht-t'}>{r.size}</text>
+        </g>
+      ))
+    )}
+    <text x="200" y="234" class="ht-note">3 questions = 3 bits</text>
+  </svg>
+</Figure>
+
+<style>
+  .ht-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ht-edge {
+    stroke: #5f6368;
+    stroke-width: 1.2;
+  }
+  .ht-node {
+    fill: #1a1a1a;
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .ht-end {
+    fill: var(--g-yellow);
+    stroke: var(--g-yellow);
+  }
+  .ht-t {
+    fill: var(--text);
+    font: 600 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ht-tend {
+    fill: #111;
+    font: 600 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ht-note {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+</style>

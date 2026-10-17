@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two distributions and their divergence"
+  caption="The blue bars are the true distribution p over three outcomes; they are fixed. Reshape the yellow model q with the sliders. The divergence D(p‖q) grows as q puts less weight where p has mass, and the reverse direction gives a different number."
+>
+  <kl-visualizer>
+    <div class="kl-ctl">
+      <label>q₁ <input type="range" min="0.05" max="0.9" step="0.01" value="0.3" data-q0 /><b data-q0v>0.30</b></label>
+      <label>q₂ <input type="range" min="0.05" max="0.9" step="0.01" value="0.3" data-q1 /><b data-q1v>0.30</b></label>
+    </div>
+    <svg class="kl-svg" viewBox="0 0 400 200" role="img" aria-label="Bars for the true distribution p and the model q over three outcomes">
+      <line x1="30" y1="170" x2="390" y2="170" class="kl-axis"></line>
+      <rect data-p0 x="50" y="170" width="28" height="0" class="kl-p"></rect>
+      <rect data-q0b x="82" y="170" width="28" height="0" class="kl-q"></rect>
+      <rect data-p1 x="150" y="170" width="28" height="0" class="kl-p"></rect>
+      <rect data-q1b x="182" y="170" width="28" height="0" class="kl-q"></rect>
+      <rect data-p2 x="250" y="170" width="28" height="0" class="kl-p"></rect>
+      <rect data-q2b x="282" y="170" width="28" height="0" class="kl-q"></rect>
+      <text x="81" y="186" class="kl-t">outcome 1</text>
+      <text x="213" y="186" class="kl-t">outcome 2</text>
+      <text x="313" y="186" class="kl-t">outcome 3</text>
+    </svg>
+    <p class="kl-stat" data-stat></p>
+  </kl-visualizer>
+</Figure>
+
+<style>
+  .kl-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .kl-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .kl-ctl input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .kl-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .kl-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .kl-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .kl-p {
+    fill: var(--g-blue);
+  }
+  .kl-q {
+    fill: var(--g-yellow);
+  }
+  .kl-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .kl-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const p = [0.5, 0.3, 0.2];
+  const bits = (a: number, b: number) => a * Math.log2(a / b);
+
+  class KLVisualizer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-q0]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-q1]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    draw() {
+      const s0 = this.querySelector<HTMLInputElement>('[data-q0]')!;
+      const s1 = this.querySelector<HTMLInputElement>('[data-q1]')!;
+      let q0 = +s0.value;
+      let q1 = +s1.value;
+      // keep the third weight at least 0.05 so the divergence stays finite
+      if (q0 + q1 > 0.95) q1 = 0.95 - q0;
+      s1.value = q1.toFixed(2);
+      const q2 = 1 - q0 - q1;
+      const q = [q0, q1, q2];
+      this.querySelector('[data-q0v]')!.textContent = q0.toFixed(2);
+      this.querySelector('[data-q1v]')!.textContent = q1.toFixed(2);
+
+      const H = 140;
+      const bar = (sel: string, v: number) => {
+        const el = this.querySelector(sel)!;
+        el.setAttribute('y', String(170 - v * H));
+        el.setAttribute('height', String(v * H));
+      };
+      bar('[data-p0]', p[0]); bar('[data-q0b]', q[0]);
+      bar('[data-p1]', p[1]); bar('[data-q1b]', q[1]);
+      bar('[data-p2]', p[2]); bar('[data-q2b]', q[2]);
+
+      const dpq = p.reduce((s, v, i) => s + bits(v, q[i]), 0);
+      const dqp = q.reduce((s, v, i) => s + bits(v, p[i]), 0);
+      this.querySelector('[data-stat]')!.textContent =
+        `D(p‖q) = ${dpq.toFixed(3)} bits · D(q‖p) = ${dqp.toFixed(3)} bits · q₃ = ${q2.toFixed(2)}`;
+    }
+  }
+  customElements.define('kl-visualizer', KLVisualizer);
+</script>

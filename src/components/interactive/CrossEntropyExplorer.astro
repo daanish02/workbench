@@ -1,0 +1,134 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Cross-entropy against entropy"
+  caption="The true coin lands heads with probability p. The model believes q. Cross-entropy H(p, q) is the bits per flip the model's code needs. It is never below the entropy H(p), and the difference is the KL divergence."
+>
+  <cross-entropy-explorer>
+    <div class="ce-ctl">
+      <label>true p <input type="range" min="0.02" max="0.98" step="0.01" value="0.9" data-p /><b data-pv>0.90</b></label>
+      <label>model q <input type="range" min="0.02" max="0.98" step="0.01" value="0.5" data-q /><b data-qv>0.50</b></label>
+    </div>
+    <svg class="ce-svg" viewBox="0 0 400 200" role="img" aria-label="Bars for entropy, cross-entropy and KL divergence in bits">
+      <line x1="60" y1="170" x2="390" y2="170" class="ce-axis"></line>
+      <rect data-hp x="90" y="170" width="70" height="0" class="ce-h"></rect>
+      <rect data-hpq x="180" y="170" width="70" height="0" class="ce-x"></rect>
+      <rect data-d x="270" y="170" width="70" height="0" class="ce-d"></rect>
+      <text x="125" y="186" class="ce-t">H(p)</text>
+      <text x="215" y="186" class="ce-t">H(p, q)</text>
+      <text x="305" y="186" class="ce-t">KL D(p‖q)</text>
+      <text data-vh x="125" y="160" class="ce-v">0</text>
+      <text data-vx x="215" y="160" class="ce-v">0</text>
+      <text data-vd x="305" y="160" class="ce-v">0</text>
+    </svg>
+    <p class="ce-stat" data-stat></p>
+  </cross-entropy-explorer>
+</Figure>
+
+<style>
+  .ce-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .ce-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .ce-ctl input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+  }
+  .ce-ctl b {
+    min-width: 2.6em;
+    text-align: right;
+    color: var(--text);
+  }
+  .ce-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ce-axis {
+    stroke: #3c4043;
+    stroke-width: 1;
+  }
+  .ce-h {
+    fill: var(--g-blue);
+    opacity: 0.85;
+  }
+  .ce-x {
+    fill: var(--g-yellow);
+    opacity: 0.85;
+  }
+  .ce-d {
+    fill: var(--g-red);
+    opacity: 0.85;
+  }
+  .ce-t {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ce-v {
+    fill: var(--text);
+    font: 600 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ce-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const H = (p: number) => -p * Math.log2(p) - (1 - p) * Math.log2(1 - p);
+  const Hx = (p: number, q: number) => -p * Math.log2(q) - (1 - p) * Math.log2(1 - q);
+  const D = (p: number, q: number) => Hx(p, q) - H(p);
+  const SCALE = 140 / 4; // pixels per bit; bars capped at 4 bits
+
+  class CrossEntropyExplorer extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-q]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+
+    setBar(sel: string, valSel: string, v: number, x: number) {
+      const h = Math.min(v, 4) * SCALE;
+      const bar = this.querySelector(sel)!;
+      bar.setAttribute('y', String(170 - h));
+      bar.setAttribute('height', String(h));
+      const label = this.querySelector(valSel)!;
+      label.setAttribute('y', String(Math.max(160 - h, 12)));
+      label.textContent = v.toFixed(3);
+      void x;
+    }
+
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const q = +this.querySelector<HTMLInputElement>('[data-q]')!.value;
+      this.querySelector('[data-pv]')!.textContent = p.toFixed(2);
+      this.querySelector('[data-qv]')!.textContent = q.toFixed(2);
+      const h = H(p), hx = Hx(p, q), d = D(p, q);
+      this.setBar('[data-hp]', '[data-vh]', h, 0);
+      this.setBar('[data-hpq]', '[data-vx]', hx, 0);
+      this.setBar('[data-d]', '[data-vd]', d, 0);
+      this.querySelector('[data-stat]')!.textContent =
+        `H(p) = ${h.toFixed(3)} · H(p, q) = ${hx.toFixed(3)} · gap = D(p‖q) = ${d.toFixed(3)} bits`;
+    }
+  }
+  customElements.define('cross-entropy-explorer', CrossEntropyExplorer);
+</script>
