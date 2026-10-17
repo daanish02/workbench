@@ -1,0 +1,318 @@
+---
+title: "Language Reference"
+description: "The major programming languages side by side: typing, memory, runtime and sweet spot, then a short profile of each with the same small program written in every one."
+order: 7
+tier: core
+takeaways:
+  - "Use the table to compare languages on **typing**, **memory management**, **runtime** and **sweet spot** at a glance."
+  - "Each profile shows the same task, summing the squares of the even numbers in a list, so the idioms can be compared directly."
+  - "The same task looks very different across languages: comprehensions, streams, iterators, LINQ, vectorised operations or a plain loop."
+  - "For how to choose between them, see the Choosing a Language note."
+resources:
+  - title: "Rosetta Code"
+    url: "https://rosettacode.org/wiki/Rosetta_Code"
+    note: "Hundreds of tasks solved in hundreds of languages; the best place to compare idioms side by side."
+  - title: "Learn X in Y minutes"
+    url: "https://learnxinyminutes.com/"
+    note: "One-page syntax tours of almost every language, ideal for a first look."
+---
+
+This is a lookup page for the major programming languages. The table compares them on the axes explained in [Choosing a Language](../../languages/language-guide/); each profile below gives what the language is for and the same small program in its idiom.
+
+## At a glance
+
+| Language | Typing | Memory | Runs as | Sweet spot |
+| --- | --- | --- | --- | --- |
+| Python | dynamic, strong | GC (ref counting) | bytecode VM | data, ML, scripting, APIs |
+| JavaScript | dynamic, weak | GC | JIT-compiled | browsers, web servers |
+| TypeScript | static (gradual) | GC | compiled to JS | large web codebases |
+| Java | static | GC | JVM + JIT | enterprise backends |
+| Kotlin | static | GC | JVM, native, JS | Android, JVM services |
+| C# | static | GC | .NET CLR + JIT | .NET services, Unity games |
+| Go | static | GC | native binary | cloud services, CLIs |
+| Rust | static | ownership, no GC | native binary | safe systems code |
+| C | static, weak | manual | native binary | kernels, embedded |
+| C++ | static | manual / RAII | native binary | engines, HPC, trading |
+| Swift | static | ARC | native binary | iOS and macOS apps |
+| Ruby | dynamic, strong | GC | VM + JIT | Rails web apps |
+| PHP | dynamic, weak | GC (ref counting) | bytecode VM | server-rendered web |
+| SQL | declarative | managed by the DB | query planner | relational data |
+| Bash | untyped strings | n/a | shell interpreter | command glue |
+| R | dynamic | GC | interpreter | statistics |
+
+## The languages
+
+Each entry below solves the **same task**: given the list `[3, 8, 5, 12, 7, 4]`, add up the squares of the even numbers ($8^2 + 12^2 + 4^2 = 224$). The task is tiny on purpose: the interesting part is the idiom each language reaches for.
+
+### Python
+
+A dynamically typed, interpreted language designed for readability. Its standard library is large, and its scientific ecosystem (NumPy, pandas, scikit-learn, PyTorch) has made it the default for data work and machine learning.
+
+**Good for:** data analysis, ML, automation, APIs, teaching. **Avoid when:** you need tight CPU-bound loops in pure Python, low memory use, or a single small binary to ship.
+
+```python
+numbers = [3, 8, 5, 12, 7, 4]
+# A generator expression filters and transforms in one readable line
+total = sum(n * n for n in numbers if n % 2 == 0)
+print(total)  # 224
+```
+
+### JavaScript
+
+The language of the web browser, standardised as ECMAScript. Modern engines JIT-compile it to fast machine code, and Node.js, Deno and Bun brought it to servers.
+
+**Good for:** anything in a browser, full-stack web, event-driven I/O. **Avoid when:** the codebase is large and long-lived without types (use TypeScript), or the work is heavy numeric computation.
+
+```js
+const numbers = [3, 8, 5, 12, 7, 4];
+// Each array method returns a new array, so the steps chain
+const total = numbers
+  .filter((n) => n % 2 === 0)
+  .map((n) => n * n)
+  .reduce((sum, sq) => sum + sq, 0);
+console.log(total); // 224
+```
+
+### TypeScript
+
+JavaScript with a static type system layered on top. The compiler checks types and then erases them, emitting ordinary JavaScript, so it runs anywhere JavaScript does.
+
+**Good for:** any JavaScript project that will grow or live long. **Avoid when:** a throwaway script, where the build step costs more than the types save.
+
+```ts
+// The annotations are checked at compile time and erased before the code runs
+function sumEvenSquares(numbers: number[]): number {
+  return numbers.filter((n) => n % 2 === 0).reduce((sum, n) => sum + n * n, 0);
+}
+console.log(sumEvenSquares([3, 8, 5, 12, 7, 4])); // 224
+// sumEvenSquares(["3", "8"]);  // compile error: string[] is not assignable to number[]
+```
+
+### Java
+
+A statically typed, object-oriented language compiled to JVM bytecode, which a JIT compiler turns into fast machine code at run time. Backward compatibility and a vast library ecosystem made it the backbone of enterprise software.
+
+**Good for:** large backend systems, big teams, big-data tooling (Kafka, Spark, Hadoop). **Avoid when:** you need tiny binaries or instant start-up, such as small CLIs or some serverless functions.
+
+```java
+import java.util.List;
+
+public class Main {
+    public static void main(String[] args) {
+        List<Integer> numbers = List.of(3, 8, 5, 12, 7, 4);
+        // Streams build a lazy pipeline; mapToInt avoids boxing each square into an Integer
+        int total = numbers.stream()
+                .filter(n -> n % 2 == 0)
+                .mapToInt(n -> n * n)
+                .sum();
+        System.out.println(total); // 224
+    }
+}
+```
+
+### Kotlin
+
+A concise, null-safe language that compiles to JVM bytecode and calls Java code directly. Google made it the preferred language for Android.
+
+**Good for:** Android apps, modern JVM backends, gradually modernising Java codebases. **Avoid when:** the team and tooling are firmly Java-only.
+
+```kotlin
+fun main() {
+    val numbers = listOf(3, 8, 5, 12, 7, 4)
+    // `it` is the implicit lambda parameter; sumOf maps and adds in one call
+    val total = numbers.filter { it % 2 == 0 }.sumOf { it * it }
+    println(total) // 224
+}
+```
+
+### C#
+
+Microsoft's statically typed language for .NET, close to Java in spirit but with features such as LINQ, properties and async/await arriving early. Modern .NET is open source and cross-platform.
+
+**Good for:** .NET backends, Windows desktop, Unity games, Azure. **Avoid when:** the deployment world is JVM or the team has no .NET experience.
+
+```csharp
+using System;
+using System.Linq;
+
+int[] numbers = { 3, 8, 5, 12, 7, 4 };
+// LINQ operators work on any sequence: arrays, lists, even database queries
+int total = numbers.Where(n => n % 2 == 0).Select(n => n * n).Sum();
+Console.WriteLine(total); // 224
+```
+
+### Go
+
+A deliberately small, statically typed language from Google that compiles to a single native binary. Goroutines and channels make concurrent network servers straightforward, and much of the cloud-native world (Docker, Kubernetes, Terraform) is written in it.
+
+**Good for:** network services, cloud tooling, CLIs, anything that should deploy as one file. **Avoid when:** you want rich abstractions or heavy numeric/ML work.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	numbers := []int{3, 8, 5, 12, 7, 4}
+	total := 0
+	// Go favours a plain loop over functional helpers: explicit, and just as fast
+	for _, n := range numbers {
+		if n%2 == 0 {
+			total += n * n
+		}
+	}
+	fmt.Println(total) // 224
+}
+```
+
+### Rust
+
+A systems language that guarantees memory safety at compile time through **ownership** and borrowing, without a garbage collector. It matches C and C++ for speed while ruling out whole classes of bugs such as use-after-free and data races.
+
+**Good for:** systems software, performance-critical services, CLIs, WebAssembly, replacing unsafe C/C++. **Avoid when:** you need to move fast on a prototype; the borrow checker has a real learning curve.
+
+```rust
+fn main() {
+    let numbers = vec![3, 8, 5, 12, 7, 4];
+    // Iterator adapters compile down to the same machine code as a hand-written loop
+    let total: i32 = numbers.iter().filter(|&&n| n % 2 == 0).map(|n| n * n).sum();
+    println!("{total}"); // 224
+}
+```
+
+### C
+
+The small, portable language most operating systems, embedded firmware and language runtimes are written in. It maps closely onto the machine and gives full control, including the freedom to corrupt memory.
+
+**Good for:** kernels, drivers, microcontrollers, libraries that every other language calls. **Avoid when:** you are writing application logic, where manual memory management mostly adds risk.
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    int numbers[] = {3, 8, 5, 12, 7, 4};
+    // C arrays don't carry their length; derive it from the byte sizes
+    size_t len = sizeof numbers / sizeof numbers[0];
+    int total = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (numbers[i] % 2 == 0) total += numbers[i] * numbers[i];
+    }
+    printf("%d\n", total); // 224
+    return 0;
+}
+```
+
+### C++
+
+C plus classes, templates and a large standard library. Its "zero-cost abstractions" let high-level code compile to tight machine code, which is why game engines, browsers, databases and trading systems use it.
+
+**Good for:** game engines, browsers, high-performance and low-latency systems. **Avoid when:** a garbage-collected or memory-safe language would do; C++'s complexity is a lasting cost.
+
+```cpp
+#include <iostream>
+#include <numeric>
+#include <vector>
+
+int main() {
+    std::vector<int> numbers{3, 8, 5, 12, 7, 4};
+    // std::accumulate folds the range; the lambda decides what each element contributes
+    int total = std::accumulate(numbers.begin(), numbers.end(), 0,
+        [](int sum, int n) { return n % 2 == 0 ? sum + n * n : sum; });
+    std::cout << total << '\n'; // 224
+}
+```
+
+### Swift
+
+Apple's statically typed, memory-safe language for iOS, macOS and its other platforms. Memory is managed with automatic reference counting (ARC) rather than a tracing garbage collector.
+
+**Good for:** native Apple apps. **Avoid when:** you are targeting anything outside the Apple ecosystem.
+
+```swift
+let numbers = [3, 8, 5, 12, 7, 4]
+// $0 is the closure's first argument; reduce(0, +) passes the + operator as a function
+let total = numbers.filter { $0 % 2 == 0 }.map { $0 * $0 }.reduce(0, +)
+print(total) // 224
+```
+
+### Ruby
+
+A dynamic, deeply object-oriented language built for programmer happiness. Ruby on Rails popularised convention-over-configuration web development.
+
+**Good for:** web applications with Rails, scripting, internal tools. **Avoid when:** raw performance or a large statically checked codebase matters most.
+
+```ruby
+numbers = [3, 8, 5, 12, 7, 4]
+# &:even? turns the method name into a block; the chain reads almost like English
+total = numbers.select(&:even?).map { |n| n * n }.sum
+puts total # 224
+```
+
+### PHP
+
+A server-side language built for generating web pages, still running a large share of the web (WordPress, Wikipedia). Modern PHP with Laravel or Symfony is fast and well structured.
+
+**Good for:** server-rendered websites, CMS platforms, cheap hosting. **Avoid when:** you are building anything other than web backends.
+
+```php
+<?php
+$numbers = [3, 8, 5, 12, 7, 4];
+// fn(...) => ... is PHP's arrow-function syntax (PHP 7.4+)
+$evens = array_filter($numbers, fn($n) => $n % 2 === 0);
+$total = array_sum(array_map(fn($n) => $n * $n, $evens));
+echo $total, PHP_EOL; // 224
+```
+
+### SQL
+
+The declarative language of relational databases. You describe the result you want, and the database's query planner decides how to compute it.
+
+**Good for:** querying, joining and aggregating structured data. **Avoid when:** you need general-purpose logic; SQL is a data language, not an application language.
+
+```sql
+-- Describe the result; the database decides how to scan, filter and add
+SELECT SUM(n * n) AS total
+FROM numbers
+WHERE n % 2 = 0;   -- 224
+```
+
+### Bash
+
+The default shell on Linux and the traditional one on macOS. Its strength is launching programs and wiring their input and output together.
+
+**Good for:** short scripts that glue commands together, CI steps, setup scripts. **Avoid when:** a script grows past a page or needs real data structures; switch to Python.
+
+```bash
+numbers=(3 8 5 12 7 4)
+total=0
+# $(( )) / (( )) are integer arithmetic; Bash has no floats and few data structures
+for n in "${numbers[@]}"; do
+  (( n % 2 == 0 )) && (( total += n * n ))
+done
+echo "$total"  # 224
+```
+
+### R
+
+A language built by statisticians for statistics. Operations apply to whole vectors at once, and its package ecosystem (tidyverse, ggplot2) is unmatched for statistical modelling and plotting.
+
+**Good for:** statistics, exploratory analysis, publication-quality plots. **Avoid when:** you are building production software or general-purpose applications.
+
+```r
+numbers <- c(3, 8, 5, 12, 7, 4)
+# Logical indexing picks the evens; ^2 squares the whole vector at once
+total <- sum(numbers[numbers %% 2 == 0]^2)
+print(total)  # [1] 224
+```
+
+## Also worth knowing
+
+| Language | Known for |
+| --- | --- |
+| Scala | functional + OO on the JVM; Spark |
+| Elixir | fault-tolerant concurrent services on the Erlang VM |
+| Haskell | pure functional programming, advanced types |
+| Julia | fast numerical and scientific computing |
+| Dart | Flutter cross-platform apps |
+| Lua | lightweight scripting embedded in games and tools |
+| Zig | a simpler, safer take on C |
