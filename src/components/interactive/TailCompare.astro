@@ -1,0 +1,81 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Tails on a log–log plot"
+  caption="The tail probability P(X > x) for x from 1 to 1000, on log scales. The normal (red) and exponential (yellow) tails plunge off the bottom; the lognormal (green) bends down slowly; the Pareto (blue) is a straight line whose slope is −α. Lower α makes the line flatter: extremes become more common, and below α = 2 the variance is infinite, below 1 the mean."
+>
+  <tail-compare>
+    <label class="tc-lbl">Pareto α <input type="range" min="0.5" max="4" step="0.1" value="1.5" data-a /> <b data-av>1.5</b></label>
+    <svg class="tc-svg" viewBox="0 0 340 220" role="img" aria-label="Log-log plot of tail probabilities for four distributions">
+      <g data-axes></g>
+      <path data-norm class="tc-norm"></path>
+      <path data-exp class="tc-exp"></path>
+      <path data-logn class="tc-logn"></path>
+      <path data-par class="tc-par"></path>
+    </svg>
+    <p class="tc-legend"><span class="n">normal</span> <span class="e">exponential</span> <span class="l">lognormal</span> <span class="p">Pareto</span></p>
+    <p class="tc-stat" data-stat></p>
+  </tail-compare>
+</Figure>
+
+<style>
+  .tc-lbl { display: flex; align-items: center; gap: 10px; font-size: 0.875rem; color: var(--text-muted); margin-bottom: 12px; }
+  .tc-lbl input { flex: 1; }
+  .tc-svg { display: block; width: 100%; max-width: 420px; margin: 0 auto; }
+  .tc-svg :global(.tc-ax) { stroke: #3c4043; }
+  .tc-svg :global(.tc-t) { fill: var(--text-faint); font: 0.625rem var(--font-mono); }
+  .tc-norm { fill: none; stroke: var(--g-red); stroke-width: 2; }
+  .tc-exp { fill: none; stroke: var(--g-yellow); stroke-width: 2; }
+  .tc-logn { fill: none; stroke: var(--g-green); stroke-width: 2; }
+  .tc-par { fill: none; stroke: var(--g-blue); stroke-width: 2.5; }
+  .tc-legend { text-align: center; font: 0.8rem var(--font-mono); margin: 6px 0 0; }
+  .n { color: var(--g-red-l); } .e { color: var(--g-yellow-l); } .l { color: var(--g-green-l); } .p { color: var(--g-blue-l); }
+  .tc-stat { margin: 6px 0 0; font: 0.875rem/1.6 var(--font-mono); color: var(--text-muted); text-align: center; }
+</style>
+
+<script>
+  const erfc = (x: number) => {
+    const t = 1 / (1 + 0.5 * Math.abs(x));
+    const y = t * Math.exp(-x * x - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return x >= 0 ? y : 2 - y;
+  };
+  const normSf = (z: number) => 0.5 * erfc(z / Math.SQRT2);
+  // x from 1 to 1000 (log10 0..3), P from 1 down to 1e-8 (log10 0..-8)
+  const sx = (lx: number) => 30 + (lx / 3) * 300;
+  const sy = (lp: number) => 10 + (-lp / 8) * 190;
+  const path = (sf: (x: number) => number) => {
+    let d = '', on = false;
+    for (let i = 0; i <= 300; i++) {
+      const lx = (3 * i) / 300;
+      const p = sf(10 ** lx);
+      if (!(p > 1e-8)) { on = false; continue; }
+      d += `${on ? 'L' : 'M'}${sx(lx).toFixed(1)},${sy(Math.log10(Math.min(1, p))).toFixed(1)}`;
+      on = true;
+    }
+    return d;
+  };
+  class TailCompare extends HTMLElement {
+    connectedCallback() {
+      let ax = `<line class="tc-ax" x1="30" y1="200" x2="330" y2="200"></line><line class="tc-ax" x1="30" y1="10" x2="30" y2="200"></line>`;
+      for (const lx of [0, 1, 2, 3]) ax += `<text class="tc-t" x="${sx(lx) - 6}" y="214">${10 ** lx}</text>`;
+      for (const lp of [0, -4, -8]) ax += `<text class="tc-t" x="0" y="${sy(lp) + 3}">1e${lp}</text>`;
+      this.querySelector('[data-axes]')!.innerHTML = ax;
+      // reference curves, each started at x = 1 so all four share the point (1, 1)
+      this.querySelector('[data-norm]')!.setAttribute('d', path((x) => normSf(x - 1) / 0.5));
+      this.querySelector('[data-exp]')!.setAttribute('d', path((x) => Math.exp(-(x - 1))));
+      this.querySelector('[data-logn]')!.setAttribute('d', path((x) => normSf(Math.log(x) / 1.5) / 0.5));
+      this.querySelector('[data-a]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const a = +this.querySelector<HTMLInputElement>('[data-a]')!.value;
+      this.querySelector('[data-av]')!.textContent = a.toFixed(1);
+      this.querySelector('[data-par]')!.setAttribute('d', path((x) => x ** -a));
+      const moments = a > 2 ? 'mean and variance finite' : a > 1 ? 'mean finite, variance infinite' : 'mean and variance infinite';
+      this.querySelector('[data-stat]')!.textContent = `P(X > 100) = ${(100 ** -a).toExponential(1)} · slope −${a.toFixed(1)} · ${moments}`;
+    }
+  }
+  customElements.define('tail-compare', TailCompare);
+</script>

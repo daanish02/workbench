@@ -1,0 +1,126 @@
+---
+title: "Heavy Tails"
+description: "Distributions whose rare values dominate: the Pareto and its power-law tail, Zipf's law for ranked data, the lognormal, and the Cauchy with no mean, with how to recognise a heavy tail and why averages mislead."
+order: 4
+tier: core
+takeaways:
+  - "A **heavy-tailed** distribution has a tail that falls more slowly than any exponential, so extreme values are far more common than a normal would suggest."
+  - "The **Pareto** distribution has $P(X > x) = (x_m / x)^\\alpha$: a straight line on a log–log plot. Its mean exists only for $\\alpha > 1$ and its variance only for $\\alpha > 2$."
+  - "**Zipf's law** says the $r$-th most common item has frequency proportional to $1/r^s$. Word counts, city sizes and website traffic follow it closely."
+  - "The **Cauchy** distribution has no mean: the average of Cauchy samples is itself Cauchy, so the law of large numbers does not apply."
+  - "With heavy tails, the sample mean is unstable and dominated by a few huge values; report medians and quantiles, and check the tail on a log–log plot."
+resources:
+  - title: "Power-law distributions in empirical data (Clauset, Shalizi and Newman)"
+    url: "https://arxiv.org/abs/0706.1062"
+    note: "How to fit and test power laws properly, and why many claimed ones are not."
+  - title: "Heavy-tailed distribution (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Heavy-tailed_distribution"
+    note: "Definitions, examples and the families of heavy tails."
+  - title: "scipy.stats distributions"
+    url: "https://docs.scipy.org/doc/scipy/reference/stats.html"
+    note: "pareto, zipf, lognorm and cauchy, used in the checks below."
+---
+
+The distributions in [Common Distributions](../common-distributions/) all have light tails: very large values are so rare that a sample's average quickly settles near the mean. Many real quantities do not behave this way. A few cities hold a large share of the population, a few words make up most of a text, a few requests account for most of a server's latency, and a few files take most of the disk. These quantities follow **heavy-tailed** distributions, where rare extreme values carry much of the total. This note introduces the main families, shows why averages and variances can fail, and gives the checks that reveal a heavy tail.
+
+## Light and heavy tails
+
+The **tail** of a distribution is $P(X > x)$ for large $x$. For the exponential it falls like $e^{-\lambda x}$, and for the normal faster still. A distribution is heavy-tailed when its tail falls more slowly than every exponential. The cleanest case is a **power law**, a tail that falls like $x^{-\alpha}$: doubling $x$ always divides the tail probability by the same factor $2^\alpha$, however far out you go.
+
+```python
+import math
+from scipy import stats
+
+for x in (2, 5, 10, 50):
+    print(f"P(X > {x:>2}): exponential {math.exp(-x):.1e}, normal {stats.norm.sf(x):.1e}, Pareto(alpha=1.5) {x ** -1.5:.1e}")
+# P(X >  2): exponential 1.4e-01, normal 2.3e-02, Pareto(alpha=1.5) 3.5e-01
+# P(X >  5): exponential 6.7e-03, normal 2.9e-07, Pareto(alpha=1.5) 8.9e-02
+# P(X > 10): exponential 4.5e-05, normal 7.6e-24, Pareto(alpha=1.5) 3.2e-02
+# P(X > 50): exponential 1.9e-22, normal 0.0e+00, Pareto(alpha=1.5) 2.8e-03
+```
+
+In words: at $x = 10$ the exponential tail is about $5 \times 10^{-5}$ and the normal's about $8 \times 10^{-24}$, while the Pareto tail is still $0.03$. At $x = 50$ the light tails are effectively zero and the Pareto still gives about one chance in $350$. Events that a normal model calls impossible are routine under a power law.
+
+<TailCompare />
+
+## The Pareto distribution
+
+The **Pareto** distribution with scale $x_m > 0$ and shape $\alpha > 0$ has support $x \ge x_m$ and
+
+$$
+P(X > x) = \left(\frac{x_m}{x}\right)^{\alpha}, \qquad f(x) = \frac{\alpha\,x_m^\alpha}{x^{\alpha + 1}}.
+
+$$
+
+Taking logarithms, $\log P(X > x) = \alpha \log x_m - \alpha \log x$: a straight line of slope $-\alpha$ on a log–log plot, which is the standard visual test for a power law. The moments exist only when the tail falls fast enough:
+
+| Quantity | Exists when | Value |
+| --- | --- | --- |
+| Mean | $\alpha > 1$ | $\frac{\alpha x_m}{\alpha - 1}$ |
+| Variance | $\alpha > 2$ | $\frac{\alpha x_m^2}{(\alpha - 1)^2(\alpha - 2)}$ |
+
+Pareto first used it for wealth, and it is the source of the **80/20 rule**: with $\alpha = \log_4 5 \approx 1.16$, the top $20\%$ of the population holds $80\%$ of the total.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+alpha = np.log(5) / np.log(4)                      # about 1.16
+x = 1 + rng.pareto(alpha, size=1_000_000)          # Pareto with x_m = 1 (numpy's pareto is shifted by 1)
+x.sort()
+top20 = x[int(0.8 * len(x)):].sum() / x.sum()
+print(f"alpha = {alpha:.3f}: top 20% hold {top20:.0%} of the total")
+print(f"largest single value holds {x[-1] / x.sum():.1%} of the total")
+# alpha = 1.161: top 20% hold 76% of the total
+# largest single value holds 0.9% of the total
+```
+
+In words: in a million draws the top fifth hold close to the predicted $80\%$, and the single largest value alone holds a visible share of everything. The exact share drifts between runs, because with $\alpha$ this close to $1$ the total is dominated by a handful of draws, the next section's problem.
+
+## When averages fail
+
+The law of large numbers needs a finite mean, and the central limit theorem a finite variance. Heavy tails can remove both. The **Cauchy** distribution, the ratio of two independent standard normals, has density $\frac{1}{\pi(1 + x^2)}$ and no mean at all: the average of $n$ Cauchy samples has exactly the same Cauchy distribution as one sample, so averaging more data never helps.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(1)
+normal = rng.normal(size=1_000_000)
+cauchy = rng.standard_cauchy(size=1_000_000)
+for n in (100, 10_000, 1_000_000):
+    print(f"n = {n:>9}: normal mean {normal[:n].mean():+.4f}, Cauchy mean {cauchy[:n].mean():+.4f}, Cauchy median {np.median(cauchy[:n]):+.4f}")
+# n =       100: normal mean -0.0736, Cauchy mean -0.4168, Cauchy median +0.0854
+# n =     10000: normal mean -0.0109, Cauchy mean -0.4856, Cauchy median -0.0064
+# n =   1000000: normal mean -0.0002, Cauchy mean +0.8490, Cauchy median -0.0002
+```
+
+In words: the normal running mean closes in on $0$, as the [Large Numbers](../law-of-large-numbers/) note promises. The Cauchy mean jumps around and does not settle, however many samples are used, because one huge draw can move it arbitrarily far. The median, which ignores how large the extremes are, settles at $0$ for both.
+
+<Callout type="pitfall">
+A finite sample always has a finite average, so software will happily report a mean and standard deviation for heavy-tailed data. The numbers can still be meaningless: they change wildly from sample to sample and are driven by the largest few values. For latencies, incomes or file sizes, report the median and high quantiles (p95, p99) instead, and check whether the tail looks like a power law before trusting any average.
+</Callout>
+
+## Zipf's law and the lognormal
+
+**Zipf's law** describes ranked data: the item of rank $r$ has frequency proportional to $1/r^s$, with $s$ close to $1$ for word frequencies. The most common English word appears about twice as often as the second and three times as often as the third. The same shape appears in city populations, website traffic and the popularity of packages, and it is a power law in disguise: the frequencies themselves follow a Pareto-like tail.
+
+```python
+import numpy as np
+from scipy import stats
+
+ranks = np.arange(1, 11)
+freq = stats.zipf.pmf(ranks, a=2.0)                 # Zipf with exponent s = 2
+print("frequency ratios f(1)/f(r):", (freq[0] / freq).round(1))
+slope = np.polyfit(np.log(ranks), np.log(freq), 1)[0]
+print("slope on a log-log plot:", round(slope, 3))
+# frequency ratios f(1)/f(r): [  1.   4.   9.  16.  25.  36.  49.  64.  81. 100.]
+# slope on a log-log plot: -2.0
+```
+
+In words: with exponent $2$ the first item is $4$ times as common as the second and $100$ times as common as the tenth, and the log–log slope recovers the exponent $-2$ exactly. Fitting a straight line to real log–log data is only a first look; the Clauset paper in the resources explains why it can mislead and what to use instead.
+
+The **lognormal** is the distribution of $e^Y$ for a normal $Y$, which arises when many independent factors multiply rather than add. It is heavy-tailed but has all moments, and over a limited range its tail can look almost straight on a log–log plot, so lognormal and power-law data are often hard to tell apart. File sizes, incomes and response times are frequently modelled with one or the other.
+
+## Where heavy tails matter
+
+Latency is the classic engineering case: the slowest one percent of requests can dominate user experience, which is why systems report p99 rather than the average. Insurance and finance price rare large losses that a normal model would ignore. In machine learning, word frequencies are Zipfian, so most vocabulary items are rare, and gradient noise in training can be heavy-tailed, which affects how optimisers behave. The [Distribution Table](../../appendix/distribution-table/) lists the light-tailed families for comparison.
