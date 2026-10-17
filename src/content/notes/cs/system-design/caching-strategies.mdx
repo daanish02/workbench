@@ -1,0 +1,166 @@
+---
+title: "Caching Strategies"
+description: "Cache-aside, write-through, write-back, and eviction policies."
+order: 4
+tier: core
+takeaways:
+  - "A **cache** keeps copies of hot data in a faster layer; it helps because access costs are unequal, and hurts if it serves stale data or hides misses."
+  - "**Cache-aside**: the app checks the cache, loads from the database on a miss, and invalidates on write. **Write-through**: write both together. **Write-back**: write the cache now, storage later (fast, but risks data loss)."
+  - "**Eviction** (LRU, LFU, FIFO) decides what to drop when full; **TTL** bounds how stale an entry can be. They solve different problems and combine."
+  - "Cache **invalidation** is the hard part: every cache is another copy of the data with its own consistency rules."
+  - "Judge a cache by effective latency and cost, not hit rate alone."
+resources:
+  - title: "Cache replacement policies (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cache_replacement_policies"
+    note: "LRU, LFU, FIFO, ARC and more, with trade-offs."
+  - title: "Redis: key eviction"
+    url: "https://redis.io/docs/latest/develop/reference/eviction/"
+    note: "How a production cache approximates LRU and LFU."
+  - title: "MDN: HTTP caching"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Caching"
+---
+
+Caching improves performance by keeping frequently needed data in a faster storage layer, reducing the cost of retrieving or computing it again. The central challenge is not simply deciding what to cache, but deciding how cached data stays synchronized with its source and what happens when the cache runs out of space. Cache-aside, write-through, and write-back define how data moves between the cache and the underlying storage; eviction policies determine which cached items are removed when space is needed. These decisions trade off latency, consistency, durability, and operational complexity.
+
+## A cache works because access costs are unequal
+
+A system may retrieve data from CPU memory, an in-memory cache, a local disk, a remote database, or an external service. These storage layers have different access costs. Keeping frequently accessed data in a faster layer can reduce latency and relieve pressure on slower dependencies.
+
+Suppose a product page requires a database query that takes 80 milliseconds. If the result is cached in memory and can be retrieved in 1 millisecond, repeated requests become much cheaper. The first request may still require the database; subsequent requests can reuse the cached result.
+
+Two quantities help describe cache effectiveness:
+
+$$
+\text{hit rate} = \frac{\text{hits}}{\text{hits} + \text{misses}}, \qquad \text{miss rate} = 1 - \text{hit rate}
+$$
+
+In words: the fraction of requests served from the cache. The average access time is a weighted mix of the two paths:
+
+$$
+T_{\text{avg}} = h \cdot T_{\text{cache}} + (1-h) \cdot T_{\text{miss}}
+$$
+
+With the 1 ms cache and 80 ms query above, a 90% hit rate gives $0.9 \times 1 + 0.1 \times 80 = 8.9$ ms, about nine times faster than always querying; at 50% it is only 40.5 ms. The misses dominate the average, which is why raising the hit rate from 90% to 99% matters more than it sounds.
+
+A high hit rate is often desirable, but it is not sufficient on its own. A cache can have a high hit rate while serving stale data, consuming excessive memory, or providing little benefit for expensive misses. What matters is whether caching improves the workload's actual latency, throughput, and cost.
+
+## Cache-aside gives the application control
+
+In the cache-aside pattern, the application checks the cache before consulting the database. On a miss, it retrieves the data from the database and populates the cache.
+
+| Operation | Steps |
+| --- | --- |
+| **Read** | 1. Application asks the cache. 2. **Hit:** return the data. **Miss:** query the database, store the result in the cache, return it. |
+| **Write** | 1. Application writes to the database. 2. Invalidate (or update) the cache entry so the next read reloads it. |
+
+For example, an application displaying a product's details first checks whether that product is cached. If not, it queries the database, stores the result in the cache, and returns it to the user.
+
+Cache-aside is popular because it is simple and gives the application control over which data is cached. Unrequested data does not need to be loaded into the cache, and a cache failure can often be handled by falling back to the database.
+
+The main difficulty is invalidation. If a product's price changes in the database while its old value remains cached, users may see stale information. A common approach is to update the database and then invalidate the corresponding cache entry. A subsequent read reloads the current value.
+
+However, invalidation is not automatically race-free. A concurrent read might retrieve an old database value before a write commits, then populate the cache after the invalidation. TTLs (time to live), versioning, coordinated updates, or other consistency mechanisms may be needed depending on the consequences of stale data.
+
+Cache-aside is well suited to read-heavy workloads where occasional misses are acceptable and the application can manage invalidation.
+
+## Write-through keeps cache and storage updated together
+
+With write-through, a write updates the cache and the underlying storage as part of the same write path. The application generally does not treat the write as complete until both required updates succeed.
+
+1. The write request goes to the cache layer.
+2. The cache writes through to the underlying database.
+3. Only when both have succeeded is the write confirmed.
+
+The key advantage is that a successfully completed write can leave the cache holding the new value, reducing the chance that the next reader encounters an old cached entry. The application does not need to wait for a later cache miss to refresh the value.
+
+The trade-off is write latency: each write must pay the cost of updating the underlying store and cache. It may also write data to the cache that is rarely read afterward.
+
+There is another subtlety: updating two independent systems is not automatically an atomic transaction. If the database commits but the cache update fails, the systems can diverge. Production implementations need a defined failure strategy, such as invalidating the cache, retrying, or reconciling the state.
+
+Write-through is useful when reads should see recently written values and the added write cost is acceptable.
+
+## Write-back makes writes fast by deferring storage updates
+
+With write-back, also called write-behind, the cache accepts a write first and propagates it to the underlying storage later.
+
+1. The write request updates the cache.
+2. The write is confirmed immediately.
+3. The entry is marked **dirty** (or queued).
+4. The cache persists it to the database later.
+
+Because the slower storage update is deferred, the write path can be much faster. Multiple updates to the same item may also be combined before persistence, reducing the number of database writes.
+
+The cost is durability risk. If the cache acknowledges a write but loses the data before it reaches persistent storage, the system may lose an update. A delayed write can also leave the database temporarily behind the cache, and failures in the write queue can create a backlog.
+
+For this reason, write-back systems need careful handling of dirty data, retries, ordering, persistence, and recovery. A cache that stores the only current copy of important data is not safely replaceable unless its durability guarantees are designed accordingly.
+
+Write-back is appropriate when write throughput matters greatly, deferred persistence is acceptable, and the system can tolerate or mitigate the additional failure modes. It is riskier for critical data when the cache is volatile and acknowledgments are treated as durable commits.
+
+## Eviction policies decide what survives under memory pressure
+
+Even a well-designed cache has finite capacity. When it fills, the system needs a policy for choosing which entries to remove. Eviction is distinct from expiration: expiration removes data because it has exceeded a time or validity rule, while eviction removes data to make room or enforce resource limits.
+
+- **Least recently used (LRU):** Evicts the item that has gone the longest without being accessed. It works well when recently accessed data is likely to be accessed again, but can perform poorly when a one-time scan pushes useful entries out of the cache.
+
+- **Least frequently used (LFU):** Evicts items with the lowest access frequency. It can preserve consistently popular entries, but old popularity can mislead the policy after demand changes unless frequency estimates decay or age.
+
+- **First in, first out (FIFO):** Evicts the item that entered the cache earliest, regardless of how recently or frequently it was accessed. It is simple to implement, but may discard a frequently used entry just because it is old.
+
+- **Time to live (TTL):** Expires entries after a configured duration. TTL primarily controls freshness rather than popularity, although expired entries also free capacity. It is often combined with an eviction policy such as LRU.
+
+No policy is best for every workload. LRU suits workloads with temporal locality; LFU can suit stable popularity distributions; FIFO favors simplicity; TTL helps bound how long data remains valid. Real cache systems may use approximations of these policies to reduce bookkeeping overhead.
+
+Replay the same accesses under each policy and watch what gets evicted:
+
+<CacheEvictionSim />
+
+```python
+from collections import Counter, OrderedDict
+import random
+
+def hit_rate(policy, seq, size):
+    cache, hits, freq = OrderedDict(), 0, Counter()
+    for k in seq:
+        freq[k] += 1
+        if k in cache:
+            hits += 1
+            if policy == "LRU":
+                cache.move_to_end(k)
+        else:
+            if len(cache) >= size:
+                victim = min(cache, key=lambda x: (freq[x], 0)) if policy == "LFU" else next(iter(cache))
+                del cache[victim]
+            cache[k] = True
+    return hits / len(seq)
+
+rnd = random.Random(5)
+hot = [rnd.choice([1, 2, 3, 4, 5]) if rnd.random() < 0.8 else rnd.randrange(100, 200) for _ in range(2000)]
+scan = hot[:1000] + list(range(1000, 1300)) + hot[1000:]        # a one-time scan of 300 new keys in the middle
+for label, seq in (("steady hot set", hot), ("with a one-off scan", scan)):
+    print(f"{label:<20}", {p: f"{hit_rate(p, seq, 8):.0%}" for p in ("FIFO", "LRU", "LFU")})
+# steady hot set       {'FIFO': '63%', 'LRU': '73%', 'LFU': '79%'}
+# with a one-off scan  {'FIFO': '55%', 'LRU': '64%', 'LFU': '69%'}
+```
+
+(The first policy-eviction idea, keeping what was used recently, is the same one that operating systems use for memory pages: see [Page Replacement](../../operating-systems/page-replacement/).)
+
+## The patterns solve different problems and can be combined
+
+Cache-aside, write-through, and write-back describe how reads and writes interact with the underlying data store. LRU, LFU, FIFO, and TTL describe how cached entries are retained or removed. They operate at different conceptual levels, so a system can use cache-aside with LRU eviction and a TTL, for example.
+
+| Strategy      | Main benefit                               | Main trade-off                                                  |
+| ------------- | ------------------------------------------ | --------------------------------------------------------------- |
+| Cache-aside   | Flexible, straightforward read caching     | Application manages misses and invalidation                     |
+| Write-through | Cache is updated on the write path         | Higher write latency; cross-system failures still need handling |
+| Write-back    | Fast writes and potential write coalescing | Risk of data loss and delayed persistence                       |
+| LRU eviction  | Preserves recently used entries            | Sensitive to some access patterns                               |
+| LFU eviction  | Preserves frequently used entries          | Historical popularity may become stale                          |
+| TTL           | Bounds entry lifetime                      | Expiration does not guarantee consistency at every instant      |
+
+A practical product catalog might use cache-aside with a TTL and LRU eviction: popular products stay in memory, while changes invalidate entries or allow them to expire. A high-throughput telemetry pipeline might use write-back or batching when delayed persistence is acceptable. A system caching frequently read reference data might use write-through if keeping the cache current on updates justifies the extra cost.
+
+The correct design begins with the data's requirements: how stale it may become, how expensive a miss is, how often it changes, how much data fits in memory, and what happens if a write is lost. Caching is not merely a speed optimization; it introduces another copy of data, and that copy creates consistency and lifecycle responsibilities.
+
+<Callout type="pitfall">
+There are only two hard things in computer science: cache invalidation and naming things. A write that updates the database but fails to invalidate (or races with a concurrent read repopulating the old value) leaves stale data visible, so decide how stale each piece of data may be, and use TTLs as a safety net rather than the whole plan.
+</Callout>

@@ -1,0 +1,202 @@
+---
+title: "API Design"
+description: "REST conventions, versioning, pagination, and idempotency."
+order: 7
+tier: core
+takeaways:
+  - "**REST** models an API as resources identified by URLs, acted on with HTTP methods; the useful parts are **statelessness**, a uniform interface and cacheability."
+  - "Be **consistent** about status codes and a stable error format (machine-readable code plus human message) that never leaks internals."
+  - "**Versioning** protects clients: prefer additive changes, deprecate deliberately, and never change a field's meaning silently."
+  - "**Pagination** bounds responses: **cursor** pagination stays correct and fast on large or changing data; offset pagination is simple but can repeat or skip items."
+  - "**Idempotency keys** make unsafe operations (POST payments) safe to retry; enforce them atomically in the database."
+resources:
+  - title: "Microsoft REST API Guidelines"
+    url: "https://github.com/microsoft/api-guidelines"
+    note: "A large, practical style guide covering errors, paging, versioning and long-running operations."
+  - title: "Google API Design Guide"
+    url: "https://cloud.google.com/apis/design"
+  - title: "Stripe: Idempotent requests"
+    url: "https://docs.stripe.com/api/idempotent_requests"
+    note: "A real implementation of idempotency keys."
+  - title: "RFC 9110: HTTP Semantics"
+    url: "https://www.rfc-editor.org/rfc/rfc9110"
+---
+
+A well-designed API gives clients a predictable way to interact with a system without needing to understand its internal implementation. Good API design is less about following a fashionable style and more about making behavior explicit: what a request means, what a response guarantees, how clients handle errors, and what happens when requests are repeated or the system changes. REST conventions provide a useful foundation for resource-oriented HTTP APIs, while versioning, pagination, and idempotency address three recurring challenges: evolution, scale, and safe retries.
+
+## REST makes the API a model of resources and their state
+
+REST (Representational State Transfer) is an architectural style for networked systems. In a conventional RESTful HTTP API, the server exposes resources through URLs and uses HTTP methods to describe the operation being performed.
+
+For example, an online store might expose:
+
+| Request             | Meaning                              |
+| ------------------- | ------------------------------------ |
+| `GET /products/42`  | Retrieve product 42                  |
+| `POST /orders`      | Create an order                      |
+| `PUT /users/7`      | Replace the representation of user 7 |
+| `PATCH /users/7`    | Partially update user 7              |
+| `DELETE /orders/91` | Delete order 91                      |
+
+The URL identifies the resource, while the HTTP method expresses the intended action. This separation creates a consistent interface: clients do not need a different custom command for every operation.
+
+REST is more than naming URLs. Its architectural constraints include client-server separation, stateless requests, cacheability, and a uniform interface. In practice, many APIs described as RESTful use only some of these ideas, which is often acceptable as long as their contracts are clear.
+
+A stateless request carries the information needed to process it rather than relying on hidden conversational state stored by the server between requests. Authentication tokens and resource identifiers may be sent with each request. Statelessness does not mean the server stores no data; it means the interpretation of a request does not depend on an implicit session history.
+
+HTTP semantics also matter. `GET` should retrieve information without changing the intended state of the resource. `PUT` is generally used for replacement and is idempotent. `PATCH` describes partial modification, but its idempotency depends on the patch operation. `POST` commonly creates resources or triggers operations and is not inherently idempotent.
+
+Using these conventions consistently makes APIs easier to document, cache, test, and integrate.
+
+## Consistent responses make clients easier to build
+
+An API contract includes more than successful responses. It defines status codes, response structure, validation behavior, authentication requirements, and error handling.
+
+For example, an API might return:
+
+- `200 OK` when a resource is retrieved successfully.
+- `201 Created` when a resource is created, optionally with a `Location` header identifying it.
+- `204 No Content` when an operation succeeds without returning a response body.
+- `400 Bad Request` when the request is malformed.
+- `401 Unauthorized` when authentication is missing or invalid.
+- `403 Forbidden` when the caller lacks permission.
+- `404 Not Found` when the requested resource does not exist or is not exposed to that caller.
+- `409 Conflict` when the request conflicts with the current resource state.
+- `429 Too Many Requests` when a rate limit is exceeded.
+- `500 Internal Server Error` when an unexpected server-side failure occurs.
+
+The exact status code depends on the situation; consistency across endpoints is the important property.
+
+Error responses should provide enough information to diagnose a problem without exposing secrets, internal stack traces, or sensitive implementation details. A stable error structure with a machine-readable code and a human-readable message helps clients decide whether to correct a request, authenticate again, retry, or stop.
+
+## Versioning protects clients as the API evolves
+
+APIs change because products acquire new requirements, data models evolve, and old behavior needs correction. The challenge is that the server and its clients may not be updated simultaneously.
+
+A change is backward-compatible if existing clients continue to work without modification. Adding an optional response field is often compatible, for example. Renaming a field, changing its meaning, removing an endpoint, or making an optional request parameter mandatory can break clients.
+
+There are several common versioning strategies:
+
+- URL versioning: `/v1/orders` and `/v2/orders`. The version is explicit and easy to inspect, route, and document.
+- Header-based versioning: The client specifies a version in a request header, keeping the resource URL stable but making requests less self-describing.
+- Media-type versioning: A version is selected through the representation's media type in headers such as `Accept`.
+
+URL versioning is often the simplest operational choice. Header-based approaches can be useful when representation negotiation is important. None eliminates the need to define compatibility rules.
+
+A disciplined evolution strategy favors additive changes, documents deprecated behavior, gives clients a migration window, and measures usage before removing an old version. Supporting multiple versions indefinitely has costs, so deprecation should be deliberate rather than accidental.
+
+Versioning is also not a substitute for good design. If every small change requires a new version, the contract may be too brittle. A well-designed API leaves room for compatible evolution.
+
+## Pagination controls the cost of retrieving collections
+
+Returning every matching record in one response becomes expensive as datasets grow. A request for all orders might return millions of records, consume large amounts of memory and bandwidth, and create unnecessary database work.
+
+Pagination divides a collection into manageable pieces. Two common approaches are offset pagination and cursor pagination.
+
+Offset pagination uses a starting position and a page size:
+
+```
+GET /orders?limit=20&offset=40
+```
+
+This asks for up to 20 orders after skipping the first 40. It is easy to understand and supports jumping to a particular page. However, large offsets can become expensive because the database may still need to scan or discard many rows. Concurrent inserts and deletes can also shift positions, causing items to be skipped or repeated across pages.
+
+Cursor pagination uses a marker representing where the previous page ended:
+
+```
+GET /orders?limit=20&after=eyJsYXN0X2lkIjo0Mn0
+```
+
+The cursor is often an encoded value based on a stable ordering key, such as a timestamp and unique ID. The next query continues after that position, avoiding the need to skip an ever-growing number of rows.
+
+Cursor pagination is usually preferable for large or frequently changing collections, especially feeds and event streams. It is less convenient for jumping directly to arbitrary page numbers, and cursor design requires a stable sort order. Cursors should generally be treated as opaque tokens rather than exposing internal query details.
+
+Regardless of the approach, define a maximum page size, use deterministic ordering, and return clear continuation information. For example, a response can include a `next_cursor` field or a link to the next page. Pagination limits response size, but it does not by itself guarantee efficient database queries; suitable indexes and query plans still matter.
+
+Fetch two pages with a new order arriving in between, and see which approach repeats an item:
+
+<PaginationDemo />
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, label TEXT)")
+db.executemany("INSERT INTO orders VALUES (?, ?)", [(i, f"order-{i}") for i in range(1, 11)])
+page = lambda q, *a: [r[0] for r in db.execute(q, a)]
+off1 = page("SELECT id FROM orders ORDER BY id DESC LIMIT 3 OFFSET 0")
+cur1 = off1[:]
+db.execute("INSERT INTO orders VALUES (11, 'order-11')")          # a new order arrives while the client is reading
+off2 = page("SELECT id FROM orders ORDER BY id DESC LIMIT 3 OFFSET 3")
+cur2 = page("SELECT id FROM orders WHERE id < ? ORDER BY id DESC LIMIT 3", cur1[-1])
+print("offset: page 1", off1, "page 2", off2, "<- 8 shown twice")
+print("cursor: page 1", cur1, "page 2", cur2, "<- no repeat")
+# offset: page 1 [10, 9, 8] page 2 [8, 7, 6] <- 8 shown twice
+# cursor: page 1 [10, 9, 8] page 2 [7, 6, 5] <- no repeat
+```
+
+## Idempotency makes retries safer
+
+Network failures create an ambiguity: a client sends a request, the server performs the operation, but the response never arrives. The client cannot tell whether the operation failed or merely lost its response.
+
+If the client retries a payment request, it could accidentally charge the customer twice. Idempotency means that repeating an operation has the same intended effect as performing it once (the same ambiguity is explored in [Distributed Basics](../../distributed-systems/distributed-basics/)).
+
+Formally, for an operation $f$,
+
+$$
+f(f(x)) = f(x)
+$$
+
+In words: applying the operation twice gives the same result as applying it once. This expression captures the idea that applying the operation repeatedly does not change the final result beyond the first application. For APIs, the important distinction is between the operation's effect and its response: repeated requests may return different metadata while still avoiding duplicate side effects.
+
+HTTP defines `GET`, `PUT`, and `DELETE` as idempotent in their intended semantics, though the response codes and ancillary effects can differ. `POST` is not inherently idempotent, but a server can make a particular POST operation safe to retry using an idempotency key.
+
+For example:
+
+```
+POST /payments
+Idempotency-Key: 8b2d1f...
+
+{
+  "order_id": "order-123",
+  "amount": 49.99
+}
+```
+
+The server records the key and the result associated with the operation. If the same request arrives again with the same key, the server returns the recorded outcome rather than creating another charge.
+
+A robust implementation must define how keys are scoped, how long results are retained, what happens if the same key is reused with a different request body, and how concurrent duplicate requests are handled. The key and the operation result need to be recorded in a way that prevents two simultaneous retries from executing the side effect twice. Simply storing a key after processing leaves a race window.
+
+The simplest correct way is to let a unique constraint in the database arbitrate, so two simultaneous retries cannot both win:
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE payments (idem_key TEXT PRIMARY KEY, amount REAL)")
+def pay(key, amount):
+    try:
+        with db:
+            db.execute("INSERT INTO payments VALUES (?, ?)", (key, amount))      # the unique key makes a concurrent retry fail atomically
+        return "charged"
+    except sqlite3.IntegrityError:
+        return "duplicate request: return the saved result"
+print(pay("k-1", 49.99), "|", pay("k-1", 49.99), "| rows:", db.execute("SELECT COUNT(*) FROM payments").fetchone()[0])
+# charged | duplicate request: return the saved result | rows: 1
+```
+
+Idempotency is especially important for payments, order creation, and other operations where a retry could produce an irreversible or costly duplicate effect.
+
+## A reliable API contract anticipates failure and growth
+
+REST conventions, versioning, pagination, and idempotency solve different problems, but they reinforce one another.
+
+REST conventions make operations predictable. Versioning lets the interface evolve without unexpectedly breaking clients. Pagination prevents collection endpoints from becoming unbounded. Idempotency lets clients retry operations when network outcomes are uncertain.
+
+Together, they support a deeper principle: an API should make its guarantees explicit, including what happens when something goes wrong. Clients need to know whether a request can be repeated safely, whether returned data may be incomplete or stale, how errors should be interpreted, and how long a contract will remain supported.
+
+The best API is not necessarily the one with the most endpoints or the strictest adherence to a style guide. It is the one whose behavior remains understandable and dependable as clients, data volumes, and system requirements grow.
+
+<Callout type="practice">
+Design the **errors and the retries** first. Decide which operations are safe to repeat, what the stable error format is, how pagination continues, and how long each version is supported. Clients can adapt to almost any shape of API, but not to behaviour that changes without notice.
+</Callout>

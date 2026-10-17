@@ -1,0 +1,140 @@
+---
+title: "Load Balancing Strategies"
+description: "Round robin, least connections, and consistent hashing."
+order: 3
+tier: core
+takeaways:
+  - "A **load balancer** gives clients one stable entry point and chooses a backend per request or connection, skipping unhealthy ones."
+  - "**Round robin** is simple but ignores request cost; **least connections** reacts to current load; **consistent hashing** keeps related requests on the same server."
+  - "The right algorithm depends on the objective: even assignment, current-load awareness, or **stable ownership** (affinity)."
+  - "Production needs more than an algorithm: **health checks**, retries with backoff, unequal capacity, session handling and multiple layers."
+  - "Start with the simplest strategy that meets the workload, and measure."
+resources:
+  - title: "Google SRE book: Load Balancing in the Datacenter"
+    url: "https://sre.google/sre-book/load-balancing-datacenter/"
+    note: "Real-world lessons on weighted round robin, subsetting and overload."
+  - title: "NGINX: HTTP load balancing"
+    url: "https://nginx.org/en/docs/http/load_balancing.html"
+    note: "The strategies in this note as configuration."
+  - title: "Load balancing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Load_balancing_(computing)"
+---
+
+A load balancer distributes incoming requests across multiple servers so that no single server becomes an unnecessary bottleneck. The strategy it uses determines which server receives each request, affecting resource utilization, response time, fault tolerance, and how consistently users reach the same backend. Round robin distributes requests in sequence, least connections favors servers handling fewer active connections, and consistent hashing maps requests or clients to servers based on a stable hash. None is universally best: the right choice depends on whether requests have similar costs, whether connections are long-lived, and whether keeping related requests on the same server matters.
+
+## Load balancing separates demand from individual servers
+
+Without a load balancer, clients may need to know individual server addresses, and traffic can become uneven as demand changes. A load balancer provides a stable entry point and selects a backend for each incoming request or connection.
+
+The load balancer makes a routing decision using information such as the current request, connection counts, server health, or a hash of the client's identity. It can also stop sending traffic to unhealthy instances.
+
+The goal is not necessarily to make every server receive exactly the same number of requests. It is to distribute work so that the system uses its capacity effectively while meeting requirements for latency, reliability, and state management.
+
+## Round robin distributes requests in sequence
+
+Round robin cycles through the available servers in order. With three servers, requests are assigned A, B, C, A, B, C, and so on.
+
+For $N$ equally eligible servers, each server receives approximately $1/N$ of requests over a sufficiently large sequence. This makes round robin simple, predictable, and inexpensive to implement.
+
+Its main assumption is that requests have roughly comparable costs and servers have roughly comparable capacities. If one request takes 2 milliseconds and another takes 5 seconds, assigning equal numbers of requests does not produce equal workloads. A server receiving several expensive requests can become overloaded while another remains relatively idle.
+
+Weighted round robin addresses differences in server capacity by assigning traffic in proportion to configured weights. For example, a server with twice the weight of another receives approximately twice as many assignments. However, weights do not automatically adapt to unexpected changes in workload.
+
+Round robin works well for stateless web requests with similar processing costs. It is less effective when request duration varies widely or servers have substantially different current workloads.
+
+## Least connections responds to active workload
+
+Least connections directs new connections to the server with the fewest active connections.
+
+Suppose server A has 80 active connections, B has 25, and C has 40. A least-connections balancer will generally choose B for the next connection, assuming all three servers are healthy and otherwise eligible.
+
+This is useful when connections remain open for different lengths of time. A server handling a few long-lived connections may be busier than one handling many short-lived connections, so counting active connections can provide a better signal than simply counting past requests.
+
+There are important limitations. An active connection is only a proxy for actual work: some connections may be idle, while others consume substantial CPU or database resources. Connection counts can also change rapidly, and two balancers making decisions independently may not have a perfectly current view of the system.
+
+Variants such as weighted least connections account for differences in server capacity. Other systems use more direct measurements, such as observed latency, queue depth, or load metrics.
+
+Least connections is especially useful for workloads involving long-lived sessions, streaming, or requests with variable durations, provided connection count correlates reasonably well with server load.
+
+## Consistent hashing preserves affinity as servers change
+
+Consistent hashing addresses a different problem: how to route related requests to the same server without having to store a large, constantly changing mapping of every client or key.
+
+A hash function converts a key—such as a user ID, cache key, or session identifier—into a position on a logical hash space. Servers are also assigned positions in that space. A key is routed to the next eligible server according to the chosen ring convention.
+
+The critical property is stability. When a server is added or removed, consistent hashing typically remaps only a subset of keys, rather than redistributing nearly all keys as a simple modulo-based mapping often would.
+
+For example, a cache may store user-specific data on particular servers. If the cluster changes from four servers to five, consistent hashing can preserve most existing key-to-server assignments. That reduces cache misses and the amount of data that must be moved or recomputed.
+
+Consistent hashing often uses virtual nodes: each physical server occupies multiple positions in the hash space. This improves distribution and allows servers with different capacities to receive different numbers of keys.
+
+Its limitations matter. Consistent hashing does not inherently measure current CPU load or active connections, so a server can receive a disproportionate workload if some keys are much hotter than others. It also does not guarantee that data is replicated or survives a server failure; those require additional mechanisms.
+
+Consistent hashing is especially useful for distributed caches, partitioned storage, and workloads where stable key ownership reduces expensive data movement.
+
+The mechanics (the ring, virtual nodes, how few keys move) are worked through in [Consistent Hashing](../consistent-hashing/). For the network-level view, including CDNs and health checks, see [Load Balancing & CDNs](../../networks/load-balancing-and-cdns/).
+
+## The strategies optimize different things
+
+| Strategy           | Routing signal          | Main strength                                | Main weakness                              |
+| ------------------ | ----------------------- | -------------------------------------------- | ------------------------------------------ |
+| Round robin        | Request sequence        | Simple, even assignment                      | Ignores actual workload                    |
+| Least connections  | Active connection count | Adapts to connection duration                | Connections may not reflect resource usage |
+| Consistent hashing | Stable hash of a key    | Preserves assignments across cluster changes | Can produce hotspots or uneven load        |
+
+These strategies are not mutually exclusive at every architectural level. A system might use consistent hashing to select a cache shard, then round robin to distribute requests among replicas serving that shard. Another layer might use health checks and weighted least connections to route traffic among application instances.
+
+The important distinction is the routing objective: round robin aims for even assignment, least connections responds to an indicator of current workload, and consistent hashing aims for stable ownership of related requests or data.
+
+Run the same stream of requests through each strategy and compare the backlogs:
+
+<LoadBalancerSim />
+
+```python
+import hashlib
+import random
+
+def simulate(strategy, seed=3, servers=3, ticks=300):
+    rnd = random.Random(seed)
+    backlog = [0.0] * servers
+    rr, worst, waited = 0, 0.0, 0.0
+    for _ in range(ticks):
+        cost = 8 if rnd.random() < 0.1 else 1                   # 10% of requests are expensive
+        key = rnd.choice([0] * 5 + list(range(1, 20)))          # one very popular key
+        if strategy == "round robin":
+            s = rr % servers; rr += 1
+        elif strategy == "least loaded":
+            s = backlog.index(min(backlog))
+        else:                                                     # hash of the key: stable, but a hot key stays on one server
+            s = int(hashlib.md5(str(key).encode()).hexdigest(), 16) % servers
+        waited += backlog[s]
+        backlog[s] += cost
+        backlog = [max(0.0, b - 1.3) for b in backlog]            # each server does 1.3 units of work per tick
+        worst = max(worst, max(backlog))
+    return worst, waited / ticks
+for name in ("round robin", "least loaded", "hash of key"):
+    worst, avg = simulate(name)
+    print(f"{name:<13} worst backlog {worst:>5.1f}, average wait {avg:>5.1f}")
+# round robin   worst backlog  10.8, average wait   0.7
+# least loaded  worst backlog   6.7, average wait   0.0
+# hash of key   worst backlog  16.6, average wait   1.6
+```
+
+Hashing loses on raw balance here, and that is the point: it buys *affinity* (a key's data stays warm on one server), which this simulation does not reward. Choose by the objective.
+
+## Real systems need more than a routing algorithm
+
+A production load balancer must also account for server health, capacity, and failure behavior. It should stop routing requests to unhealthy backends, avoid overwhelming newly started instances, and handle situations where the number of available servers changes.
+
+Other concerns include:
+
+- **Session affinity:** Keeping a user's requests on the same server may simplify state management, but can create uneven load and complicate failover. Externalizing session state often makes routing more flexible.
+- **Retries and timeouts:** Retrying a failed request can improve resilience, but excessive retries can amplify an outage. Retrying non-idempotent operations can also duplicate side effects.
+- **Unequal capacity:** Weights or load-aware policies can prevent smaller instances from receiving the same work as larger ones.
+- **Multiple layers:** DNS routing, global traffic management, regional load balancing, and application-level routing may each make different decisions.
+
+The most suitable strategy is the simplest one that meets the workload's actual needs. Round robin is a reasonable default for homogeneous, stateless requests. Least connections is useful when connection duration reflects workload. Consistent hashing is valuable when stable mapping matters more than equal request counts. In every case, measurement and health-aware routing matter as much as the selection algorithm itself.
+
+<Callout type="pitfall">
+Retries can turn a small outage into a big one: if every client retries immediately, the load on a struggling backend multiplies. Use exponential backoff with jitter, retry only idempotent requests, and cap total retries.
+</Callout>

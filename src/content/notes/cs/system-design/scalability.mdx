@@ -1,0 +1,135 @@
+---
+title: "Scalability Basics"
+description: "Vertical vs. horizontal scaling, and why horizontal usually wins at scale."
+order: 2
+tier: core
+takeaways:
+  - "**Scalability** is handling growing demand without unacceptable loss of performance, reliability or cost; it differs from raw performance."
+  - "**Vertical scaling** (a bigger machine) is simple but has a ceiling and is a single point of failure; **horizontal scaling** (more machines) raises the ceiling but adds coordination."
+  - "Real throughput is **sub-linear**: contention and coordination flatten the curve, and shared bottlenecks like the database cap everything."
+  - "Horizontal scaling only works if the app is **stateless** (or its state is shared deliberately) and its dependencies scale too."
+  - "**Measure the bottleneck first**; scale the whole request path, not just the number of servers."
+resources:
+  - title: "Neil Gunther: The Universal Scalability Law"
+    url: "https://www.perfdynamics.com/Manifesto/USLscalability.html"
+    note: "The model behind the curve in this note."
+  - title: "Scalability (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Scalability"
+  - title: "Amdahl's law (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Amdahl%27s_law"
+    note: "Why the serial part of a workload limits the benefit of adding workers."
+---
+
+Scalability is a system's ability to handle increasing demand without unacceptable degradation in performance, reliability, or cost. When demand grows, a system can use larger machines, add more machines, or combine both approaches. Vertical scaling increases the capacity of an individual machine; horizontal scaling distributes work across multiple machines. Horizontal scaling is often preferred for large systems because it allows capacity to grow beyond the practical limits of one machine, but it introduces coordination, networking, and consistency problems that vertical scaling largely avoids.
+
+## A system reaches capacity when a resource becomes a bottleneck
+
+A server handles requests using finite resources: CPU time, memory, disk throughput, network bandwidth, and database connections. As demand increases, one or more of these resources may become saturated. Response times rise, queues grow, and requests may begin to fail.
+
+The key question is not simply how many users a system has, but how much work each user generates and which resource limits that work. A thousand users performing occasional reads can be easier to support than a hundred users triggering expensive computations or database writes.
+
+Scalability is therefore about increasing the system's capacity as workload grows. It is distinct from performance, which describes how efficiently a system handles a given workload. Improving an algorithm may make a system faster without changing its architecture; scaling changes the resources or structure available to handle more work.
+
+## Vertical scaling makes one machine more powerful
+
+Vertical scaling, or scaling up, means upgrading a machine with more CPU cores, RAM, faster storage, or greater network capacity.
+
+Its main advantage is simplicity. The application may continue running as a single process or on one server, with no need to distribute requests or coordinate state across multiple machines. Shared memory, local communication, and a single database instance can make many operations straightforward.
+
+Vertical scaling is often an excellent first step because it is easy to understand and may require few application changes. However, the machine has finite upgrade limits. Larger machines can also become disproportionately expensive, and a single server may remain a single point of failure.
+
+For example, upgrading a server from 8 CPU cores to 32 may allow it to handle substantially more concurrent work. But once its memory, storage throughput, or maximum supported configuration becomes the limiting factor, further upgrades may be impractical or uneconomical.
+
+## Horizontal scaling distributes work across machines
+
+Horizontal scaling, or scaling out, means adding more machines or instances and distributing work among them.
+
+A load balancer can distribute incoming requests across several application servers. If each server can handle a certain amount of independent work, adding servers can increase total capacity without requiring any one server to become exceptionally powerful.
+
+A simplified model illustrates the idea. If one server can sustain $r$ requests per second, then $n$ servers might theoretically sustain
+
+$$
+R(n) = n r
+$$
+
+In practice, throughput is lower than this ideal because of coordination, network overhead, shared bottlenecks, and uneven load. The equation describes the opportunity, not a guarantee.
+
+A widely used model of the shortfall is the **Universal Scalability Law**:
+
+$$
+X(n) = \frac{n\,r}{1 + \alpha\,(n-1) + \beta\,n\,(n-1)}
+$$
+
+In words: each added server brings $r$ requests per second, but $\alpha$ (contention: waiting for a shared resource) taxes every server a little, and $\beta$ (coherency: servers coordinating with each other) grows with the *square* of the number of servers. Because of the $\beta$ term, adding servers past a point can make the system slower. Experiment with the costs and with a shared database limit:
+
+<ScalingCurve />
+
+```python
+def throughput(n, r=100, alpha=0.05, beta=0.001):
+    # alpha: contention (queueing on shared resources); beta: coherency (nodes talking to each other)
+    return n * r / (1 + alpha * (n - 1) + beta * n * (n - 1))
+for n in (1, 2, 4, 8, 16, 32, 64):
+    print(f"{n:>3} servers: ideal {n * 100:>5}  modelled {throughput(n):>6.0f} req/s  ({throughput(n) / (n * 100):.0%} of ideal)")
+#   1 servers: ideal   100  modelled    100 req/s  (100% of ideal)
+#   2 servers: ideal   200  modelled    190 req/s  (95% of ideal)
+#   4 servers: ideal   400  modelled    344 req/s  (86% of ideal)
+#   8 servers: ideal   800  modelled    569 req/s  (71% of ideal)
+#  16 servers: ideal  1600  modelled    804 req/s  (50% of ideal)
+#  32 servers: ideal  3200  modelled    903 req/s  (28% of ideal)
+#  64 servers: ideal  6400  modelled    782 req/s  (12% of ideal)
+```
+
+With modest costs, 64 servers deliver *less* than 32 and about an eighth of the ideal. The numbers are illustrative; the shape is the lesson.
+
+Horizontal scaling also supports elastic capacity: instances can be added during demand spikes and removed when demand falls. If one instance fails, a well-designed system can redirect work to healthy instances.
+
+However, adding machines is not enough by itself. The application must be able to distribute work, and shared dependencies such as databases, caches, and external APIs must have sufficient capacity too.
+
+## Why horizontal scaling is usually preferred at large scale
+
+The central advantage of horizontal scaling is that it changes the capacity limit from the resources of one machine to the capacity of a distributed system. This is particularly valuable when workloads grow unpredictably or must remain available during individual machine failures.
+
+Three properties make it attractive at scale.
+
+**Capacity can grow incrementally.** Instead of replacing one increasingly expensive machine, operators can add instances in smaller increments. This can improve cost flexibility and make capacity planning easier.
+
+**Failures can be contained.** With multiple instances and appropriate redundancy, one machine can fail without taking down the entire application. This is not automatic: load balancing, health checks, replicated state, and fault-tolerant dependencies are still required.
+
+**Work can be distributed geographically or by function.** Different instances can serve different regions, partitions, or workloads. This can improve latency and isolate resource-intensive tasks from other traffic.
+
+Horizontal scaling is not always cheaper. Small workloads may be less expensive on one larger server because distributed systems add operational complexity and communication overhead. The preference for horizontal scaling emerges when the benefits of incremental growth, redundancy, and distributed capacity outweigh those costs.
+
+## Distributed systems introduce a new class of problems
+
+The difficulty of horizontal scaling is that multiple machines must behave as one service even though they communicate over a network that can be slow, unreliable, or temporarily unavailable.
+
+An application server may receive a request, but the next request from the same user may reach a different instance. If the session exists only in the first server's memory, the second server may not know who the user is. Applications therefore often move session state into shared storage, use stateless authentication, or employ carefully designed routing.
+
+Shared data creates a more difficult problem. If ten application servers all send writes to one saturated database, adding more application servers will not solve the bottleneck. The database may need better indexing, caching, read replicas, partitioning, or its own scaling strategy.
+
+Distribution also introduces trade-offs around consistency and coordination. Two machines may update related data concurrently; replicated copies may temporarily disagree; network partitions may prevent components from communicating. These issues connect scalability to [distributed systems](../../distributed-systems/distributed-basics/), [load balancing](../load-balancing-strategies/), and [database sharding](../database-scaling/).
+
+The practical lesson is that horizontal scaling works best when the system is designed to distribute work and manage state deliberately. A cluster of machines is not automatically a scalable architecture.
+
+## Scaling requires identifying the actual bottleneck
+
+Neither scaling direction guarantees better performance. The right approach depends on what is limiting the system and how the workload behaves.
+
+| Situation                                               | Likely starting point                                                             |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| CPU or memory pressure on one application server        | Vertical scaling or adding application instances                                  |
+| Many independent requests that can be served separately | Horizontal scaling                                                                |
+| One database cannot handle the write workload           | Optimize queries and data access; consider partitioning or other database scaling |
+| Traffic varies substantially throughout the day         | Horizontal scaling with autoscaling                                               |
+| A small service with modest, predictable demand         | Vertical scaling may be simpler and cheaper                                       |
+| High availability is required                           | Redundancy across multiple instances or failure domains                           |
+
+A disciplined scaling process measures resource usage, request latency, throughput, error rates, and queue lengths before changing architecture. It identifies the bottleneck, tests the proposed change under representative load, and verifies that capacity improves without creating a new constraint elsewhere.
+
+A common progression is to optimize inefficient code and queries, scale up while it remains economical, make application instances horizontally scalable, and then address shared bottlenecks as demand grows. Large systems frequently combine both approaches: powerful individual machines arranged in a horizontally distributed architecture.
+
+The governing principle is that scalability depends on the entire request path, not just the number of servers. Horizontal scaling provides a more expandable foundation, but its benefits appear only when work, state, and dependencies can scale with it.
+
+<Callout type="key">
+Scale the **request path**, not the server count. Find the saturated resource first (CPU, memory, database connections, a lock), fix or scale that, and re-measure. Adding web servers in front of a saturated database changes nothing.
+</Callout>

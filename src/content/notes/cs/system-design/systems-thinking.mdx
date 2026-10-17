@@ -1,0 +1,197 @@
+---
+title: "Systems Thinking"
+description: "Requirements, estimation, bottlenecks and trade-offs: reasoning about a whole system first."
+order: 1
+tier: core
+takeaways:
+  - "Where algorithmic thinking breaks a problem into steps, **systems thinking** reasons about the **whole**: components, constraints, load, failure and trade-offs."
+  - "Start from **requirements**: what the system must do, and how fast, how available, how consistent, how durable and at what cost."
+  - "**Estimate before you design**: a few multiplications (users → requests per second → storage → bandwidth) tell you whether you need one machine or a fleet."
+  - "Systems are non-linear: latency explodes near full **utilization**, reliability **multiplies** along a chain, and retries create **feedback loops**."
+  - "Every choice is a **trade-off**; write down what you are giving up, find the **bottleneck**, then evolve the design in stages."
+resources:
+  - title: "Latency numbers every programmer should know"
+    url: "https://gist.github.com/jboner/2841832"
+    note: "Orders of magnitude from CPU cache to a cross-continent round trip."
+  - title: "Google SRE book: Embracing Risk"
+    url: "https://sre.google/sre-book/embracing-risk/"
+    note: "Availability targets, error budgets and why 100% is the wrong goal."
+  - title: "The System Design Primer"
+    url: "https://github.com/donnemartin/system-design-primer"
+    note: "A large free study guide with worked designs and estimation tables."
+  - title: "Little's law (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Little%27s_law"
+---
+
+Earlier sections taught you to solve a problem step by step (see [Algorithmic Thinking](../../foundations/algorithmic-thinking/)). **Systems thinking** is the companion skill for problems too big for one program: it asks how many parts there are, how they depend on one another, how much traffic they must carry, what happens when one of them fails, and what each design choice costs. The aim is not to memorize architectures but to reason from **requirements and numbers** to a design you can defend, and to know which trade-off you made. The rest of this section, from [scalability](../scalability/) to [API design](../api-design/), is a toolbox. This note is how you decide which tool to reach for.
+
+## Start with Requirements, Not Boxes
+
+A design is only good relative to what it must achieve. Before choosing a database or drawing a diagram, pin down two kinds of requirement.
+
+**Functional requirements** are what the system does: "users post short messages and follow other users". **Non-functional requirements** are how well it must do it, and they are usually what shapes the architecture:
+
+| Quality | The question to ask | Typical pressure it creates |
+| --- | --- | --- |
+| **Scale** | How many users, requests per second, bytes of data? | Partitioning, caching, replication |
+| **Latency** | How fast must a response feel (p50 and p99)? | Caches, nearby replicas, fewer hops |
+| **Availability** | How much downtime is acceptable? | Redundancy, failover, no single points of failure |
+| **Consistency** | Can a user ever see stale or conflicting data? | Choice of replication and transaction model |
+| **Durability** | Can an acknowledged write ever be lost? | Synchronous replication, backups, logs |
+| **Cost and simplicity** | What can the team afford to build and operate? | Fewer moving parts, managed services |
+
+Two habits help. Ask what **failure** the business can tolerate (a lost "like" is cheap, a lost payment is not), because that decides where to spend on consistency and durability. And state the requirements with **numbers** ("99.9% of reads under 200 ms"): a requirement you cannot measure is a wish.
+
+<Callout type="key">
+Requirements decide the architecture, not fashion. "Highly available and eventually consistent" and "strongly consistent and occasionally unavailable" are both reasonable systems, for different products (see [CAP Theorem](../../distributed-systems/cap-theorem/)).
+</Callout>
+
+## Estimate Before You Design
+
+A few multiplications turn vague scale into the numbers a design depends on. The aim is the **order of magnitude**: whether you need one server or a hundred, a gigabyte or a petabyte.
+
+1. **Requests:** daily active users × requests per user ÷ 86,400 seconds per day = average requests per second. Multiply by a **peak factor** (often 2–5) because traffic is bursty.
+2. **Storage:** new items per day × size × days retained × replicas.
+3. **Bandwidth:** peak requests per second × response size.
+4. **Servers:** peak requests per second ÷ what one server sustains **at a safe utilization**, not at its maximum.
+
+Try your own numbers:
+
+<CapacityEstimator />
+
+```python
+import math
+
+# Back-of-envelope capacity estimate for a read-heavy service
+dau = 10_000_000                    # daily active users
+req_per_user = 20                   # requests each user makes per day
+avg_qps = dau * req_per_user / 86_400
+peak_qps = avg_qps * 3             # traffic is bursty: assume the peak is ~3x the average
+print(f"average {avg_qps:,.0f} req/s, peak {peak_qps:,.0f} req/s")
+
+new_items_per_day, item_kb, replicas = 2_000_000, 1, 3
+storage_tb = new_items_per_day * item_kb * 365 * replicas / 1e9
+print(f"storage: {storage_tb:.1f} TB per year with {replicas} replicas")
+
+payload_kb = 50
+bandwidth_gbit = peak_qps * payload_kb * 8 / 1e6
+print(f"peak bandwidth: {bandwidth_gbit:.1f} Gbit/s at {payload_kb} KB per response")
+
+per_server_qps, headroom = 500, 0.6
+servers = math.ceil(peak_qps / (per_server_qps * headroom))
+print(f"servers: {servers} (each run at {headroom:.0%} of its {per_server_qps} req/s capacity)")
+# average 2,315 req/s, peak 6,944 req/s
+# storage: 2.2 TB per year with 3 replicas
+# peak bandwidth: 2.8 Gbit/s at 50 KB per response
+# servers: 24 (each run at 60% of its 500 req/s capacity)
+```
+
+Ten million daily users sounds enormous, yet it is only about 2,300 requests per second on average: a handful of well-tuned servers can do that, and the 2.2 TB a year fits on one modern disk. Estimates like this stop you from building a distributed system you do not need, or from underbuilding one you do.
+
+It also helps to carry a feel for **relative costs**. These are rough orders of magnitude; the ratios matter more than the exact values:
+
+| Operation | About |
+| --- | --- |
+| CPU cache or register access | 1 ns |
+| Main memory read | 100 ns |
+| SSD random read | 100 µs |
+| Round trip inside one data centre | 0.5 ms |
+| Spinning-disk seek | 5–10 ms |
+| Round trip across a continent | 100–150 ms |
+
+A memory read is about a million times faster than a cross-continent round trip, which is why caching, replication near users and avoiding unnecessary hops dominate system performance.
+
+## Systems Are Non-Linear
+
+Adding load or components rarely changes behaviour proportionally. Three effects explain most surprises.
+
+### Utilization and queueing
+
+A server that is 50% busy answers quickly. One at 95% busy does not answer 90% as fast; its **queue** grows. For a simple queue the mean time in the system is
+
+$$
+W = \frac{1}{\mu - \lambda} = \frac{S}{1-\rho}
+$$
+
+where $\lambda$ is the arrival rate, $\mu$ the service rate, $S$ the service time and $\rho = \lambda/\mu$ the utilization. In words: latency is the service time multiplied by $1/(1-\rho)$, which is 2× at 50% load, 10× at 90% and 100× at 99%.
+
+<UtilizationCurve />
+
+```python
+mu = 100                            # a server completes 100 req/s (10 ms each)
+for rho in (0.5, 0.8, 0.9, 0.95, 0.99):
+    lam = rho * mu
+    print(f"utilization {rho:>4.0%}: mean latency {1000 / (mu - lam):>6.0f} ms  ({1 / (1 - rho):>5.0f}x the 10 ms service time)")
+# utilization  50%: mean latency     20 ms  (    2x the 10 ms service time)
+# utilization  80%: mean latency     50 ms  (    5x the 10 ms service time)
+# utilization  90%: mean latency    100 ms  (   10x the 10 ms service time)
+# utilization  95%: mean latency    200 ms  (   20x the 10 ms service time)
+# utilization  99%: mean latency   1000 ms  (  100x the 10 ms service time)
+```
+
+That is why capacity plans keep servers at 50–70% of their maximum. A related identity, **Little's law**, ties concurrency to rate and latency: requests in flight $= \lambda \times W$. A service taking 1,000 requests per second with 200 ms latency holds about 200 requests open at once, which sizes connection pools and thread counts.
+
+### Reliability multiplies
+
+Components in a chain must all work, so their availabilities multiply: three services at 99.9% give about 99.7%, roughly 26 hours of downtime a year instead of 9. Redundant copies fail only when *all* copies fail, so two independent 99% replicas give 99.99%. Hence redundancy, not polishing each part, is the main lever, but only when failures are truly independent (separate machines, racks and zones).
+
+<AvailabilityMath />
+
+```python
+year_min = 365 * 24 * 60
+for a in (0.99, 0.999, 0.9999, 0.99999):
+    print(f"{a:.3%} available -> {year_min * (1 - a):>7.1f} minutes of downtime per year")
+series = 0.999 ** 3
+parallel = 1 - (1 - 0.99) ** 2
+print(f"three 99.9% services in a chain: {series:.3%} (~{year_min * (1 - series) / 60:.0f} hours/year down)")
+print(f"two 99% replicas in parallel   : {parallel:.2%} (if failures are independent)")
+# 99.000% available ->  5256.0 minutes of downtime per year
+# 99.900% available ->   525.6 minutes of downtime per year
+# 99.990% available ->    52.6 minutes of downtime per year
+# 99.999% available ->     5.3 minutes of downtime per year
+# three 99.9% services in a chain: 99.700% (~26 hours/year down)
+# two 99% replicas in parallel   : 99.99% (if failures are independent)
+```
+
+### Feedback loops
+
+Components react to each other, and reactions can reinforce a problem. A slow database makes requests time out; clients **retry**; retries add load; the database slows further. Cascading failures, retry storms and overloaded caches that stampede the database are all feedback loops. The counter-measures follow from the cause: **timeouts** so work does not pile up, **backoff with jitter** so retries spread out, **backpressure and load shedding** so a system refuses work it cannot finish, and **circuit breakers** so a failing dependency is left alone to recover.
+
+<Callout type="pitfall">
+Averages hide the problem. A service with a 50 ms average can have a 2-second 99th percentile, and a user request that touches 20 services is slow if *any one* of them is slow. Look at **percentiles** (p95, p99) and at the whole request path.
+</Callout>
+
+## Everything Is a Trade-Off
+
+No design is best in every dimension. Each choice moves a cost somewhere else:
+
+| You choose | You gain | You pay |
+| --- | --- | --- |
+| A cache | Lower latency, less database load | Staleness and invalidation bugs |
+| Replication | Availability, read capacity | Lag and possible stale reads |
+| Sharding | Write and storage capacity | Cross-shard queries and transactions |
+| Asynchronous messaging | Decoupling, buffering | Eventual consistency, duplicates, harder debugging |
+| Microservices | Independent teams and scaling | Network failure, distributed data, operational load |
+| Strong consistency | Simple reasoning | Latency and availability under partition |
+
+A useful discipline is to write the trade-off down next to every decision: "we cache product pages for 60 seconds; the cost is that a price change can show up to a minute late, which the business accepts." If you cannot name what you gave up, you probably have not understood the choice.
+
+## A Repeatable Approach
+
+The same sequence works for a new design, a design review or an interview question:
+
+1. **Clarify requirements:** functional scope, then scale, latency, availability, consistency and durability targets.
+2. **Estimate:** requests, storage, bandwidth, servers. Note which number is the largest worry.
+3. **Sketch the simplest design that could work:** clients, a service, a database. Often this already meets the requirements; stop if it does.
+4. **Define the interfaces and data:** the main API calls and how the data is shaped (see [API Design](../api-design/)).
+5. **Find the bottleneck** with your estimates, and scale *that*: a cache for read-heavy data, a queue for bursty work, replication or sharding for the database.
+6. **Walk through failure:** what if each component dies, slows down, or loses its network? Add redundancy and timeouts where the answer is bad.
+7. **Evolve in stages:** build the simple version first, measure, and add complexity only when a number forces you to.
+
+<Callout type="practice">
+Resist drawing a large architecture first. The strongest designs start small and are justified by numbers, and each added component (cache, queue, shard, service) is there because a specific estimate or failure scenario demanded it.
+</Callout>
+
+## Using the Rest of This Section
+
+Each following note is a tool you now know when to use. [Scalability](../scalability/) and [Load Balancing](../load-balancing-strategies/) answer "how do we add capacity?"; [Caching](../caching-strategies/) and [Database Scaling](../database-scaling/) answer "how do we remove the bottleneck at the data layer?"; [Consistent Hashing](../consistent-hashing/) and [Message Queues](../message-queues/) show how work and data are spread and buffered; [Rate Limiting](../rate-limiting/) and [API Design](../api-design/) protect the system at its edges; and [Microservices vs. Monolith](../microservices-vs-monolith/) is the question of how to divide the whole thing among teams. The theory beneath them, replication, consistency and consensus, is in [Distributed Systems](../../distributed-systems/distributed-basics/).

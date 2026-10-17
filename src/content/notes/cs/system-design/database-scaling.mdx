@@ -1,0 +1,129 @@
+---
+title: "Database Scaling"
+description: "Read replicas, sharding, and the trade-offs each introduces."
+order: 5
+tier: core
+takeaways:
+  - "**Read replicas** copy the primary to scale reads and availability; **replication lag** means a replica can serve stale data, and writes still go to one primary."
+  - "**Sharding** splits the data across servers (each holds a partition) to scale storage and writes, at the cost of cross-shard queries and transactions."
+  - "The **shard key** decides everything: it should spread load evenly *and* let common queries find their shard. A bad key makes a hot shard."
+  - "Replicas and shards combine: shard for write capacity, replicate each shard for reads and failover."
+  - "Scale in stages: tune queries and indexes, then add replicas, then shard only when you must."
+resources:
+  - title: "Designing Data-Intensive Applications, ch. 5 and 6"
+    url: "https://dataintensive.net/"
+    note: "Replication and partitioning, with the failure modes."
+  - title: "MongoDB: Sharding"
+    url: "https://www.mongodb.com/docs/manual/sharding/"
+    note: "Shard keys, chunks and balancing in one real system."
+  - title: "PostgreSQL: High availability, load balancing and replication"
+    url: "https://www.postgresql.org/docs/current/high-availability.html"
+---
+
+Database scaling becomes necessary when a single database can no longer handle the workload's read volume, write volume, storage requirements, or availability demands. Two common strategies address different limits: read replicas copy data to additional database servers so read traffic can be distributed, while sharding partitions data across multiple database servers so each server owns only part of the dataset. Read replicas primarily scale reads; sharding can scale both storage and writes. Both introduce coordination and operational complexity, so the key is to identify the actual bottleneck before distributing the database.
+
+## Read replicas scale reads by copying data
+
+A read replica maintains a copy of data from a primary database. The primary generally handles writes, while replicas serve some or all read queries.
+
+Imagine an online store where users constantly browse products, but product updates are relatively infrequent. Without replicas, every product lookup and update competes for resources on the same database. With several replicas, product reads can be distributed among them, leaving more primary capacity available for writes.
+
+This architecture works particularly well when reads dominate the workload. If the primary is spending most of its resources serving read queries, replicas can increase aggregate read throughput without changing how data is partitioned.
+
+However, replicas introduce replication lag. Changes made on the primary may take time to appear on a replica. A user might update an account and immediately read from a replica that still contains the previous value. This is called stale reading.
+
+Applications can mitigate the problem by routing certain reads to the primary, waiting for replication to catch up, or using database-specific consistency mechanisms. The appropriate choice depends on how important immediate read-after-write consistency is.
+
+The mechanics (leader-follower, synchronous versus asynchronous, what lag looks like) are covered in [Replication](../../distributed-systems/replication/), and the consistency guarantees you give up are the subject of [Consistency Models](../../distributed-systems/consistency-models/).
+
+Replicas also do not automatically eliminate every bottleneck. The primary must still process writes and ship changes to replicas, and each replica consumes storage and resources. If writes saturate the primary, adding read replicas may provide little benefit.
+
+## Sharding scales by splitting ownership of the data
+
+Sharding partitions a database into smaller datasets distributed across multiple database servers. Each shard stores only a portion of the total data, rather than a complete copy of everything.
+
+Suppose an application stores 300 million user records. Instead of keeping all records on one database, it might distribute them across three shards, with each responsible for roughly 100 million records.
+
+A shard key determines where each record belongs. For example, a system might use a user ID to route a user's data to a particular shard. If the application knows the shard key, it can often direct a query straight to the appropriate server.
+
+Sharding can increase write capacity because different shards can process writes independently. It can also distribute storage requirements and reduce the amount of data each individual server must manage.
+
+The challenge is that the application and database architecture must now account for data distribution. A query that needs records from every shard may require multiple requests and a merge of the results. A transaction that modifies records on different shards may require distributed coordination, which is more expensive and complicated than a transaction confined to one database.
+
+Sharding therefore changes more than capacity. It changes how queries, transactions, indexes, and operational procedures must work.
+
+## The shard key determines whether the design succeeds
+
+A good shard key distributes workload reasonably evenly and lets common queries identify the relevant shard.
+
+For example, sharding customer records by customer ID may work well when most queries concern one customer. But a dashboard that aggregates sales across all customers may need to query every shard.
+
+A poor key can create a hot shard: one server receives a disproportionate share of requests or writes. Sharding by a monotonically increasing timestamp, for example, may send new records primarily to the newest partition, depending on the partitioning scheme.
+
+The key also affects data locality. If orders, customers, and their related records need to be queried together, placing them on the same shard may reduce cross-shard operations. Yet optimizing for one access pattern can make another less efficient.
+
+Common partitioning approaches include:
+
+- **Range-based sharding:** Assigns ranges of keys to shards. Range queries can be efficient, but some ranges may become much busier than others.
+- **Hash-based sharding:** Hashes a key to distribute records more evenly. This can reduce skew but makes many range queries harder to route efficiently.
+- **Directory-based sharding:** Uses a mapping service or lookup table to determine each record's shard. This allows flexible placement but creates another piece of state to maintain and keep available.
+
+A shard key should be chosen from observed access patterns, write distribution, and growth expectations—not merely because a particular field is easy to hash.
+
+See how the choice of key and placement scheme changes where the writes land:
+
+<ShardKeyDemo />
+
+```python
+import hashlib
+from collections import Counter
+
+ids = list(range(1, 9001))                                       # new users get increasing ids
+def load(scheme, shards=4):
+    if scheme == "range": return Counter(min((i - 1) // 2250, shards - 1) for i in ids[-1000:])      # the 1000 newest writes
+    return Counter(int(hashlib.md5(str(i).encode()).hexdigest(), 16) % shards for i in ids[-1000:])
+print("newest 1000 writes by shard, range key:", sorted(load("range").items()))
+print("newest 1000 writes by shard, hash key :", sorted(load("hash").items()))
+# newest 1000 writes by shard, range key: [(3, 1000)]
+# newest 1000 writes by shard, hash key : [(0, 263), (1, 224), (2, 247), (3, 266)]
+```
+
+Range placement sent every new write to shard 3. Hash placement spread them almost evenly, at the cost of making range scans ("users 100 to 200") a query against every shard.
+
+## The tradeoffs are fundamentally different
+
+| Dimension          | Read replicas                            | Sharding                                                               |
+| ------------------ | ---------------------------------------- | ---------------------------------------------------------------------- |
+| Primary goal       | Increase read capacity                   | Increase storage and read/write capacity                               |
+| Data placement     | Each replica generally holds a full copy | Each shard holds a partition                                           |
+| Write handling     | Usually writes go to the primary         | Writes can be distributed across shards                                |
+| Read consistency   | Replication lag can expose stale data    | Depends on each shard's consistency model and cross-shard coordination |
+| Query complexity   | Read routing and replica selection       | Shard routing, fan-out queries, and cross-shard operations             |
+| Operational burden | Replication monitoring and failover      | Partitioning, rebalancing, routing, and distributed failure handling   |
+| Best fit           | Read-heavy workloads                     | Workloads exceeding the capacity of one database                       |
+
+These approaches are not mutually exclusive. A sharded database can have read replicas for each shard. In that design, sharding distributes data and write ownership, while replicas increase read capacity within each partition.
+
+## Rebalancing and failure handling become part of the architecture
+
+Both strategies introduce operational concerns that become more significant as the system grows.
+
+With read replicas, operators must monitor replication lag, replica health, and failover behavior. If a replica becomes unhealthy or too far behind, routing traffic to it can degrade performance or return outdated data.
+
+With sharding, operators must also plan for rebalancing. As the dataset grows or workload shifts, one shard may run out of storage or become overloaded before the others. Moving records to other shards can require substantial network traffic, coordination, and temporary capacity. A system needs a way to update routing information without sending requests to the wrong place during the transition.
+
+Failure handling differs as well. A failed replica may reduce read capacity but leave the primary available. A failed shard can make its particular partition inaccessible, potentially affecting every user whose data resides there. Replication within each shard can improve availability, but it does not eliminate the need for recovery and failover design.
+
+These complications are why database scaling should be treated as an architectural decision, not simply a matter of adding servers.
+
+## Scale in stages, guided by the bottleneck
+
+A sensible progression is to first optimize queries, indexes, connection management, and database configuration. Poorly indexed queries or inefficient access patterns can overwhelm even a large database, and adding infrastructure may only make the waste more expensive.
+
+If reads are the dominant bottleneck, read replicas are often the simpler next step. If writes, storage, or per-instance resource limits remain the problem, sharding may be justified—but only after considering the complexity of distributing data and transactions.
+
+The governing distinction is straightforward: replication adds copies to distribute access; sharding divides ownership to distribute the work of storing and changing data. Replicas trade some consistency and resource overhead for read capacity. Shards trade simplicity and easy global queries for a larger aggregate capacity ceiling. The right design depends on which limit the system has actually reached and what complexity it can afford.
+
+<Callout type="pitfall">
+Sharding is hard to undo. Re-sharding means moving large amounts of live data, and a wrong shard key can lock in a hot shard for years. Exhaust query tuning, caching and read replicas first, and pick the key from measured access patterns. (A scheme such as [consistent hashing](../consistent-hashing/) reduces how much data moves when you add shards.)
+</Callout>

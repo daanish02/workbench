@@ -1,0 +1,158 @@
+---
+title: "Message Queues"
+description: "Event-driven architecture, decoupling, and pub/sub messaging patterns."
+order: 8
+tier: core
+takeaways:
+  - "A **message broker** decouples producers from consumers in time and availability: the sender publishes and moves on."
+  - "A **queue** delivers each message to one worker (competing consumers); **pub/sub** delivers each event to every subscriber."
+  - "**Commands** ask for an action; **events** announce a fact. Events keep publishers ignorant of subscribers."
+  - "Asynchrony changes the failure model: you need **acks, retries, dead-letter queues, ordering rules and backpressure**."
+  - "Delivery is usually **at-least-once**, so consumers must be **idempotent**; the **transactional outbox** keeps the database and the event consistent."
+resources:
+  - title: "RabbitMQ tutorials"
+    url: "https://www.rabbitmq.com/tutorials"
+    note: "Work queues, pub/sub, routing and acknowledgements, hands-on."
+  - title: "Apache Kafka: Introduction"
+    url: "https://kafka.apache.org/intro"
+    note: "A partitioned, replicated log used as an event backbone."
+  - title: "Pattern: Transactional outbox (microservices.io)"
+    url: "https://microservices.io/patterns/data/transactional-outbox.html"
+  - title: "Enterprise Integration Patterns"
+    url: "https://www.enterpriseintegrationpatterns.com/"
+---
+
+Message queues and event-driven architecture let software components communicate without requiring them to execute at the same time or know each other's internal implementation. Instead of one service directly calling another and waiting for a response, a producer can publish a message or event that a consumer processes independently. This decouples components in time and often in deployment, making systems more resilient to temporary failures and easier to scale. The trade-off is that communication becomes asynchronous, introducing new challenges around delivery guarantees, ordering, duplicate messages, and eventual consistency.
+
+## Direct calls couple systems through time and availability
+
+Consider an online store that creates an order. In a synchronous design, the order service might call the inventory service, payment service, email service, and analytics service in sequence.
+
+If the email service is slow, the order request may be delayed. If analytics is unavailable, the order service must decide whether the entire operation should fail, wait, or ignore the problem. Each direct dependency creates another way for the overall request to become slow or unavailable.
+
+A message-driven design changes the interaction. The order service records the order and publishes an event such as `OrderPlaced`. Other components consume that event independently: inventory processes the reservation, analytics records the purchase, and a notification service sends an email.
+
+The order service no longer needs to wait for every downstream task to finish. The components are decoupled because they communicate through a message contract rather than a direct call to each implementation.
+
+This does not eliminate dependencies. Consumers still depend on the meaning and structure of published messages, and critical workflows may still require coordination. The architecture changes how dependencies are managed.
+
+## Queues and pub/sub solve related but different problems
+
+A message broker is infrastructure that accepts messages from producers and delivers them to consumers. Two common communication patterns are point-to-point queues and publish/subscribe.
+
+**Point-to-point queue.** A producer sends a task to a queue, and one eligible consumer processes each message. If several workers consume the same queue, the broker distributes tasks among them.
+
+This is useful for background jobs such as generating reports, resizing images, or processing payments.
+
+**Publish/subscribe (pub/sub).** A producer publishes a message or event to a topic. Multiple independent subscribers can receive their own copies and process them for different purposes.
+
+This is useful when an order event must trigger notifications, analytics, fulfillment, and other independent reactions.
+
+The crucial distinction is the delivery relationship. In a competing-consumer queue, a message is generally assigned to one consumer within a consumer group. In pub/sub, each subscription or consumer group can receive the event independently.
+
+A system can combine both patterns. A topic might distribute events to several consumer groups, while each group uses multiple workers to share its workload.
+
+## Events describe facts; commands request actions
+
+Not all messages mean the same thing.
+
+A command asks a recipient to perform an action: `SendWelcomeEmail` or `ReserveInventory`. It expresses intent and usually has a designated handler.
+
+An event records something that has already happened: `CustomerRegistered` or `OrderPlaced`. It describes a fact, and multiple consumers may react to it independently.
+
+This distinction influences coupling. A command typically implies that a particular capability should do something. An event allows publishers to announce a fact without knowing every interested subscriber.
+
+For example, when a customer registers, the account service can publish `CustomerRegistered`. An email service sends a welcome message, an analytics service records the registration, and a recommendation service initializes a profile. Adding another subscriber does not require changing the account service, provided the event contract remains compatible.
+
+Events should describe meaningful domain facts rather than every internal implementation detail. If the event schema mirrors private database tables too closely, changes to the publisher's internals can unnecessarily break consumers.
+
+## Asynchronous processing changes the failure model
+
+A queue allows work to wait until a consumer is ready. If a notification service is temporarily unavailable, messages can accumulate and be processed after recovery instead of forcing every order request to wait for that service.
+
+This introduces a different set of operational responsibilities:
+
+- **Acknowledgments:** A consumer confirms that a message has been processed. If it fails before acknowledging, the broker may deliver the message again.
+- **Retries:** Transient failures can be retried, often with backoff. Persistent failures need a limit or a separate recovery strategy.
+- **Dead-letter queues:** Messages that repeatedly fail can be isolated for investigation rather than blocking normal processing indefinitely.
+- **Ordering:** Messages may be processed out of order, especially when multiple consumers operate concurrently. Ordering guarantees, where required, are often scoped to a partition or key.
+- **Backpressure:** If producers generate messages faster than consumers can process them, queue depth grows. The system needs enough capacity, controlled production, or a way to shed nonessential work.
+
+A queue is therefore not infinite storage or a guarantee that a task will eventually succeed. It buffers differences in processing speed and can absorb temporary disruptions, but sustained overload still requires intervention.
+
+Change the arrival rate, the number of consumers, the failure rate, or take the consumers down, and watch the queue depth:
+
+<QueueDepthSim />
+
+## Delivery guarantees determine how carefully consumers must behave
+
+Messaging systems commonly describe delivery using three broad categories.
+
+At-most-once delivery means a message is delivered zero or one time. It avoids duplicates but may lose a message under some failure conditions.
+
+At-least-once delivery means the system retries until delivery is acknowledged according to its guarantees. A consumer may receive the same message more than once.
+
+Exactly-once processing is more difficult. Some brokers offer exactly-once semantics within specific boundaries, such as a transaction between consuming and producing messages inside the broker. That does not automatically guarantee exactly-once effects in an external database or payment provider.
+
+For this reason, robust consumers are often designed to be idempotent: processing the same message twice produces the same intended result as processing it once.
+
+For example, an order consumer can record processed event IDs in the same database transaction as its business update. When the event is redelivered, the consumer recognizes the duplicate and avoids applying the operation again. External side effects require their own idempotency or reconciliation mechanisms.
+
+```python
+processed, balance = set(), 0
+def handle(msg):
+    global balance
+    if msg["id"] in processed:                                   # redelivered duplicate: ignore
+        return "skipped duplicate"
+    balance += msg["amount"]; processed.add(msg["id"])
+    return "applied"
+delivered = [{"id": "m1", "amount": 50}, {"id": "m2", "amount": 20}, {"id": "m1", "amount": 50}]   # m1 is redelivered
+print([handle(m) for m in delivered], "-> balance", balance, "(not 120)")
+# ['applied', 'applied', 'skipped duplicate'] -> balance 70 (not 120)
+```
+
+Without the check, the redelivered `m1` would have applied twice. Real consumers store the processed IDs in the same transaction as the business update.
+
+Another common failure occurs when a service updates its database successfully but crashes before publishing the corresponding event. The database says an order was placed, but subscribers never learn about it. The transactional outbox pattern addresses this by recording the business update and an event record in one database transaction, then publishing the event from the outbox asynchronously.
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL); CREATE TABLE outbox (id INTEGER PRIMARY KEY, event TEXT, sent INTEGER DEFAULT 0);")
+with db:                                                          # one transaction: the order and its event commit together or not at all
+    db.execute("INSERT INTO orders VALUES (1, 49.99)")
+    db.execute("INSERT INTO outbox (event) VALUES ('OrderPlaced:1')")
+for (eid, event) in db.execute("SELECT id, event FROM outbox WHERE sent = 0").fetchall():
+    print("publishing", event)                                    # a relay publishes later; if it crashes, the row is still there
+    db.execute("UPDATE outbox SET sent = 1 WHERE id = ?", (eid,))
+print("unsent events left:", db.execute("SELECT COUNT(*) FROM outbox WHERE sent = 0").fetchone()[0])
+# publishing OrderPlaced:1
+# unsent events left: 0
+```
+
+The relay may publish an event twice if it crashes between publishing and marking it sent, which is acceptable because consumers are idempotent. The two patterns work as a pair.
+
+These mechanisms matter because asynchronous communication moves uncertainty into the processing pipeline. Reliability comes from explicitly designing for retries, partial failure, and duplicate delivery.
+
+## Event-driven architecture improves independence but weakens immediate visibility
+
+In a synchronous workflow, a caller often knows whether a downstream operation returned successfully before its own request completes. In an event-driven workflow, publishing an event may only mean that the broker accepted it. Consumers may process it seconds or minutes later, or fail and require intervention.
+
+This creates eventual consistency. After an order is placed, the order service may show it immediately while analytics, search indexes, or fulfillment systems have not yet caught up.
+
+For many tasks, this is acceptable. Analytics does not need to update before the customer sees an order confirmation. But some operations, such as reserving scarce inventory or preventing duplicate payments, require stronger coordination and cannot safely rely on an unexamined asynchronous delay.
+
+Event-driven architecture is most effective when tasks can be separated by clear business boundaries and consumers can work independently. It is less suitable when every step requires an immediate result from another component or when the team cannot operate the additional infrastructure and monitoring.
+
+## Choose messaging for a concrete decoupling benefit
+
+Use a queue when work can be deferred, distributed among workers, retried, or buffered during temporary demand spikes. Use pub/sub when multiple independent systems need to react to the same event without the publisher coordinating them individually.
+
+For a small application, a background job queue may be enough. A larger system with many independent consumers may benefit from a durable event broker and a formal event schema. Neither requires every interaction to become asynchronous: synchronous APIs remain useful when the caller needs an immediate answer.
+
+The governing principle is that messaging decouples when work happens and who performs it, but it does not eliminate the need to manage dependencies and failures. A well-designed system makes message meaning, delivery guarantees, retry behavior, ordering, and recovery explicit. Without those guarantees, a queue can merely hide failures behind a growing backlog.
+
+<Callout type="pitfall">
+A queue hides failures instead of removing them. Watch the **queue depth and age of the oldest message**: a growing backlog is the early warning that consumers are failing or too slow, and a dead-letter queue nobody reads is a silent data-loss mechanism.
+</Callout>

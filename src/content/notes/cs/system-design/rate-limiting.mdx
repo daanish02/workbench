@@ -1,0 +1,134 @@
+---
+title: "Rate Limiting"
+description: "Token bucket and leaky bucket algorithms for limiting request rates."
+order: 10
+tier: optional
+takeaways:
+  - "**Rate limiting** bounds incoming work to protect finite capacity; define the **scope** (who), the **allowance** (how much) and the **excess behaviour** (reject, delay or queue)."
+  - "**Token bucket** allows bursts up to the capacity while holding the long-run rate at the refill rate; **leaky bucket** queues requests and releases them at a steady rate."
+  - "Rate limiting regulates **admission**; traffic shaping regulates **when admitted work is processed**."
+  - "A per-server limiter multiplies by the number of servers: a global limit needs **shared coordination** (atomic counters in a shared store)."
+  - "Reject with **429** and `Retry-After`, and have clients back off; weight expensive endpoints more heavily."
+resources:
+  - title: "Stripe: Scaling your API with rate limiters"
+    url: "https://stripe.com/blog/rate-limiters"
+    note: "Four limiter types in production, from an engineering team that runs them."
+  - title: "Token bucket (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Token_bucket"
+  - title: "RFC 6585: 429 Too Many Requests"
+    url: "https://www.rfc-editor.org/rfc/rfc6585"
+---
+
+Rate limiting controls how frequently a client or system can perform an operation within a given period. It protects services from overload, limits abusive traffic, and allocates shared resources fairly. Two common algorithms are token bucket, which permits controlled bursts while enforcing a long-term rate, and leaky bucket, which smooths incoming traffic into a steadier output rate. Both constrain demand, but they differ in how they treat bursts and where they place the limit.
+
+## Rate limiting protects a system's finite capacity
+
+A server has limited CPU, memory, database connections, network bandwidth, and downstream service capacity. If requests arrive faster than the system can process them, queues grow, response times increase, and failures may spread to dependent services.
+
+Rate limiting places a boundary on incoming work before that boundary becomes a crisis. For example, an API might allow a client to make 100 requests per minute, while a login endpoint applies a stricter limit to reduce password-guessing attempts.
+
+A rate limit typically defines three things:
+
+- **Scope:** who or what is limited, such as a user, API key, IP address, endpoint, or whole service.
+- **Allowance:** how much work is permitted, measured in requests, bytes, or weighted operation costs.
+- **Excess behavior:** whether additional requests are rejected, delayed, queued, or shed.
+
+A simple fixed-window counter can limit requests per minute, but it has a boundary problem: a client might send 100 requests at the end of one minute and another 100 immediately after the next minute begins. Token bucket and leaky bucket provide more controlled behavior.
+
+## Token bucket allows bursts within a sustained rate
+
+Imagine a bucket that holds tokens. Each incoming request must consume a token to proceed. Tokens are replenished at a fixed rate, up to a maximum capacity. If the bucket is empty, the request must wait or be rejected.
+
+Let:
+
+- $B$ be the bucket's maximum token capacity.
+- $r$ be the token replenishment rate, in tokens per second.
+- $T$ be the time elapsed since the previous update.
+- $b$ be the current number of tokens.
+
+The bucket replenishes according to
+
+$$
+b'=\min(B,\ b+rT)
+$$
+
+A request that costs $c$ tokens is allowed when $b'\geq c$, after which $c$ tokens are deducted.
+
+For example, suppose an API has a bucket capacity of 20 tokens and replenishes at 5 tokens per second. A client that has been idle long enough can immediately make 20 one-token requests. After exhausting the bucket, it can sustain about 5 requests per second over time, assuming no additional tokens have accumulated.
+
+The maximum capacity controls the burst size; the replenishment rate controls the long-term allowance.
+
+```python
+class TokenBucket:
+    def __init__(self, capacity, rate):
+        self.capacity, self.rate, self.tokens, self.t = capacity, rate, capacity, 0.0
+    def allow(self, now, cost=1):
+        self.tokens = min(self.capacity, self.tokens + (now - self.t) * self.rate)     # refill for the elapsed time
+        self.t = now
+        if self.tokens >= cost:
+            self.tokens -= cost
+            return True
+        return False
+bucket = TokenBucket(capacity=20, rate=5)
+burst = sum(bucket.allow(0.0) for _ in range(30))
+print("30 requests at t=0 :", burst, "allowed (the burst), rest rejected")
+print("1 request at t=0.1 :", bucket.allow(0.1), "(no tokens left yet)")
+print("after 1 s idle     :", sum(bucket.allow(1.2) for _ in range(10)), "of 10 allowed (5 tokens/s refilled)")
+# 30 requests at t=0 : 20 allowed (the burst), rest rejected
+# 1 request at t=0.1 : False (no tokens left yet)
+# after 1 s idle     : 5 of 10 allowed (5 tokens/s refilled)
+```
+
+Note there is no timer or background thread: the bucket is refilled *lazily* from the elapsed time whenever a request arrives, which is how production limiters keep per-client state to two numbers.
+
+This makes token bucket useful for APIs and cloud services where occasional bursts are acceptable but sustained overload is not. A user can load a page that triggers several requests at once without being treated the same as a client that continuously floods the service.
+
+## Leaky bucket smooths traffic into a steady flow
+
+The leaky bucket model treats incoming requests like water entering a container with a controlled outlet. Requests accumulate in a queue, and the system processes or releases them at a configured rate. If the queue reaches capacity, excess requests are rejected or dropped.
+
+Suppose requests arrive in a burst of 30, but the service can process only 5 requests per second. With a queue large enough to hold the burst, the requests can be released at approximately 5 per second instead of reaching the downstream service all at once.
+
+The queue smooths short-term fluctuations. Unlike a token bucket, which permits immediate bursts when tokens have accumulated, a queued leaky-bucket implementation deliberately delays work to enforce a steadier output rate.
+
+There is an important terminology distinction: leaky bucket can also refer to an algorithm that tracks a decreasing allowance or virtual level rather than literally queueing requests. The queue-based form is especially useful when discussing traffic shaping, where the goal is to regulate the rate of outgoing traffic. In a strict queue-based implementation, requests also need deadlines or queue limits so that overload does not turn into excessive latency.
+
+## The algorithms enforce different traffic shapes
+
+| Property       | Token bucket                            | Queue-based leaky bucket                      |
+| -------------- | --------------------------------------- | --------------------------------------------- |
+| Primary goal   | Bound bursts and sustained average rate | Smooth output rate                            |
+| Burst handling | Allows bursts up to available tokens    | Buffers bursts and releases them gradually    |
+| Excess demand  | Reject or delay when tokens run out     | Queue, then reject when full                  |
+| Latency        | Often low for permitted bursts          | Can increase due to waiting                   |
+| Typical use    | API quotas and request allowances       | Traffic shaping and controlled work pipelines |
+
+The distinction is not that one algorithm permits unlimited traffic while the other does not. Both constrain demand. They differ in whether accumulated allowance can be spent quickly or whether incoming work must pass through a controlled output rate.
+
+Try both in real time: send single requests, or a burst of ten, and watch the bucket level:
+
+<TokenBucketSim />
+
+## Real rate limiters must handle concurrency and distribution
+
+The algorithm is only part of a production implementation. The system must also decide how to count requests correctly when many arrive simultaneously or when an application runs on multiple servers.
+
+A local in-memory token bucket on each of ten API instances can accidentally allow roughly ten times the intended aggregate traffic if every instance independently grants the full allowance. A global limit requires shared coordination, such as a centralized limiter, an atomic operation in a shared data store, or carefully allocated per-instance quotas.
+
+Rate limiters also need clear policies for identities and failures. IP-based limits can penalize many users behind a shared network, while API-key limits may be ineffective if keys are shared or stolen. A dependency failure in the limiter itself creates another decision: fail open and risk overload, or fail closed and reject otherwise valid traffic.
+
+For HTTP APIs, excess requests are commonly rejected with status `429 Too Many Requests`. A response may include `Retry-After` or other rate-limit metadata so clients can retry responsibly. Clients should use backoff and avoid retrying immediately in a tight loop, which can amplify overload.
+
+Finally, request counts are not always a good measure of cost. A lightweight health check and a query that scans millions of rows should not necessarily consume equal allowances. Weighted tokens or separate limits per endpoint can better reflect actual resource consumption.
+
+## Choose the algorithm based on the behavior you need
+
+Token bucket is usually a good choice when short bursts are useful and the service needs a sustained-rate limit. Leaky bucket is a better fit when downstream processing must remain smooth and the system can tolerate queuing delay.
+
+Many systems combine both ideas: a token bucket controls who may submit work, while a bounded queue and fixed worker pool control how quickly that work reaches an expensive dependency.
+
+The governing principle is that rate limiting regulates admission, while traffic shaping regulates when admitted work is processed. Choosing the right algorithm requires understanding the service's capacity, acceptable burst size, latency budget, and behavior under sustained overload.
+
+<Callout type="practice">
+Return `429 Too Many Requests` with a `Retry-After` header, limit by the identity that matters (API key or user, with a lower IP-based limit for anonymous traffic), and decide on purpose whether the limiter fails open or closed when its own store is down. Clients should retry with exponential backoff and jitter, never in a tight loop.
+</Callout>

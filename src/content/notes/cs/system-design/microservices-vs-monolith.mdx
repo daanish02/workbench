@@ -1,0 +1,129 @@
+---
+title: "Microservices vs. Monolith"
+description: "The trade-offs of microservices and monoliths, and when each makes sense."
+order: 6
+tier: core
+takeaways:
+  - "A **monolith** is one deployable unit; **microservices** are independently deployable services that own their data. Neither is inherently better."
+  - "Microservices trade local simplicity (in-process calls, one transaction) for **distributed-system complexity**: network failure, eventual consistency, many deployments."
+  - "A stateless monolith **can scale horizontally**; services pay off when workloads, teams or isolation needs genuinely differ."
+  - "A **modular monolith** (one deployment, enforced module boundaries) is usually the best starting point and keeps extraction possible."
+  - "Extract a service when there is a **concrete reason**; a service that must call many others for every request is coupled, not independent."
+resources:
+  - title: "Martin Fowler and James Lewis: Microservices"
+    url: "https://martinfowler.com/articles/microservices.html"
+    note: "The article that defined the term, including its costs."
+  - title: "Martin Fowler: MonolithFirst"
+    url: "https://martinfowler.com/bliki/MonolithFirst.html"
+    note: "Why starting with a monolith usually works out better."
+  - title: "microservices.io pattern language"
+    url: "https://microservices.io/"
+    note: "Sagas, API gateways, outbox and the rest of the vocabulary."
+---
+
+A monolith packages an application into one deployable system, while microservices divide it into independently deployable services that communicate over network boundaries. Neither architecture is inherently superior: a monolith reduces operational and coordination costs, while microservices can provide independent scaling, deployment, and ownership when a system and its engineering organization become large enough to benefit. The central trade-off is between the simplicity of keeping components together and the flexibility of distributing them. The right architecture depends on the team's size, the system's complexity, the need for independent scaling, and the cost of operating distributed software.
+
+## A monolith keeps the application inside one deployable boundary
+
+In a traditional monolith, features such as authentication, orders, payments, and reporting live within one application deployment. The code can still be divided into well-defined modules; being a monolith does not mean being a tangled mess.
+
+The key advantage is that modules can usually communicate through in-process function calls rather than network requests. A call between the order module and inventory module does not need serialization, network transport, timeouts, retries, or remote failure handling.
+
+Operations that touch multiple modules can often use a single database transaction. Developers can run the application locally with fewer dependencies, debug a request within one process, and deploy the entire system through one release pipeline.
+
+This simplicity is particularly valuable when a product is young, requirements change frequently, and the team is still discovering the right boundaries between features.
+
+The trade-off is that the deployment unit is shared. A small change may require rebuilding and redeploying the whole application. If one subsystem needs substantially more resources than the others, the entire deployment may need to scale with it. Teams working in the same codebase can also become tightly coupled through shared data models, release schedules, and conflicting changes.
+
+These problems are not inevitable. A well-structured monolith with explicit module boundaries can remain maintainable and scale considerably before distribution becomes worthwhile.
+
+## Microservices create independent deployment and ownership boundaries
+
+In a microservices architecture, the application is divided into services that can be deployed and operated independently. Each service owns a defined capability, such as payments, catalog management, or order processing, and communicates with other services through APIs, messages, or events.
+
+The main benefit is independence. A team can change and deploy the payment service without necessarily deploying the catalog service. A resource-intensive service can scale separately. Different services can use different storage technologies or release schedules when there is a genuine reason to do so.
+
+Independent ownership can also reduce coordination between teams. When boundaries are well designed, a team can develop and operate its service without needing every other team to understand its internal implementation.
+
+But a network call replaces an ordinary function call with a more complicated interaction. Requests can time out, messages can be delayed or duplicated, services can fail independently, and partial failure becomes normal.
+
+Consider a checkout operation that calls the order, inventory, and payment services. The payment service might charge a customer successfully while the response times out. The checkout service cannot safely assume that the charge failed. It needs a way to determine the outcome, prevent duplicate charges, or reconcile the operation later.
+
+Microservices therefore exchange some local simplicity for distributed-system complexity. That complexity must be justified by a real architectural benefit.
+
+## The trade-offs are broader than deployment
+
+| Dimension      | Monolith                                           | Microservices                                                        |
+| -------------- | -------------------------------------------------- | -------------------------------------------------------------------- |
+| Development    | Easier local setup and cross-module changes        | Requires service contracts and more coordination                     |
+| Deployment     | One main deployment unit                           | Services can deploy independently                                    |
+| Scaling        | Usually scales the application as a whole          | Services can scale independently                                     |
+| Communication  | Mostly in-process calls                            | Network calls and messaging introduce latency and failure modes      |
+| Data           | Easier to use shared transactions                  | Cross-service consistency and transactions are harder                |
+| Reliability    | A process failure can affect the whole application | Failures can be isolated, but cascading failures are possible        |
+| Operations     | Fewer runtime components                           | More monitoring, networking, security, and deployment infrastructure |
+| Team structure | Shared codebase and release ownership              | Can support autonomous teams with clear boundaries                   |
+
+Neither column guarantees the outcome. A monolith can have strong modularity and reliability, and microservices can be tightly coupled and fragile. The architecture establishes possibilities and constraints; implementation determines whether those possibilities are realized.
+
+## Data ownership is where the difference becomes expensive
+
+A monolith can often update several related records within one ACID transaction. For example, placing an order might create an order record, reserve inventory, and record payment state within a coordinated transactional boundary.
+
+In microservices, each service typically owns its data. The order service cannot simply reach into the inventory service's database and update its tables without undermining the independence that the architecture is meant to provide.
+
+Instead, the workflow may involve a sequence of API calls or events. If inventory is reserved but payment fails, the system needs a compensating action to release the reservation. If payment succeeds but a later step fails, it may need to issue a refund or reconcile the order.
+
+This is often handled through a [saga](../../distributed-systems/distributed-transactions/): a sequence of local transactions with compensating actions for failures. A saga does not magically make a distributed workflow atomic; it makes partial progress and recovery explicit.
+
+Microservices also commonly rely on eventual consistency, where different services' views of related business state converge over time. This is appropriate for many workflows, but not every operation tolerates delayed consistency. Data boundaries must follow business invariants rather than being chosen solely to create more services.
+
+## Why microservices are not automatically more scalable
+
+A common misconception is that a monolith cannot scale. In reality, a stateless monolithic application can often run across multiple instances behind a load balancer. Horizontal scaling does not require microservices.
+
+Microservices become useful for scaling when the workload is uneven or specific parts of the system have different resource requirements. For example, a video-processing service may need large amounts of CPU or GPU capacity while the user-account service remains lightweight. Separating them allows the two workloads to scale independently.
+
+However, if every request passes through six services and all of them depend on the same saturated database, splitting the application may add network overhead without increasing useful capacity. Distribution helps only when the architecture actually separates bottlenecks or enables independent resource allocation.
+
+Similarly, microservices can improve fault isolation, but only when dependencies, timeouts, retries, and resource limits are designed carefully. An overloaded service can otherwise trigger retries and queue growth that spread failure throughout the system.
+
+## When each architecture actually makes sense
+
+A monolith is usually the better starting point when the product is new, the team is small, requirements are changing, and the domain boundaries are not yet well understood. It lets developers change related features without coordinating network contracts or maintaining a distributed deployment environment.
+
+A modular monolith is often the strongest middle ground: one deployable application, but with explicit module boundaries, controlled dependencies, and clear ownership of domain logic. It preserves simple deployment while making later extraction possible if a module develops a genuine need for independence.
+
+Microservices become more compelling when several conditions emerge:
+
+- Different parts of the system need substantially different scaling profiles.
+- Multiple teams need to deploy independently without coordinating every release.
+- Certain capabilities require distinct reliability, security, or availability boundaries.
+- The organization can support the operational requirements: observability, automated deployment, service discovery, incident response, and distributed data management.
+- Service boundaries are stable enough that independent development will reduce rather than increase coordination.
+
+These are reasons to consider decomposition, not a checklist requiring every condition. One strong constraint can justify a separate service, while many small services without clear boundaries can make a system harder to operate.
+
+A useful warning sign is a proposed microservice that must coordinate synchronously with many other services for nearly every operation. Such a service may be physically separate but remain logically coupled. It inherits the costs of distribution without gaining much autonomy.
+
+Describe your situation and see what the rules of thumb suggest:
+
+<ArchitectureChooser />
+
+## Decompose when the benefits exceed the coordination cost
+
+A practical path is to begin with a well-structured monolith, measure where development or runtime constraints appear, and extract a service when there is a concrete reason to give it a separate boundary.
+
+For example, an application might initially handle accounts, catalog, orders, and payments in one deployment. Later, payment processing may require stricter security controls and independent operational procedures. Extracting payments could then provide a meaningful boundary. Other modules can remain in the monolith until independent scaling, deployment, or ownership provides enough benefit to justify extraction.
+
+This approach avoids treating architecture as a status symbol. It also avoids the opposite mistake of refusing decomposition when organizational or technical constraints make it valuable.
+
+The deeper principle is that architecture determines where complexity lives. A monolith concentrates complexity inside a codebase, where many relationships are easier to inspect and change. Microservices distribute complexity across APIs, networks, data ownership, deployment pipelines, and teams. Good architecture does not eliminate complexity; it places it where the system and organization can manage it most effectively.
+
+<Callout type="key">
+Architecture decides **where the complexity lives**. A monolith keeps it in one codebase, where it is easy to inspect. Microservices move it into networks, contracts and data ownership. Choose the place your team can manage best, and move it only for a reason you can name.
+</Callout>
+
+<Callout type="pitfall">
+The classic failure is the **distributed monolith**: services that must be deployed together and call each other synchronously for every request. It has all the costs of microservices and none of the independence.
+</Callout>

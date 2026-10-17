@@ -1,0 +1,132 @@
+---
+title: "Consistent Hashing"
+description: "Assigning work to servers without a full reshuffle when the fleet changes."
+order: 9
+tier: core
+takeaways:
+  - "Plain **hash-mod-N** assignment remaps most keys whenever N changes, which turns a cache cluster resize into a flood of misses."
+  - "**Consistent hashing** places servers and keys on a ring; a key belongs to the next server clockwise, so adding or removing a server moves only about 1/N of the keys."
+  - "**Virtual nodes** (many ring positions per server) even out the key distribution and let bigger servers take bigger shares."
+  - "It guarantees **limited movement, not perfect balance**: hot keys, replication and data migration still need their own handling."
+  - "Used in distributed caches, partitioned stores (Dynamo, Cassandra) and affinity-based load balancing."
+resources:
+  - title: "Consistent hashing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Consistent_hashing"
+  - title: "Dynamo: Amazon's Highly Available Key-value Store"
+    url: "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+    note: "Section 4.2 covers the ring and virtual nodes."
+  - title: "A Fast, Minimal Memory, Consistent Hash Algorithm (Jump Hash)"
+    url: "https://arxiv.org/abs/1406.2294"
+    note: "A ring-free alternative used when servers are numbered."
+---
+
+Consistent hashing is a technique for assigning keys or requests to servers so that adding or removing a server changes as few assignments as possible. It is especially useful in distributed caches, where moving data between servers is expensive, and in load balancers, where related requests may benefit from reaching the same backend. The central idea is to make both keys and servers positions in a shared hash space, then assign each key to a nearby server according to a fixed rule. Unlike simple modulo hashing, this makes the mapping relatively stable as the cluster changes.
+
+## Why ordinary hashing reshuffles too much
+
+Suppose a distributed cache has four servers and assigns each key using
+
+$$
+\text{server}(k) = h(k) \bmod N
+$$
+
+Here, $h(k)$ is a hash of the key, and $N$ is the number of servers. The modulo operation maps the hash to a server index from $0$ to $N-1$.
+
+This works while the cluster size stays fixed. But if a fifth server is added, the modulus changes from 4 to 5. For most keys, the result changes, so many cached values are suddenly assigned to different servers.
+
+Those values may not physically move immediately, but requests now look in different places. Cache hits turn into misses, and the system may need to fetch or regenerate large amounts of data. This can create a burst of load on the underlying database precisely when the cache cluster is being expanded.
+
+The problem is that the mapping depends directly on the total number of servers. Consistent hashing replaces that dependency with a mapping in which each server owns a region of a shared hash space.
+
+## A hash ring makes assignments stable
+
+Imagine a circular number line whose positions represent hash values. Each server is hashed to a position on this ring, and each data key is hashed to a position as well.
+
+To find a key's owner, move clockwise from the key's position until reaching the next server. That server is responsible for the key. The ring wraps around, so a key beyond the final server position eventually reaches the first server.
+
+The important property is local change. If a new server is inserted at a position on the ring, it takes ownership of the keys in the interval between its position and the preceding server's position. Keys in other intervals keep their existing owners.
+
+Likewise, when a server disappears, only the keys it owned need to be reassigned, typically to the next server along the ring.
+
+The exact fraction of keys that move depends on the hashing scheme and cluster change, but the expected amount of movement is far smaller than the wholesale reshuffling caused by changing the modulus.
+
+Add and remove servers below, and compare how many keys move with what hash-mod-N would have moved. Then raise the number of virtual nodes and watch the arcs even out:
+
+<HashRing />
+
+```python
+import bisect
+import hashlib
+from collections import Counter
+
+def h(x): return int(hashlib.md5(x.encode()).hexdigest(), 16)
+class Ring:
+    def __init__(self, servers, vnodes=100):
+        self.points = sorted((h(f"{s}#{i}"), s) for s in servers for i in range(vnodes))
+        self.keys = [p for p, _ in self.points]
+    def owner(self, key):
+        i = bisect.bisect(self.keys, h(key)) % len(self.points)
+        return self.points[i][1]
+
+keys = [f"user:{i}" for i in range(10000)]
+mod_moved = sum(h(k) % 4 != h(k) % 5 for k in keys) / len(keys)
+a, b = Ring(["s1", "s2", "s3", "s4"]), Ring(["s1", "s2", "s3", "s4", "s5"])
+ring_moved = sum(a.owner(k) != b.owner(k) for k in keys) / len(keys)
+print(f"modulo hashing, 4 -> 5 servers: {mod_moved:.0%} of keys move")
+print(f"hash ring,      4 -> 5 servers: {ring_moved:.0%} of keys move (ideal 1/5 = 20%)")
+for v in (1, 10, 100):
+    r = Ring(["s1", "s2", "s3", "s4"], v)
+    c = Counter(r.owner(k) for k in keys)
+    print(f"{v:>3} virtual nodes per server: keys per server {sorted(c.values())}")
+# modulo hashing, 4 -> 5 servers: 80% of keys move
+# hash ring,      4 -> 5 servers: 17% of keys move (ideal 1/5 = 20%)
+#   1 virtual nodes per server: keys per server [1765, 2602, 2680, 2953]
+#  10 virtual nodes per server: keys per server [1405, 2185, 2746, 3664]
+# 100 virtual nodes per server: keys per server [2335, 2440, 2514, 2711]
+```
+
+Modulo hashing moved 80% of the keys; the ring moved 17%, close to the ideal 1/5. With one position per server the loads vary a lot; with 100 virtual nodes they are far closer. (The 10-vnode row is a reminder that "more" is not monotonic by luck: balance improves on average, not on every run.)
+
+## Virtual nodes make the distribution more even
+
+With only one ring position per physical server, the distribution can be uneven. A server may accidentally receive a large interval of the hash space, while another receives a small one.
+
+Consistent hashing commonly addresses this with virtual nodes, or vnodes. Each physical server is represented by multiple positions on the ring, typically generated by hashing combinations of the server identity and a virtual-node index.
+
+Instead of owning one continuous interval, a physical server owns many smaller intervals distributed around the ring. This makes the total amount of assigned key space more even.
+
+Virtual nodes also make capacity weighting easier. A more powerful server can receive more virtual nodes and therefore own a larger expected share of the keys. When a physical server is removed, its virtual positions disappear, and only the keys in those positions' intervals need to be reassigned.
+
+Virtual nodes improve expected balance; they do not guarantee equal work. A handful of extremely popular keys can still create hotspots even if the number of keys is evenly distributed.
+
+## Distributed caches use it to preserve locality
+
+Consider a cache holding millions of product records across several servers. Each cache key is mapped to a server, so a request for a particular product can go directly to its expected owner.
+
+When another cache server is added, consistent hashing moves ownership of only a subset of keys. Most keys remain on their previous servers, preserving useful cached data and avoiding unnecessary misses.
+
+This is particularly valuable when the backing database is expensive to query or when rebuilding cached values consumes significant CPU. Stable assignments reduce the amount of cache warming required after cluster changes.
+
+However, consistent hashing does not automatically replicate data. If the server holding a key fails, the key must be fetched again unless the system also maintains replicas. Some designs assign a key to multiple successive servers on the ring to support replication, but this is an additional policy, not an inherent guarantee of consistent hashing.
+
+## Load balancers can use the same idea for request affinity
+
+A load balancer can hash a client ID, session identifier, or request key and route requests to the corresponding backend. This can keep related requests on the same server, which is useful when that server holds a local cache or other state associated with the client.
+
+If a backend is added or removed, consistent hashing limits how many clients are reassigned. This can preserve locality and reduce cache misses compared with assigning clients through a mapping that changes dramatically whenever the server count changes.
+
+But consistent hashing and least-connections routing optimize different objectives. Consistent hashing favors stable assignments; least connections favors servers with fewer active connections. A hash-based load balancer may continue sending a popular client's requests to an overloaded server because stability alone does not measure current load.
+
+Some systems combine stable hashing with health checks, bounded load, or fallback routing. If a server becomes unavailable, the balancer can route affected keys elsewhere, while accepting that the reassigned traffic may lose some locality.
+
+## The guarantee is limited movement, not perfect balance
+
+Consistent hashing is useful because cluster membership changes are localized in the mapping. It does not guarantee that every server receives the same number of requests, stores the same amount of data, or performs the same amount of work.
+
+Its effectiveness depends on the hash distribution, the number of virtual nodes, the workload's key popularity, and how failures are handled. Adding capacity may also require data migration if the system needs the new owner to hold the actual data, rather than simply changing where future requests are routed.
+
+The distinction from ordinary hashing is the key insight: the mapping is designed to depend on positions in a shared space, not directly on the current number of servers. That allows a distributed system to grow or shrink while preserving most existing assignments, reducing unnecessary data movement and helping the system scale with less disruption.
+
+<Callout type="key">
+The trick is to make the assignment depend on **positions in a shared space** rather than on the **count** of servers. When the count changes, only the keys near the change need new homes.
+</Callout>
