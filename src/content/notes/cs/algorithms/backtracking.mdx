@@ -1,0 +1,115 @@
+---
+title: "Backtracking"
+description: "Search with pruning, abandoning dead-end partial solutions early, shown with N-queens."
+order: 8
+tier: core
+takeaways:
+  - "**Backtracking** builds a solution one decision at a time and undoes the last decision when it hits a dead end."
+  - "Its power is **pruning**: a partial solution that already breaks a constraint is abandoned with all its extensions."
+  - "N-Queens: one queen per row; queens conflict if c₁ = c₂ or |r₁ − r₂| = |c₁ − c₂|."
+  - "The undo step (`queens[row] = -1`) is what keeps branches independent. Forget it and state leaks between branches."
+  - "Pruning helps a lot in practice but the worst case stays exponential or factorial."
+resources:
+  - title: "Backtracking"
+    url: "https://en.wikipedia.org/wiki/Backtracking"
+    note: "The general reject/accept/first/next formulation and classic applications."
+  - title: "Eight queens puzzle"
+    url: "https://en.wikipedia.org/wiki/Eight_queens_puzzle"
+    note: "Solution counts for each N, history, and faster constructive methods."
+---
+
+**Backtracking** is an algorithmic technique that explores possible solutions one decision at a time, abandoning a path as soon as it becomes impossible or violates a constraint. The N-Queens problem is a classic example: place $N$ queens on an $N \times N$ chessboard so that no two queens attack each other. Instead of testing every possible board arrangement, backtracking builds a partial solution, checks whether each new placement is safe, and reverses choices that cannot lead to a valid solution. Its power comes from pruning invalid possibilities before exploring them fully.
+
+## How backtracking works
+
+Backtracking treats a solution as a sequence of decisions. At each step, it chooses a candidate, checks whether that choice is valid, and continues recursively if it is. When a choice leads to a dead end, the algorithm undoes it and tries another candidate.
+
+The general pattern is:
+
+1. If the current partial solution is complete, record or return the solution.
+2. Consider each available candidate for the next decision.
+3. If the candidate satisfies the constraints, add it to the partial solution.
+4. Explore the resulting state recursively.
+5. Undo the choice and continue with the next candidate.
+
+<Callout type="key">
+Undoing a choice is the defining feature. Unlike a greedy algorithm, which generally commits to its decisions, backtracking systematically explores alternatives. Unlike brute force that blindly generates every complete candidate, it rejects invalid partial candidates early.
+</Callout>
+
+## The N-Queens problem
+
+A queen attacks every square in its row, column, and both diagonal directions. Therefore, a valid arrangement must prevent any pair of queens from sharing one of those lines.
+
+Placing exactly one queen in each row handles the row constraint automatically. The algorithm then chooses a column for each row while ensuring that no column or diagonal is already occupied.
+
+Represent the board with an array $Q$, where $Q[r]$ is the column containing the queen in row $r$. A queen at $(r_1,c_1)$ conflicts with a queen at $(r_2,c_2)$ if they share a column or diagonal:
+
+$$
+c_1=c_2 \quad\text{or}\quad |r_1-r_2|=|c_1-c_2|
+$$
+
+In words: two queens clash if they are in the same column, or if they are as many rows apart as they are columns apart, which is exactly what lying on a shared diagonal means. Since queens are placed one per row, there is no need to check for row conflicts. The algorithm only needs to test columns and diagonals against previously placed queens.
+
+## Building the solution recursively
+
+A straightforward implementation tries every column in the current row. If a placement is safe, it recurses to the next row. If no safe column leads to a solution, it returns to the previous row and moves that queen to another column.
+
+```python
+def solve_n_queens(n):
+    queens = [-1] * n      # queens[r] = column of the queen in row r
+    solutions = []
+
+    def safe(row, col):
+        for previous_row in range(row):
+            previous_col = queens[previous_row]
+            same_column = previous_col == col
+            same_diagonal = (
+                abs(previous_row - row)
+                == abs(previous_col - col)
+            )
+            if same_column or same_diagonal:
+                return False
+        return True
+
+    def backtrack(row):
+        if row == n:
+            solutions.append(queens.copy())   # copy: queens keeps changing
+            return
+        for col in range(n):
+            if safe(row, col):
+                queens[row] = col
+                backtrack(row + 1)
+                queens[row] = -1  # Undo the placement
+
+    backtrack(0)
+    return solutions
+
+print(solve_n_queens(4))                              # [[1, 3, 0, 2], [2, 0, 3, 1]]
+print([len(solve_n_queens(n)) for n in range(1, 9)])  # [1, 0, 0, 2, 10, 4, 40, 92]
+```
+
+The base case occurs when `row == n`: every row has a queen, and all placements passed the safety checks. The algorithm copies the board representation because the working array will continue changing as it explores other possibilities.
+
+The line `queens[row] = -1` performs the backtracking step. After the recursive call returns, the algorithm removes the current placement so that another column can be tried.
+
+<Callout type="pitfall">
+Without this undo step, earlier choices would incorrectly persist across different branches of the search.
+</Callout>
+
+For $N=4$, there are two distinct solutions, represented by the column sequences `[1, 3, 0, 2]` and `[2, 0, 3, 1]`, using zero-based column indices. For $N=2$ and $N=3$, no valid arrangement exists.
+
+<NQueensStepper />
+
+## Pruning and computational cost
+
+The main advantage of backtracking is **pruning**: once a partial arrangement contains a conflict, none of its extensions can become valid. The algorithm rejects that branch immediately rather than filling the rest of the board and discovering the conflict later.
+
+However, backtracking does not guarantee polynomial-time performance. In the simple implementation, each candidate placement checks up to $O(N)$ previously placed queens. The search tree can contain a factorial-scale number of candidate arrangements, so a loose worst-case upper bound for this implementation is $O(N!\,N)$. Actual work is reduced by pruning, but the search remains expensive as $N$ grows. Storing all solutions also requires space proportional to the number of solutions, in addition to the recursion stack and working board.
+
+The implementation can be made faster by tracking occupied columns and diagonals in sets or bitmasks. With constant-time constraint checks, each placement can be tested more efficiently, though the number of search branches can still grow rapidly. If only one solution is needed, the algorithm can stop as soon as it finds one rather than collecting every solution.
+
+## Where backtracking is useful
+
+N-Queens illustrates a general class of problems in which a valid solution must be assembled under constraints. Similar techniques appear in Sudoku solvers, maze search, graph coloring, word puzzles, and generating permutations or combinations.
+
+Backtracking is most effective when constraints can reject partial solutions early. If almost every partial choice remains viable until the end, pruning provides little benefit. When a problem has many repeated subproblems, [dynamic programming](../dynamic-programming/) may be more appropriate; when a safe local choice can be proven to preserve optimality, a [greedy algorithm](../greedy-algorithms/) may avoid searching alternatives altogether.

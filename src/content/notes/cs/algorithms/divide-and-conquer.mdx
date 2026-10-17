@@ -1,0 +1,120 @@
+---
+title: "Divide & Conquer"
+description: "Split the problem, solve the pieces, combine the answers."
+order: 5
+tier: core
+takeaways:
+  - "**Divide** into smaller instances, **conquer** them recursively, **combine** the answers."
+  - "Running time follows a recurrence T(n) = a·T(n/b) + f(n): a subproblems of size n/b plus f(n) work outside the calls."
+  - "Merge sort does n work on each of log₂n + 1 levels, so it is O(n log n)."
+  - "Splitting alone does not make things faster: 4·T(n/2) + n is still Θ(n²). What counts is how total work per level changes."
+  - "Heavily **overlapping** subproblems are a sign to switch to dynamic programming."
+resources:
+  - title: "Divide-and-conquer algorithm"
+    url: "https://en.wikipedia.org/wiki/Divide-and-conquer_algorithm"
+    note: "History, classic examples and implementation issues such as base-case size."
+  - title: "Master theorem (analysis of algorithms)"
+    url: "https://en.wikipedia.org/wiki/Master_theorem_(analysis_of_algorithms)"
+    note: "The three cases that solve most T(n) = aT(n/b) + f(n) recurrences directly."
+  - title: "MIT 6.006 Introduction to Algorithms (OCW)"
+    url: "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/"
+    note: "Lectures on recurrences, merge sort and recursion trees."
+---
+
+**Divide and conquer** is an algorithmic strategy that solves a problem by breaking it into smaller instances of the same problem, solving those instances, and combining their results. It is powerful when smaller instances are easier to solve and their solutions can be assembled efficiently into a complete answer. Merge sort, binary search, and many tree algorithms use this pattern, but the benefit depends on how much the problem shrinks and how much work is required to combine the results.
+
+## The three stages
+
+Divide and conquer follows three conceptual stages.
+
+**Divide** breaks the original problem into smaller subproblems. These are often similar in structure to the original, allowing the same algorithm to solve them recursively.
+
+**Conquer** solves the subproblems, usually by applying the algorithm recursively. When a subproblem becomes small enough to solve directly, the algorithm uses a base case.
+
+**Combine** assembles the subproblem solutions into the solution to the original problem. Depending on the algorithm, this step may be substantial or almost unnecessary.
+
+The stages are a reasoning framework rather than a requirement that every algorithm perform three equally significant operations. Binary search, for example, discards half the problem at each step and does very little combining.
+
+## Merge sort as an example
+
+Merge sort demonstrates the full pattern. Given an unsorted array, it splits the array into two halves, sorts each half recursively, and merges the two sorted halves.
+
+For `[7, 2, 5, 1]`, the process is:
+
+1. Divide into `[7, 2]` and `[5, 1]`.
+2. Divide again until each subarray contains one element, which is already sorted.
+3. Merge `[7]` and `[2]` into `[2, 7]`, and `[5]` and `[1]` into `[1, 5]`.
+4. Merge `[2, 7]` and `[1, 5]` into `[1, 2, 5, 7]`.
+
+The recursive calls solve smaller versions of the same task. The base case is a sequence of zero or one elements, and the merge operation combines the results.
+
+```python
+def merge_sort(a):
+    if len(a) <= 1:                      # base case: already sorted
+        return a
+    mid = len(a) // 2
+    left, right = merge_sort(a[:mid]), merge_sort(a[mid:])   # divide + conquer
+    out, i, j = [], 0, 0
+    while i < len(left) and j < len(right):                   # combine
+        if left[i] <= right[j]:          # <= takes ties from the left: stable
+            out.append(left[i]); i += 1
+        else:
+            out.append(right[j]); j += 1
+    return out + left[i:] + right[j:]    # one side is exhausted; append the rest
+
+print(merge_sort([7, 2, 5, 1]))  # [1, 2, 5, 7]
+```
+
+## Understanding the time complexity
+
+Divide-and-conquer algorithms are often analyzed with a **recurrence relation**. A common form is
+
+$$
+T(n)=a\,T\left(\frac{n}{b}\right)+f(n)
+$$
+
+In words: the cost of a problem of size $n$ is the cost of $a$ smaller problems of size $n/b$, plus whatever work is done to split and recombine.
+
+where:
+
+- $n$ is the original input size.
+- $a$ is the number of recursive subproblems.
+- $n/b$ is the approximate size of each subproblem.
+- $f(n)$ is the work performed outside the recursive calls, including dividing and combining.
+
+For merge sort, there are two subproblems, each half the original size, and merging takes linear time:
+
+$$
+T(n)=2T(n/2)+O(n)
+$$
+
+The recursion has approximately $\log_2 n$ levels because the input size halves at each level. Each level processes a total of $O(n)$ elements during merging, so the overall time complexity is
+
+$$
+T(n)=O(n\log n)
+$$
+
+This is better than the $O(n^2)$ worst-case time of simple quadratic sorting algorithms on large inputs. The improvement comes from organizing the work into levels rather than repeatedly processing nearly the entire problem for every element.
+
+<DivideConquerTree />
+
+## Different algorithms, different patterns
+
+Divide and conquer does not always divide the problem in the same way or combine solutions in the same manner.
+
+- Binary search divides the search interval in half and continues with only one half. Its time complexity is $O(\log n)$ on sorted, randomly accessible data.
+- Merge sort solves both halves and merges the results. Its time complexity is $O(n\log n)$.
+- Quicksort partitions elements around a pivot, then recursively sorts the resulting regions. Its average time is $O(n\log n)$, but poor partitions can lead to $O(n^2)$ time.
+- Tree traversal recursively processes subtrees, taking time proportional to the number of nodes when each node is visited a constant number of times.
+
+<Callout type="key">
+These examples show that dividing a problem is not enough by itself to guarantee efficiency. The sizes and number of subproblems, the work required outside recursive calls, and the balance of the divisions all affect the result.
+</Callout>
+
+## When divide and conquer works well
+
+The strategy is especially useful when subproblems can be solved independently and their results can be combined without excessive work. It also benefits from a natural recursive structure: sorting halves, searching a smaller interval, or processing subtrees.
+
+It is less effective when subproblems overlap heavily and repeatedly solve the same smaller tasks. Naive recursive Fibonacci is a classic example: many branches recompute identical values. [Dynamic programming](../dynamic-programming/) addresses this by storing and reusing subproblem results, while divide and conquer typically solves separate subproblems independently.
+
+The key design question is therefore not merely whether a problem can be divided. It is whether dividing it reduces the total work enough to justify the overhead of recursion and combining results.

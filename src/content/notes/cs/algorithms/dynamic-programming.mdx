@@ -1,0 +1,150 @@
+---
+title: "Dynamic Programming"
+description: "Memoization, tabulation, and the classic problems they solve."
+order: 7
+tier: core
+takeaways:
+  - "DP applies when a problem has **overlapping subproblems** and **optimal substructure**."
+  - "**Memoization** is top-down: recurse, but cache each answer. **Tabulation** is bottom-up: fill a table in dependency order."
+  - "Naive recursive fib(n) makes 2·F(n+1) − 1 calls (exponential); memoized, it makes 2n − 1."
+  - "Design order: define the **state**, write the **recurrence**, set **base cases**, pick an evaluation order, then count states × work per state."
+resources:
+  - title: "Dynamic programming"
+    url: "https://en.wikipedia.org/wiki/Dynamic_programming"
+    note: "Bellman's origin of the term and many worked examples."
+  - title: "functools.cache (Python docs)"
+    url: "https://docs.python.org/3/library/functools.html"
+    note: "One-line memoization: `@cache` on a pure recursive function."
+  - title: "VisuAlgo: recursion tree / DAG"
+    url: "https://visualgo.net/en/recursion"
+    note: "Shows a recursion tree collapsing into a DAG when subproblems are shared."
+---
+
+**Dynamic programming** (DP) is a technique for solving problems by breaking them into smaller subproblems and reusing their solutions instead of repeatedly computing them. It is especially useful when subproblems overlap and the original problem can be built from their answers. Memoization stores results as recursive calls discover them, while tabulation computes results iteratively in a deliberate order. The central insight is that many problems that appear exponentially expensive become manageable once each distinct subproblem is solved only once.
+
+## When dynamic programming applies
+
+Two properties commonly indicate that a problem can benefit from dynamic programming.
+
+**Overlapping subproblems** means the same smaller problem appears repeatedly during the computation. Consider Fibonacci numbers, defined by
+
+$$
+F(n)=F(n-1)+F(n-2)
+$$
+
+with $F(0)=0$ and $F(1)=1$. A naive recursive implementation computes `F(n-2)` multiple times through different branches. As the recursion expands, the same values are recalculated again and again.
+
+<DpFibTree />
+
+**Optimal substructure** means a larger solution can be constructed from solutions to smaller subproblems. For example, the shortest path to a destination through a particular intermediate node can be built from a shortest path to that intermediate node, followed by the final edge.
+
+These properties are common in optimization, counting, and decision problems. They are useful clues, not a guarantee that every problem with recursion needs DP. The important question is whether a manageable set of smaller states can capture everything needed to solve the original problem.
+
+## Memoization: solve on demand
+
+**Memoization** combines recursion with a cache. When a function receives a subproblem, it first checks whether its answer has already been computed. If so, it returns the stored result; otherwise, it computes the answer and saves it for later.
+
+```python
+def fib(n, memo=None):
+    if memo is None:
+        memo = {}   # fresh cache per top-level call (a default {} would be shared)
+
+    if n in memo:
+        return memo[n]
+
+    if n <= 1:
+        return n
+
+    memo[n] = fib(n - 1, memo) + fib(n - 2, memo)
+    return memo[n]
+
+print(fib(50))  # 12586269025  (instant; the naive version makes ~4 × 10^10 calls)
+```
+
+This implementation computes each Fibonacci value once and reuses it whenever another call needs it. The number of distinct states is $O(n)$, and each state performs constant additional work, so the total time is $O(n)$, with $O(n)$ storage and $O(n)$ worst-case recursion depth.
+
+Memoization is often the easiest way to convert a recursive solution into a dynamic programming solution. It computes only states actually reached by the recursion, which can be valuable when many possible states are never needed. Its main limitation is the overhead of recursive calls and cache lookups, along with the possibility of hitting a recursion-depth limit.
+
+## Tabulation: build answers in order
+
+**Tabulation** solves subproblems iteratively, storing their answers in a table. Instead of starting with the original problem and recursively asking for smaller answers, it starts with the simplest states and builds upward.
+
+```python
+def fib(n):
+    if n <= 1:
+        return n
+
+    dp = [0] * (n + 1)
+    dp[1] = 1
+
+    for i in range(2, n + 1):
+        dp[i] = dp[i - 1] + dp[i - 2]   # both inputs are already in the table
+
+    return dp[n]
+
+print(fib(50))  # 12586269025
+```
+
+The table records $F(0), F(1), \ldots, F(n)$. Each entry depends only on the two previous entries, which have already been calculated.
+
+This version also takes $O(n)$ time and $O(n)$ space, but it avoids recursive calls. Because each value depends only on the previous two, the storage can be reduced to $O(1)$ by keeping just those two values rather than the entire table.
+
+<Callout type="key">
+Memoization and tabulation can solve the same problem with the same asymptotic complexity, but they approach the computation from different directions.
+</Callout>
+
+| Property         | Memoization                   | Tabulation                             |
+| ---------------- | ----------------------------- | -------------------------------------- |
+| Strategy         | Top-down recursion            | Bottom-up iteration                    |
+| Computation      | On demand                     | In a chosen order                      |
+| Unneeded states  | Often skipped                 | May be computed unnecessarily          |
+| Call-stack usage | Usually required              | Usually avoided                        |
+| Typical strength | Natural recursive formulation | Explicit control over order and memory |
+
+## Designing a dynamic programming solution
+
+A reliable way to develop a DP algorithm is to define its states before writing the code.
+
+1. Define the **state**. Decide what information uniquely identifies a subproblem. For Fibonacci, the state is simply the index $n$. For a knapsack problem, it might be the number of items considered and the remaining capacity.
+2. Write the **recurrence**. Express the answer for a state in terms of smaller states. For Fibonacci, $F(n)=F(n-1)+F(n-2)$.
+3. Set the base cases. Define the smallest states directly, so the recurrence has valid starting points.
+4. Choose a computation strategy. Use memoization for recursive, on-demand exploration or tabulation when the dependencies can be processed in a clear order.
+5. Analyze time and space. Count the number of distinct states and the work needed per state.
+
+A useful general rule is
+
+$$
+\text{running time} \approx \text{number of states} \times \text{work per state}
+$$
+
+In words: a DP is only as fast as its state space is small. Fibonacci has $n+1$ states with $O(1)$ work each, so it takes $O(n)$; a 0/1 knapsack over $n$ items and capacity $W$ has $O(nW)$ states, each choosing between two options, so it takes $O(nW)$.
+
+<Callout type="practice">
+Before coding, write the state in one sentence ("`best[x]` = fewest coins that sum to exactly `x`"). If you cannot, the recurrence will not be right either.
+</Callout>
+
+## Classic problems
+
+A handful of problems recur so often that their state definitions are worth knowing by heart.
+
+- **Coin change (minimum coins).** State: amount $x$. $\text{best}(x) = 1 + \min_c \text{best}(x-c)$ over coins $c \le x$. This is the exact fix for the coin systems where the [greedy rule fails](../greedy-algorithms/).
+- **0/1 knapsack.** State: first $i$ items and remaining capacity $w$. Either skip item $i$ or take it if it fits: $O(nW)$ time.
+- **Longest common subsequence.** State: prefixes of length $i$ and $j$ of two strings. If the last characters match, extend the diagonal; otherwise take the better of dropping one character from either string: $O(mn)$ time.
+- **Edit distance.** The same two-prefix table, with insert, delete and substitute as the three moves. It is worked through cell by cell in [String Algorithms](../string-algorithms/).
+
+Coin change shows the pattern in a few lines of tabulation:
+
+```python
+def min_coins(coins, amount):
+    best = [0] + [float("inf")] * amount   # best[x] = fewest coins summing to x
+    for x in range(1, amount + 1):          # smaller amounts are always ready first
+        for c in coins:
+            if c <= x:
+                best[x] = min(best[x], best[x - c] + 1)
+    return best[amount]
+
+print(min_coins([1, 3, 4], 6))       # 2   (3 + 3; greedy would use 4 + 1 + 1)
+print(min_coins([1, 5, 10, 25], 63)) # 6   (25 + 25 + 10 + 1 + 1 + 1)
+```
+
+There are `amount` states and each tries every coin, so the running time is $O(\text{amount} \times \text{coins})$, exactly the states-times-work rule above.

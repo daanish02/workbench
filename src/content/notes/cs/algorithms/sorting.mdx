@@ -1,0 +1,130 @@
+---
+title: "Sorting"
+description: "Bubble, insertion, merge, quick, and heap sort, compared by cost and behavior."
+order: 4
+tier: core
+takeaways:
+  - "Bubble and insertion sort are O(n²); **insertion sort** is still the best choice for small or nearly sorted inputs."
+  - "**Merge sort** guarantees O(n log n) and is stable, at the cost of O(n) extra memory."
+  - "**Quicksort** averages O(n log n) and is fast in practice, but bad pivots make it O(n²)."
+  - "**Heapsort** guarantees O(n log n) in O(1) extra space, but is not stable and has poor locality."
+  - "A **stable** sort keeps equal keys in their original order, which lets you sort by several fields in successive passes."
+resources:
+  - title: "VisuAlgo: sorting"
+    url: "https://visualgo.net/en/sorting"
+    note: "Step-through animations of every algorithm here, with pseudocode."
+  - title: "Sorting algorithm"
+    url: "https://en.wikipedia.org/wiki/Sorting_algorithm"
+    note: "Big comparison table, including stability and memory for dozens of sorts."
+  - title: "Sorting Techniques (Python docs)"
+    url: "https://docs.python.org/3/howto/sorting.html"
+    note: "Key functions and how stability enables multi-pass sorts."
+  - title: "Timsort"
+    url: "https://en.wikipedia.org/wiki/Timsort"
+    note: "The hybrid merge/insertion sort behind Python's and Java's object sorts."
+---
+
+Sorting algorithms arrange a collection of elements according to an ordering, such as ascending numbers or alphabetical names. Different algorithms achieve the same result through different strategies, trading simplicity and memory use against speed as the input grows. Bubble sort and insertion sort are simple but usually slow on large collections; merge sort guarantees $O(n\log n)$ time by dividing the problem into smaller parts, while quicksort achieves $O(n\log n)$ average time through partitioning and heapsort guarantees $O(n\log n)$ time using a heap. Understanding these differences explains why no single sorting algorithm is best for every situation.
+
+## How sorting algorithms work
+
+The central task is to transform an unordered sequence into one that satisfies a comparison rule. For ascending numbers, the rule is that each element must be less than or equal to the next.
+
+The algorithms differ mainly in how they identify the next correctly positioned elements. Some repeatedly exchange neighboring values, some insert each value into an already sorted region, and others divide the sequence or use a data structure to choose elements efficiently.
+
+A key measure is time complexity: how the number of operations grows with the input size $n$. An algorithm taking $O(n^2)$ time may be perfectly adequate for a dozen elements but become expensive for millions. Space complexity matters too, especially when an algorithm needs extra arrays or recursive function calls.
+
+<SortingVisualizer />
+
+## Bubble sort and insertion sort
+
+**Bubble sort** repeatedly compares adjacent elements and swaps them when they are out of order. After one full pass, the largest unsorted element has moved to the end, much like a bubble rising through the sequence. Repeating this process eventually sorts the collection.
+
+For example, sorting `[4, 2, 3]` begins by swapping `4` and `2`, producing `[2, 4, 3]`. The next comparison swaps `4` and `3`, producing `[2, 3, 4]`.
+
+Bubble sort is easy to understand but inefficient: its average and worst-case time complexity is $O(n^2)$. An optimized implementation that stops when a pass makes no swaps can finish in $O(n)$ time on an already sorted sequence. Its main value is educational rather than practical.
+
+**Insertion sort** builds a sorted region from left to right. Each new element is taken from the unsorted region and inserted into its correct position among the elements already processed. Larger elements shift right to make room.
+
+For `[4, 2, 3]`, insertion sort first inserts `2` before `4`, giving `[2, 4, 3]`. It then inserts `3` between them, giving `[2, 3, 4]`.
+
+Insertion sort has $O(n^2)$ average and worst-case time complexity, but it performs well on small or nearly sorted collections. It is also in-place, stable in its usual implementation, and requires only $O(1)$ auxiliary space. These properties make it useful as a component inside more sophisticated sorting implementations.
+
+## Merge sort: divide and combine
+
+**Merge sort** uses [divide-and-conquer](../divide-and-conquer/): split the sequence into smaller parts, sort those parts, and combine them into a sorted whole.
+
+For `[4, 2, 3, 1]`, it divides the sequence into `[4, 2]` and `[3, 1]`, then into individual elements. Individual elements are already sorted. The algorithm merges them in order: `[2, 4]` and `[1, 3]`, followed by the final merge `[1, 2, 3, 4]`.
+
+The key insight is that merging two sorted sequences is efficient. Compare their first remaining elements, take the smaller one, and repeat. Each element needs to be processed only a constant number of times per level of merging.
+
+The recurrence is
+
+$$
+T(n)=2T(n/2)+O(n)
+$$
+
+In words: sorting $n$ items costs two sorts of half the size plus a linear amount of merging. The two recursive calls sort halves of the input, while the linear term represents merging. There are approximately $\log_2 n$ levels, each doing $O(n)$ work, giving
+
+$$
+T(n)=O(n\log n)
+$$
+
+Merge sort guarantees this time complexity in the best, average, and worst cases. Its usual array implementation requires $O(n)$ auxiliary space, but it is stable when equal elements are taken from the left half first. It is particularly useful when predictable performance matters or when sorting linked lists and external data that cannot fit entirely in memory.
+
+## Quicksort: partition around a pivot
+
+**Quicksort** also uses divide-and-conquer, but it organizes the data differently. It selects a **pivot**, partitions the elements into those smaller and larger than the pivot, and recursively sorts the resulting regions. Once the partitions are sorted, the full sequence is sorted without a separate merge step.
+
+For `[4, 2, 3, 1]`, choosing `3` as the pivot could produce a left region containing `[2, 1]` and a right region containing `[4]`. Sorting the left region and placing the pivot between the regions produces `[1, 2, 3, 4]`.
+
+<Callout type="pitfall" title="The pivot is everything">
+The pivot determines how balanced the recursive work will be. With roughly equal partitions, the recurrence resembles merge sort's, producing $O(n\log n)$ time. If the pivot repeatedly produces one large partition and one nearly empty partition, the work can degrade to $O(n^2)$. Always picking the last element as pivot does exactly this on input that is already sorted: try **Quick** with **Reversed** or **Nearly sorted** input in the visualizer above.
+</Callout>
+
+Quicksort's average time complexity is $O(n\log n)$, and its worst-case time complexity is $O(n^2)$. Randomized pivot selection or careful pivot strategies reduce the likelihood of poor partitions but do not remove the theoretical worst case. Typical in-place implementations use $O(\log n)$ expected stack space with balanced recursion, although pathological recursion can require $O(n)$. Standard quicksort is not stable.
+
+Quicksort is often fast in practice because partitioning is efficient and array-based implementations tend to have good memory locality. Its appeal is not that it has the strongest worst-case guarantee, but that its average performance is excellent for many in-memory workloads.
+
+## Heapsort: repeatedly extract the maximum
+
+**Heapsort** uses a [binary heap](../../data-structures/heaps/), a tree-shaped structure commonly stored in an array. In a max-heap, every parent is at least as large as its children, so the largest element is always at the root.
+
+Heapsort first rearranges the input into a max-heap. It then swaps the root with the last element in the unsorted region, shrinks that region, and restores the heap property. Each extraction places the largest remaining element into its final position at the end of the array.
+
+Building the heap takes $O(n)$ time. Each of the $n$ extractions requires at most $O(\log n)$ work to restore the heap, giving an overall time complexity of $O(n\log n)$ in the best, average, and worst cases.
+
+Heapsort is in-place in its standard array implementation and uses $O(1)$ auxiliary space, excluding implementation-specific overhead. Its disadvantages are that it is not stable and often has poorer cache locality than quicksort. It is useful when a guaranteed $O(n\log n)$ bound and minimal extra memory matter.
+
+## Comparing the algorithms
+
+| Algorithm      | Best time        | Average time     | Worst time       | Auxiliary space                | Stable? |
+| -------------- | ---------------- | ---------------- | ---------------- | ------------------------------ | ------- |
+| Bubble sort    | $O(n)$\*     | $O(n^2)$     | $O(n^2)$     | $O(1)$                     | Yes     |
+| Insertion sort | $O(n)$       | $O(n^2)$     | $O(n^2)$     | $O(1)$                     | Yes     |
+| Merge sort     | $O(n\log n)$ | $O(n\log n)$ | $O(n\log n)$ | $O(n)$\*\*                 | Yes     |
+| Quicksort      | $O(n\log n)$ | $O(n\log n)$ | $O(n^2)$     | $O(\log n)$ expected\*\*\* | No      |
+| Heapsort       | $O(n\log n)$ | $O(n\log n)$ | $O(n\log n)$ | $O(1)$                     | No      |
+
+\* Bubble sort's linear best case assumes an early-exit check. \*\* Standard array-based merge sort. \*\*\* Typical in-place recursive quicksort; actual stack use depends on partition balance and implementation.
+
+<Callout type="key">
+**Stability** means equal-key elements preserve their original relative order. Suppose two records have the same date but different names. A stable sort will not reverse their order merely because their dates are equal. This matters when sorting records by multiple fields in successive passes.
+</Callout>
+
+Python's built-in sort is stable, so two passes give "by date, then by name within each date":
+
+```python
+records = [("2024-03-01", "Mo"), ("2024-01-15", "Ann"),
+           ("2024-03-01", "Al"), ("2024-01-15", "Bea")]
+by_name = sorted(records, key=lambda r: r[1])   # secondary key first
+by_date = sorted(by_name, key=lambda r: r[0])   # stable: ties keep name order
+for r in by_date:
+    print(r)
+# ('2024-01-15', 'Ann')
+# ('2024-01-15', 'Bea')
+# ('2024-03-01', 'Al')
+# ('2024-03-01', 'Mo')
+```
+
+The practical choice follows from the workload. Insertion sort suits small or nearly sorted inputs. Merge sort suits predictable performance and stable ordering. Quicksort is a strong general-purpose approach for in-memory arrays when average speed matters. Heapsort is attractive when worst-case time guarantees and low auxiliary memory are priorities. Real-world libraries often use hybrid algorithms that combine techniques rather than relying on one algorithm for every input. Python's own sort, Timsort, is merge sort that uses insertion sort on short runs.

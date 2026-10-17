@@ -1,0 +1,136 @@
+---
+title: "Big-O Notation"
+description: "Time and space complexity, and the common growth classes."
+order: 1
+tier: core
+takeaways:
+  - "Big-O describes **growth rate**, not exact time: constants and lower-order terms are dropped, so 3n² + 5n + 10 is O(n²)."
+  - "f(n) = O(g(n)) means that past some n₀, f(n) ≤ c·g(n) for a fixed constant c. It is an **upper bound**."
+  - "Common classes, cheapest first: O(1), O(log n), O(n), O(n log n), O(n²), O(2ⁿ), O(n!)."
+  - "Big-O says nothing about best, average or worst case by itself. **State the case** you are analyzing."
+  - "Time and space are separate budgets; **auxiliary space** counts only the extra memory beyond the input."
+resources:
+  - title: "Big O notation"
+    url: "https://en.wikipedia.org/wiki/Big_O_notation"
+    note: "Formal definitions of O, Ω and Θ, and the related notations."
+  - title: "Big-O Cheat Sheet"
+    url: "https://www.bigocheatsheet.com/"
+    note: "Time and space bounds for common data structures and sorts on one page."
+  - title: "MIT 6.006 Introduction to Algorithms (OCW)"
+    url: "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/"
+    note: "Free lectures; the first ones cover asymptotic analysis carefully."
+---
+
+**Big-O notation** describes how an algorithm's resource requirements grow as its input gets larger. **Time complexity** measures how the amount of computation scales, while **space complexity** measures how memory requirements scale. Rather than predicting exact seconds or bytes, Big-O focuses on the growth rate, allowing algorithms to be compared independently of specific hardware. Understanding common complexity classes helps explain why one solution remains practical for millions of inputs while another becomes prohibitively expensive.
+
+## What Big-O measures
+
+Big-O notation describes an **asymptotic upper bound** on a function's growth. In algorithm analysis, it is commonly used to express how an algorithm's time or space requirements scale with input size $n$, ignoring constant factors and lower-order terms.
+
+For example, suppose an algorithm performs approximately
+
+$$
+T(n)=3n^2+5n+10
+$$
+
+operations. As $n$ grows, the quadratic term dominates the others, so the function is $O(n^2)$.
+
+<Callout type="key">
+Big-O does not mean the algorithm performs exactly $n^2$ operations; it describes the growth rate up to constant factors.
+</Callout>
+
+Formally, $f(n)=O(g(n))$ if there are positive constants $c$ and $n_0$ such that
+
+$$
+0 \le f(n) \le c\,g(n) \quad \text{for all } n\ge n_0
+$$
+
+In words: beyond some input size $n_0$, $f(n)$ never exceeds a fixed constant multiple of $g(n)$. For $T(n)=3n^2+5n+10$, taking $c=4$ and $n_0=7$ works, because $5n+10 \le n^2$ once $n\ge 7$.
+
+In everyday algorithm discussions, people often use Big-O to describe the expected or typical scaling of an operation.
+
+<Callout type="pitfall" title="A bound is not a case">
+Strictly speaking, Big-O itself does not specify whether an analysis is for the best, average, expected, or worst case; that assumption must be stated separately.
+</Callout>
+
+## Common time complexity classes
+
+The most useful complexity classes describe different patterns of growth.
+
+| Complexity       | Name         | Typical example                           |
+| ---------------- | ------------ | ----------------------------------------- |
+| $O(1)$       | Constant     | Accessing an array element by index       |
+| $O(\log n)$  | Logarithmic  | Binary search in a sorted array           |
+| $O(n)$       | Linear       | Scanning a list once                      |
+| $O(n\log n)$ | Linearithmic | Efficient comparison sorting              |
+| $O(n^2)$     | Quadratic    | Comparing every pair of elements          |
+| $O(2^n)$     | Exponential  | Exploring all subsets of $n$ elements |
+| $O(n!)$      | Factorial    | Enumerating all permutations              |
+
+<BigOGrowth />
+
+Constant time means the number of steps does not grow with $n$ under the stated assumptions. Logarithmic time grows slowly because each step can eliminate a substantial fraction of the remaining search space. Linear time grows in proportion to the number of inputs, while quadratic time often appears when each element is compared with many others.
+
+Exponential and factorial algorithms can become impractical even at moderate input sizes. They often arise when a problem requires exploring many possible combinations or arrangements, although not every problem that sounds combinatorial requires an exponential algorithm.
+
+<Callout type="pitfall">
+These classes are useful comparisons, not guarantees of absolute speed. An $O(n)$ algorithm can be slower than an $O(n^2)$ algorithm for small inputs if its constant overhead is much larger. Big-O becomes most informative when understanding how performance changes as the input grows.
+</Callout>
+
+## Time complexity: counting computational work
+
+Time complexity estimates how the amount of work grows with input size. It is usually derived by examining loops, recursion, and the cost of the operations inside them.
+
+A single loop over $n$ elements generally takes $O(n)$ time:
+
+```
+FOR each item IN items
+    process(item)
+```
+
+A nested loop that examines every pair often takes $O(n^2)$:
+
+```
+FOR each item in items
+    FOR each other_item in items
+        compare(item, other_item)
+```
+
+The nested loops perform roughly $n^2$ comparisons. However, nested loops do not automatically imply quadratic complexity: if the inner loop runs a fixed number of times, or the total number of iterations is bounded more tightly, the result can be different.
+
+Binary search illustrates logarithmic time. Each comparison halves the remaining search interval, so after $k$ steps the remaining size is approximately $n/2^k$. To reduce that interval to one element, we need about
+
+$$
+\frac{n}{2^k}\le 1 \quad\Longrightarrow\quad 2^k\ge n \quad\Longrightarrow\quad k\ge \log_2 n
+$$
+
+In words: the number of halvings is how many times $n$ can be divided by 2 before reaching 1, which is $\log_2 n$ (about 20 for a million elements). Thus binary search takes $O(\log n)$ time on a sorted array.
+
+Complexity can also vary by case. Searching an unsorted array takes $O(n)$ time in the worst case, but may finish immediately if the first element matches. Good analysis states which case is being considered rather than treating one input as representative of every execution.
+
+## Space complexity: counting memory
+
+Space complexity describes how memory requirements grow with input size. The distinction between **total space** and **auxiliary space** matters: total space includes the memory needed to represent the input, while auxiliary space measures the additional memory used by the algorithm.
+
+For example, summing an array with a running total requires only a constant amount of additional storage:
+
+```
+total = 0
+
+FOR each item IN items
+    total = total + item
+```
+
+Its auxiliary space is $O(1)$, even though the input array itself occupies $O(n)$ memory.
+
+Copying every element into a second array requires $O(n)$ auxiliary space. A recursive algorithm may also consume stack space proportional to its recursion depth; a recursive traversal of a balanced tree typically uses $O(\log n)$ stack space, while a deeply skewed tree can require $O(n)$.
+
+Time and space complexity are independent dimensions. An algorithm can use extra memory to save time—for example, caching previously computed results—or minimize memory while doing more repeated computation. Choosing between these approaches depends on the constraints of the problem.
+
+## Reading complexity in practice
+
+Big-O becomes most useful when comparing realistic alternatives. Searching for a key in an unsorted list takes $O(n)$ time, while searching a sorted array with binary search takes $O(\log n)$. A hash table can offer $O(1)$ average lookup, though its worst case can be $O(n)$. The best choice depends on whether the data is sorted, how frequently it changes, memory limits, and which operations matter most.
+
+Two other notations often appear alongside Big-O. **Big-Omega**, $\Omega(g(n))$, describes an asymptotic lower bound, while **Big-Theta**, $\Theta(g(n))$, describes a tight bound when both upper and lower bounds match. For example, traversing every element of an array takes $\Theta(n)$ time because each element must be visited.
+
+The practical goal is not to minimize the written complexity class at all costs. It is to understand how an algorithm scales, identify the dominant cost, and choose a solution whose time and memory demands remain acceptable as the problem grows.

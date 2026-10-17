@@ -1,0 +1,143 @@
+---
+title: "Graph Algorithms"
+description: "BFS, DFS, Dijkstra, and topological sort, and when each applies."
+order: 9
+tier: core
+takeaways:
+  - "**BFS** (queue) explores in layers and finds fewest-edge paths; **DFS** (stack or recursion) dives deep first. Both are O(V + E)."
+  - "**Dijkstra** finalizes the closest unfinished vertex each round and relaxes its edges: O((V + E) log V) with a binary heap."
+  - "Dijkstra is only correct with **non-negative** edge weights; use Bellman–Ford when weights can be negative."
+  - "**Topological sort** (Kahn's algorithm) orders a DAG so every edge points forward; leftover vertices mean a cycle."
+resources:
+  - title: "VisuAlgo: graph traversal (BFS/DFS)"
+    url: "https://visualgo.net/en/dfsbfs"
+    note: "Run BFS, DFS and topological sort on graphs you draw."
+  - title: "VisuAlgo: single-source shortest paths"
+    url: "https://visualgo.net/en/sssp"
+    note: "Dijkstra and Bellman–Ford step by step, including negative-weight failures."
+  - title: "Dijkstra's algorithm"
+    url: "https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm"
+    note: "Proof of correctness and running times for different priority queues."
+  - title: "Topological sorting"
+    url: "https://en.wikipedia.org/wiki/Topological_sorting"
+    note: "Kahn's algorithm and the DFS-based alternative."
+---
+
+Graph algorithms solve problems involving relationships between objects: finding reachable nodes, exploring networks, computing shortest paths, and ordering tasks with dependencies. Breadth-first search (BFS) explores outward in layers, while depth-first search (DFS) follows paths as far as possible before backtracking. Dijkstra's algorithm finds shortest paths when edge weights are non-negative, and topological sorting orders the vertices of a directed acyclic graph so that dependencies come before the tasks that depend on them. The right algorithm depends on what the graph represents and what question needs answering.
+
+## Representing a graph
+
+A graph consists of vertices (or nodes) and edges connecting them. A social network, a road system, and a sequence of software dependencies can all be represented as graphs, even though their edges mean different things.
+
+Graphs can be directed, where edges have a direction, or undirected, where connections work both ways. Edges may also carry weights representing distance, time, cost, or another quantity.
+
+A common representation is an **adjacency list**, which stores each vertex's neighbors. For a sparse graph, this usually uses $O(V+E)$ space, where $V$ is the number of vertices and $E$ is the number of edges. An **adjacency matrix** instead stores whether every possible pair of vertices is connected, using $O(V^2)$ space.
+
+These representations affect performance. With adjacency lists, traversing all vertices and edges typically takes $O(V+E)$ time. The algorithms below commonly use this representation.
+
+## Breadth-first search (BFS)
+
+BFS explores a graph in layers. Starting from a source vertex, it visits all immediate neighbors before visiting vertices two edges away, then three edges away, and so on.
+
+It uses a queue: the first vertex discovered is the first one processed. A vertex is normally marked as visited when it is enqueued, preventing the same vertex from being added repeatedly through different paths.
+
+For example, if `A` connects to `B` and `C`, and both connect to `D`, BFS starting at `A` visits `A`, then `B` and `C`, then `D` (assuming that neighbor order).
+
+BFS is useful for finding the shortest path in an unweighted graph, because the first discovery of a vertex occurs along a path with the minimum number of edges. It is also used for reachability, level-order exploration, and finding connected components.
+
+With an adjacency list, BFS takes $O(V+E)$ time and $O(V)$ auxiliary space in the usual implementation.
+
+<GraphTraversal />
+
+## Depth-first search (DFS)
+
+DFS explores one path as deeply as possible before returning to try another. It can be implemented recursively or with an explicit stack.
+
+Starting from `A`, DFS might visit `A`, then `B`, then `D`, before backtracking to explore `C`. The exact order depends on how neighbors are ordered. Unlike BFS, DFS does not generally find the shortest path.
+
+DFS is useful for exploring connected components, detecting cycles, identifying structural properties of graphs, and supporting algorithms for topological sorting. It is also the foundation for many graph-analysis techniques, including strongly connected component algorithms.
+
+Like BFS, DFS takes $O(V+E)$ time with an adjacency list and uses $O(V)$ auxiliary space in the usual implementation. Recursive DFS can additionally consume stack space proportional to the depth of the traversal.
+
+## Dijkstra's algorithm
+
+Dijkstra's algorithm finds shortest-path distances from a source vertex to other vertices in a weighted graph, provided all edge weights are non-negative.
+
+Instead of exploring vertices purely by distance in number of edges, it repeatedly selects the unprocessed vertex with the smallest known distance. For each outgoing edge, it checks whether going through that vertex produces a shorter route to its neighbor. This process is called **relaxation**.
+
+If $d[u]$ is the best known distance to vertex $u$, and an edge from $u$ to $v$ has weight $w(u,v)$, relaxation tests
+
+$$
+d[v] > d[u] + w(u,v)
+$$
+
+If the inequality holds, the algorithm updates the distance:
+
+$$
+d[v] = d[u] + w(u,v)
+$$
+
+In words: if reaching $u$ and then taking the edge to $v$ is cheaper than the best route to $v$ known so far, remember the cheaper route.
+
+A priority queue efficiently selects the next vertex with the smallest tentative distance. With an adjacency list and a binary heap, a common implementation takes $O((V+E)\log V)$ time. Python's `heapq` has no decrease-key operation, so the usual approach pushes a new entry on every improvement and skips stale ones when they are popped. This is the same graph as the visual above:
+
+```python
+import heapq
+
+graph = {
+    "A": [("B", 2), ("C", 5), ("D", 1)],
+    "B": [("A", 2), ("E", 3)],
+    "C": [("A", 5), ("D", 2), ("F", 1)],
+    "D": [("A", 1), ("C", 2)],
+    "E": [("B", 3), ("F", 2)],
+    "F": [("C", 1), ("E", 2)],
+}
+
+def dijkstra(graph, source):
+    dist = {v: float("inf") for v in graph}
+    dist[source] = 0
+    pq = [(0, source)]
+    while pq:
+        d, u = heapq.heappop(pq)       # closest vertex not yet finalized
+        if d > dist[u]:
+            continue                   # stale entry: u was already reached more cheaply
+        for v, w in graph[u]:
+            if d + w < dist[v]:        # relaxation
+                dist[v] = d + w
+                heapq.heappush(pq, (dist[v], v))
+    return dist
+
+print(dijkstra(graph, "A"))
+# {'A': 0, 'B': 2, 'C': 3, 'D': 1, 'E': 5, 'F': 4}
+```
+
+Dijkstra differs from BFS because edge weights matter. A path with fewer edges may be more expensive than a longer path: above, the direct edge A–C costs 5 but A–D–C costs 3. BFS is appropriate when all edges have equal cost; Dijkstra handles varying non-negative costs.
+
+<Callout type="pitfall">
+Negative edge weights invalidate Dijkstra's correctness guarantee; algorithms such as Bellman–Ford are designed to handle negative weights and can detect reachable negative cycles.
+</Callout>
+
+## Topological sorting
+
+**Topological sorting** produces a linear ordering of vertices in a directed acyclic graph (DAG) such that every directed edge $u \to v$ places $u$ before $v$. It is useful for task scheduling, build systems, course prerequisites, and other dependency problems.
+
+One method, **Kahn's algorithm**, tracks each vertex's **in-degree**: the number of incoming edges. It begins by placing every vertex with in-degree zero into a queue. These vertices have no unresolved prerequisites, so they can be processed first. Whenever a vertex is processed, its outgoing edges are removed from consideration, reducing the in-degree of its neighbors. Any neighbor whose in-degree reaches zero becomes eligible for processing.
+
+If all vertices are processed, the resulting order is a valid topological sort. If some vertices remain, the graph contains a directed cycle, meaning no valid topological ordering exists.
+
+Kahn's algorithm runs in $O(V+E)$ time with an adjacency list. A graph may have multiple valid topological orders because independent tasks can often be scheduled in different orders.
+
+## Choosing the right algorithm
+
+| Algorithm        | Main purpose                                            | Key requirement           | Typical time         |
+| ---------------- | ------------------------------------------------------- | ------------------------- | -------------------- |
+| BFS              | Explore by distance in edges; unweighted shortest paths | No weights required       | $O(V+E)$         |
+| DFS              | Explore paths, detect cycles, analyze structure         | No weights required       | $O(V+E)$         |
+| Dijkstra         | Weighted shortest paths from a source                   | Non-negative edge weights | $O((V+E)\log V)$ |
+| Topological sort | Order tasks by dependencies                             | Directed acyclic graph    | $O(V+E)$         |
+
+<Callout type="key">
+The main distinction is the question each algorithm answers. BFS asks what is reachable in progressively larger layers; DFS asks what can be explored by following paths; Dijkstra asks what the minimum weighted cost is; topological sorting asks what order respects all dependencies.
+</Callout>
+
+These algorithms can also work together. For example, a dependency system can use topological sorting to establish execution order, while a navigation system can use Dijkstra to find minimum-cost routes and BFS to explore an unweighted network.

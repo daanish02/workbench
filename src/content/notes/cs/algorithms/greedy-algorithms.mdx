@@ -1,0 +1,118 @@
+---
+title: "Greedy Algorithms"
+description: "Locally best choices, and when they are globally optimal."
+order: 6
+tier: core
+takeaways:
+  - "A **greedy algorithm** commits to the best-looking choice at each step and never revisits it."
+  - "It is correct only when you can prove the **greedy-choice property** and **optimal substructure**, usually with an exchange argument."
+  - "Earliest-finish-first activity selection, fractional knapsack, Kruskal, Prim and Huffman are provably optimal greedy algorithms."
+  - "Largest-coin-first change fails for coins 4·3·1 at amount 6 (4+1+1 vs 3+3). Tempting ≠ correct."
+resources:
+  - title: "Greedy algorithm"
+    url: "https://en.wikipedia.org/wiki/Greedy_algorithm"
+    note: "When greedy works, when it fails, and the matroid theory behind it."
+  - title: "Activity selection problem"
+    url: "https://en.wikipedia.org/wiki/Activity_selection_problem"
+    note: "The earliest-finish rule with a full exchange-argument proof."
+  - title: "Change-making problem"
+    url: "https://en.wikipedia.org/wiki/Change-making_problem"
+    note: "Which coin systems are canonical (greedy-safe), and the DP that always works."
+---
+
+**Greedy algorithms** solve problems by repeatedly making the best-looking choice available at the current step, without reconsidering earlier decisions. They are efficient when local choices can be shown to produce a globally optimal solution, but that guarantee does not hold for every problem. The central challenge is therefore not finding a tempting next move; it is proving that committing to it will not prevent a better overall result. Greedy algorithms are especially useful in problems involving scheduling, graph optimization, and constructing efficient codes.
+
+## How greedy algorithms work
+
+A greedy algorithm builds a solution incrementally. At each step, it selects the best available option according to a rule, commits to that choice, and continues until the solution is complete.
+
+Consider selecting the maximum number of non-overlapping meetings in a room. Each meeting has a start time and an end time. A natural strategy is to choose the meeting that finishes earliest, then choose the earliest-finishing meeting that starts after the previous one ends.
+
+Choosing the earliest finish leaves as much time as possible for future meetings. The algorithm does not need to examine every possible schedule; it makes a sequence of locally informed choices.
+
+A typical greedy algorithm follows this pattern:
+
+1. Define the objective and the choices available at each step.
+2. Select the best feasible choice according to a greedy rule.
+3. Commit to the choice and update the remaining problem.
+4. Repeat until the solution is complete.
+
+The rule must respect the problem's constraints. For example, a meeting that overlaps one already selected is not a feasible choice.
+
+<Callout type="key">
+Greedy does not mean choosing arbitrarily or ignoring constraints; it means choosing locally without backtracking.
+</Callout>
+
+```python
+def select_activities(meetings):
+    chosen, free_at = [], float("-inf")
+    for start, end in sorted(meetings, key=lambda m: m[1]):   # earliest finish first
+        if start >= free_at:          # feasible: starts after the last chosen one ends
+            chosen.append((start, end))
+            free_at = end             # commit; this choice is never revisited
+    return chosen
+
+meetings = [(1, 4), (3, 5), (0, 6), (5, 7), (3, 9), (5, 9),
+            (6, 10), (8, 11), (8, 12), (2, 14), (12, 16)]
+print(select_activities(meetings))  # [(1, 4), (5, 7), (8, 11), (12, 16)]
+```
+
+## When greedy choices are optimal
+
+Two properties often help establish that a greedy algorithm works.
+
+**Greedy-choice property**: There exists an optimal solution that begins with the choice selected by the greedy rule. This means the local choice can be made without sacrificing the possibility of a global optimum.
+
+**Optimal substructure**: After making that choice, the remaining problem can be solved optimally to complete the solution.
+
+For the meeting-scheduling problem, consider an optimal schedule whose first meeting is not the one that finishes earliest. Replace its first meeting with the earliest-finishing compatible meeting. Because the replacement ends no later, every later meeting in the original schedule remains feasible. The replacement therefore preserves the number of meetings selected. Once the first choice is justified, the same reasoning applies to the remaining meetings.
+
+This kind of argument is an **exchange proof**: take an optimal solution and show that one of its choices can be exchanged for the greedy choice without making the solution worse.
+
+Other proofs use induction or show that each greedy step preserves an invariant needed for optimality. The exact proof depends on the problem, but the goal is always to establish that local decisions remain compatible with a global optimum.
+
+## Classic greedy algorithms
+
+Several important algorithms demonstrate different ways greedy choices can work.
+
+**Activity selection.** To maximize the number of non-overlapping activities, repeatedly choose the compatible activity with the earliest finish time. After sorting by finish time, the algorithm runs in $O(n\log n)$ time, or $O(n)$ if the activities are already sorted. Choosing the shortest activity or the earliest starting activity does not generally guarantee an optimal schedule.
+
+**Fractional knapsack.** Given items with values and weights, maximize value under a weight limit when fractions of items are allowed. Sort items by value per unit of weight, $v_i/w_i$, and take as much as possible of the highest-ratio item before moving to the next. Sorting takes $O(n\log n)$ time. The strategy works because value increases linearly with the fraction taken. It does not generally solve the 0/1 knapsack problem, where each item must be taken whole or not at all.
+
+**Kruskal's minimum spanning tree algorithm.** For a connected, weighted, undirected graph, sort edges by weight and consider them from lightest to heaviest. Add an edge if it does not create a cycle. The result is a minimum spanning tree. A disjoint-set data structure efficiently tracks which vertices are already connected. The algorithm's correctness follows from the cut property: a lightest edge crossing an appropriate cut can be included in some minimum spanning tree.
+
+**Prim's minimum spanning tree algorithm.** Start with one vertex and repeatedly add the lightest edge connecting the current tree to a vertex outside it. Like Kruskal's algorithm, Prim's algorithm uses a greedy rule justified by the cut property, but it grows one tree rather than considering all edges globally in sorted order.
+
+**Huffman coding.** To construct an efficient prefix code, repeatedly combine the two symbols or partial trees with the lowest frequencies. Frequent symbols tend to receive shorter codes, while less frequent symbols receive longer ones. A priority queue supports the repeated minimum selections. Huffman coding is optimal among binary prefix codes for the given symbol frequencies.
+
+## When greedy algorithms fail
+
+A locally optimal choice can block a better global solution. Consider making 6 units of change using coin denominations 1, 3, and 4, where the objective is to use as few coins as possible.
+
+A greedy strategy that always chooses the largest coin takes 4, then 1, then 1: three coins. But the optimal solution is $3+3$, which uses only two.
+
+<GreedyCoinChange />
+
+<Callout type="pitfall">
+The failure occurs because the largest immediate denomination does not necessarily leave the best remainder.
+</Callout>
+
+The same issue appears in 0/1 knapsack: choosing the item with the highest value-to-weight ratio can prevent a combination of other items from achieving a larger total value.
+
+Greedy algorithms also depend on the precise objective. A rule that maximizes the number of activities may not minimize their total duration, and a rule that minimizes total edge weight in a spanning tree is not necessarily the right rule for finding a shortest path between two particular vertices.
+
+When no convincing proof supports the greedy choice, alternatives such as [dynamic programming](../dynamic-programming/) can evaluate multiple possibilities and reuse subproblem results. [Backtracking](../backtracking/) can explore candidate solutions and reject those that cannot lead to a valid answer, though it may be more expensive.
+
+## Greedy versus dynamic programming
+
+Both techniques exploit problem structure, but they differ in how they make decisions.
+
+| Property                    | Greedy algorithms                     | Dynamic programming                              |
+| --------------------------- | ------------------------------------- | ------------------------------------------------ |
+| Decision strategy           | Commit to a local choice              | Compare solutions across states                  |
+| Reconsiders earlier choices | Usually no                            | Considers alternatives through state transitions |
+| Required justification      | Greedy-choice property                | Correct state definition and recurrence          |
+| Typical strength            | Efficient, direct optimization        | Problems with overlapping subproblems            |
+| Common risk                 | Local optimum is not globally optimal | Too many states or expensive transitions         |
+
+The distinction is not that greedy algorithms are always faster or that dynamic programming always finds an optimum. Both can have different complexities depending on the problem. The important difference is the reasoning: greedy algorithms rely on a provably safe choice at each step, while dynamic programming systematically combines answers to smaller states.

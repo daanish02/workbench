@@ -1,0 +1,113 @@
+---
+title: "Searching"
+description: "Linear and binary search, and why sorted order makes binary search fast."
+order: 3
+tier: core
+takeaways:
+  - "**Linear search** works on anything, sorted or not, and costs O(n) comparisons in the worst case."
+  - "**Binary search** halves the interval each step: O(log n), about 20 comparisons for a million items, but only on sorted, randomly accessible data."
+  - "Compute the midpoint as `L + (R − L) // 2` and always exclude it on the next step (`R = M − 1` or `L = M + 1`)."
+  - "Count the total cost: sorting once (O(n log n)) only pays off if you will search many times."
+resources:
+  - title: "Binary search"
+    url: "https://en.wikipedia.org/wiki/Binary_search"
+    note: "Variants (leftmost, rightmost, approximate matches) and their exact comparison counts."
+  - title: "Nearly all binary searches and mergesorts are broken (Google Research)"
+    url: "https://research.google/blog/extra-extra-read-all-about-it-nearly-all-binary-searches-and-mergesorts-are-broken/"
+    note: "Joshua Bloch on the (L + R) / 2 overflow bug that sat in the JDK for nine years."
+  - title: "bisect: array bisection algorithm (Python docs)"
+    url: "https://docs.python.org/3/library/bisect.html"
+    note: "The standard library's binary search, including first/last occurrence."
+---
+
+Searching algorithms locate a target value within a collection, but the strategy determines how much work is required. Linear search checks elements one by one and works even when the data is unsorted; binary search repeatedly halves the search space, making it much faster on large collections that are already sorted. The central trade-off is simplicity versus efficiency: linear search needs almost no assumptions, while binary search depends on an ordering it can exploit.
+
+## Linear search
+
+**Linear search** examines each element in sequence until it finds the target or reaches the end. It works on arrays, linked lists, and unsorted data because it makes no assumptions about where the target might be.
+
+For example, searching for `7` in `[4, 2, 9, 7, 5]` checks `4`, then `2`, then `9`, then finds `7`. If the target is absent, every element must be checked.
+
+In the worst case, linear search performs $n$ comparisons for a collection of $n$ elements, giving $O(n)$ time. If the target is equally likely to appear at any position, a successful search takes about $(n+1)/2$ comparisons on average. Its auxiliary space complexity is $O(1)$.
+
+Linear search is often the sensible choice for small collections, unsorted data, or linked lists where accessing an arbitrary middle element is expensive. Sorting data just to perform one search may cost more than simply scanning it.
+
+## Binary search
+
+**Binary search** takes advantage of sorted data. Instead of checking every element, it examines the middle element and uses the ordering to discard half of the remaining candidates.
+
+Suppose the sorted sequence is `[2, 5, 8, 12, 16, 23, 38]` and the target is `16`. The middle element is `12`. Since `16` is larger, every element at or below `12` can be ruled out. The middle of the remaining right-hand region is `23`; because `16` is smaller, the search continues in the region between `12` and `23`, finding `16`.
+
+Each comparison reduces the remaining search space approximately by half:
+
+$$
+n \rightarrow \frac{n}{2} \rightarrow \frac{n}{4} \rightarrow \cdots \rightarrow 1
+$$
+
+After $k$ halvings, the remaining size is approximately $n/2^k$. Setting this to $1$ gives $k \approx \log_2 n$, so binary search runs in $O(\log n)$ time.
+
+For a million elements, linear search might examine up to a million entries, while binary search needs only about 20 halvings to isolate a target. Binary search typically uses $O(1)$ auxiliary space in its iterative form; a recursive implementation uses $O(\log n)$ call-stack space.
+
+<SearchingRace />
+
+<Callout type="pitfall">
+The crucial limitation is that the data must be sorted according to the same ordering used by the search.
+</Callout>
+
+Binary search also needs efficient access to the middle element, which is why it works well on arrays but is not directly efficient on ordinary linked lists.
+
+## The mechanics of binary search
+
+Maintain a search interval with a left boundary $L$ and a right boundary $R$. Calculate the midpoint, compare its value with the target, and discard the half that cannot contain the target.
+
+For an inclusive interval, the midpoint is commonly calculated as
+
+$$
+M = L + \left\lfloor \frac{R-L}{2} \right\rfloor
+$$
+
+In words: start at the left edge and move halfway across the interval, rounding down. This form avoids the potential integer overflow of calculating $(L+R)/2$ in fixed-width integer languages.
+
+- If the middle value equals the target, return its position.
+- If the target is smaller, continue with the left half by setting $R=M-1$.
+- If the target is larger, continue with the right half by setting $L=M+1$.
+- If $L>R$, the target is absent.
+
+<Callout type="pitfall" title="Off by one, forever">
+The boundary updates are essential. Failing to exclude the already-checked midpoint can cause an infinite loop.
+</Callout>
+
+```python
+def binary_search(a, target):
+    lo, hi = 0, len(a) - 1            # inclusive interval: both ends still possible
+    steps = 0
+    while lo <= hi:                   # empty once lo passes hi
+        mid = lo + (hi - lo) // 2
+        steps += 1
+        if a[mid] == target:
+            return mid, steps
+        if target < a[mid]:
+            hi = mid - 1              # mid itself is ruled out, so exclude it
+        else:
+            lo = mid + 1
+    return -1, steps
+
+print(binary_search([2, 5, 8, 12, 16, 23, 38], 16))   # (4, 3)
+print(binary_search(list(range(1_000_000)), 999_999))  # (999999, 20)
+print(binary_search(list(range(1_000_000)), -1))       # (-1, 19)
+```
+
+Binary search also requires a deliberate choice about duplicates: a basic implementation may return any matching occurrence, while finding the first or last occurrence requires adjusting the search to continue after a match. Python's `bisect.bisect_left([2, 5, 8, 8, 8, 23], 8)` returns `2`, the first of the three 8s.
+
+## Comparing the algorithms
+
+| Property                   | Linear search                 | Binary search                                  |
+| -------------------------- | ----------------------------- | ---------------------------------------------- |
+| Requires sorted data       | No                            | Yes                                            |
+| Worst-case time            | $O(n)$                    | $O(\log n)$                                |
+| Best-case time             | $O(1)$                    | $O(1)$                                     |
+| Auxiliary space, iterative | $O(1)$                    | $O(1)$                                     |
+| Works well on linked lists | Yes                           | Generally no                                   |
+| Best suited for            | Small or unsorted collections | Large, sorted, randomly accessible collections |
+
+The choice depends on the total cost, not just the cost of one search. Sorting an unsorted collection usually takes at least $O(n\log n)$ time with comparison-based sorting algorithms, so sorting solely to perform one search is often unnecessary. If the same collection will be searched many times, sorting once and using binary search can be substantially more efficient.

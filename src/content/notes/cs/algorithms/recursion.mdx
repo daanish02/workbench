@@ -1,0 +1,131 @@
+---
+title: "Recursion"
+description: "The call stack, base cases, and how recursive calls unwind."
+order: 2
+tier: core
+takeaways:
+  - "A recursive function needs a **base case** that stops it and a **recursive case** that makes progress toward it."
+  - "Every active call has its own **stack frame** with its own locals; the stack unwinds newest-first once the base case returns."
+  - "Recursion depth d costs O(d) stack space, so very deep recursion hits a stack overflow or a depth limit (Python's default is 1000)."
+  - "Recursion is a way of expressing a solution, not a speed-up. Naive recursive Fibonacci is **exponential** because it repeats subproblems."
+resources:
+  - title: "Recursion (computer science)"
+    url: "https://en.wikipedia.org/wiki/Recursion_(computer_science)"
+    note: "Recursive data, recursive procedures, tail calls and their costs."
+  - title: "Call stack"
+    url: "https://en.wikipedia.org/wiki/Call_stack"
+    note: "What a stack frame actually holds and how calls and returns use it."
+  - title: "VisuAlgo: recursion tree visualizer"
+    url: "https://visualgo.net/en/recursion"
+    note: "Draws the call tree for factorial, Fibonacci and other recursive functions."
+---
+
+**Recursion** is a technique in which a function solves a problem by calling itself on a smaller version of that problem. It works when the problem can be reduced repeatedly until a simple case can be answered directly. Two ideas make recursion possible: base cases, which stop the process, and the call stack, which remembers each unfinished function call until its work can resume. Recursion can make problems such as tree traversal and divide-and-conquer algorithms easier to express, but without correct stopping conditions or progress toward them, it can run indefinitely or exhaust memory.
+
+## How recursion works
+
+A recursive function breaks a problem into smaller subproblems that follow the same structure as the original. Instead of explicitly managing every step, the function delegates a smaller task to another invocation of itself.
+
+Consider a countdown:
+
+```python
+def countdown(n):
+    if n == 0:          # base case: nothing left to count
+        print("Done")
+        return
+    print(n)
+    countdown(n - 1)    # same task, one step smaller
+
+countdown(3)
+# 3
+# 2
+# 1
+# Done
+```
+
+Calling `countdown(3)` prints `3`, `2`, `1`, and then `Done`. Each call handles the current number and delegates the remaining countdown to `countdown(n - 1)`.
+
+The important feature is that each invocation has its own value of `n`. The call with `n = 3` does not lose its state when it calls `countdown(2)`; it waits until that call finishes before returning. This is the difference between the recursive definition of a task and the sequence of function calls that executes it.
+
+## Base cases and recursive cases
+
+A recursive function needs two logical components.
+
+The **base case** describes a problem simple enough to solve without another recursive call. It terminates that branch of the recursion. The **recursive case** reduces the current problem and calls the function again.
+
+For example, factorial is defined by
+
+$$
+n! = \begin{cases} 1 & \text{if } n=0,\\ n\,(n-1)! & \text{if } n>0. \end{cases}
+$$
+
+In words: zero factorial is defined as 1, and any larger factorial is $n$ times the factorial one smaller. The base case $0! = 1$ provides the stopping point. The recursive case reduces the argument by one until the base case is reached.
+
+```python
+def factorial(n):
+    if n == 0:
+        return 1
+    return n * factorial(n - 1)   # this frame waits here until the smaller call returns
+
+print(factorial(4))  # 24
+```
+
+For `factorial(4)`, the calls reduce the problem to `factorial(0)`. That call returns `1`, allowing the pending multiplications to resolve.
+
+<Callout type="pitfall">
+A base case alone is not sufficient. Each recursive call must also make progress toward it. If the function calls `factorial(n)` again with the same value of `n`, the computation never reaches the base case.
+</Callout>
+
+A robust implementation must also define its valid inputs: the example above assumes a non-negative integer.
+
+## The call stack
+
+The **call stack** is the runtime structure that tracks active function calls. Each call gets a **stack frame** containing information such as its local variables, parameters, and where execution should resume after the call returns.
+
+For `factorial(3)`, the sequence of calls is:
+
+```
+factorial(3)
+  factorial(2)
+    factorial(1)
+      factorial(0) -> 1
+    returns 1 * 1 = 1
+  returns 2 * 1 = 2
+returns 3 * 2 = 6
+```
+
+<Callout type="key">
+The calls accumulate as the function descends toward the base case. Once the base case returns, the stack unwinds in reverse order: the most recent call finishes first, then its caller resumes, and so on.
+</Callout>
+
+<RecursionCallStack />
+
+This explains why recursive code can look short while doing substantial work. Every active call consumes stack space. A recursion depth of $d$ typically requires $O(d)$ stack space, although exact frame sizes depend on the language and runtime. If recursion becomes too deep, the program may encounter a stack overflow or recursion-depth limit.
+
+## Recursion, iteration, and efficiency
+
+Many recursive computations can also be written using loops. The iterative version of factorial keeps a running product rather than creating a new function call for each smaller input:
+
+```python
+def factorial_iterative(n):
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+
+print(factorial_iterative(4))                  # 24
+print(factorial_iterative(5000).bit_length())  # 54233  (one frame, any n)
+
+try:
+    factorial(5000)        # recursive version: 5001 frames needed
+except RecursionError as e:
+    print(e)               # maximum recursion depth exceeded
+```
+
+Python caps recursion depth (1,000 frames by default, see `sys.getrecursionlimit()`) precisely so that runaway recursion fails with a clear error instead of crashing the interpreter.
+
+Both versions perform $O(n)$ arithmetic operations. The recursive version typically uses $O(n)$ call-stack space, while the iterative version uses $O(1)$ auxiliary space.
+
+Recursion is not inherently slower or better. Its main advantage is that it can match the structure of a problem. A tree, for instance, consists of a node and smaller subtrees, so recursively processing each subtree is natural. Divide-and-conquer algorithms such as [merge sort](../sorting/) similarly divide a problem into smaller instances and combine their results.
+
+A critical distinction is that not all recursion has the same efficiency. Naive recursive Fibonacci repeatedly solves the same subproblems, leading to exponential running time. Memoization or an iterative approach (see [dynamic programming](../dynamic-programming/)) avoids much of that repeated work. Some languages optimize tail-recursive calls, but Python does not generally eliminate their stack frames, so tail recursion should not be assumed to use constant stack space.

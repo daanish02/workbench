@@ -1,0 +1,122 @@
+---
+title: "String Algorithms"
+description: "Pattern matching and edit distance, the core string problems."
+order: 10
+tier: optional
+takeaways:
+  - "Naive pattern matching tries every start position: O(nm) in the worst case."
+  - "**KMP** precomputes a prefix (LPS) table so the text pointer never moves backward: O(n + m) total."
+  - "**Levenshtein distance** is the fewest insertions, deletions and substitutions turning one string into another."
+  - "Edit distance is a DP over prefixes: each cell is the min of three neighbours, so O(mn) time and space."
+resources:
+  - title: "Knuth–Morris–Pratt algorithm"
+    url: "https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm"
+    note: "The failure-function construction with a fully worked example."
+  - title: "Levenshtein distance"
+    url: "https://en.wikipedia.org/wiki/Levenshtein_distance"
+    note: "The recurrence, the full-matrix and two-row algorithms, and related distances."
+  - title: "Longest common subsequence"
+    url: "https://en.wikipedia.org/wiki/Longest_common_subsequence"
+    note: "The sibling DP behind diff tools, built on the same prefix table."
+---
+
+String algorithms solve problems involving sequences of characters: finding a word inside a larger text, comparing two strings, detecting approximate matches, or transforming one string into another. Pattern matching focuses on locating occurrences of a pattern within text, while edit distance measures how different two strings are by calculating the minimum operations needed to transform one into the other. These problems underpin search engines, text editors, spell checkers, DNA analysis, and data validation. The key is to exploit the structure of strings rather than repeatedly comparing every possible character sequence.
+
+## Pattern matching
+
+Pattern matching asks whether a pattern $P$ occurs within a text $T$, and often where it occurs.
+
+For example, searching for `cat` in `concatenate` finds a match beginning at index 3, assuming zero-based indexing. The simplest algorithm, **naive pattern matching**, checks the pattern at every possible starting position in the text, comparing characters until a mismatch or a complete match occurs.
+
+If the text has length $n$ and the pattern has length $m$, there are at most $n-m+1$ candidate starting positions. Each comparison may examine up to $m$ characters, giving a worst-case time complexity of $O(nm)$. This is often adequate for short patterns or small inputs, but it can repeat substantial work when many candidate matches share the same prefix.
+
+More sophisticated algorithms reuse information from earlier comparisons.
+
+## KMP and efficient exact matching
+
+The **Knuth–Morris–Pratt (KMP)** algorithm avoids rechecking text characters that are already known to match. It preprocesses the pattern into a prefix table, often called the longest proper prefix that is also a suffix (**LPS**) table.
+
+A **proper prefix** is a prefix that is not the entire string. For the pattern `ABABAC`, the prefix `ABA` is also a suffix of `ABABA`, so partial matches can provide information about where the next possible match begins.
+
+```python
+def lps_table(p):
+    lps = [0] * len(p)   # lps[i]: longest proper prefix of p[:i+1] that is also its suffix
+    k = 0                # length of the current matching prefix
+    for i in range(1, len(p)):
+        while k > 0 and p[i] != p[k]:
+            k = lps[k - 1]          # fall back to the next shorter border, not to 0
+        if p[i] == p[k]:
+            k += 1
+        lps[i] = k
+    return lps
+
+print(lps_table("ABABAC"))  # [0, 0, 1, 2, 3, 0]
+```
+
+The `3` at position 4 is the `ABA` border of `ABABA`: if a mismatch happens on the next character, KMP already knows the last three text characters match the first three of the pattern and resumes from there.
+
+<Callout type="key">
+When a mismatch occurs, KMP uses the prefix table to shift the pattern to the next viable position rather than restarting from the beginning. The text pointer never moves backward. As a result, preprocessing and matching together take $O(n+m)$ time, with $O(m)$ extra space for the table.
+</Callout>
+
+Other algorithms suit different circumstances. Boyer–Moore uses information about mismatches to skip sections of text, often making it fast in practice. Rabin–Karp hashes the pattern and candidate text windows, using rolling hashes to identify likely matches before verifying them. These approaches illustrate a broader principle: string search becomes more efficient when the algorithm preserves information about what previous comparisons have already established.
+
+## Edit distance
+
+Exact pattern matching asks whether two strings match. Edit distance instead measures how much work is required to turn one string into another.
+
+The most common form is **Levenshtein distance**, which allows three operations:
+
+- Insertion: add a character.
+- Deletion: remove a character.
+- Substitution: replace one character with another.
+
+Each operation has cost 1 in the standard version. For example, transforming `cat` into `cut` requires one substitution, so the edit distance is 1. Transforming `kitten` into `sitting` requires three operations, giving a distance of 3.
+
+Edit distance is useful for spell checking, fuzzy search, comparing identifiers, and measuring similarity between biological sequences. A small distance indicates that two strings are similar under the chosen edit operations, though it does not necessarily mean they have similar meanings.
+
+## Dynamic programming for edit distance
+
+The standard Levenshtein algorithm uses a table $D$, where $D[i,j]$ is the minimum cost of transforming the first $i$ characters of string $A$ into the first $j$ characters of string $B$.
+
+The base cases represent transforming a prefix into an empty string, or vice versa:
+
+$$
+D[i,0]=i,\qquad D[0,j]=j
+$$
+
+The recurrence considers the three possible final operations:
+
+$$
+D[i,j]=\min \begin{cases} D[i-1,j]+1 & \text{(delete } A_i\text{)}\\ D[i,j-1]+1 & \text{(insert } B_j\text{)}\\ D[i-1,j-1]+c & \text{(substitute, or match)} \end{cases}
+\qquad c=\begin{cases} 0 & A_i = B_j\\ 1 & A_i \ne B_j \end{cases}
+$$
+
+In words: the cheapest way to finish is to delete the last letter of $A$, insert the last letter of $B$, or line up both last letters (free if they already match, one substitution otherwise), each on top of the best answer for the shorter prefixes.
+
+Each cell depends only on the cell above, the cell to the left and the diagonal, so filling the table row by row guarantees all three are ready. The answer is $D[m,n]$, and following the choices back from that corner recovers an actual sequence of edits.
+
+<EditDistanceGrid />
+
+```python
+def edit_distance(a, b):
+    m, n = len(a), len(b)
+    D = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1):
+        D[i][0] = i                  # delete all i characters
+    for j in range(n + 1):
+        D[0][j] = j                  # insert all j characters
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            c = 0 if a[i - 1] == b[j - 1] else 1
+            D[i][j] = min(D[i - 1][j] + 1,       # delete
+                          D[i][j - 1] + 1,       # insert
+                          D[i - 1][j - 1] + c)   # substitute or match
+    return D[m][n]
+
+print(edit_distance("kitten", "sitting"))  # 3
+print(edit_distance("cat", "cut"))         # 1
+print(edit_distance("", "abc"))            # 3
+```
+
+The table has $(m+1)(n+1)$ cells and each takes constant work, so the algorithm runs in $O(mn)$ time and space. When only the distance is needed, not the edits themselves, keeping just the previous row cuts the space to $O(\min(m,n))$. This is [dynamic programming](../dynamic-programming/) in its most typical form: a state for every pair of prefixes, and a recurrence over the last step.
