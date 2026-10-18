@@ -68,6 +68,7 @@ export const areas: Area[] = [
       { id: 'security', title: 'Security' },
       { id: 'distributed-systems', title: 'Distributed Systems' },
       { id: 'system-design', title: 'System Design' },
+      { id: 'data-engineering', title: 'Data Engineering' },
       { id: 'case-studies', title: 'Design Case Studies' },
       { id: 'cloud', title: 'Cloud Computing' },
       { id: 'software-engineering', title: 'Software Engineering' },
