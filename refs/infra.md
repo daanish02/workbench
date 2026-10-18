@@ -4,8 +4,8 @@ Covers the physical/architectural layer that sits beneath CS's Operating Systems
 
 ## Writing checklist (added 2026-10-18, read before each section)
 
-- Every note is a placeholder stub today (body `_Placeholder..._`). Overwrite in place; keep the slug unless the new title makes it misleading.
-- Titles: at most 3 words ("X and Y" / "X & Y" counts as 3). Most stub titles are too long; suggested short titles are listed per section below.
+- Every note, including the ones marked _(new)_ below, already exists as a placeholder stub (body `_Placeholder..._`) with its short title, description and `order` set (2026-10-18; orders follow the suggested order in each section). Overwrite stubs in place; do not create new files or renumber unless a note is added or dropped. Slugs are the old long ones (e.g. `quantum-computers` is titled "Unconventional Computing"); keep them unless one is misleading.
+- Titles: at most 3 words ("X and Y" / "X & Y" counts as 3). The short titles listed per section below are already applied to the stubs.
 - `##` headings at most 5 words.
 - Do NOT re-teach, link instead: `cs/foundations/{boolean-logic,number-representation,fetch-execute-cycle}`, `cs/theory/finite-automata`, `cs/operating-systems/{virtual-memory,page-replacement,io-management,file-systems,context-switching,synchronization}`, `cs/networks/{link-layer,network-models}`, `cs/appendix/latency-numbers`, `cs/system-design/scalability` (Amdahl's law is already there).
 - Python: simulators are the natural code here (gate sims, cache sims, pipeline timing, branch predictors, RAID parity, roofline). Seeded, standalone, real output; run `uv run scripts/check_notes.py infra`.
@@ -25,7 +25,7 @@ Covers the physical/architectural layer that sits beneath CS's Operating Systems
 9. **VLSI design basics** — from gate-level design to an actual chip [Chip Design]
 10. **Power and heat** _(new)_ — dynamic power ∝ C·V²·f, leakage, end of Dennard scaling, dark silicon, why clocks stalled near 4–5 GHz and multicore happened. [Power & Thermals]
 
-Short titles: Transistors as Switches → "Transistor Switches", Logic Gates from Transistors → "CMOS Gates", Boolean Algebra to Circuits → "Truth Tables to Circuits", Clock Signals and Synchronous Design → "Clocks & Timing", Finite State Machines in Hardware → "Hardware FSMs".
+Short titles: Transistors as Switches → "Transistor Switches", Logic Gates from Transistors → "CMOS Gates", Boolean Algebra to Circuits → "Logic to Circuits", Clock Signals and Synchronous Design → "Clocks & Timing", Finite State Machines in Hardware → "Hardware FSMs".
 Also cover: arithmetic beyond the adder (ripple vs carry-lookahead, shifters, multipliers) and propagation delay / critical path, which sets clock speed and motivates pipelining.
 
 **Interactive:** logic gate builder (wire gates together, watch signals propagate), adder circuit step-through (binary addition happening gate by gate), FSM-in-hardware demo (the same traffic-light FSM from Computational Theory, now shown as flip-flops and gates).
@@ -42,7 +42,7 @@ Also cover: arithmetic beyond the adder (ripple vs carry-lookahead, shifters, mu
 6. **Assembly and calling conventions** _(new)_ — what compiled code looks like: registers, stack frames, call/return, one C function in RISC-V or x86-64; bridge from `cs/languages/compilers-and-interpreters`. [Machine Code]
 7. **Boot and firmware** _(new, optional)_ — reset vector, BIOS/UEFI, bootloader, handoff to the kernel; ties to `cs/operating-systems/kernel-architecture`. [Boot Process]
 
-Short titles: Von Neumann vs. Harvard → "Von Neumann & Harvard", Interrupts at the Hardware Level → "Hardware Interrupts", Embedded Systems Basics → "Embedded Systems".
+Short titles: Von Neumann vs. Harvard → "Von Neumann Architecture" (covers Harvard too), Interrupts at the Hardware Level → "Hardware Interrupts", Embedded Systems Basics → "Embedded Systems".
 Also cover in I/O Interfacing: memory-mapped vs port I/O, polling vs interrupts vs DMA, PCIe as the modern bus (lanes, generations).
 
 **Interactive:** bus transaction visualizer (watch an address go out, data come back, step by step), Von Neumann vs. Harvard side-by-side (same instruction fetch, different memory paths highlighted).
@@ -86,7 +86,7 @@ Short titles: Instruction Set Architectures → "Instruction Sets" (x86 vs ARM v
 10. **Memory ordering and atomics** _(new)_ — store buffers, why hardware reorders, x86 TSO vs ARM weak ordering, fences, compare-and-swap / LL-SC; the hardware under `cs/operating-systems/synchronization`. [Memory Ordering]
 11. **Cache-friendly code** _(new, practical)_ — locality, row vs column traversal, struct-of-arrays, false sharing; show with a simulated cache in Python (miss counts, no timings). Could instead close Cache Basics. [Cache-Friendly Code]
 
-Short titles: Why the Memory Hierarchy Exists → "Memory Hierarchy", Cache Replacement Policies → "Cache Replacement", Virtual Memory at the Hardware Level → "TLBs & Page Walks", Non-Volatile Memory Technologies → "Non-Volatile Memory".
+Short titles: Why the Memory Hierarchy Exists → "Memory Hierarchy", Cache Replacement Policies → "Cache Replacement", Virtual Memory at the Hardware Level → "TLBs & Paging", Non-Volatile Memory Technologies → "Non-Volatile Memory".
 Also cover: HBM (stacked DRAM beside GPUs) in Main Memory, since the GPU section leans on it; CXL memory expansion in Non-Volatile Memory or Interconnects.
 
 **Interactive:** cache hit/miss simulator (a sequence of memory accesses, watch which hit and which miss under different cache configurations), cache coherence visualizer (multiple cores, watch MESI states change as each reads/writes a shared line), memory hierarchy latency ladder (a visual scale showing register → L1 → L2 → L3 → RAM → disk access times, which are wildly non-intuitive until seen side by side).
@@ -139,12 +139,12 @@ _(Placed last deliberately — this section's content is what `scaffold-dl` will
 7. **SIMD instructions on CPUs** — vectorization before you even reach a GPU
 8. **Supercomputer architecture** — clusters of nodes, high-speed interconnects (InfiniBand-style, conceptually), how a supercomputer differs from "just a lot of GPUs" — what coordination and scheduling at that scale actually requires
 9. **Multi-GPU and distributed training hardware** — the hardware considerations `scaffold-applied-dl` will eventually reference directly
-10. **Quantum Computers** — does that fit here? → Decision: not a parallel architecture. Keep as the last note, retitled "Emerging Hardware": quantum (qubits, gates, why only some problems speed up), neuromorphic, photonic, at survey depth.
+10. **Quantum Computers** — does that fit here? → Decision: not a parallel architecture. Keep as the last note, retitled "Unconventional Computing" (not "Emerging Hardware": that dates): quantum (qubits, gates, why only some problems speed up), neuromorphic, photonic, at survey depth.
 11. **FPGAs and ASICs** _(new)_ — reconfigurable logic (LUTs, routing), when an FPGA beats a GPU (latency, custom bit widths), ASICs/TPUs as the endpoint; links back to Digital Logic. [FPGAs & ASICs]
 12. **Roofline model** _(new, high value)_ — arithmetic intensity (FLOPs per byte), compute-bound vs memory-bound, why matmul is fast and elementwise ops are not; the bridge to DL performance. Could be a section of CPU vs GPU instead. [Roofline Model]
 13. **GPU programming model** _(new)_ — kernels, grid/block/thread, shared memory, coalesced access, occupancy; one tiny CUDA-style kernel explained via a Python simulation. [GPU Programming]
 
-Suggested order: Why GPUs Differ, GPU Architecture, GPU Programming, Roofline Model, CPU vs GPU, SIMD on CPUs, Multicore CPUs, AI Accelerators (tensor cores, TPUs), FPGAs & ASICs, Interconnects (PCIe, NVLink, CXL, InfiniBand), Multi-GPU Training, Supercomputers, Emerging Hardware. Section could be renamed "Parallel & Accelerators".
+Suggested order: Why GPUs Differ, GPU Architecture, GPU Programming, Roofline Model, CPU vs GPU, SIMD on CPUs, Multicore CPUs, AI Accelerators (tensor cores, TPUs), FPGAs & ASICs, Interconnects (PCIe, NVLink, CXL, InfiniBand), Multi-GPU Training, Supercomputers, Unconventional Computing. Section could be renamed "Parallel & Accelerators".
 Short titles: Why GPUs Are Architecturally Different → "Why GPUs Differ", CPU vs. GPU Workloads → "CPU vs GPU", SIMD Instructions on CPUs → "SIMD on CPUs", Tensor Cores and Specialized AI Hardware → "AI Accelerators", Supercomputer Architecture → "Supercomputers", Multi-GPU and Distributed Training Hardware → "Multi-GPU Training" (data/tensor/pipeline parallelism only as hardware traffic; the algorithms belong to DL).
 
 **Interactive:** SIMD vs. scalar execution comparison (the same operation, one element at a time vs. many at once, visualized), GPU warp execution visualizer (threads grouped into warps, watch divergence cost appear when threads in a warp take different branches), CPU-vs-GPU workload chooser (given a task, see why it maps well or poorly to each architecture).
