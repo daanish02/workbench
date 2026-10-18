@@ -1,6 +1,6 @@
 # Deep Learning Knowledge Base — Full Content Plan
 
-Owns architectures, training mechanics, and the mathematics of how deep networks actually learn. `scaffold-applied-dl` owns what gets built _with_ these architectures (LLMs, vision models, audio, RL with neural function approximators). `scaffold-ml`'s shallow neural network section (perceptron, MLP, intuitive backprop) is the on-ramp this KB continues from — full derivation and modern architectures start here.
+Owns architectures, training mechanics, and the mathematics of how deep networks actually learn. the `applied-dl` area owns what gets built _with_ these architectures (LLMs, vision models, audio, RL with neural function approximators). the `ml` area's shallow neural network section (perceptron, MLP, intuitive backprop) is the on-ramp this KB continues from — full derivation and modern architectures start here.
 
 
 ## Writing checklist (coverage review 2026-10-18, read before each section)
@@ -13,10 +13,10 @@ Owns architectures, training mechanics, and the mathematics of how deep networks
 
 ## 1. Neural Network Foundations, Deepened
 
-_(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — this is where backprop stops being "intuitive" and becomes fully derived.)_
+_(Picks up exactly where `ml/shallow-neural-networks` left off — this is where backprop stops being "intuitive" and becomes fully derived.)_
 
 1. **Computational graphs** — representing a network as a graph of operations, the structure everything else here depends on
-2. **Backpropagation, fully derived** — the chain rule applied through an entire network _(direct, explicit callback to `math:calculus:chain-rule` and `math:linear-algebra:matrices-as-transformations`)_
+2. **Backpropagation, fully derived** — the chain rule applied through an entire network _(direct, explicit callback to `math/calculus/the-chain-rule-multivariable` and `math/linear-algebra/matrices-as-transformations`)_
 3. **Automatic differentiation** — how frameworks compute exact gradients without anyone hand-deriving them
 4. **Weight initialization** — why it matters at all, Xavier/Glorot and He initialization
 5. **Loss functions for deep learning** — cross-entropy and MSE revisited at the scale and context deep nets actually use them
@@ -34,7 +34,7 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 4. **Dropout** — regularization specific to deep nets, what it does during training vs. inference
 5. **Learning rate schedules** — warmup, decay, cyclical learning rates
 6. **Hyperparameter tuning for deep nets** — how this differs from classical ML's grid/random search at this scale
-7. **Mixed precision training** — direct callback to `hardware:gpus-parallel-architectures:tensor-cores`
+7. **Mixed precision training** — direct callback to `infra/gpus-parallelism/tensor-cores-and-specialized-ai-hardware`
 
 **Interactive:** optimizer race (the same loss surface, SGD vs. momentum vs. Adam converging at different rates side by side — extending the Math KB's gradient descent playground to the deep-learning-specific optimizers), vanishing gradient demo (a deep network, watch gradient magnitude shrink layer by layer during backprop), batch norm before/after (the same network's loss landscape, visibly smoother with batch norm applied).
 
@@ -42,7 +42,7 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 
 ## 3. Convolutional Neural Networks
 
-1. **The convolution operation** — kernels, feature maps, sliding windows _(ties to `math:signals-fourier:convolution`)_
+1. **The convolution operation** — kernels, feature maps, sliding windows _(ties to `math/signals-fourier/convolution`)_
 2. **Pooling** — max/average pooling, why downsampling helps
 3. **CNN architectures as a narrative** — LeNet → AlexNet → VGG → ResNet, told as a sequence of solved problems, not a list of names
 4. **Residual connections** — why skip connections are what actually made very deep networks trainable
@@ -68,12 +68,12 @@ _(Picks up exactly where `scaffold-ml:neural-networks-classical` left off — th
 
 ## 5. Attention & Transformers
 
-_(Architecture only — pretraining objectives, scaling laws, and what you actually build with transformers belong in `scaffold-applied-dl`.)_
+_(Architecture only — pretraining objectives, scaling laws, and what you actually build with transformers belong in the `applied-dl` area.)_
 
 1. **The attention mechanism** — query/key/value, how attention solves the seq2seq bottleneck from the previous section
 2. **Self-attention** — attending within a single sequence rather than between two
 3. **The Transformer architecture, in full** — multi-head attention, positional encoding, feedforward sublayers, layer norm placement, the complete block
-4. **Why transformers parallelize better than RNNs** — direct callback to `hardware:gpus-parallel-architectures`, this is where that hardware knowledge pays off
+4. **Why transformers parallelize better than RNNs** — direct callback to `infra/gpus-parallelism`, this is where that hardware knowledge pays off
 5. **Positional encoding variants** — learned vs. sinusoidal vs. rotary, why position needs to be injected at all
 
 **Interactive:** attention weight visualizer (a sentence, click a word, see which other words it attends to, weights shown as connecting lines of varying thickness — genuinely one of the best possible demos for this concept), multi-head attention comparison (the same sentence, different heads attending to different relationships — syntax vs. coreference, for instance), transformer vs. RNN parallelism demo (visualize the sequential dependency chain in an RNN vs. the fully parallel computation in a transformer).
@@ -94,7 +94,7 @@ _(Architecture only — pretraining objectives, scaling laws, and what you actua
 
 ## 7. Generative Models, Foundations
 
-_(This is where the autoencoder teased in `scaffold-ml:dimensionality-reduction` actually gets built. Specific generative applications — image generation products, etc. — belong in `scaffold-applied-dl`.)_
+_(This is where the autoencoder teased in `ml/dimensionality-reduction` actually gets built. Specific generative applications — image generation products, etc. — belong in the `applied-dl` area.)_
 
 1. **Autoencoders** — the architecture, reconstruction loss, closing the loop from the ML KB's forward-link
 2. **Variational Autoencoders** — the probabilistic twist, the reparameterization trick
@@ -108,7 +108,7 @@ _(This is where the autoencoder teased in `scaffold-ml:dimensionality-reduction`
 
 ## 8. Deep Learning Systems & Practical Training
 
-1. **Hardware for deep learning** — explicit, direct callback to `hardware:gpus-parallel-architectures` — this section assumes that KB rather than re-explaining GPUs
+1. **Hardware for deep learning** — explicit, direct callback to `infra/gpus-parallelism` — this section assumes that KB rather than re-explaining GPUs
 2. **Distributed training** — data parallelism vs. model parallelism, at a conceptual level
 3. **Mixed precision training, in practice** — building on the [opt] mention in Section 2
 4. **Experiment tracking and reproducibility** — why deep learning experiments are unusually easy to make irreproducible by accident
@@ -120,7 +120,7 @@ _(This is where the autoencoder teased in `scaffold-ml:dimensionality-reduction`
 
 ## 9. Deep Reinforcement Learning
 
-_(Picks up exactly where `scaffold-ml:reinforcement-learning-basics` left off — tabular Q-learning doesn't scale past small state spaces, which is precisely the problem deep RL solves by using a neural network as the function approximator.)_
+_(Picks up exactly where `ml/reinforcement-learning` left off — tabular Q-learning doesn't scale past small state spaces, which is precisely the problem deep RL solves by using a neural network as the function approximator.)_
 
 1. **Why RL needs function approximation** — the direct motivating gap from tabular Q-learning's limits
 2. **Deep Q-Networks (DQN)** — approximating the Q-function with a neural net, experience replay, target networks — why both tricks were necessary to make it stable
@@ -135,7 +135,7 @@ _(Picks up exactly where `scaffold-ml:reinforcement-learning-basics` left off �
 
 ## 10. Deep Learning for Recommender Systems
 
-_(Closes the loop deliberately left open in `scaffold-ml:recommender-systems` — classical matrix factorization and collaborative filtering live there; this section is what happens when you replace those with learned representations, directly reusing this KB's own architectures.)_
+_(Closes the loop deliberately left open in `ml/recommender-systems` — classical matrix factorization and collaborative filtering live there; this section is what happens when you replace those with learned representations, directly reusing this KB's own architectures.)_
 
 1. **Why classical recommenders hit a ceiling** — the direct motivating gap from the ML KB's matrix factorization approach
 2. **Neural collaborative filtering** — replacing matrix factorization's dot product with a learned neural network

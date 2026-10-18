@@ -1,6 +1,6 @@
 # Applied DL Knowledge Base — Full Content Plan
 
-Covers the three true modalities built on top of `scaffold-dl`'s architectures: LLMs/NLP, Vision/VLMs, and Audio. (RL and Recommenders moved to `scaffold-dl` itself, since both are general techniques rather than domain-specific modalities — see the DL KB plan's boundary note.) Everything here assumes `scaffold-dl`'s Transformer, CNN, and generative-model sections as prerequisites rather than re-deriving them.
+Covers the three true modalities built on top of the `dl` area's architectures: LLMs/NLP, Vision/VLMs, and Audio. (RL and Recommenders moved to the `dl` area itself, since both are general techniques rather than domain-specific modalities — see the DL KB plan's boundary note.) Everything here assumes the `dl` area's Transformer, CNN, and generative-model sections as prerequisites rather than re-deriving them.
 
 
 ## Writing checklist (coverage review 2026-10-18, read before each section)
@@ -14,7 +14,7 @@ Covers the three true modalities built on top of `scaffold-dl`'s architectures: 
 ## 1. NLP Foundations
 
 1. **Text preprocessing and tokenization** — word-level vs. subword tokenization (BPE, WordPiece, SentencePiece)
-2. **Word embeddings** — Word2Vec, GloVe, why a learned vector beats one-hot encoding _(conceptual echo of the embedding idea from `scaffold-dl`'s recommender section, now applied to words)_
+2. **Word embeddings** — Word2Vec, GloVe, why a learned vector beats one-hot encoding _(conceptual echo of the embedding idea from the `dl` area's recommender section, now applied to words)_
 3. **The limits of static embeddings** — polysemy, context-independence — the exact gap that motivates contextual models
 4. **Classic NLP tasks** — POS tagging, named entity recognition, sentiment analysis — the pre-transformer task landscape
 5. **Language modeling** — what "predicting the next token" means, n-gram models as a simple baseline before transformers existed
@@ -26,12 +26,12 @@ Covers the three true modalities built on top of `scaffold-dl`'s architectures: 
 
 ## 2. Large Language Models — Architecture & Pretraining
 
-1. **From Transformer to LLM** — stacking decoder-only transformer blocks, causal masking _(directly builds on `scaffold-dl:attention-transformers`)_
+1. **From Transformer to LLM** — stacking decoder-only transformer blocks, causal masking _(directly builds on `dl/attention-transformers`)_
 2. **Pretraining objectives** — autoregressive next-token prediction vs. masked language modeling (BERT-style), contrasted directly
 3. **Tokenization at LLM scale** — vocabulary size tradeoffs, how this differs from Section 1's introduction
 4. **Scaling laws** — how loss improves predictably with more data, parameters, and compute
 5. **Emergent abilities** — capabilities that appear only past a certain scale, and the live debate over whether these are real discontinuities or measurement artifacts
-6. **Context windows at scale** — extending beyond `scaffold-dl`'s positional encoding basics to the techniques that let modern context windows grow so large
+6. **Context windows at scale** — extending beyond the `dl` area's positional encoding basics to the techniques that let modern context windows grow so large
 
 **Interactive:** scaling law plotter (adjust compute/data/params, watch predicted loss move along the scaling curve), causal masking visualizer (show exactly which tokens a given position can and can't attend to, contrasted with a non-causal transformer).
 
@@ -80,12 +80,12 @@ _(Promoted from a single bullet to a full section — this is the fastest-growin
 
 ## 6. Computer Vision — Core Tasks
 
-_(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task-framed rather than architecture-framed.)_
+_(Builds on `dl/convolutional-networks` — this section is task-framed rather than architecture-framed.)_
 
 1. **Image classification, revisited** — now framed as a task with real datasets/benchmarks rather than an architecture walkthrough
 2. **Object detection** — bounding boxes, region proposals, single-shot detectors (YOLO-style) at a conceptual level
 3. **Semantic and instance segmentation** — pixel-level understanding, the distinction between the two
-4. **Image generation in practice** — revisiting `scaffold-dl`'s GAN/diffusion foundations, now as applied generation pipelines (text-to-image, inpainting)
+4. **Image generation in practice** — revisiting the `dl` area's GAN/diffusion foundations, now as applied generation pipelines (text-to-image, inpainting)
 
 **Interactive:** object detection demo (an image, bounding boxes appear with confidence scores, adjustable detection threshold), segmentation mask overlay (toggle between semantic and instance segmentation on the same image to make the distinction concrete).
 
@@ -95,7 +95,7 @@ _(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task
 
 1. **Vision Transformers (ViT)** — applying the Transformer architecture to images via patch embeddings
 2. **ViT vs. CNN** — inductive bias tradeoffs, when each architecture actually wins
-3. **Self-supervised vision** — contrastive learning (SimCLR-style), masked image modeling — the vision-specific analog of Section 1's "why self-supervision matters" idea from `scaffold-ml`
+3. **Self-supervised vision** — contrastive learning (SimCLR-style), masked image modeling — the vision-specific analog of Section 1's "why self-supervision matters" idea from the `ml` area
 4. **Vision model scaling** — a vision-specific echo of Section 2's LLM scaling laws
 
 **Interactive:** image-to-patches visualizer (watch an image get sliced into patches and embedded, exactly mirroring tokenization for text), ViT vs. CNN attention/activation comparison (what each architecture "looks at" on the same image).
@@ -116,7 +116,7 @@ _(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task
 
 ## 9. Audio & Speech Foundations
 
-1. **Audio as data** — waveforms, sampling rate, the physical signal itself _(ties directly to `math:signals-fourier`)_
+1. **Audio as data** — waveforms, sampling rate, the physical signal itself _(ties directly to `math/signals-fourier`)_
 2. **Spectrograms** — turning audio into an image-like representation via the Fourier transform — the bridge that lets vision techniques apply to audio at all
 3. **Feature extraction for audio** — MFCCs, mel spectrograms
 4. **Audio data augmentation** — pitch shift, time stretch, noise injection
@@ -127,10 +127,10 @@ _(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task
 
 ## 10. Speech & Audio Deep Learning
 
-1. **Automatic speech recognition (ASR)** — the sequence-to-sequence framing, CTC loss _(builds directly on `scaffold-dl:recurrent-neural-networks`/Transformers)_
+1. **Automatic speech recognition (ASR)** — the sequence-to-sequence framing, CTC loss _(builds directly on `dl/recurrent-networks`/Transformers)_
 2. **Text-to-speech (TTS)** — generating audio from text, the role of a vocoder
 3. **Speaker identification and diarization** — who's speaking, and when
-4. **Music and audio generation** — applying `scaffold-dl`'s generative models (GANs, diffusion) directly to audio
+4. **Music and audio generation** — applying the `dl` area's generative models (GANs, diffusion) directly to audio
 5. **Real-time and streaming audio models** — the added constraints of low-latency inference
 
 **Interactive:** ASR alignment visualizer (audio waveform aligned against the predicted transcript, showing where CTC collapses repeated predictions into final tokens), TTS pipeline walkthrough (text → predicted spectrogram → vocoder → audio, shown as one animated flow mirroring the RAG pipeline visual from Section 4).

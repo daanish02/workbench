@@ -16,11 +16,11 @@ Covers the physical/architectural layer that sits beneath CS's Operating Systems
 
 1. **Transistors as switches** — the physical basis of every gate, built from almost nothing
 2. **Logic gates from transistors** — CMOS gate construction, why gates are the atoms of hardware
-3. **Boolean algebra to circuits** — turning a truth table into an actual circuit _(ties to `math:foundations:logic`, `cs:foundations:boolean-logic` — this page is where logic becomes physical)_
+3. **Boolean algebra to circuits** — turning a truth table into an actual circuit _(ties to `math/foundations/propositional-logic`, `cs/foundations/boolean-logic` — this page is where logic becomes physical)_
 4. **Combinational circuits** — adders (half/full), multiplexers, decoders
 5. **Sequential circuits** — flip-flops, latches, registers — circuits with memory
 6. **Clock signals and synchronous design** — why a clock exists, setup/hold time intuition
-7. **Finite state machines in hardware** — the physical realization of what `cs:computational-theory:finite-automata` describes abstractly
+7. **Finite state machines in hardware** — the physical realization of what `cs/theory/finite-automata` describes abstractly
 8. **Circuit minimization** — Karnaugh maps, why fewer gates matters
 9. **VLSI design basics** — from gate-level design to an actual chip [Chip Design]
 10. **Power and heat** _(new)_ — dynamic power ∝ C·V²·f, leakage, end of Dennard scaling, dark silicon, why clocks stalled near 4–5 GHz and multicore happened. [Power & Thermals]
@@ -37,7 +37,7 @@ Also cover: arithmetic beyond the adder (ripple vs carry-lookahead, shifters, mu
 1. **Von Neumann vs. Harvard architecture** — shared vs. separate instruction/data memory
 2. **System buses** — address bus, data bus, control bus — how components actually talk
 3. **I/O interfacing** — how peripherals connect to the rest of the system
-4. **Interrupts at the hardware level** — the physical/electrical side of what `cs:os:io-management` covers conceptually
+4. **Interrupts at the hardware level** — the physical/electrical side of what `cs/operating-systems/io-management` covers conceptually
 5. **Embedded systems basics** — microcontrollers vs. general-purpose CPUs, resource constraints
 6. **Assembly and calling conventions** _(new)_ — what compiled code looks like: registers, stack frames, call/return, one C function in RISC-V or x86-64; bridge from `cs/languages/compilers-and-interpreters`. [Machine Code]
 7. **Boot and firmware** _(new)_ — reset vector, BIOS/UEFI, bootloader, handoff to the kernel; ties to `cs/operating-systems/kernel-architecture`. [Boot Process]
@@ -76,11 +76,11 @@ Short titles: Instruction Set Architectures → "Instruction Sets" (x86 vs ARM v
 
 1. **Why the memory hierarchy exists** — the speed/cost/capacity triangle, no single memory type wins on all three
 2. **Cache basics** — cache lines, hits/misses, direct-mapped vs. set-associative vs. fully-associative
-3. **Cache replacement policies** — LRU and friends, at the hardware level _(the same ideas as `cs:os:page-replacement`, applied one layer lower)_
+3. **Cache replacement policies** — LRU and friends, at the hardware level _(the same ideas as `cs/operating-systems/page-replacement`, applied one layer lower)_
 4. **Cache coherence** — the MESI protocol, why multicore systems need it at all
 5. **Main memory** — DRAM vs. SRAM, why caches use SRAM and main memory uses DRAM
 6. **Memory controllers** — how the CPU actually talks to RAM
-7. **Virtual memory at the hardware level** — TLBs, page table walks — the hardware support beneath `cs:os:virtual-memory`
+7. **Virtual memory at the hardware level** — TLBs, page table walks — the hardware support beneath `cs/operating-systems/virtual-memory`
 8. **Prefetching** — predicting future accesses to hide memory latency
 9. **Non-volatile memory technologies** — where persistent and working memory are starting to blur
 10. **Memory ordering and atomics** _(new)_ — store buffers, why hardware reorders, x86 TSO vs ARM weak ordering, fences, compare-and-swap / LL-SC; the hardware under `cs/operating-systems/synchronization`. [Memory Ordering]
@@ -99,7 +99,7 @@ Also cover: HBM (stacked DRAM beside GPUs) in Main Memory, since the GPU section
 2. **HDD vs. SSD** — how each physically stores and retrieves data
 3. **Storage interfaces** — SATA, NVMe — conceptually, what changed and why NVMe is faster
 4. **RAID** — redundancy and performance tradeoffs across RAID levels
-5. **How a file system maps to physical storage** — the hardware-facing half of `cs:os:file-systems`
+5. **How a file system maps to physical storage** — the hardware-facing half of `cs/operating-systems/file-systems`
 6. **Storage area networks** — storage as a shared network resource
 
 Short titles: The Storage Hierarchy → "Storage Hierarchy" (or fold into Memory Hierarchy's ladder and drop, to avoid repeating it), How a File System Maps to Physical Storage → "Blocks to Files", Storage Area Networks → "SAN & NAS".
@@ -111,11 +111,11 @@ Also cover in HDD vs SSD: flash internals (pages vs erase blocks, FTL, write amp
 
 ## 6. Networking Hardware
 
-_(The physical layer beneath `cs:computer-networks`, which covers protocols and logical behavior — this section is the wires, radios, and switches themselves.)_
+_(The physical layer beneath `cs/networks`, which covers protocols and logical behavior — this section is the wires, radios, and switches themselves.)_
 
 1. **Physical transmission media** — copper, fiber optics, wireless — tradeoffs in speed, distance, interference
 2. **Network interface cards, switches, and routers** — what each piece of hardware actually does, physically
-3. **Bandwidth, latency, and throughput** — the physical constraints behind the numbers quoted in `cs:computer-networks`
+3. **Bandwidth, latency, and throughput** — the physical constraints behind the numbers quoted in `cs/networks`
 4. **Wireless technology basics** — WiFi standards at a conceptual level, why newer standards are faster
 5. **Data center networking topologies** — spine-leaf and similar architectures at scale
 6. **RDMA and SmartNICs** _(new)_ — kernel bypass, RDMA/RoCE, DPUs offloading networking and storage; leads into InfiniBand in GPUs & Parallelism. [RDMA & SmartNICs]
@@ -128,7 +128,7 @@ Short titles: Physical Transmission Media → "Transmission Media" (include sign
 
 ## 7. GPUs & Parallel Architectures
 
-_(Placed last deliberately — this section's content is what `scaffold-dl` will lean on most directly.)_
+_(Placed last deliberately — this section's content is what the `dl` area will lean on most directly.)_
 
 1. **Why GPUs are architecturally different** — SIMD/SIMT, thousands of simple cores vs. few powerful ones
 2. **GPU architecture** — cores, warps/wavefronts, the GPU's own memory hierarchy
@@ -138,7 +138,7 @@ _(Placed last deliberately — this section's content is what `scaffold-dl` will
 6. **Tensor cores and specialized AI hardware** — purpose-built matrix-multiply acceleration, the direct hardware story behind why DL got fast
 7. **SIMD instructions on CPUs** — vectorization before you even reach a GPU
 8. **Supercomputer architecture** — clusters of nodes, high-speed interconnects (InfiniBand-style, conceptually), how a supercomputer differs from "just a lot of GPUs" — what coordination and scheduling at that scale actually requires
-9. **Multi-GPU and distributed training hardware** — the hardware considerations `scaffold-applied-dl` will eventually reference directly
+9. **Multi-GPU and distributed training hardware** — the hardware considerations the `applied-dl` area will eventually reference directly
 10. ~~**Quantum Computers**~~ — moved to its own section, 8. Unconventional Computing.
 11. **FPGAs and ASICs** _(new)_ — reconfigurable logic (LUTs, routing), when an FPGA beats a GPU (latency, custom bit widths), ASICs/TPUs as the endpoint; links back to Digital Logic. [FPGAs & ASICs]
 12. **Roofline model** _(new, high value)_ — arithmetic intensity (FLOPs per byte), compute-bound vs memory-bound, why matmul is fast and elementwise ops are not; the bridge to DL performance. Could be a section of CPU vs GPU instead. [Roofline Model]

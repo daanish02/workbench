@@ -1,6 +1,6 @@
 # Machine Learning Knowledge Base — Full Content Plan (v2)
 
-Covers classical ML and the fundamentals that `scaffold-dl` will build directly on top of. Heavy prerequisites from Math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`) are called out inline rather than re-derived here.
+Covers classical ML and the fundamentals that the `dl` area will build directly on top of. Heavy prerequisites from Math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`) are called out inline rather than re-derived here.
 
 
 ## Writing checklist (coverage review 2026-10-18, read before each section)
@@ -15,7 +15,7 @@ Covers classical ML and the fundamentals that `scaffold-dl` will build directly 
 
 1. **What "learning from data" actually means** — the difference between a program you write and a model that's fit
 2. **Types of learning** — supervised, unsupervised, reinforcement — the three framed side by side
-3. **Semi-supervised and self-supervised learning** — learning when labels are scarce or absent entirely; self-supervised learning gets real weight here since it's the pretraining mechanism behind modern foundation models — an explicit forward-link to `scaffold-applied-dl`'s LLM section, not just a passing definition
+3. **Semi-supervised and self-supervised learning** — learning when labels are scarce or absent entirely; self-supervised learning gets real weight here since it's the pretraining mechanism behind modern foundation models — an explicit forward-link to the `applied-dl` area's LLM section, not just a passing definition
 4. **The ML workflow** — data → features → model → evaluation → deployment, as a repeating loop
 5. **Bias-variance tradeoff** — underfitting vs. overfitting, the single most load-bearing concept in the whole KB
 6. **The hypothesis space and inductive bias** — every model assumes something; making that assumption visible
@@ -43,8 +43,8 @@ _(Moved up deliberately — the goal is to understand how a model's performance 
 
 ## 3. Supervised Learning — Regression
 
-1. **Linear regression** — the model, closed-form solution, connection to `math:statistics:regression`
-2. **Gradient descent for regression** — fitting via optimization instead of closed form _(direct application of `math:optimization:gradient-descent`)_
+1. **Linear regression** — the model, closed-form solution, connection to `math/statistics/regression`
+2. **Gradient descent for regression** — fitting via optimization instead of closed form _(direct application of `math/optimization/gradient-descent`)_
 3. **Polynomial regression** — extending linear models to curves, and why this makes overfitting easy
 4. **Regularization — Ridge and Lasso** — L2/L1 penalties, why they constrain model complexity differently
 5. **Elastic Net** — combining L1 and L2
@@ -96,10 +96,10 @@ _(Moved up deliberately — the goal is to understand how a model's performance 
 ## 7. Dimensionality Reduction
 
 1. **Why dimensionality reduction matters** — the curse of dimensionality, intuition first
-2. **PCA** — direct callback to `math:linear-algebra:pca`, now framed as an ML tool
+2. **PCA** — direct callback to `math/linear-algebra/principal-component-analysis-pca`, now framed as an ML tool
 3. **t-SNE** — preserving local structure for visualization
 4. **UMAP** — conceptually contrasted with t-SNE
-5. **Autoencoders as dimensionality reduction** — teased here, built properly in `scaffold-dl`
+5. **Autoencoders as dimensionality reduction** — teased here, built properly in the `dl` area
 
 **Interactive:** PCA on real data (high-dimensional dataset projected to 2D live, variance-explained per component), t-SNE vs. PCA comparison.
 
@@ -107,15 +107,15 @@ _(Moved up deliberately — the goal is to understand how a model's performance 
 
 ## 8. Recommender Systems
 
-_(New section. Classical, data-structure-and-matrix-driven approaches live here — directly building on PCA/SVD from the section above. Modern deep-learning-based recommenders — neural collaborative filtering, embedding-based retrieval, sequence-aware/session-based recommenders — belong in `scaffold-dl`, same boundary pattern as Neural Networks and RL below.)_
+_(New section. Classical, data-structure-and-matrix-driven approaches live here — directly building on PCA/SVD from the section above. Modern deep-learning-based recommenders — neural collaborative filtering, embedding-based retrieval, sequence-aware/session-based recommenders — belong in the `dl` area, same boundary pattern as Neural Networks and RL below.)_
 
 1. **The recommendation problem** — explicit vs. implicit feedback, the cold-start problem stated upfront
 2. **Collaborative filtering** — user-based and item-based, the "people like you also liked" intuition
-3. **Matrix factorization** — recommender systems as an SVD application, a direct, concrete callback to `math:linear-algebra:svd`
+3. **Matrix factorization** — recommender systems as an SVD application, a direct, concrete callback to `math/linear-algebra/singular-value-decomposition-svd`
 4. **Content-based filtering** — recommending from item features rather than other users' behavior
 5. **Hybrid approaches** — combining collaborative and content-based signals
 6. **Evaluating recommenders** — precision@k, recall@k, NDCG — why standard classification metrics don't quite fit this problem
-7. **Deep learning-based recommenders** — explicitly deferred to `scaffold-dl` (neural collaborative filtering, embeddings, two-tower architectures, and sequence-aware recommenders directly reuse DL's own RNN/Transformer sections), noted here as a forward pointer rather than built out
+7. **Deep learning-based recommenders** — explicitly deferred to the `dl` area (neural collaborative filtering, embeddings, two-tower architectures, and sequence-aware recommenders directly reuse DL's own RNN/Transformer sections), noted here as a forward pointer rather than built out
 
 **Interactive:** matrix factorization visualizer (a sparse user-item matrix, watch latent factors get learned and fill in predicted ratings), collaborative filtering similarity demo (pick a user, watch their nearest neighbors and what gets recommended as a result).
 
@@ -136,13 +136,13 @@ _(New section. Classical, data-structure-and-matrix-driven approaches live here 
 
 ## 10. Neural Networks (Classical/Shallow)
 
-_(Kept shallow here — `scaffold-dl` owns deep architectures, backprop derivation, and modern training.)_
+_(Kept shallow here — the `dl` area owns deep architectures, backprop derivation, and modern training.)_
 
 1. **The perceptron** — the original neural unit, what it can and can't learn (XOR problem)
 2. **Multi-layer perceptrons** — stacking layers, why depth adds expressive power
 3. **Activation functions** — sigmoid, tanh, ReLU
 4. **Forward propagation** — tracing a single input through a small network by hand
-5. **An intuitive (non-derived) look at backpropagation** — the idea of credit assignment, full derivation deferred to `scaffold-dl`
+5. **An intuitive (non-derived) look at backpropagation** — the idea of credit assignment, full derivation deferred to the `dl` area
 6. **Universal approximation theorem** — stated rather than proven
 
 **Interactive:** perceptron XOR demo (fails, then a 2-layer network succeeds), activation function comparison, forward-pass step-through.
@@ -151,14 +151,14 @@ _(Kept shallow here — `scaffold-dl` owns deep architectures, backprop derivati
 
 ## 11. Reinforcement Learning Basics
 
-_(Kept introductory — deeper RL, especially anything neural-network-based (DQN, policy gradients, actor-critic), belongs in `scaffold-dl`.)_
+_(Kept introductory — deeper RL, especially anything neural-network-based (DQN, policy gradients, actor-critic), belongs in the `dl` area.)_
 
 1. **The RL framing** — agent, environment, state, action, reward
-2. **Markov Decision Processes** — the formal model _(ties to `math:probability:markov-chains`)_
+2. **Markov Decision Processes** — the formal model _(ties to `math/probability/markov-chains`)_
 3. **Value functions and policies** — what an agent is actually trying to learn
 4. **Q-learning** — the simplest concrete algorithm, a small grid-world example
 5. **Exploration vs. exploitation** — the core tension in every RL problem
-6. **Policy gradient methods** — deferred to `scaffold-dl`, where the full deep RL treatment (DQN, policy gradients, actor-critic, PPO) lives
+6. **Policy gradient methods** — deferred to the `dl` area, where the full deep RL treatment (DQN, policy gradients, actor-critic, PPO) lives
 
 **Interactive:** grid-world Q-learning visualizer, exploration-vs-exploitation multi-armed bandit simulator.
 
