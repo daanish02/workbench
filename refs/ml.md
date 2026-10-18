@@ -167,3 +167,11 @@ _(Kept introductory — deeper RL, especially anything neural-network-based (DQN
 6. **MLOps tooling** — kept conceptual, same principle as Cloud/SWE Practices in CS
 
 **Interactive:** model drift simulator, feature importance visualizer.
+
+---
+
+## Appendix _(section added 2026-10-18)_
+
+Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+
+Candidates: glossary (FilterTable, like cs/appendix/glossary); metrics cheat sheet (accuracy, precision/recall, F1, ROC-AUC, RMSE, when to use which); model chooser (which model for which data size/type, like math/appendix/which-tool-when); scikit-learn quick map (estimator, fit/predict/transform, pipelines).

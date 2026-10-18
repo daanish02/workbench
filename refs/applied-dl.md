@@ -127,3 +127,11 @@ _(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task
 5. **Real-time and streaming audio models** — the added constraints of low-latency inference
 
 **Interactive:** ASR alignment visualizer (audio waveform aligned against the predicted transcript, showing where CTC collapses repeated predictions into final tokens), TTS pipeline walkthrough (text → predicted spectrogram → vocoder → audio, shown as one animated flow mirroring the RAG pipeline visual from Section 4).
+
+---
+
+## Appendix _(section added 2026-10-18)_
+
+Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+
+Candidates: glossary; model family timeline (BERT, GPT, ViT, CLIP, Whisper, …, with year and key idea); benchmarks and metrics table (perplexity, BLEU, mAP, WER, …); prompt and decoding parameters (temperature, top-p, top-k); memory and compute rules of thumb (parameters to GPU memory, tokens per second).

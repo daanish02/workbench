@@ -138,3 +138,11 @@ _(Closes the loop deliberately left open in `scaffold-ml:recommender-systems` â€
 6. **Cold-start strategies in deep recommenders** â€” how learned representations help (or don't) with the cold-start problem introduced in the ML KB
 
 **Interactive:** embedding space visualizer (project learned user/item embeddings into 2D, watch similar items cluster together), two-tower retrieval demo (a query embedding, watch nearest-neighbor item embeddings get retrieved live).
+
+---
+
+## Appendix _(section added 2026-10-18)_
+
+Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+
+Candidates: glossary; layer and shape cheat sheet (output shapes and parameter counts for linear, conv, attention); loss and activation table; optimizer and hyperparameter defaults (learning rates, batch sizes, warmup) with sources; training-failure checklist (loss NaN, not decreasing, overfitting: symptom to fix).
