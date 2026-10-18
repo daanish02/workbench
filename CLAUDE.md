@@ -70,7 +70,7 @@ Writing: plain, specific sentences with no padding. State facts precisely: no "a
 - Prefer clarity: a short hand-written version when the algorithm is the topic, then a one-line library check (numpy, scipy, sympy, networkx, statsmodels). Mention the run command when a library is used, e.g. "Run it with `uv run --with numpy --with scipy`."
 - Comments explain why, not what. Use 4-space indentation.
 - After editing any note code, run `uv run scripts/check_notes.py <area> <filter>`.
-- Versions: the pins in the PEP 723 header of `scripts/check_notes.py` (Python and every library) are the single source of truth. Each note with Python code automatically shows "Code on this page was run with Python 3.14 · NumPy …", listing only the libraries its code imports. To use a new library, add it pinned to that header and add its display name to `PACKAGES` in `src/lib/code-versions.ts`.
+- Versions: the pins in the PEP 723 header of `scripts/check_notes.py` (Python and every library) are the single source of truth. Every Python code block's header shows them automatically: the tab reads "Python 3.14", and the right side lists the pinned versions of the libraries that block imports (`numpy 2.5.4 · scipy 1.18.1`). To use a new library, add it pinned to that header and to `PACKAGES` in `scripts/code-pins.mjs`.
 
 ## Figures (interactive components)
 

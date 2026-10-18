@@ -5,6 +5,7 @@ import mdx from '@astrojs/mdx';
 import expressiveCode from 'astro-expressive-code';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { PYTHON_VERSION, libraryVersions } from './scripts/code-pins.mjs';
 
 // Language names for the header tab of code blocks without a title. Shell languages and plain
 // text are left out: shell blocks render as a terminal, and text/diagram blocks need no header.
@@ -17,14 +18,33 @@ const LANGUAGE_LABELS = {
 // The copy button (1.75rem) is centred in it: half the leftover space, minus the 1px frame border
 // that expressive-code adds to the button's offset.
 const HEADER_COPY_SPACING = 'calc((1.9rem + 0.9rem - 1.75rem) / 2 - 1px)';
+// depth-first search of a hast tree for the first element with a class
+function findByClass(node, cls) {
+  if (node.properties?.className?.includes?.(cls)) return node;
+  for (const child of node.children ?? []) {
+    const hit = findByClass(child, cls);
+    if (hit) return hit;
+  }
+  return undefined;
+}
 function languageHeaders() {
   return {
     name: 'language-headers',
     hooks: {
-      // a block's language becomes its header tab, the same look as a titled block
+      // a block's language becomes its header tab, the same look as a titled block;
+      // Python blocks name the Python version the checker runs them with
       preprocessMetadata: ({ codeBlock }) => {
         const label = LANGUAGE_LABELS[codeBlock.language];
-        if (label && !codeBlock.props.title) codeBlock.props.title = label;
+        if (label && !codeBlock.props.title)
+          codeBlock.props.title = codeBlock.language === 'python' && PYTHON_VERSION ? `${label} ${PYTHON_VERSION}` : label;
+      },
+      // Python blocks also list the pinned versions of the libraries that block imports, right of the tab
+      postprocessRenderedBlock: ({ codeBlock, renderData }) => {
+        if (codeBlock.language !== 'python') return;
+        const libs = libraryVersions(codeBlock.code);
+        if (!libs) return;
+        const header = findByClass(renderData.blockAst, 'header');
+        header?.children.push({ type: 'element', tagName: 'span', properties: { className: ['code-libs'], title: libs }, children: [{ type: 'text', value: libs }] });
       },
     },
     baseStyles: `
@@ -33,6 +53,13 @@ function languageHeaders() {
         & .title { font: 600 0.8125rem/1.9rem 'Inter', system-ui, sans-serif; padding-block: 0.45rem; }
         & .copy button { width: 1.75rem; height: 1.75rem; opacity: 0.75; background: transparent; }
         & .copy button:hover, & .copy button:focus-visible { opacity: 1; }
+        /* library versions: muted, right-aligned, stopping short of the copy button; long lists end in an ellipsis */
+        & .header { align-items: center; }
+        & .code-libs {
+          margin: 0 calc(1.75rem + 1.1rem) 0 auto; min-width: 0; padding-left: 1rem;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          font: 0.6875rem 'JetBrains Mono', ui-monospace, monospace; color: #6e6e6e;
+        }
       }
     `,
   };
