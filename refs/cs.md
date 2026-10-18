@@ -62,3 +62,5 @@ Decided with the user (2026-10-18), do not add: Python quick reference; a Web/Fr
 ## 4. Appendix additions (stubs exist, 2026-10-18)
 
 Language sheets, one per language, all with the shared headings in CLAUDE.md (Appendix templates): `python-sheet`, `javascript-typescript` (TypeScript first, JavaScript differences noted), `go-sheet`, `c-sheet`, `cpp-sheet`, `java-sheet`, `rust-sheet`, plus `rosetta-table` (concept rows, language columns). `language-reference` stays the high-level comparison and should link to the sheets.
+
+**Open issue (user, 2026-10-18):** non-Python snippets in the language sheets and Rosetta table stay `// output: PENDING` until the user runs them. Collect them in `refs/verify-snippets.md`; the user pastes outputs back in one batch.

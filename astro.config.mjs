@@ -6,39 +6,33 @@ import expressiveCode from 'astro-expressive-code';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
-// Labels for the language badge shown on code blocks without a title. Shell languages and plain
-// text are left out: shell blocks render as a terminal, and text/diagram blocks need no label.
+// Language names for the header tab of code blocks without a title. Shell languages and plain
+// text are left out: shell blocks render as a terminal, and text/diagram blocks need no header.
 const LANGUAGE_LABELS = {
   python: 'Python', sql: 'SQL', typescript: 'TypeScript', ts: 'TypeScript', javascript: 'JavaScript', js: 'JavaScript',
   rust: 'Rust', kotlin: 'Kotlin', java: 'Java', go: 'Go', swift: 'Swift', ruby: 'Ruby', r: 'R', php: 'PHP',
   lua: 'Lua', json: 'JSON', yaml: 'YAML', cypher: 'Cypher', csharp: 'C#', cpp: 'C++', c: 'C', html: 'HTML', css: 'CSS',
 };
-function languageBadges() {
+// Header height of a titled frame, from expressive-code: 1.9rem + 2 * (uiPaddingBlock 0.25rem + indicator 2px).
+// The copy button (1.75rem) is centred in it, so it sits in the header instead of over the code.
+const HEADER_COPY_SPACING = 'calc((1.9rem + 0.5rem + 4px - 1.75rem) / 2)';
+function languageHeaders() {
   return {
-    name: 'language-badges',
+    name: 'language-headers',
     hooks: {
-      // tag the rendered frame with its language; the badge itself is drawn by baseStyles below
-      postprocessRenderedBlock: ({ codeBlock, renderData }) => {
+      // a block's language becomes its header tab, the same look as a titled block
+      preprocessMetadata: ({ codeBlock }) => {
         const label = LANGUAGE_LABELS[codeBlock.language];
-        if (!label || codeBlock.props.title) return;
-        renderData.blockAst.properties = { ...renderData.blockAst.properties, dataLang: label };
+        if (label && !codeBlock.props.title) codeBlock.props.title = label;
       },
     },
     baseStyles: `
-      .frame[data-lang] { position: relative; }
-      .frame[data-lang]::after {
-        content: attr(data-lang);
-        position: absolute; top: 0; right: 0; z-index: 1;
-        font: 600 0.6875rem/1 'Inter', system-ui, sans-serif;
-        letter-spacing: 0.06em; text-transform: uppercase;
-        color: #8ab4f8; background: rgba(138, 180, 248, 0.1);
-        border: 1px solid rgba(138, 180, 248, 0.25); border-top: 0; border-right: 0;
-        border-radius: 0 12px 0 8px; /* top-right matches the frame's 12px corner */
-        /* extra right padding clears the rounded corner; letter-spacing adds a little trailing space */
-        padding: 0.45rem 0.9rem 0.4rem 0.85rem; pointer-events: none;
-        transition: opacity 0.15s;
+      .frame.has-title:not(.is-terminal) {
+        --button-spacing: ${HEADER_COPY_SPACING};
+        & .title { font: 600 0.8125rem/1.9rem 'Inter', system-ui, sans-serif; padding-block: 0.25rem; }
+        & .copy button { width: 1.75rem; height: 1.75rem; opacity: 0.75; background: transparent; }
+        & .copy button:hover, & .copy button:focus-visible { opacity: 1; }
       }
-      .frame[data-lang]:hover::after, .frame[data-lang]:focus-within::after { opacity: 0; }
     `,
   };
 }
@@ -60,8 +54,8 @@ export default defineConfig({
   integrations: [
     expressiveCode({
       themes: ['github-dark-default'],
-      // Code blocks get a small language badge; shell blocks keep the terminal frame.
-      plugins: [languageBadges()],
+      // Code blocks get a header bar (language tab left, copy button right); shell blocks keep the terminal frame.
+      plugins: [languageHeaders()],
       styleOverrides: {
         borderRadius: '12px',
         borderColor: '#262626',
@@ -71,9 +65,14 @@ export default defineConfig({
         frames: {
           editorBackground: '#0b0b0b',
           terminalBackground: '#0b0b0b',
-          editorTabBarBackground: '#0b0b0b',
-          editorActiveTabBackground: '#0b0b0b',
-          editorActiveTabIndicatorTopColor: '#8ab4f8',
+          // the header is a lighter bar than the code, with the active tab underlined in the accent
+          editorTabBarBackground: '#161616',
+          editorActiveTabBackground: '#161616',
+          editorActiveTabForeground: '#8ab4f8',
+          editorActiveTabBorderColor: 'transparent',
+          editorActiveTabIndicatorTopColor: 'transparent',
+          editorActiveTabIndicatorBottomColor: '#8ab4f8',
+          editorActiveTabIndicatorHeight: '2px',
           editorTabBarBorderBottomColor: '#262626',
           terminalTitlebarBackground: '#0b0b0b',
           terminalTitlebarBorderBottomColor: '#262626',
