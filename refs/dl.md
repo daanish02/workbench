@@ -175,3 +175,5 @@ Stubs exist for everything here.
 **New section: Representation Learning** (after Regularization): `contrastive-learning`, `metric-learning`, `self-supervised-objectives`. This is the general home of self-supervision; `ml/ml-foundations/semi-supervised-and-self-supervised-learning` introduces it and `applied-dl/modern-vision/self-supervised-vision` applies it.
 
 **Appendix pages:** `glossary`, `pytorch-guide`, `shapes-and-parameters`, `losses-and-activations`, `training-defaults`, `training-failures`.
+
+**Appendix page added:** `reading-papers` (Reading DL Papers): three-pass reading, finding the real contribution, checking ablations, baselines and compute.

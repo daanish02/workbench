@@ -200,3 +200,21 @@ Stubs exist for everything here.
 **New section: Time Series** (after Feature Engineering): `forecasting-basics`, `time-series-features`, `backtesting`, `classical-forecasting` (exponential smoothing, ARIMA). Link `math/statistics/time-series` for the theory; this section is the ML practice. Deep forecasters are in `applied-dl/other-domains/time-series-dl`.
 
 **Appendix pages:** `glossary`, `metrics-cheat-sheet`, `model-chooser`, `scikit-learn-guide`.
+
+**New section: Exploratory Analysis** _(added 2026-10-18, before Feature Engineering)_. The user wants this thorough: no important chart missing, each chart drawn well. Organised by chart family; every family note covers each chart's purpose, when it misleads, and the seaborn call (matplotlib only where seaborn has no function). Stubs, in order:
+`eda-workflow`, `data-profiling`, `choosing-a-chart`, `distribution-charts` (histogram, KDE, ECDF, box, violin, strip, swarm, ridgeline, Q-Q), `relationship-charts` (scatter, hexbin, 2D KDE, bubble, regplot, pair plot, correlation heatmap), `comparison-charts` (bar, grouped/stacked, dot, lollipop, dumbbell, slope), `composition-charts` (stacked area, waffle, mosaic, pie/donut and why not, Sankey), `many-category-charts` (treemap, sunburst, Pareto, sorted top-k + other; the case of hundreds of classes or labels, common in NLP), `time-series-charts` (line, area, seasonal, lag, ACF, calendar heatmap), `high-dimensional-charts` (small multiples/facets, parallel coordinates, clustered heatmap, PCA/UMAP projections), `maps-and-networks` (choropleth, point map, node-link, adjacency matrix), `model-diagnostic-charts` (residuals, confusion heatmap, ROC/PR, calibration, learning curves, SHAP, partial dependence; link the Model Evaluation notes instead of repeating the metrics), `chart-design` (colour maps, colour-blind safety, labels, annotation, log scales), `visualization-pitfalls` (truncated and dual axes, overplotting, rainbow maps, Simpson's paradox).
+Figures: each family note needs interactive figures that draw the charts on the same small dataset, so the reader can switch chart type and see what each one reveals or hides. Use the design tokens; chart colours follow the figure rules in CLAUDE.md. Python blocks use seaborn and matplotlib but cannot print an image: print the numbers the chart encodes (bin counts, quartiles, correlations) so the checker can verify them.
+
+**More appendix pages:** `pandas-guide`, `seaborn-guide` (the user's default plotting library), `matplotlib-guide` (basics, and what seaborn lacks).
+
+**EDA workflow to teach in `eda-workflow`** (agreed with the user 2026-10-18; their habit is univariate, then bivariate, then multivariate, which stays the core):
+1. Question first: target, unit of observation (what one row is), the decision the analysis feeds.
+2. Split before looking: if a model will follow, set the test set aside and explore only training data (otherwise leakage through the analyst's eyes; link `feature-engineering/data-leakage`).
+3. Data-quality pass: types, missingness, duplicates, impossible values, cardinality (`data-profiling`).
+4. Univariate: each variable alone (`distribution-charts`).
+5. Bivariate, target first: each feature against the target, then feature pairs (`relationship-charts`, `comparison-charts`).
+6. Multivariate: interactions, confounders, subgroup flips such as Simpson's paradox (`high-dimensional-charts`).
+7. Written findings and hypotheses, handed to Feature Engineering.
+
+**Appendix page added:** `reading-papers` (Reading ML Papers): the claim, how data was split, whether baselines were tuned equally, and whether gains exceed run-to-run noise (link `model-evaluation/comparing-models`).
+

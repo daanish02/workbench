@@ -158,3 +158,5 @@ Stubs exist for everything here.
 **Appendix pages:** `glossary`, `model-timeline`, `benchmarks-and-metrics`, `gpu-memory-math`. Decoding parameters are not an appendix page: `llm-inference/decoding-strategies` covers them.
 
 **Decided not to add:** a meta-learning note (in in-context learning), a continual-learning note (in fine-tuning and `ml/ml-systems/model-drift`), MCMC (added to math as `math/statistics/mcmc`).
+
+**Appendix page added:** `reading-papers` (Reading Model Papers): technical reports and model releases, benchmark claims and contamination, model cards, what is not reported.
