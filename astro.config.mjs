@@ -13,9 +13,10 @@ const LANGUAGE_LABELS = {
   rust: 'Rust', kotlin: 'Kotlin', java: 'Java', go: 'Go', swift: 'Swift', ruby: 'Ruby', r: 'R', php: 'PHP',
   lua: 'Lua', json: 'JSON', yaml: 'YAML', cypher: 'Cypher', csharp: 'C#', cpp: 'C++', c: 'C', html: 'HTML', css: 'CSS',
 };
-// Header height of a titled frame, from expressive-code: 1.9rem + 2 * (uiPaddingBlock 0.25rem + indicator 2px).
-// The copy button (1.75rem) is centred in it, so it sits in the header instead of over the code.
-const HEADER_COPY_SPACING = 'calc((1.9rem + 0.5rem + 4px - 1.75rem) / 2)';
+// The header is the title's 1.9rem line plus 0.45rem padding above and below (about 46px).
+// The copy button (1.75rem) is centred in it: half the leftover space, minus the 1px frame border
+// that expressive-code adds to the button's offset.
+const HEADER_COPY_SPACING = 'calc((1.9rem + 0.9rem - 1.75rem) / 2 - 1px)';
 function languageHeaders() {
   return {
     name: 'language-headers',
@@ -29,7 +30,7 @@ function languageHeaders() {
     baseStyles: `
       .frame.has-title:not(.is-terminal) {
         --button-spacing: ${HEADER_COPY_SPACING};
-        & .title { font: 600 0.8125rem/1.9rem 'Inter', system-ui, sans-serif; padding-block: 0.25rem; }
+        & .title { font: 600 0.8125rem/1.9rem 'Inter', system-ui, sans-serif; padding-block: 0.45rem; }
         & .copy button { width: 1.75rem; height: 1.75rem; opacity: 0.75; background: transparent; }
         & .copy button:hover, & .copy button:focus-visible { opacity: 1; }
       }
