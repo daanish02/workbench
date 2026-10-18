@@ -58,3 +58,7 @@ These looked missing but are covered; don't add notes for them:
 isolation levels (transactions-and-acid), WebSockets/QUIC (other-protocols, http), cgroups/namespaces (cloud/vms-vs-containers, containerization), supply chain (secure-development), Amdahl's law (scalability), CRDTs (consistency-models, collaborative-editor), OAuth (authentication).
 
 Decided with the user (2026-10-18), do not add: Python quick reference; a Web/Frontend section (different domain); a Compilers section (`languages/compilers-and-interpreters` is enough); a Performance Engineering section (profiling is in debugging/observability, hardware performance is in infra); Graphics and Mobile (off the path to ML/DL).
+
+## 4. Appendix additions (stubs exist, 2026-10-18)
+
+Language sheets, one per language, all with the shared headings in CLAUDE.md (Appendix templates): `python-sheet`, `javascript-typescript` (TypeScript first, JavaScript differences noted), `go-sheet`, `c-sheet`, `cpp-sheet`, `java-sheet`, `rust-sheet`, plus `rosetta-table` (concept rows, language columns). `language-reference` stays the high-level comparison and should link to the sheets.

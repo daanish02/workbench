@@ -34,7 +34,13 @@ resources:                    # 2–3 links, every URL checked with curl (200) b
     note: "Why it is worth opening."
 ```
 
-`tier: advanced` shows a small ADV badge (sidebar, note header, overview). It means the note is harder or leans on several earlier notes, so read it after the core notes of its section. It does not mean skippable or less important. Use it sparingly, about 1 note in 10 per section; everything else is `core`. When writing a stub, confirm or change its tier by this rule.
+`tier: advanced` shows a small ADV badge (sidebar, note header, overview). It means the note is harder or leans on several earlier notes, so read it after the core notes of its section. It does not mean skippable or less important. A note is advanced if it (1) needs most of its section first, (2) is a step up in rigor or abstraction from its neighbours, (3) is the research or frontier end of its topic, or (4) is systems depth beyond a working model. Being niche, long or new does not count. Aim for about 1 note in 5 per section; everything else is `core`. When writing a stub, confirm or change its tier by these tests.
+
+### Appendix templates
+
+- **Library guide** (NumPy, SciPy, SymPy, pandas, seaborn, matplotlib, scikit-learn, PyTorch, Hugging Face): a `<FilterTable>` at the top mapping "I want to…" to the call, then `##` sections by task ("Creating arrays", "Linear algebra"), each with a short standalone code block and real output.
+- **Language sheet** (`cs/appendix/*-sheet`, `javascript-typescript`): the same `##` headings in every sheet, in this order: Types, Variables, Control Flow, Functions, Collections, Strings, Errors, Structs and Classes, Generics, Modules and Packages, Concurrency, Memory Model, Tooling, Idioms and Pitfalls. Code in that language; run every snippet with the real compiler or runtime and paste its output (the checker only runs Python). `rosetta-table` is a `<FilterTable>`: one concept per row, one column per language.
+- Lookup pages (glossary, cheat sheets, units): `<FilterTable>`.
 
 Body pattern, as in the CS notes:
 
