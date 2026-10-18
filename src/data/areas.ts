@@ -48,6 +48,8 @@ export const areas: Area[] = [
       { id: 'storage', title: 'Storage' },
       { id: 'networking-hardware', title: 'Networking Hardware' },
       { id: 'gpus-parallelism', title: 'GPUs & Parallelism' },
+      { id: 'unconventional-computing', title: 'Unconventional Computing' },
+      { id: 'appendix', title: 'Appendix' },
     ],
   },
   {
@@ -92,6 +94,7 @@ export const areas: Area[] = [
       { id: 'shallow-neural-networks', title: 'Shallow Neural Networks' },
       { id: 'reinforcement-learning', title: 'Reinforcement Learning' },
       { id: 'ml-systems', title: 'ML Systems' },
+      { id: 'appendix', title: 'Appendix' },
     ],
   },
   {
@@ -109,6 +112,7 @@ export const areas: Area[] = [
       { id: 'practical-training', title: 'Practical Training' },
       { id: 'deep-reinforcement-learning', title: 'Deep Reinforcement Learning' },
       { id: 'deep-recommenders', title: 'Deep Recommenders' },
+      { id: 'appendix', title: 'Appendix' },
     ],
   },
   {
@@ -126,6 +130,7 @@ export const areas: Area[] = [
       { id: 'vision-language-models', title: 'Vision-Language Models' },
       { id: 'audio-foundations', title: 'Audio Foundations' },
       { id: 'speech-audio-models', title: 'Speech & Audio Models' },
+      { id: 'appendix', title: 'Appendix' },
     ],
   },
 ];
