@@ -90,6 +90,7 @@ export const areas: Area[] = [
       { id: 'unsupervised-learning', title: 'Unsupervised Learning' },
       { id: 'dimensionality-reduction', title: 'Dimensionality Reduction' },
       { id: 'recommender-systems', title: 'Recommender Systems' },
+      { id: 'exploratory-analysis', title: 'Exploratory Analysis' },
       { id: 'feature-engineering', title: 'Feature Engineering' },
       { id: 'time-series', title: 'Time Series' },
       { id: 'shallow-neural-networks', title: 'Shallow Neural Networks' },
