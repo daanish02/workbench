@@ -56,7 +56,7 @@ function languageHeaders() {
         /* library versions: muted, right-aligned, stopping short of the copy button; long lists end in an ellipsis */
         & .header { align-items: center; }
         & .code-libs {
-          margin: 0 calc(1.75rem + 1.1rem) 0 auto; min-width: 0; padding-left: 1rem;
+          margin: 0 calc(1.75rem + 1.9rem) 0 auto; min-width: 0; padding-left: 1rem;
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           font: 0.6875rem 'JetBrains Mono', ui-monospace, monospace; color: #6e6e6e;
         }
