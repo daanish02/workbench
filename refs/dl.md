@@ -2,6 +2,13 @@
 
 Owns architectures, training mechanics, and the mathematics of how deep networks actually learn. `scaffold-applied-dl` owns what gets built _with_ these architectures (LLMs, vision models, audio, RL with neural function approximators). `scaffold-ml`'s shallow neural network section (perceptron, MLP, intuitive backprop) is the on-ramp this KB continues from â€” full derivation and modern architectures start here.
 
+
+## Writing checklist (coverage review 2026-10-18, read before each section)
+
+- Every note below, including the ones marked _(new)_, already exists as a placeholder stub (body `_Placeholder. Content not written yet._`) with a short title (at most 3 words), description and `order`. Overwrite stubs in place; do not create files or renumber unless a note is added or dropped. Slugs are the old long ones; keep them.
+- `##` headings at most 5 words. Python blocks standalone with real output; run `uv run scripts/check_notes.py dl`.
+- Link instead of re-teaching: math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`, `information-theory`), CS, and Hardware (`infra/...`) notes already cover the foundations named below.
+
 ---
 
 ## 1. Neural Network Foundations, Deepened
@@ -141,8 +148,30 @@ _(Closes the loop deliberately left open in `scaffold-ml:recommender-systems` â€
 
 ---
 
-## Appendix _(section added 2026-10-18)_
+## Coverage review _(2026-10-18)_
 
-Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+Stubs exist for everything here.
 
-Candidates: glossary; layer and shape cheat sheet (output shapes and parameter counts for linear, conv, attention); loss and activation table; optimizer and hyperparameter defaults (learning rates, batch sizes, warmup) with sources; training-failure checklist (loss NaN, not decreasing, overfitting: symptom to fix).
+**Merged / boundaries**
+- `training-optimization/mixed-precision-training` merged into `practical-training/mixed-precision-training-in-practice`; number formats live in `infra/cpu-architecture/floating-point-hardware`, link it.
+- `hardware-for-deep-learning` is a short bridge to `infra/gpus-parallelism/*`, not a re-teach.
+- `distributed-training` owns the algorithms (data, tensor, pipeline parallelism, FSDP, ZeRO); `infra/gpus-parallelism/multi-gpu-and-distributed-training-hardware` owns the hardware traffic.
+- A PyTorch guide belongs in the appendix (`appendix/pytorch-guide`). Notes can still use PyTorch in code blocks.
+
+**New notes** _(new)_
+- Foundations: `modern-activations` (GELU, SiLU, SwiGLU).
+- Training: `gradient-clipping`, `normalization-layers` (LayerNorm, RMSNorm, GroupNorm).
+- CNNs: `efficient-convolutions` (depthwise separable, 1x1).
+- RNNs: `state-space-models` (S4, Mamba).
+- Transformers: `transformer-variants` (encoder-only, decoder-only, encoder-decoder), `efficient-attention` (FlashAttention, sparse, linear).
+- Regularization: `double-descent`.
+- Generative: `autoregressive-models`, `normalizing-flows`, `diffusion-guidance`, `flow-matching`.
+- Practical: `debugging-training`, `interpreting-networks` (saliency, Grad-CAM, probing).
+- Deep RL: `model-based-rl` (world models, MCTS/AlphaZero), `offline-rl`.
+- Deep recommenders: `ranking-models` (retrieve then rank).
+
+**New section: Graph Neural Networks** (after Attention & Transformers): `graphs-as-data`, `message-passing`, `gcn-and-gat`, `graph-tasks`. Link `cs/data-structures/graphs`; note that a transformer is message passing on a complete graph.
+
+**New section: Representation Learning** (after Regularization): `contrastive-learning`, `metric-learning`, `self-supervised-objectives`. This is the general home of self-supervision; `ml/ml-foundations/semi-supervised-and-self-supervised-learning` introduces it and `applied-dl/modern-vision/self-supervised-vision` applies it.
+
+**Appendix pages:** `glossary`, `pytorch-guide`, `shapes-and-parameters`, `losses-and-activations`, `training-defaults`, `training-failures`.

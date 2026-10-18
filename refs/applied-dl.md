@@ -2,6 +2,13 @@
 
 Covers the three true modalities built on top of `scaffold-dl`'s architectures: LLMs/NLP, Vision/VLMs, and Audio. (RL and Recommenders moved to `scaffold-dl` itself, since both are general techniques rather than domain-specific modalities — see the DL KB plan's boundary note.) Everything here assumes `scaffold-dl`'s Transformer, CNN, and generative-model sections as prerequisites rather than re-deriving them.
 
+
+## Writing checklist (coverage review 2026-10-18, read before each section)
+
+- Every note below, including the ones marked _(new)_, already exists as a placeholder stub (body `_Placeholder. Content not written yet._`) with a short title (at most 3 words), description and `order`. Overwrite stubs in place; do not create files or renumber unless a note is added or dropped. Slugs are the old long ones; keep them.
+- `##` headings at most 5 words. Python blocks standalone with real output; run `uv run scripts/check_notes.py applied-dl`.
+- Link instead of re-teaching: math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`, `information-theory`), CS, and Hardware (`infra/...`) notes already cover the foundations named below.
+
 ---
 
 ## 1. NLP Foundations
@@ -130,8 +137,24 @@ _(Builds on `scaffold-dl:convolutional-neural-networks` — this section is task
 
 ---
 
-## Appendix _(section added 2026-10-18)_
+## Coverage review _(2026-10-18)_
 
-Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+Stubs exist for everything here.
 
-Candidates: glossary; model family timeline (BERT, GPT, ViT, CLIP, Whisper, …, with year and key idea); benchmarks and metrics table (perplexity, BLEU, mAP, WER, …); prompt and decoding parameters (temperature, top-p, top-k); memory and compute rules of thumb (parameters to GPU memory, tokens per second).
+**Moved:** `mixture-of-experts` from LLM Applications to LLM Architecture (it is architecture).
+
+**New notes** _(new)_
+- LLM Architecture: `modern-llm-blocks` (RoPE, GQA, RMSNorm, SwiGLU), `pretraining-data` (sources, filtering, dedup, mixtures).
+- LLM Alignment: `distillation`, `reasoning-models` (test-time compute, RL for reasoning), `llm-safety` (jailbreaks, prompt injection, red-teaming; agent-side defences stay in `agentic-systems/agent-safety-and-guardrails`). `fine-tuning` also covers catastrophic forgetting and continual learning. `in-context-learning-and-prompting` also covers meta-learning / few-shot learning (decided: no separate note).
+- LLM Applications: `choosing-an-approach` (prompt vs RAG vs fine-tune), `rerankers-and-hybrid-search`, `structured-output`, `llm-evals-in-practice`.
+- Computer Vision: `ocr-and-documents`, `video-understanding`, `depth-and-3d` (monocular depth, NeRF, Gaussian splatting).
+- Modern Vision: `vision-foundation-models` (DINO, SAM, DETR).
+- Speech & Audio: `neural-audio-codecs` (discrete audio tokens), `speech-llms` (speech-to-speech).
+
+**New section: LLM Inference** (after LLM Alignment): `decoding-strategies`, `kv-cache`, `speculative-decoding`, `llm-quantization` (link `dl/practical-training/model-compression` for the general idea), `llm-serving`. Link `infra/memory-hierarchy` and `infra/gpus-parallelism/roofline-model`: decoding is memory-bound.
+
+**New section: Other Domains** (after Speech & Audio): `time-series-dl` (link `ml/time-series/*`), `tabular-dl` (vs gradient boosting, link `ml/trees-ensembles/gradient-boosting`), `scientific-ml` (AlphaFold, weather models, physics-informed networks).
+
+**Appendix pages:** `glossary`, `model-timeline`, `benchmarks-and-metrics`, `gpu-memory-math`. Decoding parameters are not an appendix page: `llm-inference/decoding-strategies` covers them.
+
+**Decided not to add:** a meta-learning note (in in-context learning), a continual-learning note (in fine-tuning and `ml/ml-systems/model-drift`), MCMC (added to math as `math/statistics/mcmc`).

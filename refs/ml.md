@@ -2,6 +2,13 @@
 
 Covers classical ML and the fundamentals that `scaffold-dl` will build directly on top of. Heavy prerequisites from Math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`) are called out inline rather than re-derived here.
 
+
+## Writing checklist (coverage review 2026-10-18, read before each section)
+
+- Every note below, including the ones marked _(new)_, already exists as a placeholder stub (body `_Placeholder. Content not written yet._`) with a short title (at most 3 words), description and `order`. Overwrite stubs in place; do not create files or renumber unless a note is added or dropped. Slugs are the old long ones; keep them.
+- `##` headings at most 5 words. Python blocks standalone with real output; run `uv run scripts/check_notes.py ml`.
+- Link instead of re-teaching: math (`linear-algebra`, `calculus`, `probability`, `statistics`, `optimization`, `information-theory`), CS, and Hardware (`infra/...`) notes already cover the foundations named below.
+
 ---
 
 ## 1. ML Foundations & Workflow
@@ -170,8 +177,26 @@ _(Kept introductory — deeper RL, especially anything neural-network-based (DQN
 
 ---
 
-## Appendix _(section added 2026-10-18)_
+## Coverage review _(2026-10-18)_
 
-Last section of the area, same pattern as `math/appendix` and `cs/appendix` (reference pages, FilterTable for long tables). Only the Glossary stub exists so far (`appendix/glossary`, order 1); decide the other pages when this area is written, then add stubs.
+Stubs exist for everything here.
 
-Candidates: glossary (FilterTable, like cs/appendix/glossary); metrics cheat sheet (accuracy, precision/recall, F1, ROC-AUC, RMSE, when to use which); model chooser (which model for which data size/type, like math/appendix/which-tool-when); scikit-learn quick map (estimator, fit/predict/transform, pipelines).
+**Merged / dropped**
+- `feature-engineering/handling-imbalanced-datasets` merged into `supervised-classification/class-imbalance` (now covers weights, resampling, SMOTE, threshold moving). Feature Engineering should link to it.
+- `recommender-systems/deep-learning-based-recommenders` and `reinforcement-learning/policy-gradient-methods` dropped: they were forward pointers only. The topics are full notes in DL (`dl/deep-recommenders/*`, `dl/deep-reinforcement-learning/policy-gradient-methods`). End `evaluating-recommenders` and `exploration-vs-exploitation` with a "where next" link to them.
+
+**New notes** _(new)_
+- Foundations: `loss-and-risk` (empirical risk, MLE as a loss; link `math/statistics/estimation`), `learning-theory` (PAC, VC dimension, no free lunch).
+- Evaluation: `learning-curves`, `comparing-models` (bootstrap intervals, paired tests; link `math/statistics/bootstrap-methods`, `hypothesis-testing`).
+- Regression: `generalized-linear-models`, `gaussian-processes` (link `math/probability/multivariate-normal`).
+- Classification: `discriminant-analysis` (LDA/QDA).
+- Unsupervised: `spectral-clustering`, `cluster-evaluation`, `hidden-markov-models` (forward algorithm, Viterbi, EM; link `math/probability/markov-chains`).
+- Dimensionality reduction: `nmf-and-ica`, `manifold-learning`.
+- Recommenders: `learning-to-rank`.
+- Feature engineering: `text-features` (bag of words, TF-IDF), `feature-pipelines` (fit on train only).
+- RL: `value-iteration` (value and policy iteration), `temporal-difference-learning` (Monte Carlo, TD(0), SARSA), placed before Q-learning so it no longer jumps straight to Q-learning.
+- ML Systems: `data-versioning`. `model-drift` also covers retraining and continual learning. A/B testing should link `math/statistics/causal-inference` rather than re-teach causality.
+
+**New section: Time Series** (after Feature Engineering): `forecasting-basics`, `time-series-features`, `backtesting`, `classical-forecasting` (exponential smoothing, ARIMA). Link `math/statistics/time-series` for the theory; this section is the ML practice. Deep forecasters are in `applied-dl/other-domains/time-series-dl`.
+
+**Appendix pages:** `glossary`, `metrics-cheat-sheet`, `model-chooser`, `scikit-learn-guide`.
