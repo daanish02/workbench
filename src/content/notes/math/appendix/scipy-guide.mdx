@@ -3,6 +3,285 @@ title: "SciPy Guide"
 description: "A working guide to SciPy: optimisation, integration, interpolation, statistics, sparse matrices and signal processing."
 order: 9
 tier: core
+takeaways:
+  - "SciPy is a set of numerical toolboxes on top of NumPy arrays. Import the submodule you need: `scipy.optimize`, `scipy.integrate`, `scipy.interpolate`, `scipy.stats`, `scipy.linalg`, `scipy.sparse`, `scipy.signal`, `scipy.special`."
+  - "`optimize` minimises functions (`minimize`), finds roots (`brentq`), fits models to data (`curve_fit`) and solves linear programs (`linprog`)."
+  - "`stats` gives every common distribution the same methods: `pdf`/`pmf`, `cdf`, `ppf` (quantile), `sf` (upper tail), `rvs` (samples). It also runs the standard tests."
+  - "Always check the result object (`res.success`, `sol.converged`, the error estimate), not just the number. A numerical routine can return a wrong answer quietly."
+  - "Use `scipy.sparse` when most matrix entries are zero, and `scipy.special` functions such as `logsumexp` when a direct formula would overflow."
+resources:
+  - title: "SciPy User Guide"
+    url: "https://docs.scipy.org/doc/scipy/tutorial/index.html"
+    note: "One tutorial per submodule, with the reasoning behind each routine's options."
+  - title: "Statistical functions (scipy.stats reference)"
+    url: "https://docs.scipy.org/doc/scipy/reference/stats.html"
+    note: "The full list of distributions and tests, with the methods every distribution shares."
+  - title: "Optimization and root finding (scipy.optimize reference)"
+    url: "https://docs.scipy.org/doc/scipy/reference/optimize.html"
+    note: "Every minimiser, root finder and fitting routine, and which method each `method=` option selects."
 ---
 
-_Placeholder. Content not written yet._
+[NumPy](../numpy-guide/) supplies the array; **SciPy** supplies the numerical methods that work on it: optimisation, integration, interpolation, statistics, sparse linear algebra and signal processing. Each lives in its own submodule, so code imports only what it uses. Most routines are wrappers around decades-old, carefully tested Fortran and C libraries, which is why they are usually more reliable than a hand-written version. This page is a working reference: find the task in the table, then read the section for a runnable example. Run the examples with `uv run --with numpy --with scipy python`.
+
+<FilterTable plain placeholder="Filter tasks, e.g. minimise, root, fit, integrate, p-value">
+
+### scipy.optimize
+
+| I want to... | Call |
+|---|---|
+| minimise a function of several variables | `minimize(f, x0, method="BFGS")` |
+| find a root of a function in an interval | `brentq(f, a, b)`, `root_scalar(f, bracket=[a, b])` |
+| fit a model's parameters to data | `curve_fit(model, x, y, p0)` |
+| solve a linear program | `linprog(c, A_ub, b_ub, bounds)` |
+
+### scipy.integrate
+
+| I want to... | Call |
+|---|---|
+| integrate a function, including to infinity | `quad(f, a, b)` |
+| solve an ordinary differential equation | `solve_ivp(f, t_span, y0, t_eval)` |
+
+### scipy.interpolate
+
+| I want to... | Call |
+|---|---|
+| draw a smooth curve through points | `CubicSpline(x, y)` |
+| interpolate linearly (NumPy) | `np.interp(x_new, x, y)` |
+
+### scipy.stats
+
+| I want to... | Call |
+|---|---|
+| get a normal CDF or quantile | `stats.norm.cdf(x)`, `stats.norm.ppf(p)` |
+| get a binomial or Poisson probability | `stats.binom.pmf(k, n, p)`, `stats.poisson.sf(k, mu)` |
+| fix a distribution's parameters once | `d = stats.norm(loc, scale)` |
+| get a central interval holding a probability | `d.interval(0.95)` |
+| draw repeatable samples | `d.rvs(size, random_state=0)` |
+| compare two means | `stats.ttest_ind(a, b)` |
+| measure correlation with a p-value | `stats.pearsonr(x, y)`, `stats.spearmanr(x, y)` |
+| summarise data | `stats.describe(data)` |
+
+### scipy.linalg, sparse, special, signal
+
+| I want to... | Call |
+|---|---|
+| factor a symmetric positive-definite matrix | `linalg.cholesky(A, lower=True)` |
+| take an LU decomposition | `linalg.lu(A)` |
+| compute a matrix exponential | `linalg.expm(A)` |
+| store a mostly-zero matrix | `sparse.diags(...)`, `sparse.csr_matrix(A)` |
+| solve a sparse linear system | `sparse.linalg.spsolve(A, b)` |
+| evaluate the gamma function or a binomial coefficient | `special.gamma(x)`, `special.comb(n, k, exact=True)` |
+| compute a sigmoid or log-sum-exp safely | `special.expit(x)`, `special.logsumexp(a)` |
+| find peaks in a signal | `signal.find_peaks(x, height)` |
+
+</FilterTable>
+
+## Minimising a Function
+
+`minimize` takes a function of a vector and a starting point. BFGS, the default for unconstrained problems, builds an estimate of the curvature from successive gradients (estimated by finite differences when none is given). The test function below is a curved valley in the style of the Rosenbrock function, which is easy to roll into and slow to follow to the bottom.
+
+```python
+from scipy.optimize import minimize
+
+def f(p):
+    x, y = p
+    return (x - 1) ** 2 + 10 * (y - x**2) ** 2  # a curved valley with its minimum at (1, 1)
+
+res = minimize(f, x0=[-1.0, 1.0], method="BFGS")
+print(res.success, [round(float(v), 4) for v in res.x], res.fun < 1e-10)  # prints: True [1.0, 1.0] True
+```
+
+In words: from $(-1, 1)$ the optimiser found the minimum at $(1, 1)$, where $f = 0$, and reported success. The [gradient descent](../../optimization/gradient-descent/) notes explain what these methods do inside; in practice, call `minimize` and check `res.success` and `res.message`.
+
+## Finding a Root
+
+`brentq` needs an interval $[a, b]$ where the function changes sign, and then is guaranteed to converge. `root_scalar` is the general interface to it and to other root finders.
+
+```python
+import math
+from scipy.optimize import brentq, root_scalar
+
+print(round(brentq(lambda x: x**2 - 2, 0, 2), 10))
+sol = root_scalar(lambda x: math.cos(x) - x, bracket=[0, 1])
+print(round(sol.root, 6), sol.converged)
+# 1.4142135624
+# 0.739085 True
+```
+
+In words: the positive root of $x^2 - 2$ is $\sqrt{2} \approx 1.4142135624$. The equation $\cos x = x$ has no closed-form solution, and the root finder gives $x \approx 0.739085$ with its convergence flag set. Compare [Newton's method](../../optimization/numerical-methods/), which is faster but needs a good start.
+
+## Fitting a Model to Data
+
+`curve_fit` adjusts a model's parameters to minimise the squared residuals, for models that need not be linear in their parameters. It returns the best parameters and their covariance matrix; the square roots of its diagonal are the standard errors.
+
+```python
+import numpy as np
+from scipy.optimize import curve_fit
+
+def model(t, a, k):
+    return a * np.exp(-k * t)
+
+rng = np.random.default_rng(0)
+t = np.linspace(0, 4, 30)
+y = model(t, 5.0, 0.8) + rng.normal(0, 0.05, t.size)
+params, cov = curve_fit(model, t, y, p0=[1, 1])
+print(np.round(params, 3), np.round(np.sqrt(np.diag(cov)), 3))  # prints: [5.019 0.808] [0.025 0.006]
+```
+
+In words: data generated from $5e^{-0.8t}$ plus small noise gives back $a = 5.019 \pm 0.025$ and $k = 0.808 \pm 0.006$, both within about two standard errors of the truth. The starting guess `p0` matters for non-linear models: a poor start can converge to the wrong fit or not at all.
+
+## Linear Programming
+
+`linprog` minimises a linear objective under linear inequality constraints. To maximise, negate the objective and negate the result back. See [linear programming](../../optimization/linear-programming/) for the geometry.
+
+```python
+from scipy.optimize import linprog
+
+# maximise 3x + 2y subject to x + y <= 4, x + 3y <= 6, x, y >= 0 (linprog minimises, so negate)
+res = linprog(c=[-3, -2], A_ub=[[1, 1], [1, 3]], b_ub=[4, 6], bounds=[(0, None), (0, None)])
+print(res.status, res.x, -res.fun)  # prints: 0 [4. 0.] 12.0
+```
+
+In words: status $0$ means an optimum was found. The best point is the corner $(4, 0)$, with objective value $3 \cdot 4 + 2 \cdot 0 = 12$.
+
+## Integrals and Differential Equations
+
+`quad` integrates a function adaptively, including over infinite intervals, and returns an error estimate with the value. `solve_ivp` integrates an ordinary differential equation $y' = f(t, y)$ from an initial value.
+
+```python
+import numpy as np
+from scipy.integrate import quad, solve_ivp
+
+value, err = quad(lambda x: np.exp(-x**2), -np.inf, np.inf)
+print(round(value, 10), round(np.sqrt(np.pi), 10), err < 1e-6)
+sol = solve_ivp(lambda t, y: -2 * y, t_span=(0, 1), y0=[1.0], t_eval=[0.5, 1.0], rtol=1e-10, atol=1e-12)
+print(np.round(sol.y[0], 6), np.round(np.exp(-2 * np.array([0.5, 1.0])), 6))
+# 1.7724538509 1.7724538509 True
+# [0.367879 0.135335] [0.367879 0.135335]
+```
+
+In words: the Gaussian integral $\int_{-\infty}^{\infty} e^{-x^2}\,dx$ comes out as $\sqrt{\pi} \approx 1.7724538509$ to ten digits. The equation $y' = -2y$ with $y(0) = 1$ has solution $e^{-2t}$, and the solver matches it at $t = 0.5$ and $t = 1$. The default tolerances of `solve_ivp` are loose (relative $10^{-3}$), so set `rtol` and `atol` when accuracy matters. See [integrals](../../calculus/integrals/) and [differential equations](../../calculus/differential-equations/).
+
+<Callout type="pitfall">
+Numerical routines return a number even when they failed. Check `res.success` for `minimize`, the status for `linprog`, `converged` for root finders and the error estimate for `quad`, and loosen nothing until you know why it failed.
+</Callout>
+
+## Interpolation
+
+A **cubic spline** passes through every data point with matching first and second derivatives at each one, so the curve is smooth. Linear interpolation just joins the points with straight lines.
+
+```python
+import numpy as np
+from scipy.interpolate import CubicSpline
+
+x = np.array([0, 1, 2, 3])
+y = np.array([0, 1, 8, 27])  # x cubed
+spline = CubicSpline(x, y)
+print(np.round(spline([0.5, 1.5, 2.5]), 4), np.interp([0.5, 1.5, 2.5], x, y))  # prints: [ 0.125  3.375 15.625] [ 0.5  4.5 17.5]
+```
+
+In words: the points come from $x^3$, and the spline recovers $0.5^3 = 0.125$, $1.5^3 = 3.375$ and $2.5^3 = 15.625$ exactly, because with its default end conditions a cubic spline through samples of a cubic is the cubic itself. Linear interpolation overshoots every value, for example $4.5$ instead of $3.375$.
+
+## Distributions
+
+Every distribution in `scipy.stats` has the same methods: `pdf` (or `pmf` for discrete ones), `cdf`, `ppf` (the inverse of the CDF, i.e. the quantile), `sf` (the survival function $1 - \text{CDF}$, more accurate in the tail) and `rvs` (random samples). Calling a distribution with its parameters **freezes** them, so later calls need only the data.
+
+```python
+from scipy import stats
+
+print(round(stats.norm.cdf(1.96), 4), round(stats.norm.ppf(0.975), 4))
+print(round(stats.binom.pmf(3, n=10, p=0.5), 4), round(stats.poisson.sf(5, mu=2), 4))
+d = stats.norm(loc=100, scale=15)  # a frozen distribution: parameters fixed once
+print(round(d.cdf(130), 4), [round(float(v), 2) for v in d.interval(0.95)])
+print(d.rvs(size=3, random_state=0).round(2))
+# 0.975 1.96
+# 0.1172 0.0166
+# 0.9772 [70.6, 129.4]
+# [126.46 106.   114.68]
+```
+
+In words: $97.5\%$ of a standard normal lies below $1.96$. Three heads in ten fair flips has probability $0.1172$, and a Poisson count with mean $2$ exceeds $5$ with probability $0.0166$. For the frozen normal with mean $100$ and standard deviation $15$, the central $95\%$ runs from $70.6$ to $129.4$. See [common distributions](../../probability/common-distributions/).
+
+## Statistical Tests
+
+The tests return a result object with the statistic and the p-value. `ttest_ind` compares two independent means; `pearsonr` tests linear correlation.
+
+```python
+import numpy as np
+from scipy import stats
+
+rng = np.random.default_rng(1)
+a = rng.normal(10.0, 2.0, 40)
+b = rng.normal(11.0, 2.0, 40)
+t = stats.ttest_ind(a, b)
+print(round(t.statistic, 3), round(t.pvalue, 4))
+r = stats.pearsonr([1, 2, 3, 4, 5], [2.1, 3.9, 6.2, 7.8, 10.1])
+print(round(r.statistic, 4), r.pvalue < 0.001)
+print(stats.describe([2, 4, 4, 4, 5, 5, 7, 9]).variance)
+# -1.851 0.0679
+# 0.9987 True
+# 4.571428571428571
+```
+
+In words: the two samples really do come from means $10$ and $11$, yet with $40$ points each the test gives $p = 0.0679$, which would not count as significant at the $5\%$ level. A real difference of half a standard deviation is easy to miss with small samples. The correlation $0.9987$ is highly significant. `describe` reports the sample variance with $n - 1$ in the denominator: $4.5714$ for the same data the [stdlib guide](../python-math-stdlib/) used. See [hypothesis testing](../../statistics/hypothesis-testing/).
+
+## Dense Linear Algebra
+
+`scipy.linalg` contains everything in `numpy.linalg` plus more decompositions and matrix functions.
+
+```python
+import numpy as np
+from scipy import linalg
+
+A = np.array([[4.0, 2.0], [2.0, 3.0]])
+L = linalg.cholesky(A, lower=True)
+print(np.round(L, 4).tolist(), np.allclose(L @ L.T, A))
+P, Lu, U = linalg.lu(np.array([[1.0, 2.0], [3.0, 4.0]]))
+print(P.tolist(), np.round(U, 4).tolist())
+print(np.round(linalg.expm(np.array([[0.0, 1.0], [-1.0, 0.0]]) * np.pi / 2), 6).tolist())
+# [[2.0, 0.0], [1.0, 1.4142]] True
+# [[0.0, 1.0], [1.0, 0.0]] [[3.0, 4.0], [0.0, 0.6667]]
+# [[0.0, 1.0], [-1.0, 0.0]]
+```
+
+In words: the **Cholesky** factor $L$ is lower triangular with $LL^\top = A$; it exists only for symmetric positive-definite matrices and is the fastest way to solve with them. The **LU** decomposition swapped the two rows (the permutation $P$) so that the larger pivot $3$ comes first, which keeps rounding error small. The **matrix exponential** of the rotation generator times $\frac{\pi}{2}$ is a $90°$ rotation matrix. See [matrix decompositions](../../linear-algebra/matrix-decompositions/).
+
+## Sparse Matrices
+
+A **sparse** matrix stores only its nonzero entries. Large matrices from graphs, finite differences and text features are often more than $99\%$ zeros, so sparse storage saves both memory and time.
+
+```python
+import numpy as np
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
+
+n = 1000
+# tridiagonal matrix: 2 on the diagonal, -1 beside it, stored as about 3n numbers instead of n * n
+A = sparse.diags([-np.ones(n - 1), 2 * np.ones(n), -np.ones(n - 1)], [-1, 0, 1], format="csr")
+b = np.ones(n)
+x = spsolve(A, b)
+print(A.shape, A.nnz, np.allclose(A @ x, b), round(x.max(), 1))  # prints: (1000, 1000) 2998 True 125250.0
+```
+
+In words: the $1000 \times 1000$ matrix has $10^6$ entries but only $2998$ nonzeros, so it is stored in about $0.3\%$ of the space. The sparse solver returns a solution that satisfies $A\mathbf{x} = \mathbf{b}$. This tridiagonal matrix is the discrete second derivative, and its solution is a parabola with peak $125250$ in the middle.
+
+## Special Functions and Signals
+
+`scipy.special` holds functions that appear throughout probability and physics, implemented to stay accurate where the naive formula fails. `scipy.signal` holds filtering and spectral tools.
+
+```python
+import numpy as np
+from scipy import signal, special
+
+print(special.gamma(5), special.comb(10, 3, exact=True), round(special.expit(0.0), 2))
+with np.errstate(over="ignore"):  # the naive version overflows; silence the warning to show the result
+    naive = np.log(np.sum(np.exp([1000.0, 1000.0])))
+print(round(special.logsumexp([1000.0, 1000.0]), 4), naive)
+peaks, _ = signal.find_peaks([0, 2, 1, 3, 1, 4, 0], height=2)
+print(peaks)
+# 24.0 120 0.5
+# 1000.6931 inf
+# [1 3 5]
+```
+
+In words: $\Gamma(5) = 4! = 24$, $\binom{10}{3} = 120$, and the sigmoid of $0$ is $0.5$. The naive $\log(e^{1000} + e^{1000})$ overflows to infinity, while `logsumexp` returns the exact answer $1000 + \ln 2 \approx 1000.6931$; the same trick keeps softmax and log-likelihood code stable. `find_peaks` locates the local maxima at positions $1$, $3$ and $5$.

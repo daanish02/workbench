@@ -3,6 +3,114 @@ title: "Reading Math Papers"
 description: "How to read a mathematics paper: definitions first, working examples by hand, and reading proofs in passes."
 order: 6
 tier: core
+takeaways:
+  - "Read a maths paper in **passes**, not front to back: first the abstract, introduction and statements of the main results; then the definitions and examples; the proofs last, and only those you need."
+  - "Keep a **notation sheet**. Most confusion in a paper is a symbol defined three pages earlier, or used in a different sense than in your textbook."
+  - "Make every definition and theorem concrete with a **small example** worked by hand or in code. A statement you cannot test on a case you can compute is not yet understood."
+  - "Read a proof **top-down**: find its skeleton (the key lemma, the one clever step) before checking each line. Phrases like 'it is easy to see' mark steps the author skipped, not steps that are short."
+  - "Expect to be slow: an hour per page is normal for a hard result, and re-reading is the method, not a failure."
+resources:
+  - title: "How to Read a Paper (S. Keshav)"
+    url: "http://ccr.sigcomm.org/online/files/p83-keshavA.pdf"
+    note: "The three-pass method, written for computer science but just as useful for maths: what to read in each pass and when to stop."
+  - title: "Career advice (Terence Tao)"
+    url: "https://terrytao.wordpress.com/career-advice/"
+    note: "Short essays from a working mathematician, including how to read papers, learn other fields and use the literature."
+  - title: "arXiv: Mathematics"
+    url: "https://arxiv.org/archive/math"
+    note: "Where most current maths papers appear first, free, sorted by subject."
 ---
 
-_Placeholder. Content not written yet._
+A maths paper is the most compressed writing you will meet. Each sentence states a precise fact, definitions are given once and then used for pages, and proofs skip any step the author considers routine for experts. Reading it the way you read prose, line by line from the start, usually ends in a fog by page two. This page gives a working method: what to read in which order, how to make abstract statements concrete, and how to get through a proof. It assumes the vocabulary of [proof techniques](../../foundations/proof-techniques/) and the [notation](../notation/) page.
+
+## How a Paper Is Built
+
+Most papers share one structure, and knowing it tells you where to look.
+
+| Part | What it contains | Read it... |
+|---|---|---|
+| Abstract | the main result in one paragraph | first |
+| Introduction | the problem, why it matters, the main theorems stated informally or exactly, and how the proof goes | first, carefully |
+| Preliminaries | definitions, notation and known results the paper relies on | in pass 2, as a reference |
+| Main results | theorems, lemmas and their proofs | statements in pass 1, proofs in pass 3 |
+| Examples and remarks | special cases, counterexamples, why a condition is needed | in pass 2; they are the most useful part for a reader |
+| Related work, references | how the result fits the field | when you need context or a missing definition |
+
+The **introduction** often contains a proof sketch ("the idea is to...") that is worth more than any single page of the formal proof. A **lemma** is a stepping-stone result proved to support a theorem; a **corollary** follows quickly from a theorem.
+
+## Read in Passes
+
+Three passes, each with a goal and a stopping point:
+
+1. **What is claimed.** Read the abstract, the introduction and the statements of the main theorems, skipping every proof. Goal: say in one sentence what the paper proves and under which conditions. Many papers you can stop here.
+2. **What it means.** Read the definitions and examples. For each main theorem, check what it says on a concrete case and why each hypothesis is there (what goes wrong without it). Goal: be able to explain the theorem to someone else with an example.
+3. **Why it is true.** Read the proofs you need. Goal: reconstruct the argument's main steps without looking.
+
+<Callout type="pitfall">
+Do not start with the proofs. Without knowing what a proof is for, each step looks arbitrary and you will remember none of them. Read the statement, test it on an example, then read the proof to learn why the example came out the way it did.
+</Callout>
+
+## Make It Concrete
+
+Abstraction is how a paper reaches generality, and examples are how a reader reaches understanding. For every definition, write down the simplest object that satisfies it and one that does not. For every theorem, try the smallest case you can compute.
+
+Testing on small cases can also catch claims that are false, or true only under conditions the text forgot to state. A classic example is Euler's polynomial $n^2 + n + 41$: it gives a prime for every $n$ anyone usually tries.
+
+```python
+def is_prime(m):
+    if m < 2:
+        return False
+    d = 2
+    while d * d <= m:
+        if m % d == 0:
+            return False
+        d += 1
+    return True
+
+# claim to test: n^2 + n + 41 is prime for every n >= 0
+first_failure = next(n for n in range(1000) if not is_prime(n * n + n + 41))
+print("holds for n = 0 ..", first_failure - 1, "| fails at n =", first_failure, "with value", first_failure**2 + first_failure + 41, "= 41 * 41")  # prints: holds for n = 0 .. 39 | fails at n = 40 with value 1681 = 41 * 41
+```
+
+In words: the polynomial gives primes for all $40$ values $n = 0$ to $39$, then fails at $n = 40$, where $40^2 + 40 + 41 = 1681 = 41^2$. Forty confirming cases are evidence, not proof. Small cases are for understanding a claim and hunting counterexamples; only the proof settles it.
+
+When a step in a proof claims an identity or a computation, a computer algebra system can check it exactly. Here a proof uses the fact that the first $n$ odd numbers sum to $n^2$.
+
+```python
+import sympy as sp
+
+k, n = sp.symbols("k n", integer=True, positive=True)
+# claim from a proof: the sum of the first n odd numbers is n^2
+lhs = sp.summation(2 * k - 1, (k, 1, n))
+print(lhs, sp.simplify(lhs - n**2) == 0)
+print([sum(2 * j - 1 for j in range(1, m + 1)) for m in range(1, 7)])
+# n**2 True
+# [1, 4, 9, 16, 25, 36]
+```
+
+In words: SymPy confirms $\sum_{k=1}^{n} (2k - 1) = n^2$ symbolically for every $n$, and the first six partial sums $1, 4, 9, 16, 25, 36$ show the pattern. Checking a routine step this way frees attention for the steps that need thought. Run it with `uv run --with sympy`; the [SymPy guide](../sympy-guide/) covers the tools.
+
+## Keep a Notation Sheet
+
+Write down every symbol the first time it appears, with its meaning and where it was defined. Papers reuse letters ($\mu$ may be a measure in one paper and a mean in the next), overload notation, and rely on conventions stated once in the preliminaries, such as whether $\mathbb{N}$ starts at $0$ or $1$ or whether $\log$ is natural. When a formula stops making sense, the cause is usually a symbol you misread, and the sheet finds it in seconds.
+
+## Reading a Proof
+
+Read a proof **top-down**. First find its skeleton: which earlier lemmas it uses, what the key step is, and what technique it follows (induction, contradiction, construction, a clever bound). Write the skeleton as three to five lines. Only then check the details, one step at a time, filling each gap on paper.
+
+Some phrases have specific meanings in proofs:
+
+| Phrase | What it usually means |
+|---|---|
+| "it is easy to see", "clearly" | a step the author skipped; often a page of work for a newcomer |
+| "without loss of generality (WLOG)" | the other cases follow by symmetry or relabelling; check that they really do |
+| "by a standard argument" | a technique well known in the subfield; look for it in the references |
+| "for sufficiently large $n$" | the statement holds beyond some threshold, which may be huge or unknown |
+| "up to a constant", "$\lesssim$" | an inequality that ignores fixed factors; the constant may matter in practice |
+| "it suffices to show" | the claim has been reduced to a simpler one; the reduction itself is a step to check |
+
+When a step will not yield after a real effort, mark it, assume it, and keep reading. The rest of the argument often explains why the step was needed, which makes it easier to prove on return.
+
+## Finding Help
+
+When a definition is missing, follow the citation: preliminaries often say "see [12]" instead of repeating a definition. A survey article or a textbook chapter on the topic usually gives the same ideas with more examples. Many papers have a free version on [arXiv](https://arxiv.org/archive/math), sometimes with corrections added after publication; check the version history if a step looks wrong. A wrong-looking step is occasionally a real error, but far more often it is a convention the reader has not yet met.

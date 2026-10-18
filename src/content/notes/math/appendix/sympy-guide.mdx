@@ -3,6 +3,210 @@ title: "SymPy Guide"
 description: "A working guide to SymPy: symbols, simplification, calculus, solving equations and matrices exactly."
 order: 10
 tier: core
+takeaways:
+  - "SymPy does **symbolic** maths: it manipulates formulas, not numbers. Declare variables with `sp.symbols`, build expressions with ordinary operators, and results stay exact (`sqrt(2)`, `1/3`, `pi`)."
+  - "The core verbs: `expand`, `factor`, `simplify` reshape an expression; `solve` and `solveset` find solutions; `diff`, `integrate`, `limit`, `series` and `summation` do calculus."
+  - "Exact by default: write `sp.Rational(1, 3)`, not `1/3`, which Python turns into a float before SymPy sees it."
+  - "Use SymPy to derive or check a formula, then `lambdify` it into a fast NumPy function for numbers. SymPy itself is slow at bulk numerical work."
+  - "Assumptions change answers: a symbol declared `positive=True` or `integer=True` lets SymPy simplify further than a general complex symbol."
+resources:
+  - title: "SymPy Tutorial (SymPy docs)"
+    url: "https://docs.sympy.org/latest/tutorials/intro-tutorial/index.html"
+    note: "The official introduction: symbols, simplification, calculus, solvers and matrices."
+  - title: "Solveset (SymPy docs)"
+    url: "https://docs.sympy.org/latest/modules/solvers/solveset.html"
+    note: "Why solveset returns sets, and how domains change the answer."
+  - title: "Lambdify (SymPy docs)"
+    url: "https://docs.sympy.org/latest/modules/utilities/lambdify.html"
+    note: "Turning symbolic expressions into fast numerical functions for NumPy and other backends."
 ---
 
-_Placeholder. Content not written yet._
+[NumPy](../numpy-guide/) and [SciPy](../scipy-guide/) compute with numbers; **SymPy** computes with symbols. It expands and factors expressions, solves equations in closed form, and differentiates, integrates and sums exactly, the way you would on paper but without slips. It is the right tool to derive a formula, check a hand calculation, or produce LaTeX for a note. This page is a working reference: find the task in the table, then read the section for a runnable example. Run the examples with `uv run --with sympy python` (plus `--with numpy` for `lambdify`).
+
+<FilterTable plain placeholder="Filter tasks, e.g. factor, solve, integrate, eigen, latex">
+
+### Expressions
+
+| I want to... | Call |
+|---|---|
+| declare symbols | `x, y = sp.symbols("x y")` |
+| declare a symbol with assumptions | `sp.symbols("n", integer=True, positive=True)` |
+| multiply out or factor | `sp.expand(e)`, `sp.factor(e)` |
+| simplify | `sp.simplify(e)` |
+| substitute values | `e.subs({x: 1, y: 2})` |
+| keep an exact fraction | `sp.Rational(1, 3)` |
+| get a decimal value to any precision | `e.evalf(30)`, `sp.N(e, 10)` |
+| get LaTeX for an expression | `sp.latex(e)` |
+
+### Solving
+
+| I want to... | Call |
+|---|---|
+| solve one equation | `sp.solve(e, x)` |
+| solve over a chosen domain | `sp.solveset(e, x, domain=sp.S.Reals)` |
+| solve a system | `sp.solve([e1, e2], [a, b])` |
+| solve a differential equation | `sp.dsolve(ode, y(t), ics={...})` |
+
+### Calculus
+
+| I want to... | Call |
+|---|---|
+| differentiate | `sp.diff(f, x)` |
+| integrate, with or without limits | `sp.integrate(f, x)`, `sp.integrate(f, (x, a, b))` |
+| take a limit | `sp.limit(f, x, point)` |
+| expand a Taylor series | `sp.series(f, x, point, order)` |
+| sum a series in closed form | `sp.summation(f, (k, 1, n))` |
+
+### Matrices and numbers
+
+| I want to... | Call |
+|---|---|
+| get an exact determinant or inverse | `M.det()`, `M.inv()` |
+| get exact eigenvalues | `M.eigenvals()` |
+| row-reduce a matrix | `M.rref()` |
+| get the characteristic polynomial | `M.charpoly(lam)` |
+| turn an expression into a NumPy function | `sp.lambdify(x, e, "numpy")` |
+
+</FilterTable>
+
+## Expressions and Simplification
+
+A **symbol** is a placeholder SymPy can reason about. Arithmetic on symbols builds an expression tree, which the functions below rewrite. `simplify` tries many rewrites and picks the shortest result, so it is convenient but can be slow; `expand` and `factor` do one specific thing.
+
+```python
+import sympy as sp
+
+x, y = sp.symbols("x y")
+expr = (x + y) ** 2
+print(expr, "|", sp.expand(expr), "|", sp.factor(x**2 - 5 * x + 6))
+print(sp.simplify(sp.sin(x) ** 2 + sp.cos(x) ** 2), sp.simplify((x**2 - 1) / (x - 1)))
+print(expr.subs({x: 1, y: 2}), sp.sqrt(8), sp.Rational(1, 3) + sp.Rational(1, 6))
+# (x + y)**2 | x**2 + 2*x*y + y**2 | (x - 3)*(x - 2)
+# 1 x + 1
+# 9 2*sqrt(2) 1/2
+```
+
+In words: $(x + y)^2$ expands to $x^2 + 2xy + y^2$, and $x^2 - 5x + 6$ factors as $(x - 3)(x - 2)$. `simplify` knows $\sin^2 x + \cos^2 x = 1$ and cancels $\frac{x^2 - 1}{x - 1}$ to $x + 1$, silently dropping the fact that the original is undefined at $x = 1$. Results stay exact: $\sqrt{8}$ becomes $2\sqrt{2}$ and $\frac{1}{3} + \frac{1}{6}$ is exactly $\frac{1}{2}$.
+
+<Callout type="pitfall">
+`sp.Rational(1, 3)` is exact, but `1/3` inside an expression is not: Python evaluates it to the float `0.333...` before SymPy ever sees it. Write rationals with `sp.Rational`, or divide a SymPy object (`sp.Integer(1) / 3`), whenever exactness matters.
+</Callout>
+
+## Solving Equations
+
+`solve` returns a list of solutions and works for most everyday cases. `solveset` returns a mathematical set and takes a **domain**, so it can say "no real solutions" or describe infinitely many.
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+print(sp.solve(x**2 - 5 * x + 6, x), sp.solve(x**2 + 1, x))
+print(sp.solveset(x**2 + 1, x, domain=sp.S.Reals), sp.solveset(sp.sin(x), x, domain=sp.Interval(0, 7)))
+a, b = sp.symbols("a b")
+print(sp.solve([a + b - 3, a - b - 1], [a, b]))
+# [2, 3] [-I, I]
+# EmptySet {0, pi, 2*pi}
+# {a: 2, b: 1}
+```
+
+In words: $x^2 - 5x + 6 = 0$ has roots $2$ and $3$. $x^2 + 1 = 0$ has the complex roots $\pm i$, but over the reals the solution set is empty. On $[0, 7]$, $\sin x = 0$ exactly at $0$, $\pi$ and $2\pi$. The linear system $a + b = 3$, $a - b = 1$ gives $a = 2$, $b = 1$.
+
+## Calculus
+
+`diff`, `integrate`, `limit` and `series` give exact answers where a closed form exists. `sp.oo` is infinity. See [derivatives](../../calculus/derivatives/), [integrals](../../calculus/integrals/) and [Taylor series](../../calculus/taylor-series/).
+
+```python
+import sympy as sp
+
+x = sp.symbols("x")
+f = x**3 * sp.exp(-x)
+print(sp.diff(f, x), "|", sp.factor(sp.diff(f, x)))
+print(sp.integrate(sp.exp(-(x**2)), (x, -sp.oo, sp.oo)), sp.integrate(x * sp.log(x), x))
+print(sp.limit(sp.sin(x) / x, x, 0), sp.limit((1 + 1 / x) ** x, x, sp.oo))
+print(sp.series(sp.cos(x), x, 0, 6))
+# -x**3*exp(-x) + 3*x**2*exp(-x) | -x**2*(x - 3)*exp(-x)
+# sqrt(pi) x**2*log(x)/2 - x**2/4
+# 1 E
+# 1 - x**2/2 + x**4/24 + O(x**6)
+```
+
+In words: the derivative of $x^3 e^{-x}$ factors as $-x^2(x - 3)e^{-x}$, which shows at once that it is zero at $x = 0$ and $x = 3$. The Gaussian integral is exactly $\sqrt{\pi}$, the number SciPy could only approximate, and $\int x \ln x\,dx = \frac{x^2 \ln x}{2} - \frac{x^2}{4}$ (plus a constant SymPy leaves out). The limits are $1$ and $e$, and the series of $\cos x$ is $1 - \frac{x^2}{2} + \frac{x^4}{24}$ with the order of the error term shown.
+
+## Sums in Closed Form
+
+`summation` finds closed forms for finite and infinite sums. Declaring the index as a positive integer helps SymPy pick the right formula.
+
+```python
+import sympy as sp
+
+k, n = sp.symbols("k n", integer=True, positive=True)
+print(sp.summation(k, (k, 1, n)), "|", sp.factor(sp.summation(k**2, (k, 1, n))))
+print(sp.summation(1 / k**2, (k, 1, sp.oo)))
+# n**2/2 + n/2 | n*(n + 1)*(2*n + 1)/6
+# pi**2/6
+```
+
+In words: $\sum_{k=1}^{n} k = \frac{n(n + 1)}{2}$ and $\sum_{k=1}^{n} k^2 = \frac{n(n + 1)(2n + 1)}{6}$, the formulas usually proved by [induction](../../foundations/proof-techniques/). The infinite sum $\sum 1/k^2$ is $\frac{\pi^2}{6}$, the Basel problem, returned exactly.
+
+## Exact Matrices
+
+`sp.Matrix` works with exact entries, so determinants, inverses and eigenvalues come out as integers, fractions and radicals instead of rounded floats.
+
+```python
+import sympy as sp
+
+M = sp.Matrix([[2, 1], [1, 2]])
+print(M.det(), M.inv(), M.eigenvals())
+rref, pivots = M.rref()
+print(rref.tolist(), pivots)
+lam = sp.symbols("lambda")
+print(sp.factor(M.charpoly(lam).as_expr()))
+# 3 Matrix([[2/3, -1/3], [-1/3, 2/3]]) {3: 1, 1: 1}
+# [[1, 0], [0, 1]] (0, 1)
+# (lambda - 3)*(lambda - 1)
+```
+
+In words: the determinant is $3$, the inverse has exact entries $\frac{2}{3}$ and $-\frac{1}{3}$, and the eigenvalues are $3$ and $1$, each with multiplicity $1$. The reduced row echelon form is the identity with pivots in both columns, so the matrix has full rank. The characteristic polynomial factors as $(\lambda - 3)(\lambda - 1)$, matching the eigenvalues. See [determinants](../../linear-algebra/determinants/) and [eigenvalues](../../linear-algebra/eigenvalues-and-eigenvectors/).
+
+## Differential Equations
+
+`dsolve` solves ordinary differential equations symbolically. Unknown functions are declared with `sp.Function`, and initial conditions go in `ics`.
+
+```python
+import sympy as sp
+
+t = sp.symbols("t")
+y = sp.Function("y")
+ode = sp.Eq(y(t).diff(t, 2) + y(t), 0)
+print(sp.dsolve(ode, y(t)))
+print(sp.dsolve(sp.Eq(y(t).diff(t), -2 * y(t)), y(t), ics={y(0): 1}))
+# Eq(y(t), C1*sin(t) + C2*cos(t))
+# Eq(y(t), exp(-2*t))
+```
+
+In words: $y'' + y = 0$, the simple harmonic oscillator, has general solution $C_1 \sin t + C_2 \cos t$ with two free constants. With the condition $y(0) = 1$, the decay equation $y' = -2y$ has the single solution $e^{-2t}$, the same one SciPy's numerical solver matched. See [differential equations](../../calculus/differential-equations/).
+
+## From Symbols to Numbers
+
+`evalf` and `N` give decimal values to any precision. `lambdify` compiles an expression into an ordinary Python function backed by NumPy, which is the bridge from a derived formula to fast numerical code. `latex` prints the expression ready for a note.
+
+```python
+import numpy as np
+import sympy as sp
+
+x = sp.symbols("x")
+expr = sp.sin(x) ** 2
+f = sp.lambdify(x, expr, "numpy")  # turn the formula into a fast NumPy function
+print(np.round(f(np.array([0.0, np.pi / 4, np.pi / 2])), 4))
+print(sp.pi.evalf(30), sp.N(sp.sqrt(2), 10))
+print(sp.latex(sp.Integral(sp.exp(-x**2), x)))
+# [0.  0.5 1. ]
+# 3.14159265358979323846264338328 1.414213562
+# \int e^{- x^{2}}\, dx
+```
+
+In words: the lambdified $\sin^2 x$ evaluates a whole array at once, giving $0$, $0.5$ and $1$. `evalf(30)` prints $\pi$ to $30$ significant digits, which a float cannot hold. `latex` returns the code that renders as $\int e^{- x^{2}}\, dx$.
+
+<Callout type="pitfall">
+Do not loop over thousands of values with `expr.subs(...)`: each call walks the expression tree and is very slow. Derive symbolically, then `lambdify` once and evaluate the resulting function on a NumPy array.
+</Callout>
