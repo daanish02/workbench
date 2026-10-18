@@ -3,6 +3,223 @@ title: "MCMC"
 description: "Sampling from a posterior you cannot write down: Markov chains, Metropolis-Hastings, Gibbs sampling and checking convergence."
 order: 5
 tier: advanced
+takeaways:
+  - "**Markov chain Monte Carlo (MCMC)** draws samples from a distribution known only up to a constant, such as a posterior $p(\\theta \\mid x) \\propto p(x \\mid \\theta)\\,\\pi(\\theta)$, by running a Markov chain whose stationary distribution is that target."
+  - "**Metropolis-Hastings** proposes a move and accepts it with probability $\\min\\left(1, \\frac{p(\\theta')}{p(\\theta)}\\right)$ for a symmetric proposal. The unknown normalising constant cancels in the ratio, which is why the method works at all."
+  - "The **step size** trades acceptance against movement: tiny steps are almost always accepted but crawl, huge steps are mostly rejected. Both give few **effective samples**."
+  - "**Gibbs sampling** updates one variable at a time from its full conditional distribution, and every draw is accepted."
+  - "Samples are correlated and the start is arbitrary: drop a **burn-in**, run several chains from different starts, and check **R-hat** is close to $1$ before trusting the results."
+resources:
+  - title: "The Markov-chain Monte Carlo Interactive Gallery (Chi Feng)"
+    url: "https://chi-feng.github.io/mcmc-demo/"
+    note: "Watch random-walk Metropolis, Hamiltonian Monte Carlo and others explore 2D targets side by side."
+  - title: "Metropolis-Hastings algorithm (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm"
+    note: "The algorithm, the acceptance ratio for asymmetric proposals, and why detailed balance gives the right stationary distribution."
+  - title: "Posterior Analysis (Stan Reference Manual)"
+    url: "https://mc-stan.org/docs/reference-manual/analysis.html"
+    note: "How a production sampler computes R-hat and effective sample size."
 ---
 
-_Placeholder. Content not written yet._
+[Bayesian inference](../bayesian-inference/) turns a prior and a likelihood into a posterior, but only a few conjugate pairs give the posterior in closed form. With a realistic model, the posterior is proportional to something you can evaluate, $p(x \mid \theta)\,\pi(\theta)$, while the normalising integral that would make it a density is out of reach. **Markov chain Monte Carlo** sidesteps that integral: it builds a [Markov chain](../../probability/markov-chains/) that visits each region of $\theta$ in proportion to its posterior probability, so the chain's history is a sample from the posterior. This note derives the Metropolis rule, runs it on the coin posterior from the Bayesian note where the exact answer is known, then covers step size, Gibbs sampling and how to tell whether a chain can be trusted.
+
+## The Idea
+
+A **Markov chain** moves from state to state, and the next state depends only on the current one. Under mild conditions it settles into a **stationary distribution** $\pi$: after many steps, the fraction of time it spends in each region matches $\pi$, whatever the start. MCMC runs this backwards. It picks the target first, the posterior $p(\theta)$, and designs a chain whose stationary distribution is exactly $p$. Averages over the chain then estimate averages under the posterior, by the same logic as the [law of large numbers](../../probability/law-of-large-numbers/), even though the samples are not independent.
+
+## The Metropolis Rule
+
+The **random-walk Metropolis** algorithm repeats one step. From the current value $\theta$, propose $\theta' = \theta + \varepsilon$ with $\varepsilon \sim \mathcal{N}(0, s^2)$, where $s$ is the **step size**. Accept the proposal with probability
+
+$$
+\alpha = \min\left(1, \frac{p(\theta')}{p(\theta)}\right),
+
+$$
+
+and otherwise stay at $\theta$, which repeats the current value in the sample.
+
+In words: a move uphill to higher posterior density is always taken, and a move downhill is taken with probability equal to how much lower the density is. Because only the ratio $p(\theta') / p(\theta)$ appears, any unknown constant factor in $p$ cancels. The general **Metropolis-Hastings** rule multiplies the ratio by $q(\theta \mid \theta') / q(\theta' \mid \theta)$ to correct for a proposal $q$ that is not symmetric; for the Gaussian random walk that factor is $1$.
+
+The coin from the Bayesian note had $7$ heads in $10$ flips and a uniform prior, so the posterior is proportional to $\theta^7 (1 - \theta)^3$. Its exact mean is $\frac{8}{12} \approx 0.6667$, which lets us check the sampler. Working with logarithms avoids underflow when densities are tiny.
+
+```python
+import math
+import random
+
+def log_target(theta):
+    # unnormalised log posterior for 7 heads in 10 flips with a uniform prior: Beta(8, 4)
+    if not 0 < theta < 1:
+        return -math.inf
+    return 7 * math.log(theta) + 3 * math.log(1 - theta)
+
+def metropolis(n, step, seed=1):
+    random.seed(seed)
+    theta, chain, accepted = 0.5, [], 0
+    for _ in range(n):
+        proposal = theta + random.gauss(0, step)
+        # accept with probability min(1, target(proposal) / target(theta)); logs avoid underflow
+        if math.log(random.random()) < log_target(proposal) - log_target(theta):
+            theta, accepted = proposal, accepted + 1
+        chain.append(theta)
+    return chain, accepted / n
+
+chain, rate = metropolis(20000, 0.2)
+kept = chain[1000:]  # drop the burn-in
+print("acceptance rate:", round(rate, 3))
+print("posterior mean estimate:", round(sum(kept) / len(kept), 4), " exact 8/12 =", round(8 / 12, 4))
+# acceptance rate: 0.595
+# posterior mean estimate: 0.6649  exact 8/12 = 0.6667
+```
+
+In words: the sampler never used the normalising constant $1320$ of the Beta$(8, 4)$ density, yet its estimate $0.6649$ is within $0.002$ of the exact mean $0.6667$. About $60\%$ of proposals were accepted with step size $0.2$. The first $1000$ samples were discarded as **burn-in**, the stretch where the chain may still carry the memory of its arbitrary start.
+
+<MetropolisSampler />
+
+## Choosing a Step Size
+
+Consecutive samples are correlated, because the chain either stays put or moves a short way. The **effective sample size** (ESS) converts a correlated chain into the number of independent samples that would give the same precision:
+
+$$
+\text{ESS} = \frac{n}{1 + 2\sum_{k \ge 1} \rho_k},
+
+$$
+
+where $\rho_k$ is the autocorrelation of the chain at lag $k$.
+
+In words: the more each sample resembles the one before it, the larger the sum of autocorrelations and the fewer independent draws the chain is worth. The sum is cut off when the estimated autocorrelations turn negative, because beyond that point they are noise.
+
+```python
+import math
+import random
+
+def log_target(theta):
+    if not 0 < theta < 1:
+        return -math.inf
+    return 7 * math.log(theta) + 3 * math.log(1 - theta)
+
+def metropolis(n, step, seed=1):
+    random.seed(seed)
+    theta, chain, accepted = 0.5, [], 0
+    for _ in range(n):
+        proposal = theta + random.gauss(0, step)
+        if math.log(random.random()) < log_target(proposal) - log_target(theta):
+            theta, accepted = proposal, accepted + 1
+        chain.append(theta)
+    return chain, accepted / n
+
+def ess(x):
+    # effective sample size: n / (1 + 2 * sum of autocorrelations), summed until they turn negative
+    n, m = len(x), sum(x) / len(x)
+    var = sum((v - m) ** 2 for v in x) / n
+    total = 0.0
+    for lag in range(1, n // 2):
+        r = sum((x[i] - m) * (x[i + lag] - m) for i in range(n - lag)) / (n * var)
+        if r < 0:
+            break
+        total += r
+    return n / (1 + 2 * total)
+
+for step in (0.02, 0.2, 2.0):
+    chain, rate = metropolis(5000, step)
+    print(f"step {step:<4}  acceptance {rate:.2f}  effective samples {ess(chain[500:]):.0f} of 4500")
+# step 0.02  acceptance 0.95  effective samples 41 of 4500
+# step 0.2   acceptance 0.60  effective samples 772 of 4500
+# step 2.0   acceptance 0.09  effective samples 151 of 4500
+```
+
+In words: a step of $0.02$ accepts $95\%$ of moves but each move is tiny, so $4500$ samples are worth only $41$ independent ones. A step of $2.0$ jumps far past the posterior, gets rejected $91\%$ of the time, and is worth $151$. The middle value $0.2$ is worth $772$, about $19$ times the timid chain. In one dimension a useful rule of thumb is an acceptance rate somewhere around $40\%$ to $50\%$; for high-dimensional random-walk proposals the optimum falls to about $23\%$.
+
+<Callout type="pitfall">
+A high acceptance rate is not a sign of a good sampler. A chain that accepts nearly every move is usually taking steps too small to explore, and its samples are heavily correlated. Judge a run by its effective sample size and its convergence checks, not by how often it says yes.
+</Callout>
+
+## Gibbs Sampling
+
+When the target has several variables and each one's distribution given all the others (its **full conditional**) is easy to sample, **Gibbs sampling** updates the variables one at a time from those conditionals. Every draw is accepted, so there is no step size to tune. For a standard bivariate normal with correlation $\rho$, each coordinate given the other is
+
+$$
+x \mid y \sim \mathcal{N}\left(\rho y,\ 1 - \rho^2\right).
+
+$$
+
+In words: knowing $y$ shifts the expected $x$ by $\rho y$ and shrinks its variance by the share of variance $y$ explains. The same holds with $x$ and $y$ swapped. This is a property of the [multivariate normal](../../probability/multivariate-normal/).
+
+```python
+import math
+import random
+
+# Gibbs sampling for a standard bivariate normal with correlation rho:
+# each coordinate given the other is normal with mean rho * other and variance 1 - rho^2
+random.seed(3)
+rho, x, y = 0.8, 0.0, 0.0
+xs, ys = [], []
+for _ in range(20000):
+    x = random.gauss(rho * y, math.sqrt(1 - rho**2))
+    y = random.gauss(rho * x, math.sqrt(1 - rho**2))
+    xs.append(x)
+    ys.append(y)
+xs, ys = xs[1000:], ys[1000:]
+mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+cov = sum((a - mx) * (b - my) for a, b in zip(xs, ys)) / len(xs)
+sx = math.sqrt(sum((a - mx) ** 2 for a in xs) / len(xs))
+sy = math.sqrt(sum((b - my) ** 2 for b in ys) / len(ys))
+print("sample correlation:", round(cov / (sx * sy), 3), " target:", rho)  # prints: sample correlation: 0.797 target: 0.8
+```
+
+In words: alternating two one-dimensional normal draws recovered the joint structure, with a sample correlation of $0.797$ against the true $0.8$. The cost of Gibbs shows up when variables are strongly correlated: each update can move only along one axis, so the chain zigzags slowly along a narrow diagonal ridge.
+
+## Checking Convergence
+
+A chain gives no warning when it is stuck in one region or still drifting away from its start. The standard check runs several chains from deliberately scattered starting points and compares them. The **Gelman-Rubin statistic** $\hat{R}$ (R-hat) compares the variance between chain means with the variance within each chain:
+
+$$
+\hat{R} = \sqrt{\frac{\frac{n-1}{n} W + \frac{1}{n} B}{W}},
+
+$$
+
+where $W$ is the average within-chain variance, $B$ is $n$ times the variance of the chain means, and $n$ is the length of each chain.
+
+In words: if every chain has found the same distribution, the chain means agree, $B$ is small, and $\hat{R}$ is close to $1$. If the chains still disagree because of where they started, $B$ is large and $\hat{R}$ rises above $1$. A common threshold is $\hat{R} < 1.01$.
+
+```python
+import math
+import random
+
+def log_target(theta):
+    if not 0 < theta < 1:
+        return -math.inf
+    return 7 * math.log(theta) + 3 * math.log(1 - theta)
+
+def metropolis(n, step, start, seed):
+    random.seed(seed)
+    theta, chain = start, []
+    for _ in range(n):
+        proposal = theta + random.gauss(0, step)
+        if math.log(random.random()) < log_target(proposal) - log_target(theta):
+            theta = proposal
+        chain.append(theta)
+    return chain
+
+def r_hat(chains):
+    # Gelman-Rubin: compares the spread between chain means with the spread within chains
+    n = len(chains[0])
+    means = [sum(c) / n for c in chains]
+    grand = sum(means) / len(means)
+    between = n * sum((m - grand) ** 2 for m in means) / (len(chains) - 1)
+    within = sum(sum((v - m) ** 2 for v in c) / (n - 1) for c, m in zip(chains, means)) / len(chains)
+    return math.sqrt(((n - 1) / n * within + between / n) / within)
+
+starts = [0.05, 0.3, 0.7, 0.95]
+short = [metropolis(30, 0.02, s, seed=i) for i, s in enumerate(starts)]
+long = [metropolis(4000, 0.2, s, seed=i)[500:] for i, s in enumerate(starts)]
+print("R-hat, 30 tiny steps:", round(r_hat(short), 2))
+print("R-hat, 3500 kept samples:", round(r_hat(long), 3))
+# R-hat, 30 tiny steps: 3.82
+# R-hat, 3500 kept samples: 1.0
+```
+
+In words: four short chains with tiny steps never left the neighbourhood of their starts at $0.05$, $0.3$, $0.7$ and $0.95$, and $\hat{R} = 3.82$ says so loudly. Four long chains with a sensible step and a burn-in all found the same posterior, and $\hat{R}$ rounds to $1.0$. A low $\hat{R}$ is necessary, not sufficient: chains that all miss the same isolated mode agree with each other and are still wrong.
+
+## Beyond Random Walks
+
+Random-walk proposals scale poorly as the number of parameters grows, because almost every random direction in a high-dimensional space leads downhill. **Hamiltonian Monte Carlo** uses the gradient of the log posterior to propose long, informed moves that are still accepted with high probability; its adaptive variant, **NUTS**, is the default in Stan and PyMC. The checks in this note (burn-in, effective sample size, several chains, $\hat{R}$) apply to every one of these samplers.
