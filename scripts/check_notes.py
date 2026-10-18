@@ -6,16 +6,18 @@
 #   "sympy==1.14.0",
 #   "networkx==3.7",
 #   "statsmodels==0.15.0",
+#   "cryptography==50.0.2",
+#   "packaging==26.3",
 # ]
 # ///
-"""Run every Python block in the math notes on its own and check its printed output.
+"""Run every Python block in one area's notes on its own and check its printed output.
 
 Expected output is written in a block in one of two ways:
   - inline:    print(x)  # prints: 42 | second line
   - trailing:  a run of comment lines at the very end of the block, one per output line.
 Whitespace is normalised before comparing, and '...' marks an omitted tail.
 
-Usage: uv run scripts/check_math_notes.py [path-filter]
+Usage: uv run scripts/check_notes.py <area> [path-filter]   e.g. math, cs, infra
 """
 
 import os
@@ -24,7 +26,7 @@ import re
 import subprocess
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent / "src" / "content" / "notes" / "math"
+NOTES = pathlib.Path(__file__).resolve().parent.parent / "src" / "content" / "notes"
 
 
 def norm(s):
@@ -46,6 +48,8 @@ def expected_fragments(code_lines):
     frags += reversed(tail)
     out = []
     for f in frags:
+        # "<- ..." after an output line is an annotation, not output
+        f = re.sub(r"\s*<-\s.*$", "", f)
         f = norm(re.sub(r"\.\.\.\s*(\(\d+ lines\))?$", "", f))
         if f:
             out.append(f)
@@ -66,7 +70,10 @@ def blocks(path):
 
 
 def main():
-    filt = sys.argv[1] if len(sys.argv) > 1 else ""
+    if len(sys.argv) < 2 or not (NOTES / sys.argv[1]).is_dir():
+        sys.exit("usage: uv run scripts/check_notes.py <area> [path-filter]")
+    ROOT = NOTES / sys.argv[1]
+    filt = sys.argv[2] if len(sys.argv) > 2 else ""
     failures = total = 0
     for path in sorted(ROOT.rglob("*.mdx")):
         rel = path.relative_to(ROOT).as_posix()

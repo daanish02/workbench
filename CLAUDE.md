@@ -6,7 +6,7 @@ A study site of notes (Astro 7 + MDX + KaTeX), deployed to GitHub Pages under `/
 
 - `bun run dev`: dev server with hot reload. The user reviews notes in the browser.
 - `bun run build`: display-math check, then `astro build`, then pagefind. Run it before claiming anything is done.
-- `uv run scripts/check_math_notes.py [filter]`: runs every Python block in the math notes on its own and checks its printed output. It must report 0 failing.
+- `uv run scripts/check_notes.py <area> [filter]`: runs every Python block in one area's notes (math, cs, …) on its own and checks its printed output. It must report 0 failing.
 - Tooling: bun only for JS (never npm, npx or yarn); uv only for Python (never bare pip). Pin exact versions.
 
 ## Where things live
@@ -37,7 +37,7 @@ resources:                    # 2–3 links, every URL checked with curl (200) b
 Body pattern, as in the CS notes:
 
 1. An opening paragraph: the problem, why it matters, what the note covers, and a link to the note it builds on.
-2. `##` sections of 2–3 words each. Bold key terms where they are defined. Define every term and symbol before using it.
+2. `##` sections of at most 5 words each. Bold key terms where they are defined. Define every term and symbol before using it.
 3. Math: inline `$…$`. Display math always on its own lines with a blank line before the closing `$$`:
    ```
    $$
@@ -60,7 +60,7 @@ Writing: plain, specific sentences with no padding. State facts precisely: no "a
 - Seed all randomness (`np.random.default_rng(seed)`, `random.seed(...)`). Never print timings or other machine-dependent values; print a boolean check instead.
 - Prefer clarity: a short hand-written version when the algorithm is the topic, then a one-line library check (numpy, scipy, sympy, networkx, statsmodels). Mention the run command when a library is used, e.g. "Run it with `uv run --with numpy --with scipy`."
 - Comments explain why, not what. Use 4-space indentation.
-- After editing any math code, run `uv run scripts/check_math_notes.py <filter>`.
+- After editing any note code, run `uv run scripts/check_notes.py <area> <filter>`.
 
 ## Figures (interactive components)
 
@@ -99,7 +99,7 @@ import Figure from '../Figure.astro';
 
 ## Definition of done
 
-1. `uv run scripts/check_math_notes.py`: 0 failing (math changes).
+1. `uv run scripts/check_notes.py <area>`: 0 failing for every area with code changes.
 2. `bun run build` succeeds with no display-math errors, and `grep -rl katex-error dist/<area>` finds nothing.
 3. Links resolve, and new resource URLs return 200.
 4. The figures were tried in `bun run dev` (or the user was told they need a look).
