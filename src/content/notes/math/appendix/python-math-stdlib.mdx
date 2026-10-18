@@ -3,6 +3,331 @@ title: "Python Math Stdlib"
 description: "The built-in math modules in one place: math, cmath, statistics, random, fractions and decimal."
 order: 7
 tier: core
+takeaways:
+  - "Six modules ship with Python and need no install: **math** (real functions), **cmath** (complex), **statistics** (summaries and the normal distribution), **random** (seeded pseudo-random numbers), **fractions** (exact rationals) and **decimal** (exact decimal arithmetic)."
+  - "Compare floats with `math.isclose`, never `==`: `0.1 + 0.2 == 0.3` is `False`."
+  - "Use the exact integer functions (`math.comb`, `math.isqrt`, `math.gcd`) for counting; they never lose precision, however large the numbers."
+  - "`random` is for simulation, not security. Seed it for repeatable results; use `secrets` for anything an attacker could guess."
+  - "Reach for NumPy once you have arrays of numbers; these modules work one value or one list at a time."
+resources:
+  - title: "math: Mathematical functions (Python docs)"
+    url: "https://docs.python.org/3/library/math.html"
+    note: "Every function in math, with the precision guarantees of each."
+  - title: "statistics: Mathematical statistics functions (Python docs)"
+    url: "https://docs.python.org/3/library/statistics.html"
+    note: "Averages, spread, correlation, regression and NormalDist, with notes on which variance formula each function uses."
+  - title: "decimal: Decimal fixed point and floating point arithmetic (Python docs)"
+    url: "https://docs.python.org/3/library/decimal.html"
+    note: "Contexts, precision and rounding modes for money and other exact-decimal work."
 ---
 
-_Placeholder. Content not written yet._
+Before installing NumPy or SciPy, check whether the standard library already does the job. For single values, short lists, exact arithmetic and quick statistics it often does, with no dependency. This page is a working reference: find the task in the table, then read the section for a runnable example. The [NumPy guide](../numpy-guide/) takes over once the data is an array.
+
+<FilterTable plain placeholder="Filter tasks, e.g. round, median, seed, exact">
+
+### math
+
+| I want to... | Call |
+|---|---|
+| use π, e or τ | `math.pi`, `math.e`, `math.tau` |
+| round down, round up, or cut off the fraction | `math.floor`, `math.ceil`, `math.trunc` |
+| compare two floats | `math.isclose(a, b)` |
+| add many floats accurately | `math.fsum(values)` |
+| count combinations or arrangements | `math.comb(n, k)`, `math.perm(n, k)` |
+| get the greatest common divisor or least common multiple | `math.gcd`, `math.lcm` |
+| take an exact integer square root | `math.isqrt(n)` |
+| multiply a list of numbers | `math.prod(values)` |
+| take a logarithm in any base | `math.log(x, base)`, `math.log2`, `math.log10` |
+| compute log(1 + x) or eˣ − 1 for tiny x | `math.log1p(x)`, `math.expm1(x)` |
+| convert between degrees and radians | `math.degrees`, `math.radians` |
+| get the angle of a point (x, y) | `math.atan2(y, x)` |
+| get a length or a distance | `math.hypot(x, y)`, `math.dist(p, q)` |
+| test for infinity or not-a-number | `math.isinf`, `math.isnan` |
+
+### cmath
+
+| I want to... | Call |
+|---|---|
+| take the square root of a negative number | `cmath.sqrt(-4)` |
+| get the angle of a complex number | `cmath.phase(z)` |
+| convert between rectangular and polar form | `cmath.polar(z)`, `cmath.rect(r, phi)` |
+| compute a complex exponential | `cmath.exp(z)` |
+
+### statistics
+
+| I want to... | Call |
+|---|---|
+| get the mean, median or mode | `statistics.mean`, `statistics.median`, `statistics.mode` |
+| get the standard deviation of a sample | `statistics.stdev(data)` |
+| get the standard deviation of a whole population | `statistics.pstdev(data)` |
+| split data into quartiles or percentiles | `statistics.quantiles(data, n=4)` |
+| measure linear correlation | `statistics.correlation(x, y)` |
+| fit a straight line | `statistics.linear_regression(x, y)` |
+| get a normal probability or quantile | `NormalDist(mu, sigma).cdf(x)`, `.inv_cdf(p)` |
+
+### random
+
+| I want to... | Call |
+|---|---|
+| make results repeatable | `random.seed(42)` |
+| get a float in [0, 1) or in [a, b] | `random.random()`, `random.uniform(a, b)` |
+| roll a die | `random.randint(1, 6)` |
+| pick one item, or several with weights | `random.choice(seq)`, `random.choices(seq, weights, k)` |
+| draw without replacement | `random.sample(seq, k)` |
+| shuffle a list in place | `random.shuffle(items)` |
+| draw from a normal distribution | `random.gauss(mu, sigma)` |
+| keep an independent generator | `random.Random(seed)` |
+
+### fractions and decimal
+
+| I want to... | Call |
+|---|---|
+| do exact arithmetic with fractions | `Fraction(1, 3) + Fraction(1, 6)` |
+| find a simple fraction close to a float | `Fraction(x).limit_denominator(1000)` |
+| add decimal amounts without float error | `Decimal("0.1") + Decimal("0.2")` |
+| round money half up to cents | `d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)` |
+| compute with more digits | `getcontext().prec = 30` |
+
+</FilterTable>
+
+## Constants and Rounding
+
+`math.floor` always goes down and `math.ceil` always goes up, so for negative numbers `floor` moves away from zero. `math.trunc` simply drops the fraction. The built-in `round` uses **round half to even** (banker's rounding): a tie goes to the even neighbour, which avoids a systematic upward bias when many ties are rounded.
+
+```python
+import math
+
+print(math.pi, math.e, math.tau)
+print(math.floor(-2.5), math.ceil(-2.5), math.trunc(-2.5))
+print(round(2.5), round(3.5), round(2.675, 2))
+# 3.141592653589793 2.718281828459045 6.283185307179586
+# -3 -2 -2
+# 2 4 2.67
+```
+
+In words: $\lfloor -2.5 \rfloor = -3$ but truncation gives $-2$. `round(2.5)` is `2` and `round(3.5)` is `4`, both to the even neighbour. `round(2.675, 2)` gives `2.67`, not `2.68`, because the float stored for `2.675` is slightly below it. The [decimal](#money-and-exact-decimals) section shows how to round money exactly.
+
+## Comparing and Summing Floats
+
+Floats are binary approximations, so small errors appear in arithmetic. Two tools handle them: `math.isclose` compares with a relative tolerance (default $10^{-9}$), and `math.fsum` adds a list while tracking the lost low-order bits, so the result is correctly rounded.
+
+```python
+import math
+
+values = [0.1] * 10
+total = 0.0
+for v in values:
+    total += v  # each += rounds, and the errors accumulate
+print(total, sum(values), math.fsum(values))
+print(0.1 + 0.2 == 0.3, math.isclose(0.1 + 0.2, 0.3))
+# 0.9999999999999999 1.0 1.0
+# False True
+```
+
+In words: adding $0.1$ ten times in a loop gives $0.9999999999999999$. The built-in `sum` returns `1.0` because, since Python 3.12, it uses compensated summation for floats; `math.fsum` is exact on any version. `0.1 + 0.2 == 0.3` is `False`, while `isclose` says the two are equal within tolerance. The [floating point note](/workbench/cs/foundations/floating-point/) explains where these errors come from.
+
+<Callout type="pitfall">
+Never test floats with `==` after arithmetic, and never use a float as a money amount. Use `math.isclose` (or an explicit tolerance) for comparisons, and `Decimal` or integer cents for money.
+</Callout>
+
+## Exact Integer Functions
+
+Python integers have no size limit, and these functions stay exact on them. They are the right tools for [combinatorics](../../foundations/combinatorics/) and [number theory](../../discrete-math/number-theory/).
+
+```python
+import math
+
+print(math.factorial(10), math.comb(10, 3), math.perm(10, 3))
+print(math.gcd(84, 36), math.lcm(4, 6), math.isqrt(99))
+print(math.prod([1, 2, 3, 4]))
+# 3628800 120 720
+# 12 12 9
+# 24
+```
+
+In words: there are $\binom{10}{3} = 120$ ways to choose $3$ items from $10$ and $10 \cdot 9 \cdot 8 = 720$ ordered arrangements. $\gcd(84, 36) = 12$, $\operatorname{lcm}(4, 6) = 12$, and $\lfloor\sqrt{99}\rfloor = 9$. `math.isqrt` is exact for any integer, while `int(math.sqrt(n))` can be off by one for very large $n$ because the float square root rounds.
+
+## Logs and Exponentials
+
+`math.log(x, base)` handles any base; `log2` and `log10` are more accurate for their bases. Near zero, `log(1 + x)` and `exp(x) - 1` lose most of their digits because $1 + x$ rounds first; `log1p` and `expm1` compute them directly.
+
+```python
+import math
+
+print(math.log(100, 10), math.log10(1000), math.log2(1024))
+x = 1e-10
+print(math.log(1 + x), math.log1p(x))
+print(math.exp(1e-10) - 1, math.expm1(1e-10))
+# 2.0 3.0 10.0
+# 1.000000082690371e-10 9.999999999500001e-11
+# 1.000000082740371e-10 1.00000000005e-10
+```
+
+In words: for $x = 10^{-10}$ the true value of $\ln(1 + x)$ is about $x - x^2/2 = 9.9999999995 \times 10^{-11}$. The naive form gets only the first $7$ digits right, and `log1p` gets all of them. The same holds for `expm1`. These matter in probability code, where log-likelihoods and small rates are common.
+
+## Angles and Distances
+
+Trigonometric functions take radians. `atan2(y, x)` returns the angle of the point $(x, y)$ in the correct quadrant, which plain `atan(y / x)` cannot do.
+
+```python
+import math
+
+print(math.sin(math.pi / 6), math.degrees(math.pi), math.radians(180))
+print(math.atan2(1, -1), math.hypot(3, 4), math.dist((0, 0), (3, 4)))
+print(math.inf > 1e308, math.isnan(math.nan), math.nan == math.nan)
+# 0.49999999999999994 180.0 3.141592653589793
+# 2.356194490192345 5.0 5.0
+# True True False
+```
+
+In words: $\sin(\pi/6)$ prints $0.49999999999999994$ rather than $0.5$, another float rounding. The point $(-1, 1)$ is at $\frac{3\pi}{4} \approx 2.356$ radians, in the second quadrant. `hypot` and `dist` both give the length $5$ of the $3$-$4$-$5$ triangle. `nan` is not equal even to itself, so test for it with `math.isnan`.
+
+## Complex Numbers
+
+Python has a built-in complex type, written `1 + 1j`. The `cmath` module provides the functions that `math` refuses for complex input, such as the square root of a negative number. See [complex numbers](../../foundations/complex-numbers/) for the theory.
+
+```python
+import cmath
+import math
+
+print(cmath.sqrt(-4))
+z = complex(1, 1)
+print(abs(z), cmath.phase(z), cmath.polar(z))
+print(cmath.rect(2, math.pi / 2))
+print(cmath.exp(1j * math.pi))
+# 2j
+# 1.4142135623730951 0.7853981633974483 (1.4142135623730951, 0.7853981633974483)
+# (1.2246467991473532e-16+2j)
+# (-1+1.2246467991473532e-16j)
+```
+
+In words: $\sqrt{-4} = 2i$. The number $1 + i$ has modulus $\sqrt{2}$ and angle $\frac{\pi}{4}$. Converting polar $(2, \frac{\pi}{2})$ back gives $2i$ plus a rounding error of about $10^{-16}$ in the real part. $e^{i\pi}$ prints as $-1$ with the same tiny imaginary error, which is Euler's identity in floating point.
+
+## Summary Statistics
+
+The `statistics` module works on plain lists and returns exact results for integer input where it can. Note the two standard deviations: `stdev` divides by $n - 1$ (a sample estimating a larger population) and `pstdev` divides by $n$ (the data is the whole population).
+
+```python
+import statistics as st
+
+data = [2, 4, 4, 4, 5, 5, 7, 9]
+print(st.mean(data), st.median(data), st.mode(data))
+print(st.pstdev(data), round(st.stdev(data), 4))
+print(st.quantiles(data, n=4))
+# 5 4.5 4
+# 2.0 2.1381
+# [4.0, 4.5, 6.5]
+```
+
+In words: the mean is $5$, the median $4.5$ and the most common value $4$. The population standard deviation is exactly $2$, while the sample version is larger, $2.1381$, because dividing by $n - 1 = 7$ corrects for estimating the mean from the same data. The quartiles are $4$, $4.5$ and $6.5$.
+
+The module also fits lines and measures correlation, which covers quick checks without pandas or SciPy.
+
+```python
+import statistics as st
+
+x = [1, 2, 3, 4, 5]
+y = [2.1, 3.9, 6.2, 7.8, 10.1]
+print(round(st.correlation(x, y), 4))
+fit = st.linear_regression(x, y)
+print(round(fit.slope, 3), round(fit.intercept, 3))
+# 0.9987
+# 1.99 0.05
+```
+
+In words: the points lie almost on a line, with correlation $0.9987$. The least-squares line is $y = 1.99x + 0.05$, the same fit the [regression note](../../statistics/regression/) derives.
+
+## The Normal Distribution
+
+`NormalDist` represents a normal distribution and gives its CDF, quantiles and density without SciPy.
+
+```python
+from statistics import NormalDist
+
+iq = NormalDist(mu=100, sigma=15)
+print(round(iq.cdf(130), 4), round(iq.inv_cdf(0.975), 2))
+print(round(NormalDist().inv_cdf(0.975), 4))
+# 0.9772 129.4
+# 1.96
+```
+
+In words: on a scale with mean $100$ and standard deviation $15$, a score of $130$ (two standard deviations up) is above $97.72\%$ of the population. The $97.5$th percentile is $129.4$. For the standard normal, that percentile is the familiar $1.96$ used in $95\%$ confidence intervals.
+
+## Random Numbers
+
+`random` produces pseudo-random numbers from a seeded generator, so a fixed seed gives the same sequence on every run. That makes simulations repeatable.
+
+```python
+import random
+
+random.seed(42)
+print(random.random(), random.uniform(1, 2), random.randint(1, 6))
+print(random.choice("abc"), random.choices("ab", weights=[9, 1], k=5))
+deck = list(range(10))
+random.shuffle(deck)
+print(deck, random.sample(range(100), 3))
+print(round(random.gauss(0, 1), 4))
+# 0.6394267984578837 1.025010755222667 3
+# a ['a', 'a', 'a', 'a', 'a']
+# [4, 3, 2, 9, 5, 1, 7, 8, 0, 6] [91, 83, 89]
+# -0.6778
+```
+
+In words: with seed $42$ every run prints exactly these values. `choices` draws with replacement and respects weights, so with weights $9$ to $1$ it picked `a` five times here. `sample` draws without replacement, and `shuffle` reorders the list in place.
+
+A module-level seed is shared by all code in the program. A separate `random.Random` instance keeps its own state, so a library can be repeatable without disturbing anyone else's random numbers.
+
+```python
+import random
+
+# a private generator with its own seed does not disturb the global one
+rng = random.Random(7)
+print([rng.randint(1, 6) for _ in range(5)])
+rng.seed(7)
+print([rng.randint(1, 6) for _ in range(5)])
+# [3, 2, 4, 6, 1]
+# [3, 2, 4, 6, 1]
+```
+
+In words: re-seeding the private generator with $7$ replays the same five rolls, and nothing outside it was affected.
+
+<Callout type="pitfall">
+`random` is predictable by design: anyone who learns the seed or enough outputs can reproduce the sequence. For passwords, tokens and keys, use the `secrets` module instead.
+</Callout>
+
+## Exact Fractions
+
+`Fraction` stores a numerator and denominator as integers, so arithmetic is exact. Build it from a string to get the decimal you typed; building it from a float exposes the float's true binary value.
+
+```python
+import math
+from fractions import Fraction
+
+print(Fraction(1, 3) + Fraction(1, 6))
+print(Fraction(0.1), Fraction("0.1"))
+print(Fraction(math.pi).limit_denominator(1000))
+# 1/2
+# 3602879701896397/36028797018963968 1/10
+# 355/113
+```
+
+In words: $\frac{1}{3} + \frac{1}{6} = \frac{1}{2}$ exactly. The float `0.1` is really $\frac{3602879701896397}{2^{55}}$, while the string `"0.1"` gives exactly $\frac{1}{10}$. The best fraction for $\pi$ with denominator at most $1000$ is $\frac{355}{113}$, accurate to about $3 \times 10^{-7}$.
+
+## Money and Exact Decimals
+
+`Decimal` stores numbers in base ten, so amounts like $0.1$ are exact, and it lets you choose the rounding rule. Always build a `Decimal` from a string, not a float.
+
+```python
+from decimal import Decimal, ROUND_HALF_UP, getcontext
+
+print(Decimal("0.1") + Decimal("0.2"), Decimal(0.1))
+price = Decimal("2.675")
+print(round(2.675, 2), price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+getcontext().prec = 30
+print(Decimal(1) / Decimal(7))
+# 0.3 0.1000000000000000055511151231257827021181583404541015625
+# 2.67 2.68
+# 0.142857142857142857142857142857
+```
+
+In words: in decimal, $0.1 + 0.2$ is exactly $0.3$. Building from the float $0.1$ imports its binary error, visible in all $55$ digits. Rounding $2.675$ to cents gives `2.67` with floats but the expected `2.68` with `Decimal` and `ROUND_HALF_UP`. Raising the context precision to $30$ gives $\frac{1}{7}$ to $30$ significant digits.

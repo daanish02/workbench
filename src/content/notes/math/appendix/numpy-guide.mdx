@@ -3,6 +3,292 @@ title: "NumPy Guide"
 description: "A working guide to NumPy: arrays, broadcasting, indexing, linear algebra, random numbers and vectorised thinking."
 order: 8
 tier: core
+takeaways:
+  - "A NumPy **array** holds many numbers of one **dtype** in one block of memory, with a **shape** such as `(3, 4)`. Operations apply to every element at once, in compiled code, so whole-array expressions replace Python loops."
+  - "**Broadcasting** lines shapes up from the right and stretches any dimension of size 1, so a `(3, 1)` column plus a `(2,)` row gives a `(3, 2)` table without copying."
+  - "`axis` names the dimension a reduction collapses: `m.sum(axis=0)` sums down the columns, `m.sum(axis=1)` along the rows."
+  - "Solve linear systems with `np.linalg.solve`, not by inverting the matrix. Use `eigh` for symmetric matrices and `lstsq` for least squares."
+  - "Slices are **views** that share memory with the original; integer dtypes **wrap around** silently on overflow. Both cause quiet bugs."
+resources:
+  - title: "NumPy: the absolute basics for beginners (NumPy docs)"
+    url: "https://numpy.org/doc/stable/user/absolute_beginners.html"
+    note: "The official tour of arrays, shapes, indexing and common operations."
+  - title: "Broadcasting (NumPy docs)"
+    url: "https://numpy.org/doc/stable/user/basics.broadcasting.html"
+    note: "The exact rules for combining arrays of different shapes, with diagrams."
+  - title: "Linear algebra (numpy.linalg reference)"
+    url: "https://numpy.org/doc/stable/reference/routines.linalg.html"
+    note: "Every decomposition and solver, and which LAPACK routine each one calls."
 ---
 
-_Placeholder. Content not written yet._
+NumPy is the array library under almost all scientific Python: pandas, SciPy, scikit-learn and PyTorch all accept and return NumPy arrays or close relatives. Its core idea is to store numbers in a typed, contiguous array and run each operation over the whole array in compiled code. Code written this way, called **vectorised** code, is shorter than the loop it replaces and usually tens to hundreds of times faster. This page is a working reference: find the task in the table, then read the section for a runnable example. Run the examples with `uv run --with numpy python`.
+
+<FilterTable plain placeholder="Filter tasks, e.g. reshape, solve, random, mask">
+
+### Creating and shaping
+
+| I want to... | Call |
+|---|---|
+| make an array from a list | `np.array([1, 2, 3])` |
+| make zeros, ones or a constant | `np.zeros(n)`, `np.ones((r, c))`, `np.full(n, value)` |
+| make an identity matrix | `np.eye(n)` |
+| make evenly spaced values by step or by count | `np.arange(start, stop, step)`, `np.linspace(start, stop, num)` |
+| see the shape, number of dimensions, size or dtype | `a.shape`, `a.ndim`, `a.size`, `a.dtype` |
+| change the shape | `a.reshape(r, c)`, `a.reshape(-1, c)` |
+| flatten or transpose | `a.ravel()`, `a.T` |
+| join arrays | `np.concatenate`, `np.stack`, `np.vstack`, `np.hstack` |
+
+### Indexing
+
+| I want to... | Call |
+|---|---|
+| get one element | `m[i, j]` |
+| get a row or a column | `m[i]`, `m[:, j]` |
+| slice with a step | `m[1:, ::2]` |
+| keep elements matching a condition | `m[m > 0]` |
+| pick elements by a list of positions | `m[[0, 2], [1, 3]]` |
+| replace values by a condition | `np.where(cond, a, b)` |
+| find positions where a condition holds | `np.nonzero(cond)` |
+
+### Computing
+
+| I want to... | Call |
+|---|---|
+| sum, average or take extremes | `a.sum()`, `a.mean()`, `a.max()`, `a.argmax()` |
+| reduce along one axis | `a.sum(axis=0)` |
+| apply a function to every element | `np.sqrt(a)`, `np.exp(a)`, `np.round(a, 3)` |
+| standardise columns | `(x - x.mean(axis=0)) / x.std(axis=0)` |
+| take running totals | `np.cumsum(a)` |
+| sort, or get the sorting order | `np.sort(a)`, `np.argsort(a)` |
+| count distinct values | `np.unique(a, return_counts=True)` |
+| find where to insert into a sorted array | `np.searchsorted(sorted_a, v)` |
+| compare floats | `np.isclose(a, b)`, `np.allclose(a, b)` |
+
+### Linear algebra
+
+| I want to... | Call |
+|---|---|
+| multiply matrices | `A @ B` |
+| solve Ax = b | `np.linalg.solve(A, b)` |
+| fit least squares | `np.linalg.lstsq(X, y)` |
+| get a determinant or a norm | `np.linalg.det(A)`, `np.linalg.norm(v)` |
+| get eigenvalues of a symmetric matrix | `np.linalg.eigh(A)` |
+| get eigenvalues of any square matrix | `np.linalg.eig(A)` |
+| take the singular value decomposition | `np.linalg.svd(A)` |
+
+### Random numbers
+
+| I want to... | Call |
+|---|---|
+| make a seeded generator | `rng = np.random.default_rng(seed)` |
+| draw integers or uniform floats | `rng.integers(low, high, size)`, `rng.random(size)` |
+| draw from a normal distribution | `rng.normal(mean, sd, size)` |
+| sample from a list, or shuffle | `rng.choice(items, size)`, `rng.permutation(n)` |
+
+</FilterTable>
+
+## Creating Arrays
+
+An array has a single **dtype** (element type) for all its elements. Integers give `int64` by default, any float gives `float64`, and `dtype=` overrides the choice.
+
+```python
+import numpy as np
+
+print(np.array([1, 2, 3]), np.zeros(3), np.ones((2, 2), dtype=int).tolist())
+print(np.arange(0, 1, 0.25), np.linspace(0, 1, 5))
+print(np.eye(2).tolist(), np.full(3, 7))
+# [1 2 3] [0. 0. 0.] [[1, 1], [1, 1]]
+# [0.   0.25 0.5  0.75] [0.   0.25 0.5  0.75 1.  ]
+# [[1.0, 0.0], [0.0, 1.0]] [7 7 7]
+```
+
+In words: `arange` stops before its end like `range`, so it gives four values up to $0.75$, while `linspace(0, 1, 5)` gives exactly five values including both ends. Prefer `linspace` for float ranges: with a float step, rounding can make `arange` include or drop the last point unexpectedly.
+
+## Shape and Reshape
+
+The **shape** is a tuple with one length per dimension. `reshape` reinterprets the same data with a new shape, and `-1` asks NumPy to work out that dimension.
+
+```python
+import numpy as np
+
+a = np.arange(12)
+m = a.reshape(3, 4)
+print(m.shape, m.ndim, m.size, m.dtype)
+print(m.T.shape, m.ravel()[:5], m.reshape(-1, 6).shape)
+# (3, 4) 2 12 int64
+# (4, 3) [0 1 2 3 4] (2, 6)
+```
+
+In words: twelve numbers become a $3 \times 4$ matrix with $2$ dimensions. The transpose is $4 \times 3$, `ravel` flattens it back, and `reshape(-1, 6)` infers that $12$ elements in rows of $6$ means $2$ rows.
+
+## Indexing and Masks
+
+Indexing takes one position or slice per dimension. A **boolean mask**, an array of `True` and `False` with the same shape, selects the elements where it is `True`. **Fancy indexing** with lists of positions picks arbitrary elements.
+
+```python
+import numpy as np
+
+m = np.arange(12).reshape(3, 4)
+print(m[1, 2], m[0], m[:, 1], m[1:, ::2].tolist())
+print(m[m % 2 == 0])
+print(m[[0, 2], [1, 3]])
+# 6 [0 1 2 3] [1 5 9] [[4, 6], [8, 10]]
+# [ 0  2  4  6  8 10]
+# [ 1 11]
+```
+
+In words: `m[1, 2]` is row $1$, column $2$, which holds $6$. `m[:, 1]` is the whole second column. `m[1:, ::2]` takes rows $1$ onward and every other column. The mask `m % 2 == 0` keeps the even numbers, and `m[[0, 2], [1, 3]]` picks the elements at $(0, 1)$ and $(2, 3)$, which are $1$ and $11$.
+
+## Broadcasting
+
+When two arrays have different shapes, NumPy compares the shapes from the last dimension backward. Two dimensions are compatible when they are equal or one of them is $1$, and a dimension of $1$ is stretched to match. This is **broadcasting**.
+
+```python
+import numpy as np
+
+col = np.array([[1], [2], [3]])   # shape (3, 1)
+row = np.array([10, 20])          # shape (2,)
+print((col + row).tolist())
+x = np.array([[1.0, 2.0], [3.0, 4.0]])
+print(((x - x.mean(axis=0)) / x.std(axis=0)).tolist())
+# [[11, 21], [12, 22], [13, 23]]
+# [[-1.0, -1.0], [1.0, 1.0]]
+```
+
+In words: a $(3, 1)$ column plus a $(2,)$ row gives a $(3, 2)$ table of every sum, with no loop and no copies of the inputs. The second line standardises each column: `x.mean(axis=0)` has shape $(2,)$, so it broadcasts across both rows, and each column ends up with mean $0$ and standard deviation $1$.
+
+<Callout type="pitfall">
+Broadcasting also succeeds when you did not intend it. Subtracting a shape `(3,)` vector from a `(3, 1)` column gives a `(3, 3)` matrix instead of an error. When a result has an unexpected shape, print `.shape` at each step; keep column vectors explicitly 2D with `reshape(-1, 1)`.
+</Callout>
+
+## Reductions and Elementwise Math
+
+A **reduction** such as `sum`, `mean` or `max` collapses values. The `axis` argument names the dimension that disappears: `axis=0` collapses the rows, leaving one value per column. **Universal functions** (`np.sqrt`, `np.exp` and many more) apply elementwise.
+
+```python
+import numpy as np
+
+m = np.array([[1, 2, 3], [4, 5, 6]])
+print(m.sum(), m.sum(axis=0), m.sum(axis=1))
+print(m.mean(axis=1), m.max(), m.argmax(), np.cumsum([1, 2, 3]))
+print(np.sqrt([1, 4, 9]), np.exp(0), np.round(np.pi, 3))
+# 21 [5 7 9] [ 6 15]
+# [2. 5.] 6 5 [1 3 6]
+# [1. 2. 3.] 1.0 3.142
+```
+
+In words: the total is $21$. Summing with `axis=0` gives the column totals $5, 7, 9$, and `axis=1` the row totals $6$ and $15$. `argmax` returns $5$, the position of the largest value in the flattened array, not the value itself.
+
+## Linear Algebra
+
+`@` is matrix multiplication. To solve $A\mathbf{x} = \mathbf{b}$, call `np.linalg.solve`: it factorises $A$ once and is faster and more accurate than computing $A^{-1}$. For a symmetric matrix, `eigh` returns real eigenvalues in ascending order.
+
+```python
+import numpy as np
+
+A = np.array([[3.0, 1.0], [1.0, 2.0]])
+b = np.array([9.0, 8.0])
+print(np.linalg.solve(A, b), A @ np.array([2.0, 3.0]))
+print(round(np.linalg.det(A), 6), np.linalg.norm([3, 4]))
+vals, vecs = np.linalg.eigh(A)  # eigh: for symmetric matrices, sorted eigenvalues
+print(np.round(vals, 4))
+# [2. 3.] [9. 8.]
+# 5.0 5.0
+# [1.382 3.618]
+```
+
+In words: the system $3x + y = 9$, $x + 2y = 8$ has solution $(2, 3)$, and multiplying back gives $\mathbf{b}$. The determinant is $3 \cdot 2 - 1 \cdot 1 = 5$. The eigenvalues $\frac{5 \pm \sqrt{5}}{2} \approx 1.382$ and $3.618$ multiply to the determinant $5$ and add to the trace $5$. See [eigenvalues and eigenvectors](../../linear-algebra/eigenvalues-and-eigenvectors/).
+
+Least squares and the SVD cover the overdetermined case, where there are more equations than unknowns.
+
+```python
+import numpy as np
+
+X = np.array([[1, 1], [1, 2], [1, 3], [1, 4]], dtype=float)
+y = np.array([2.1, 3.9, 6.2, 7.8])
+coef, *_ = np.linalg.lstsq(X, y)
+print(np.round(coef, 3))
+U, s, Vt = np.linalg.svd(X, full_matrices=False)
+print(np.round(s, 4), U.shape, Vt.shape)
+# [0.15 1.94]
+# [5.7794 0.7738] (4, 2) (2, 2)
+```
+
+In words: the column of ones gives an intercept, so `lstsq` fits $y = 0.15 + 1.94x$ to four points that no single line passes through. The [SVD](../../linear-algebra/singular-value-decomposition-svd/) of the $4 \times 2$ design matrix has two singular values, $5.7794$ and $0.7738$; their ratio, about $7.5$, is the matrix's condition number.
+
+## Random Numbers
+
+Create a **Generator** with `np.random.default_rng(seed)` and call methods on it. A seed makes runs repeatable, and passing the generator around keeps randomness explicit. The older `np.random.seed` with module-level functions still works but shares one global state.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+print(rng.integers(1, 7, size=5), np.round(rng.random(3), 4))
+print(np.round(rng.normal(0, 1, size=3), 4))
+print(rng.choice(["a", "b", "c"], size=4), rng.permutation(5))
+# [6 4 4 2 2] [0.0165 0.8133 0.9128]
+# [ 1.304   0.9471 -0.7037]
+# ['a' 'b' 'c' 'a'] [2 1 3 4 0]
+```
+
+In words: five die rolls, three uniform floats, three standard normal draws, four picks with replacement and a shuffled range, all identical on every run with seed $0$. `integers(1, 7)` excludes $7$, like `range`.
+
+## Sorting, Searching and Joining
+
+```python
+import numpy as np
+
+v = np.array([3, 1, 2, 3, 1])
+print(np.sort(v), np.argsort(v), np.unique(v, return_counts=True))
+print(np.where(v > 1, v, 0), np.nonzero(v == 3)[0], np.searchsorted([1, 3, 5], 4))
+print(np.concatenate([[1, 2], [3]]), np.stack([[1, 2], [3, 4]]).shape, np.vstack([[1, 2], [3, 4]]).tolist())
+# [1 1 2 3 3] [1 4 2 0 3] (array([1, 2, 3]), array([2, 1, 2]))
+# [3 0 2 3 0] [0 3] 2
+# [1 2 3] (2, 2) [[1, 2], [3, 4]]
+```
+
+In words: `argsort` returns the positions that would sort the array, which is how you sort one array by another. `unique` reports values $1, 2, 3$ with counts $2, 1, 2$. `where` keeps values above $1$ and zeroes the rest, `nonzero` finds the $3$s at positions $0$ and $3$, and `searchsorted` says $4$ belongs at position $2$ of the sorted list $[1, 3, 5]$.
+
+## Views and Copies
+
+A basic slice returns a **view**: a new array object that shares the original's memory. Writing through the view changes the original. Call `.copy()` when you need independent data. Boolean masks and fancy indexing always return copies.
+
+```python
+import numpy as np
+
+a = np.arange(5)
+view = a[1:3]       # slicing returns a view of the same memory
+view[0] = 99
+print(a)
+b = np.arange(5)
+copy = b[1:3].copy()
+copy[0] = 99
+print(b)
+# [ 0 99  2  3  4]
+# [0 1 2 3 4]
+```
+
+In words: writing $99$ into the view changed `a[1]`, while the explicit copy left `b` untouched. Views make slicing cheap even for huge arrays, which is why NumPy uses them by default.
+
+## Dtype Surprises
+
+Fixed-size integers **overflow** by wrapping around, with no error. Division `/` always produces floats, `//` floors. Float sums carry rounding error, so compare them with `np.isclose`.
+
+```python
+import numpy as np
+
+x = np.array([200], dtype=np.uint8)
+print(x + 100)          # wraps around modulo 256, with no error
+print(np.array([1, 2]) / 2, np.array([1, 2]) // 2)
+print(np.array([0.1, 0.2]).sum() == 0.3, np.isclose(np.array([0.1, 0.2]).sum(), 0.3))
+# [44]
+# [0.5 1. ] [0 1]
+# False True
+```
+
+In words: $200 + 100 = 300$ does not fit in an unsigned 8-bit integer, whose range is $0$ to $255$, so it wraps to $300 - 256 = 44$ silently. Images are often stored as `uint8`, so convert to a float dtype before doing arithmetic on pixel values.
+
+<Callout type="pitfall">
+NumPy never warns about integer overflow in array arithmetic. If values can grow (counts, products, pixel sums), choose `int64` or `float64` explicitly, or check `a.max()` against `np.iinfo(a.dtype).max`.
+</Callout>
