@@ -25,7 +25,7 @@ Frontmatter (schema in `src/content.config.ts`):
 title: "Two Or Three Words"   # Title Case, at most 3 words
 description: "One sentence on what the note covers."
 order: 3                      # position inside the section; renumber neighbours when inserting
-tier: core                    # core | optional | advanced
+tier: core                    # core | advanced (see below)
 takeaways:                    # 3–5 one-line bullets, shown in the "In short" box
   - "Use **bold** for the key term. LaTeX inside YAML needs doubled backslashes: $\\frac{a}{b}$."
 resources:                    # 2–3 links, every URL checked with curl (200) before adding
@@ -33,6 +33,8 @@ resources:                    # 2–3 links, every URL checked with curl (200) b
     url: "https://…"
     note: "Why it is worth opening."
 ```
+
+`tier: advanced` shows a small ADV badge (sidebar, note header, overview). It means the note is harder or leans on several earlier notes, so read it after the core notes of its section. It does not mean skippable or less important. Use it sparingly, about 1 note in 10 per section; everything else is `core`. When writing a stub, confirm or change its tier by this rule.
 
 Body pattern, as in the CS notes:
 

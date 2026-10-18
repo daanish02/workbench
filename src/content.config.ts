@@ -9,8 +9,8 @@ const notes = defineCollection({
     title: z.string(),
     description: z.string(),
     order: z.number(),
-    /** core = learn now, optional = useful extra, advanced = come back later */
-    tier: z.enum(['core', 'optional', 'advanced']).default('core'),
+    /** advanced = harder, or leans on several earlier notes (shown as an ADV badge); everything else is core */
+    tier: z.enum(['core', 'advanced']).default('core'),
     /** 3-4 one-line takeaways shown in the "In short" box at the top */
     takeaways: z.array(z.string()).default([]),
     resources: z
