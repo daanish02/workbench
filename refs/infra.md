@@ -4,7 +4,7 @@ Covers the physical/architectural layer that sits beneath CS's Operating Systems
 
 ## Writing checklist (added 2026-10-18, read before each section)
 
-- Every note, including the ones marked _(new)_ below, already exists as a placeholder stub (body `_Placeholder..._`) with its short title, description and `order` set (2026-10-18; orders follow the suggested order in each section). Overwrite stubs in place; do not create new files or renumber unless a note is added or dropped. Slugs are the old long ones (e.g. `quantum-computers` is titled "Unconventional Computing"); keep them unless one is misleading.
+- Every note, including the ones marked _(new)_ below, already exists as a placeholder stub (body `_Placeholder..._`) with its short title, description and `order` set (2026-10-18; orders follow the suggested order in each section). Overwrite stubs in place; do not create new files or renumber unless a note is added or dropped. Slugs are the old long ones (e.g. `why-gpus-are-architecturally-different` is titled "Why GPUs Differ"); keep them unless one is misleading.
 - Titles: at most 3 words ("X and Y" / "X & Y" counts as 3). The short titles listed per section below are already applied to the stubs.
 - `##` headings at most 5 words.
 - Do NOT re-teach, link instead: `cs/foundations/{boolean-logic,number-representation,fetch-execute-cycle}`, `cs/theory/finite-automata`, `cs/operating-systems/{virtual-memory,page-replacement,io-management,file-systems,context-switching,synchronization}`, `cs/networks/{link-layer,network-models}`, `cs/appendix/latency-numbers`, `cs/system-design/scalability` (Amdahl's law is already there).
@@ -40,10 +40,10 @@ Also cover: arithmetic beyond the adder (ripple vs carry-lookahead, shifters, mu
 4. **Interrupts at the hardware level** — the physical/electrical side of what `cs:os:io-management` covers conceptually
 5. **Embedded systems basics** — microcontrollers vs. general-purpose CPUs, resource constraints
 6. **Assembly and calling conventions** _(new)_ — what compiled code looks like: registers, stack frames, call/return, one C function in RISC-V or x86-64; bridge from `cs/languages/compilers-and-interpreters`. [Machine Code]
-7. **Boot and firmware** _(new, optional)_ — reset vector, BIOS/UEFI, bootloader, handoff to the kernel; ties to `cs/operating-systems/kernel-architecture`. [Boot Process]
+7. **Boot and firmware** _(new)_ — reset vector, BIOS/UEFI, bootloader, handoff to the kernel; ties to `cs/operating-systems/kernel-architecture`. [Boot Process]
 
 Short titles: Von Neumann vs. Harvard → "Von Neumann Architecture" (covers Harvard too), Interrupts at the Hardware Level → "Hardware Interrupts", Embedded Systems Basics → "Embedded Systems".
-Also cover in I/O Interfacing: memory-mapped vs port I/O, polling vs interrupts vs DMA, PCIe as the modern bus (lanes, generations).
+Also cover in I/O Interfacing: memory-mapped vs port I/O, polling vs interrupts vs DMA, PCIe as the modern bus (lanes, generations), and ADCs/DACs, the boundary where the analog world (sensors, audio, radio) becomes bits; link `math/signals-fourier/sampling` for the sampling theory.
 
 **Interactive:** bus transaction visualizer (watch an address go out, data come back, step by step), Von Neumann vs. Harvard side-by-side (same instruction fetch, different memory paths highlighted).
 
@@ -64,7 +64,7 @@ Also cover in I/O Interfacing: memory-mapped vs port I/O, polling vs interrupts 
 11. **Measuring CPU performance** _(new, place right after CPU components)_ — the iron law (time = instructions × CPI × clock period), IPC, why GHz alone misleads, benchmarks (SPEC) and their traps. [CPU Performance]
 12. **Floating point hardware** _(new)_ — IEEE 754 layout, rounding, denormals, FMA, then FP16 / BF16 / FP8 / INT8 range-vs-precision trade-offs; feeds DL directly. Link `cs/foundations/number-representation` for integers. [Floating-Point Hardware]
 13. **Speculation attacks** _(new, capstone)_ — Spectre and Meltdown: why speculation leaks through cache timing, mitigations and their cost. Rowhammer can go here or in Main Memory. [Hardware Security]
-14. **Hardware virtualization** _(new, optional)_ — VT-x/AMD-V, nested page tables, IOMMU; links to `cs/cloud/vms-vs-containers`. [Hardware Virtualization]
+14. **Hardware virtualization** _(new)_ — VT-x/AMD-V, nested page tables, IOMMU; links to `cs/cloud/vms-vs-containers`. [Hardware Virtualization]
 
 Short titles: Instruction Set Architectures → "Instruction Sets" (x86 vs ARM vs RISC-V today), Out-of-Order Execution and Superscalar Processors → "Out-of-Order Execution", Instruction-Level Parallelism → "Instruction Parallelism" (consider merging into OoO: it overlaps pipelining + superscalar), The Datapath → "The Datapath".
 
@@ -118,7 +118,7 @@ _(The physical layer beneath `cs:computer-networks`, which covers protocols and 
 3. **Bandwidth, latency, and throughput** — the physical constraints behind the numbers quoted in `cs:computer-networks`
 4. **Wireless technology basics** — WiFi standards at a conceptual level, why newer standards are faster
 5. **Data center networking topologies** — spine-leaf and similar architectures at scale
-6. **RDMA and SmartNICs** _(new, optional)_ — kernel bypass, RDMA/RoCE, DPUs offloading networking and storage; leads into InfiniBand in GPUs & Parallelism. [RDMA & SmartNICs]
+6. **RDMA and SmartNICs** _(new)_ — kernel bypass, RDMA/RoCE, DPUs offloading networking and storage; leads into InfiniBand in GPUs & Parallelism. [RDMA & SmartNICs]
 
 Short titles: Physical Transmission Media → "Transmission Media" (include signal encoding, NRZ vs PAM4), Network Interface Cards, Switches, and Routers → "NICs & Switches" (cut-through vs store-and-forward, ASIC forwarding tables), Bandwidth, Latency, and Throughput → "Bandwidth & Latency" (bandwidth-delay product; link `cs/appendix/latency-numbers`), Wireless Technology Basics → "Wireless Basics", Data Center Networking Topologies → "Data Center Topologies".
 
@@ -139,15 +139,32 @@ _(Placed last deliberately — this section's content is what `scaffold-dl` will
 7. **SIMD instructions on CPUs** — vectorization before you even reach a GPU
 8. **Supercomputer architecture** — clusters of nodes, high-speed interconnects (InfiniBand-style, conceptually), how a supercomputer differs from "just a lot of GPUs" — what coordination and scheduling at that scale actually requires
 9. **Multi-GPU and distributed training hardware** — the hardware considerations `scaffold-applied-dl` will eventually reference directly
-10. **Quantum Computers** — does that fit here? → Decision: not a parallel architecture. Keep as the last note, retitled "Unconventional Computing" (not "Emerging Hardware": that dates): quantum (qubits, gates, why only some problems speed up), neuromorphic, photonic, at survey depth.
+10. ~~**Quantum Computers**~~ — moved to its own section, 8. Unconventional Computing.
 11. **FPGAs and ASICs** _(new)_ — reconfigurable logic (LUTs, routing), when an FPGA beats a GPU (latency, custom bit widths), ASICs/TPUs as the endpoint; links back to Digital Logic. [FPGAs & ASICs]
 12. **Roofline model** _(new, high value)_ — arithmetic intensity (FLOPs per byte), compute-bound vs memory-bound, why matmul is fast and elementwise ops are not; the bridge to DL performance. Could be a section of CPU vs GPU instead. [Roofline Model]
 13. **GPU programming model** _(new)_ — kernels, grid/block/thread, shared memory, coalesced access, occupancy; one tiny CUDA-style kernel explained via a Python simulation. [GPU Programming]
 
-Suggested order: Why GPUs Differ, GPU Architecture, GPU Programming, Roofline Model, CPU vs GPU, SIMD on CPUs, Multicore CPUs, AI Accelerators (tensor cores, TPUs), FPGAs & ASICs, Interconnects (PCIe, NVLink, CXL, InfiniBand), Multi-GPU Training, Supercomputers, Unconventional Computing. Section could be renamed "Parallel & Accelerators".
+Suggested order: Why GPUs Differ, GPU Architecture, GPU Programming, Roofline Model, CPU vs GPU, SIMD on CPUs, Multicore CPUs, AI Accelerators (tensor cores, TPUs), FPGAs & ASICs, Interconnects (PCIe, NVLink, CXL, InfiniBand), Multi-GPU Training, Supercomputers. Section could be renamed "Parallel & Accelerators".
 Short titles: Why GPUs Are Architecturally Different → "Why GPUs Differ", CPU vs. GPU Workloads → "CPU vs GPU", SIMD Instructions on CPUs → "SIMD on CPUs", Tensor Cores and Specialized AI Hardware → "AI Accelerators", Supercomputer Architecture → "Supercomputers", Multi-GPU and Distributed Training Hardware → "Multi-GPU Training" (data/tensor/pipeline parallelism only as hardware traffic; the algorithms belong to DL).
 
 **Interactive:** SIMD vs. scalar execution comparison (the same operation, one element at a time vs. many at once, visualized), GPU warp execution visualizer (threads grouped into warps, watch divergence cost appear when threads in a warp take different branches), CPU-vs-GPU workload chooser (given a task, see why it maps well or poorly to each architecture).
+
+---
+
+## 8. Unconventional Computing _(new section, 2026-10-18)_
+
+_(Everything before this is digital, von Neumann-style computing. This section covers machines that compute differently. Survey depth: what each one is, the physics it exploits, what it is good and bad at, and where it stands today. Name chosen over "Emerging Hardware", which dates; avoid "new"/"recent"/"future" wording in the notes for the same reason, and date any status claims ("as of 2026").)_
+
+1. **Analog computing** — computing with continuous voltages: op-amp adders and integrators, differential analyzers, solving an ODE by wiring it up; why digital won (noise, precision, programmability) and why analog is back for AI. [Analog Computing]
+2. **Compute-in-memory** — doing matrix-vector multiplies inside memory arrays (resistive crossbars, Ohm's and Kirchhoff's laws as multiply-add), escaping the memory wall from `memory-hierarchy`. [Compute-in-Memory]
+3. **Neuromorphic computing** — spiking neurons, event-driven chips (Loihi, TrueNorth, SpiNNaker), energy per spike vs per FLOP. [Neuromorphic Computing]
+4. **Photonic computing** — computing with light: interferometer meshes for matmul, optical interconnects vs optical compute, what limits it (conversion, nonlinearity). [Photonic Computing]
+5. **Quantum computing** — qubits, superposition, measurement, gates and circuits; simulate a 1–2 qubit circuit with numpy. Link `math/linear-algebra` for the vectors and unitary matrices. [Quantum Computing]
+6. **Quantum algorithms** — Deutsch–Jozsa intuition, Grover (quadratic speedup), Shor (why RSA is at risk, link `cs/security/cryptography`), and why most problems get no speedup. [Quantum Algorithms]
+7. **Quantum hardware** — superconducting, trapped-ion and photonic qubits, decoherence, error rates, error correction and logical vs physical qubits (link `math/information-theory/error-correction`). [Quantum Hardware]
+8. **Other paradigms** — DNA/molecular, reversible, probabilistic and stochastic computing, in one survey note. [Other Paradigms]
+
+**Interactive:** analog integrator (dial in an ODE, watch the voltage curve vs the exact solution, add noise), crossbar matmul (set conductances and input voltages, read output currents), spiking neuron (input current in, spikes out, threshold slider), qubit on the Bloch sphere (apply gates, see measurement probabilities), Grover amplitude stepper (Step / Auto / Reset).
 
 ---
 
@@ -156,4 +173,4 @@ Short titles: Why GPUs Are Architecturally Different → "Why GPUs Differ", CPU 
 A **latency numbers reference page** — the famous "latency numbers every programmer should know" table (register access, L1/L2/L3, RAM, SSD, disk, network round-trip) as a standalone, frequently-revisited reference, linked from Memory Hierarchy, Storage, and Networking Hardware alike.
 → Already exists as `cs/appendix/latency-numbers`. Link to it; do not duplicate.
 
-Optional **Appendix** section for infra (same FilterTable pattern as the CS appendix): hardware glossary (ALU, TLB, HBM, NVLink, CPI, …), units and orders of magnitude (GB vs GiB, Gb/s vs GB/s, FLOPS), and how to read a CPU/GPU/SSD spec sheet.
+**Appendix** section for infra (last section; stubs exist) (same FilterTable pattern as the CS appendix): hardware glossary (ALU, TLB, HBM, NVLink, CPI, …), units and orders of magnitude (GB vs GiB, Gb/s vs GB/s, FLOPS), and how to read a CPU/GPU/SSD spec sheet.

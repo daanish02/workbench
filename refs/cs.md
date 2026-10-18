@@ -38,9 +38,9 @@ Placeholder stubs were created on 2026-10-18 (body `_Placeholder. Content not wr
 4. `system-design/rpc-and-serialization` (order 9, after api-design) — RPC vs REST, gRPC/Protocol Buffers, JSON vs binary formats, schema evolution, idempotent retries.
 5. `data-structures/union-find` (order 10, after graphs) — union by rank + path compression, near-constant amortized cost, uses (Kruskal, connected components). Link it from Kruskal in `algorithms/greedy-algorithms`, which uses an inline disjoint set without explaining it.
 6. `algorithms/randomized-algorithms` (order 12, last) — Las Vegas vs Monte Carlo, quickselect, reservoir sampling, Miller-Rabin. Pieces are scattered in sorting and skip lists; link them.
-7. `data-structures/range-queries` (order 13, optional tier) — prefix sums, segment tree, Fenwick tree.
-8. `algorithms/network-flow` (order 10, after graph-algorithms, optional tier) — max-flow/min-cut, Ford-Fulkerson/Edmonds-Karp, bipartite matching.
-9. `foundations/text-encoding` (order 4, optional tier) — ASCII, Unicode code points, UTF-8 bytes, normalization, why `len()` differs from what users see. Partly in `data-structures/arrays-and-strings`; link both ways.
+7. `data-structures/range-queries` (order 13) — prefix sums, segment tree, Fenwick tree.
+8. `algorithms/network-flow` (order 10, after graph-algorithms) — max-flow/min-cut, Ford-Fulkerson/Edmonds-Karp, bipartite matching.
+9. `foundations/text-encoding` (order 4) — ASCII, Unicode code points, UTF-8 bytes, normalization, why `len()` differs from what users see. Partly in `data-structures/arrays-and-strings`; link both ways.
 
 ### New section: Data Engineering
 
