@@ -97,6 +97,7 @@ import Figure from '../Figure.astro';
 - **Steppers always have Step, Auto and Reset**, in that order. Mark the step button `data-step-btn` and add `<button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>`; `Base.astro` auto-plays it (it reads Pause while running) and stops at the end. Reset returns to step 0. A figure with its own Play loop still needs Step and Reset.
 - Sliders: `<label class="xx-lbl">name <input type="range" …> <b data-xv>value</b></label>`, with the current value shown.
 - Readout: one `<p>` in monospace with the key numbers, formatted like `a = 1 · b = 2 · verdict`.
+- **Axes: every chart names what each axis measures** (with units or "log scale" where they apply). Wrap the chart: `<div class="axes" style="--ax-w: 440px"><span class="ax-y">density</span><svg …/><span class="ax-x">heads probability θ</span></div>` (`--ax-w` = the chart's max-width; styles in `global.css`; works for any viewBox units and for canvas). Coordinate planes use `x` and `y`. When one SVG holds several panels with different axes, put the titles inside it instead with `<text class="ax-title">` (rotate the y title with `transform="translate(x y) rotate(-90)"`). Add `<text class="ax-tick">` end values where the scale is fixed and not obvious.
 - Layout: SVG with a `viewBox` and `width: 100%; max-width: …`; it must work at phone width.
 
 ## Gotchas
