@@ -1,0 +1,209 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Union-find trees, with and without the optimizations"
+  caption="Each step runs one operation on 8 elements. Arrows point from a child to its parent; blue nodes are roots, yellow is the current find path, green arrows were just rewired by path compression. With both optimizations off, the unions build two chains and the final tree is 4 levels tall; turn on union by rank and it stays at 2, and path compression flattens whatever a find walks."
+>
+  <union-find-viz>
+    <div class="ctl-row">
+      <input type="checkbox" hidden data-rank />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Union by rank</button>
+      <input type="checkbox" hidden data-comp />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Path compression</button>
+    </div>
+    <svg class="uf-svg" data-svg viewBox="0 0 440 250" role="img" aria-label="union-find forest"></svg>
+    <p class="uf-msg" data-msg></p>
+    <p class="uf-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </union-find-viz>
+</Figure>
+
+<style>
+  .uf-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .uf-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .uf-svg :global(line.new) {
+    stroke: var(--g-green);
+    stroke-width: 2.4;
+  }
+  .uf-svg :global(circle) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .uf-svg :global(.root circle) {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+  }
+  .uf-svg :global(.path circle) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .uf-svg :global(text) {
+    fill: var(--text);
+    font: 700 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .uf-svg :global(text.rk) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+  }
+  .uf-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .uf-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const N = 8;
+  type Op = ['union', number, number] | ['find', number];
+  const OPS: Op[] = [
+    ['union', 0, 1], ['union', 1, 2], ['union', 2, 3],
+    ['union', 4, 5], ['union', 5, 6], ['union', 6, 7],
+    ['union', 3, 7], ['find', 0], ['find', 4], ['find', 7],
+  ];
+  interface Frame {
+    parent: number[];
+    rank: number[];
+    path: number[];
+    fresh: number[]; // children whose parent pointer was just rewired
+    msg: string;
+  }
+
+  function frames(byRank: boolean, compress: boolean): Frame[] {
+    const parent = [...Array(N).keys()];
+    const rank = Array(N).fill(0);
+    const out: Frame[] = [{ parent: [...parent], rank: [...rank], path: [], fresh: [], msg: 'Eight singleton sets: every element is its own root.' }];
+    const find = (x: number) => {
+      const path = [x];
+      while (parent[path[path.length - 1]] !== path[path.length - 1]) path.push(parent[path[path.length - 1]]);
+      const root = path[path.length - 1];
+      const fresh: number[] = [];
+      if (compress) for (const p of path.slice(0, -2)) { parent[p] = root; fresh.push(p); }
+      return { root, path, fresh };
+    };
+    for (const op of OPS) {
+      if (op[0] === 'find') {
+        const { root, path, fresh } = find(op[1]);
+        const msg = `find(${op[1]}) walks ${path.join(' → ')} and returns root ${root} (${path.length - 1} step${path.length === 2 ? '' : 's'}).` + (fresh.length ? ` Compression points ${fresh.join(', ')} straight at ${root}.` : compress || path.length < 3 ? '' : ' Without compression the path stays as long.');
+        out.push({ parent: [...parent], rank: [...rank], path, fresh, msg });
+        continue;
+      }
+      const [, a, b] = op;
+      const fa = find(a);
+      const fb = find(b);
+      let ra = fa.root;
+      let rb = fb.root;
+      const fresh = [...fa.fresh, ...fb.fresh];
+      let msg: string;
+      if (byRank) {
+        if (rank[ra] < rank[rb]) [ra, rb] = [rb, ra];
+        parent[rb] = ra;
+        if (rank[ra] === rank[rb]) rank[ra]++;
+        msg = `union(${a}, ${b}): roots ${fa.root} and ${fb.root}; by rank, ${rb} goes under ${ra}.`;
+      } else {
+        parent[ra] = rb; // naive: a's root under b's root
+        msg = `union(${a}, ${b}): naive linking puts root ${ra} under root ${rb}.`;
+        rb = ra;
+      }
+      fresh.push(rb);
+      out.push({ parent: [...parent], rank: [...rank], path: [...new Set([...fa.path, ...fb.path])], fresh, msg });
+    }
+    return out;
+  }
+
+  class UnionFindViz extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      this.querySelectorAll('input[type=checkbox]').forEach((c) => c.addEventListener('change', () => this.reset()));
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      const r = this.querySelector<HTMLInputElement>('[data-rank]')!.checked;
+      const c = this.querySelector<HTMLInputElement>('[data-comp]')!.checked;
+      this.fr = frames(r, c);
+      this.i = 0;
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const kids: number[][] = Array.from({ length: N }, () => []);
+      const roots: number[] = [];
+      f.parent.forEach((p, x) => (p === x ? roots.push(x) : kids[p].push(x)));
+      // layout: each leaf takes one column; a parent sits above the middle of its children
+      const pos: [number, number][] = Array(N);
+      let col = 0;
+      let maxDepth = 0;
+      const place = (x: number, d: number): number => {
+        maxDepth = Math.max(maxDepth, d);
+        if (!kids[x].length) {
+          pos[x] = [col++, d];
+          return pos[x][0];
+        }
+        const cs = kids[x].map((k) => place(k, d + 1));
+        pos[x] = [(cs[0] + cs[cs.length - 1]) / 2, d];
+        return pos[x][0];
+      };
+      roots.forEach((r) => {
+        place(r, 0);
+        col += 0.6;
+      });
+      const W = 440;
+      const span = Math.max(col - 0.6, 1);
+      const sx = (c: number) => 28 + (c / Math.max(span - 1, 1)) * (W - 56);
+      const sy = (d: number) => 28 + d * 48;
+      const R = 15;
+      let s = '<defs><marker id="uf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--border-strong)" /></marker></defs>';
+      for (let x = 0; x < N; x++) {
+        const p = f.parent[x];
+        if (p === x) continue;
+        const [x1, y1] = [sx(pos[x][0]), sy(pos[x][1])];
+        const [x2, y2] = [sx(pos[p][0]), sy(pos[p][1])];
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        const ux = (x2 - x1) / len;
+        const uy = (y2 - y1) / len;
+        s += `<line class="${f.fresh.includes(x) ? 'new' : ''}" x1="${x1 + ux * R}" y1="${y1 + uy * R}" x2="${x2 - ux * (R + 3)}" y2="${y2 - uy * (R + 3)}" marker-end="url(#uf-arr)" />`;
+      }
+      for (let x = 0; x < N; x++) {
+        const cls = f.path.includes(x) ? 'path' : f.parent[x] === x ? 'root' : '';
+        const [cx, cy] = [sx(pos[x][0]), sy(pos[x][1])];
+        s += `<g class="${cls}"><circle cx="${cx}" cy="${cy}" r="${R}" /><text x="${cx}" y="${cy}">${x}</text>`;
+        if (f.parent[x] === x && f.rank[x]) s += `<text class="rk" x="${cx}" y="${cy - R - 7}">rank ${f.rank[x]}</text>`;
+        s += '</g>';
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · sets = ${roots.length} · tallest tree = ${maxDepth} · parent = [${f.parent.join(', ')}]`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('union-find-viz', UnionFindViz);
+</script>
