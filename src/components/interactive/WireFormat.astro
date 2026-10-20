@@ -1,0 +1,158 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The same message as JSON and as Protocol Buffers"
+  caption="Pick a format and a message version. In the protobuf bytes, yellow is a tag (field number and wire type), blue a length, green the value. JSON repeats every field name; protobuf sends only numbers. With v2, the old v1 reader skips field 4 because it does not know the number, and still reads id, name and age."
+>
+  <wire-format>
+    <div class="ctl-row">
+      <span class="ctl-label">Format</span>
+      <input type="hidden" data-fmt value="pb" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="pb" aria-pressed="true">Protobuf</button>
+        <button type="button" class="btn" data-choice="json" aria-pressed="false">JSON</button>
+      </span>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Writer</span>
+      <input type="hidden" data-ver value="v1" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="v1" aria-pressed="true">v1: id, name, age</button>
+        <button type="button" class="btn" data-choice="v2" aria-pressed="false">v2: + email (field 4)</button>
+      </span>
+    </div>
+    <div class="wf-bytes" data-bytes></div>
+    <p class="wf-read mono" data-read></p>
+    <p class="wf-stat mono" data-stat></p>
+  </wire-format>
+</Figure>
+
+<style>
+  .wf-bytes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 14px 0 8px;
+    min-height: 3em;
+  }
+  .wf-bytes :global(.grp) {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .wf-bytes :global(.grp.skip) {
+    border-color: var(--g-red);
+    border-style: dashed;
+  }
+  .wf-bytes :global(.grp small) {
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+    text-align: center;
+  }
+  .wf-bytes :global(.row) {
+    display: flex;
+    gap: 2px;
+  }
+  .wf-bytes :global(.b) {
+    font: 0.75rem var(--font-mono);
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  .wf-bytes :global(.tag) {
+    background: rgba(251, 188, 5, 0.22);
+  }
+  .wf-bytes :global(.len) {
+    background: rgba(66, 133, 244, 0.22);
+  }
+  .wf-bytes :global(.val) {
+    background: rgba(52, 168, 83, 0.2);
+  }
+  .wf-bytes :global(.json) {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .wf-bytes :global(.json .k) {
+    color: var(--g-yellow-l);
+  }
+  .wf-read,
+  .wf-stat {
+    font-size: 0.8125rem;
+    margin: 0 0 6px;
+    overflow-wrap: anywhere;
+  }
+  .wf-read {
+    color: var(--text-muted);
+  }
+  .wf-stat {
+    color: var(--text);
+  }
+</style>
+
+<script>
+  type Val = number | string;
+  const FIELDS: [string, number, Val][] = [
+    ['id', 1, 150],
+    ['name', 2, 'ada'],
+    ['age', 3, 36],
+    ['email', 4, 'ada@x.io'],
+  ];
+  const enc = new TextEncoder();
+  const varint = (n: number) => {
+    const out: number[] = [];
+    do {
+      let b = n & 0x7f;
+      n = Math.floor(n / 128);
+      if (n) b |= 0x80;
+      out.push(b);
+    } while (n);
+    return out;
+  };
+  const hx = (b: number) => b.toString(16).padStart(2, '0');
+  const esc = (s: string) => s.replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[m]!);
+
+  class WireFormat extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input[type=hidden]').forEach((i) => i.addEventListener('change', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const fmt = this.querySelector<HTMLInputElement>('[data-fmt]')!.value;
+      const v2 = this.querySelector<HTMLInputElement>('[data-ver]')!.value === 'v2';
+      const fields = FIELDS.filter(([, num]) => v2 || num <= 3);
+      const box = this.querySelector('[data-bytes]')!;
+      let size = 0;
+      if (fmt === 'pb') {
+        box.innerHTML = fields
+          .map(([name, num, v]) => {
+            const isInt = typeof v === 'number';
+            const tag = varint((num << 3) | (isInt ? 0 : 2));
+            const data = isInt ? varint(v as number) : [...enc.encode(v as string)];
+            const len = isInt ? [] : varint(data.length);
+            size += tag.length + len.length + data.length;
+            const cells = [...tag.map((b) => `<span class="b tag">${hx(b)}</span>`), ...len.map((b) => `<span class="b len">${hx(b)}</span>`), ...data.map((b) => `<span class="b val">${hx(b)}</span>`)];
+            return `<div class="grp${num === 4 ? ' skip' : ''}"><div class="row">${cells.join('')}</div><small>field ${num}${num === 4 ? ' (unknown to v1)' : ''}</small></div>`;
+          })
+          .join('');
+      } else {
+        const obj = Object.fromEntries(fields.map(([n, , v]) => [n, v]));
+        const text = JSON.stringify(obj);
+        size = enc.encode(text).length;
+        box.innerHTML = `<div class="json">${esc(text).replace(/&quot;(\w+)&quot;:/g, '<span class="k">&quot;$1&quot;</span>:')}</div>`;
+      }
+      const seen = fields.filter(([, num]) => num <= 3).map(([n, , v]) => `${n}=${JSON.stringify(v)}`);
+      this.querySelector('[data-read]')!.textContent = v2
+        ? `v1 reader gets: ${seen.join(', ')} · skips ${fmt === 'pb' ? 'field 4 by its length' : 'the unknown "email" key'}`
+        : `v1 reader gets: ${seen.join(', ')}`;
+      const names = fields.reduce((s, [n]) => s + n.length + 2, 0);
+      this.querySelector('[data-stat]')!.textContent = `format = ${fmt === 'pb' ? 'protobuf' : 'JSON'} · size = ${size} bytes${fmt === 'json' ? ` · field names and quotes = ${names} bytes` : ''}`;
+    }
+  }
+  customElements.define('wire-format', WireFormat);
+</script>

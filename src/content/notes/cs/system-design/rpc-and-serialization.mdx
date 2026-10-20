@@ -3,6 +3,248 @@ title: "RPC & Serialization"
 description: "Remote procedure calls vs REST, gRPC and Protocol Buffers, JSON vs binary formats and schema evolution."
 order: 9
 tier: core
+takeaways:
+  - "**RPC** makes a call to another machine look like a local function call; **REST** models the API as resources and HTTP verbs. Both send bytes over a network that can be slow, fail or deliver twice."
+  - "**Serialization** turns in-memory data into bytes. **JSON** is self-describing text; **Protocol Buffers** and similar binary formats send field numbers instead of names, so messages are smaller and faster to parse but need the schema to read."
+  - "**gRPC** = Protocol Buffers + HTTP/2: typed contracts, generated client code, streaming and deadlines; common between internal services."
+  - "**Schema evolution**: add fields with new numbers, never reuse or renumber old ones, and give new fields defaults, so old and new code can read each other's messages."
+  - "A remote call can time out after the work was done: make retried operations **idempotent** (idempotency keys) and always set a **deadline**."
+resources:
+  - title: "Introduction to gRPC (grpc.io)"
+    url: "https://grpc.io/docs/what-is-grpc/introduction/"
+    note: "Services defined in .proto files, generated stubs, and the four call types."
+  - title: "Protocol Buffers: Encoding (protobuf.dev)"
+    url: "https://protobuf.dev/programming-guides/encoding/"
+    note: "The wire format byte by byte: varints, tags and length-delimited fields, the same as this note's encoder."
+  - title: "Schema evolution in Avro, Protocol Buffers and Thrift (Kleppmann)"
+    url: "https://martin.kleppmann.com/2012/12/05/schema-evolution-in-avro-protocol-buffers-thrift.html"
+    note: "How three binary formats encode the same record, and what each allows to change."
 ---
 
-_Placeholder. Content not written yet._
+Once a system is split into services ([Microservices vs. Monolith](../microservices-vs-monolith/)), every interaction between them crosses a network. Two questions follow: what does a call look like to the programmer, and how are the arguments turned into bytes and back? [API Design](../api-design/) answered the first for public HTTP APIs with REST. This note covers the other main style, the **remote procedure call (RPC)**, then **serialization**: text formats such as JSON against binary formats such as **Protocol Buffers**, how **gRPC** combines them, how to change a message format without breaking running services (**schema evolution**), and why retries need **idempotency**.
+
+## Calling a Remote Function
+
+An **RPC** framework lets code call a function on another machine with the syntax of a local call. A generated **stub** (client proxy) packs the arguments into bytes (**marshalling**), sends them, waits, and unpacks the reply; on the server, a **skeleton** unpacks the request, calls the real function and sends back the result. Python's standard library includes a small RPC system over HTTP and XML:
+
+```python
+import threading
+import xmlrpc.client
+from xmlrpc.server import SimpleXMLRPCServer
+
+server = SimpleXMLRPCServer(("127.0.0.1", 0), logRequests=False)   # port 0: the OS picks a free port
+server.register_function(lambda a, b: a + b, "add")
+server.register_function(lambda a, b: a / b, "divide")
+threading.Thread(target=server.serve_forever, daemon=True).start()
+
+port = server.server_address[1]
+proxy = xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}")
+print("add(2, 3) =", proxy.add(2, 3))          # looks local; is an HTTP request carrying XML
+try:
+    proxy.divide(1, 0)                         # a remote failure comes back as an exception
+except xmlrpc.client.Fault as e:
+    print("Fault:", e.faultString)
+server.shutdown()
+# add(2, 3) = 5
+# Fault: <class 'ZeroDivisionError'>:division by zero
+```
+
+In words: `proxy.add(2, 3)` returns `5` as if `add` were local, though it was an HTTP request to another thread's server. The server's `ZeroDivisionError` crossed the wire as a `Fault` carrying the text `division by zero`, not as the original exception type: the client has to know which remote errors can occur.
+
+That last detail is the general warning. A remote call is **not** a local call: it can take a thousand times longer, fail halfway, or succeed on the server while the reply is lost. Hiding the network completely makes those failures surprising; good RPC frameworks expose them through **deadlines**, status codes and retry policies.
+
+<Callout type="pitfall">
+Calling a remote method inside a loop (`for id in ids: client.get_user(id)`) turns one page load into hundreds of network round trips: the **N+1 calls** problem. Batch the request (`get_users(ids)`) or stream the results.
+</Callout>
+
+## RPC Versus REST
+
+Both usually run over HTTP; they differ in what the API is organized around.
+
+| | REST | RPC (gRPC, Thrift, JSON-RPC) |
+| --- | --- | --- |
+| Model | **Resources** and HTTP verbs: `GET /users/42` | **Operations**: `GetUser(id=42)` |
+| Contract | Conventions, often an OpenAPI document | A schema file (`.proto`, `.thrift`) compiled into client and server code |
+| Format | Usually JSON | Usually binary (Protocol Buffers) |
+| Strengths | Browsers, caches and proxies understand it; easy to explore with `curl` | Typed, compact, fast; streaming; generated clients in many languages |
+| Typical use | Public and browser-facing APIs | Calls between internal services |
+
+Many systems use both: REST or GraphQL at the edge for clients, RPC between back-end services.
+
+## Serialization: Data to Bytes
+
+**Serialization** (encoding) converts in-memory objects into a byte sequence, and **deserialization** (decoding) rebuilds them; the [Text Encoding](../../foundations/text-encoding/) note did the same for strings. Formats split into two families:
+
+- **Text, self-describing**: JSON, XML, YAML. Every message carries its field names, so any reader can parse it without a schema, and humans can read it. The cost is size and parsing speed; JSON also has no integer type beyond what a double can hold exactly (see [Floating Point](../../foundations/floating-point/)) and no binary data type.
+- **Binary, schema-based**: Protocol Buffers, Thrift, Avro. The schema is agreed in advance, so a message carries short field **numbers** instead of names and stores integers in compact binary form. Smaller and faster, but unreadable without the schema.
+
+Protocol Buffers encode each field as a **tag** (field number and a 3-bit **wire type**) followed by the value. Integers are **varints**: 7 bits per byte, with the top bit meaning "more bytes follow", so small numbers take one byte. Strings are length-prefixed. An encoder for that format in a few lines:
+
+```python
+import json
+
+def varint(n):
+    out = bytearray()
+    while True:                                # 7 bits per byte, low bits first; top bit = "more follows"
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+def field(number, value):
+    if isinstance(value, int):                 # wire type 0: varint
+        return varint(number << 3 | 0) + varint(value)
+    data = value.encode("utf-8")               # wire type 2: length-delimited
+    return varint(number << 3 | 2) + varint(len(data)) + data
+
+user = {"id": 150, "name": "ada", "age": 36}
+numbers = {"id": 1, "name": 2, "age": 3}       # the schema: field names live here, not on the wire
+binary = b"".join(field(numbers[k], v) for k, v in user.items())
+text = json.dumps(user, separators=(",", ":")).encode()
+print("protobuf-style:", binary.hex(" "), f"({len(binary)} bytes)")
+print("JSON:", text.decode(), f"({len(text)} bytes)")
+# protobuf-style: 08 96 01 12 03 61 64 61 18 24 (10 bytes)
+# JSON: {"id":150,"name":"ada","age":36} (32 bytes)
+```
+
+In words: `08` is the tag for field 1 with wire type 0, and `96 01` is 150 as a varint (the same bytes as the example in the official encoding guide). `12 03 61 64 61` is field 2, length 3, then the UTF-8 bytes of `ada`; `18 24` is field 3 = 36. The binary message is 10 bytes against 32 for compact JSON, because names such as `"name"` never travel. Explore the two formats, and what an older reader does with a newer message:
+
+<WireFormat />
+
+## gRPC
+
+**gRPC** is Google's open-source RPC framework. A service is declared in a `.proto` file:
+
+```protobuf
+syntax = "proto3";
+
+message GetUserRequest { int64 id = 1; }
+message User {
+  int64 id = 1;
+  string name = 2;
+  int32 age = 3;
+}
+
+service Users {
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc WatchUsers(GetUserRequest) returns (stream User);   // server streaming
+}
+```
+
+The `protoc` compiler generates message classes and client and server stubs for each language, so a Go server and a Python client share one contract. Calls run over **HTTP/2**, which multiplexes many calls on one connection and supports four call shapes: unary (one request, one reply), server streaming, client streaming and bidirectional streaming. Every call carries a **deadline**, which the server can see and propagate to calls it makes in turn, and fails with a status code such as `DEADLINE_EXCEEDED` or `UNAVAILABLE`. Browsers cannot speak raw gRPC, which is one reason public APIs stay on REST and JSON.
+
+## Changing Formats Safely
+
+Services are deployed one at a time, so for a while old and new versions run side by side and read each other's messages. A format change must work in both directions:
+
+- **Backward compatible**: new code can read data written by old code.
+- **Forward compatible**: old code can read data written by new code.
+
+Protocol Buffers make both possible because readers look fields up by number, skip numbers they do not know (the length or wire type says how far), and fill missing fields with defaults:
+
+```python
+def varint(n):
+    out = bytearray()
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+def encode(msg, schema):
+    out = b""
+    for name, value in msg.items():
+        num = schema[name]
+        if isinstance(value, int):
+            out += varint(num << 3) + varint(value)
+        else:
+            data = value.encode()
+            out += varint(num << 3 | 2) + varint(len(data)) + data
+    return out
+
+def read_varint(buf, i):
+    n = shift = 0
+    while True:
+        b = buf[i]; i += 1
+        n |= (b & 0x7F) << shift; shift += 7
+        if b < 0x80:
+            return n, i
+
+def decode(buf, schema, defaults):
+    names = {num: name for name, num in schema.items()}
+    msg, i = dict(defaults), 0
+    while i < len(buf):
+        key, i = read_varint(buf, i)
+        num, wire = key >> 3, key & 7
+        if wire == 0:
+            value, i = read_varint(buf, i)
+        else:                                  # length-delimited: the length lets a reader skip it
+            size, i = read_varint(buf, i)
+            value, i = buf[i:i + size].decode(), i + size
+        if num in names:                       # unknown field numbers are skipped, not errors
+            msg[names[num]] = value
+    return msg
+
+v1 = {"id": 1, "name": 2}
+v2 = {"id": 1, "name": 2, "email": 3}          # v2 adds field 3; numbers 1 and 2 never change meaning
+
+new_bytes = encode({"id": 7, "name": "ada", "email": "ada@example.com"}, v2)
+old_bytes = encode({"id": 8, "name": "bob"}, v1)
+print("old reader, new data:", decode(new_bytes, v1, {"id": 0, "name": ""}))
+print("new reader, old data:", decode(old_bytes, v2, {"id": 0, "name": "", "email": ""}))
+# old reader, new data: {'id': 7, 'name': 'ada'}
+# new reader, old data: {'id': 8, 'name': 'bob', 'email': ''}
+```
+
+In words: the v1 reader gets a v2 message, finds field 3, does not know it, and skips it, returning `id` 7 and `name` ada. The v2 reader gets a v1 message with no field 3 and fills `email` with its default, the empty string. Neither side crashes, so the two versions can be deployed in either order.
+
+The rules that keep this working:
+
+- Add new fields with **new numbers**; never change the number or type of an existing field.
+- Never **reuse** the number of a deleted field (mark it `reserved`): an old writer would fill it with data of the old meaning.
+- Treat every field as optional in code: a missing value arrives as its default (`0`, `""`, `false`), which can be indistinguishable from a real zero.
+- Renaming a field is safe on the wire (names are not sent) but breaks code and JSON mappings.
+
+<Callout type="pitfall">
+JSON looks schema-free, so its changes feel safe, but every reader still assumes fields and types. Renaming `user_id` to `userId`, turning a number into a string, or making a field required breaks old clients just as surely, and there is no compiler to warn you. Version JSON contracts as deliberately as `.proto` files.
+</Callout>
+
+## Retries and Idempotency
+
+A client that hears nothing back cannot tell whether the request was lost, the server crashed before doing the work, or the work was done and the reply was lost. The usual reaction is to retry, which is safe only if repeating the operation has the same effect as doing it once: **idempotency**. Reads are naturally idempotent; "charge $50" is not. The fix, as in [API Design](../api-design/), is an **idempotency key**: the client sends a unique id per logical operation, and the server stores the result under it and replays that result for repeats.
+
+```python
+import random
+
+def run(use_key, seed=3):
+    rng = random.Random(seed)
+    charges, seen = [], {}
+
+    def server(request):                       # the charge happens; the reply may be lost on the way back
+        key = request["key"]
+        if key is not None and key in seen:
+            return seen[key]                   # a retry with a known key replays the stored result
+        charges.append(request["amount"])
+        if key is not None:
+            seen[key] = "ok"
+        return "ok"
+
+    request = {"amount": 50, "key": "order-17" if use_key else None}
+    for attempt in range(1, 6):
+        server(request)
+        if rng.random() > 0.6:                 # 40% of replies arrive; otherwise the client times out and retries
+            return attempt, charges
+    return attempt, charges
+
+for use_key in (False, True):
+    attempts, charges = run(use_key)
+    print(f"idempotency key={use_key}: attempts={attempts}, charges={charges}")
+# idempotency key=False: attempts=4, charges=[50, 50, 50, 50]
+# idempotency key=True: attempts=4, charges=[50]
+```
+
+In words: with the same lost replies (seed 3), the client needs 4 attempts both times. Without a key the server charges on every attempt, $200 for a $50 order; with the key it charges once and answers the three retries from its stored result.
+
+<Callout type="practice">
+Set a **deadline** on every remote call, retry only idempotent operations (or ones with an idempotency key), and back off exponentially with random **jitter** so that many clients do not retry in lockstep and overload a recovering server. Cap the number of retries at each layer: three layers that each make up to 3 attempts turn one failing call at the bottom into 27.
+</Callout>
