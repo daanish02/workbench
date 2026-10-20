@@ -3,6 +3,203 @@ title: "Floating Point"
 description: "How IEEE 754 stores real numbers, why 0.1 + 0.2 is not 0.3, and how to compare and round safely."
 order: 3
 tier: core
+takeaways:
+  - "A **floating-point** number is $(-1)^{s} \\times 1.f \\times 2^{e}$: a sign bit, an exponent and a fraction, in a fixed number of bits (64 for Python's `float`)."
+  - "Most decimal fractions, including 0.1, have **no exact binary form**, so they are rounded on input; `0.1 + 0.2 == 0.3` is `False` for that reason."
+  - "Floats are **dense near zero and sparse far away**: the gap between neighbours grows with the size of the number, and above $2^{53}$ not every integer exists."
+  - "Never compare floats with `==` after arithmetic; use `math.isclose` with a relative tolerance, plus an absolute one near zero."
+  - "For money, use `decimal.Decimal` or integer cents, never binary floats."
+resources:
+  - title: "Floating-Point Arithmetic: Issues and Limitations (Python docs)"
+    url: "https://docs.python.org/3/tutorial/floatingpoint.html"
+    note: "The short official explanation of why 0.1 is not 0.1, with Python tools for exact views."
+  - title: "What Every Computer Scientist Should Know About Floating-Point Arithmetic (Goldberg)"
+    url: "https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html"
+    note: "The classic long paper: rounding error, guard digits, cancellation and the IEEE standard."
+  - title: "float.exposed"
+    url: "https://float.exposed/"
+    note: "Edit the bits of half, single and double precision floats and see the exact value."
 ---
 
-_Placeholder. Content not written yet._
+Integers in [Number Representation](../number-representation/) are exact: every bit pattern is one whole number, and the only failure is overflow. Real numbers cannot work that way, because there are infinitely many of them between any two integers and only $2^{64}$ patterns in 64 bits. **Floating point** chooses a finite set of real numbers, spread so that the relative error is roughly the same at every scale, and rounds everything else to the nearest one. That choice explains the familiar surprises: `0.1 + 0.2` printing `0.30000000000000004`, sums that depend on order, and `NaN != NaN`. This note covers the IEEE 754 layout, where rounding happens, the special values, and how to compare, sum and round safely. The hardware side (FPUs, half-precision formats for ML) belongs to infra.
+
+## Scientific Notation in Binary
+
+Decimal scientific notation writes $6.02 \times 10^{23}$: a few significant digits and a power of ten. **IEEE 754**, the standard almost every CPU implements, does the same in base 2. A **double** (64 bits, Python's `float`, C's `double`) has three fields:
+
+- **sign** $s$: 1 bit, 0 for positive, 1 for negative.
+- **exponent** $e$: 11 bits, stored with a **bias** of 1023 so that negative powers need no sign of their own.
+- **fraction** $f$: 52 bits, the digits after the binary point. The leading `1.` is not stored (the **implicit bit**), so the **significand** $1.f$ has 53 bits of precision.
+
+For a normal number the value is
+
+$$
+x = (-1)^{s} \times 1.f \times 2^{e - 1023}.
+
+$$
+
+In words: the exponent picks a power of two (the scale), and the fraction says where in the interval from that power to the next one the number sits. A **single** (32 bits, `float` in C, Java and NumPy's `float32`) has the same shape with 8 exponent bits (bias 127) and 23 fraction bits. Python can show the fields of a double:
+
+```python
+import struct
+
+def fields(x):
+    bits = struct.unpack(">Q", struct.pack(">d", x))[0]     # the 64 raw bits of a Python float
+    sign = bits >> 63
+    exponent = (bits >> 52) & 0x7FF
+    fraction = bits & ((1 << 52) - 1)
+    return sign, exponent, fraction
+
+for x in [1.0, -2.5, 0.1]:
+    s, e, f = fields(x)
+    value = (-1) ** s * (1 + f / 2**52) * 2.0 ** (e - 1023)   # rebuild the number from its fields
+    print(f"{x:>5}: sign={s} exponent={e} (2^{e - 1023}) fraction={f:#015x} -> {value!r}")
+#   1.0: sign=0 exponent=1023 (2^0) fraction=0x0000000000000 -> 1.0
+#  -2.5: sign=1 exponent=1024 (2^1) fraction=0x4000000000000 -> -2.5
+#   0.1: sign=0 exponent=1019 (2^-4) fraction=0x999999999999a -> 0.1
+```
+
+In words: 1.0 is $1.0 \times 2^{0}$ with an all-zero fraction. $-2.5$ is $-1.01_2 \times 2^{1}$: sign 1, and the fraction `0x4…` is the binary `01` after the point. 0.1 is $1.6 \times 2^{-4}$, and its fraction is the repeating hex pattern `999…`, cut off and rounded up to `a` at the end. That last digit is the rounding error.
+
+Try it in 32 bits: type a number or flip individual bits.
+
+<FloatBits />
+
+## Why 0.1 Is Not 0.1
+
+A fraction has a finite binary expansion only if its denominator, in lowest terms, is a power of two. $\tfrac{1}{2}$, $\tfrac{3}{8}$ and $0.75$ are exact; $\tfrac{1}{10}$ is not, because $10 = 2 \times 5$. In binary, $0.1 = 0.000110011001100\ldots_2$ repeats forever, like $\tfrac{1}{3} = 0.333\ldots$ in decimal. The float stores the nearest double instead:
+
+```python
+from decimal import Decimal
+from fractions import Fraction
+
+print(0.1 + 0.2 == 0.3)                       # prints: False
+print(repr(0.1 + 0.2))
+print(Decimal(0.1))                           # the exact value the float 0.1 holds
+print(Fraction(0.1) == Fraction(1, 10))       # the stored value is not 1/10
+# False
+# 0.30000000000000004
+# 0.1000000000000000055511151231257827021181583404541015625
+# False
+```
+
+In words: the double called `0.1` is really 0.1000000000000000055511…, slightly above one tenth. `0.2` and `0.3` are rounded too, and the rounded sum of the first two lands one step above the double nearest 0.3, so Python prints `0.30000000000000004`. Python shows `0.1` for the stored value only because `repr` prints the shortest decimal that rounds back to the same double.
+
+IEEE 754 makes one promise about arithmetic: each basic operation ($+$, $-$, $\times$, $\div$, $\sqrt{\ }$) returns the exact result **correctly rounded** to the nearest representable value (ties go to the one with an even last bit, **round half to even**). The error of one operation is at most half a step; errors appear because results are rounded at every step, and they can accumulate.
+
+## Gaps Grow With Size
+
+Between $2^{k}$ and $2^{k+1}$ there are always $2^{52}$ evenly spaced doubles, whatever $k$ is. So the gap between neighbours, one **ulp** (unit in the last place), doubles with each power of two: floats are dense near zero and sparse far from it. The gap at 1.0 is **machine epsilon**, $\varepsilon = 2^{-52} \approx 2.2 \times 10^{-16}$, the relative precision of a double (about 15–16 significant decimal digits).
+
+```python
+import math
+import sys
+
+eps = sys.float_info.epsilon
+print("machine epsilon:", eps)
+print("1 + eps/2 == 1:", 1.0 + eps / 2 == 1.0)
+print("spacing at 1:", math.ulp(1.0), "| at 1e16:", math.ulp(1e16))
+print("2**53 + 1 == 2**53:", float(2**53) + 1 == float(2**53))
+print("largest:", sys.float_info.max, "| overflow:", sys.float_info.max * 2)
+print("smallest normal:", sys.float_info.min, "| subnormal:", 5e-324, "| underflow:", 5e-324 / 2)
+# machine epsilon: 2.220446049250313e-16
+# 1 + eps/2 == 1: True
+# spacing at 1: 2.220446049250313e-16 | at 1e16: 2.0
+# 2**53 + 1 == 2**53: True
+# largest: 1.7976931348623157e+308 | overflow: inf
+# smallest normal: 2.2250738585072014e-308 | subnormal: 5e-324 | underflow: 0.0
+```
+
+In words: adding half of epsilon to 1.0 changes nothing, because the result rounds back to 1.0. At $10^{16}$ the gap is already 2.0, so odd integers there cannot be stored, and $2^{53} + 1$ rounds to $2^{53}$: 53 bits of significand hold every integer only up to $2^{53} \approx 9.007 \times 10^{15}$. The range runs from about $1.8 \times 10^{308}$ (beyond that, **overflow** to `inf`) down to $2.2 \times 10^{-308}$ for normal numbers. Below that, **subnormal** numbers drop the implicit bit and lose precision gradually down to $5 \times 10^{-324}$; halving that **underflows** to 0.0.
+
+<Callout type="pitfall">
+Large integers stored as floats lose their last digits silently. JavaScript numbers are doubles, so a 64-bit database id such as `9007199254740993` arrives in a browser as `9007199254740992`. Send big ids as strings, and use integer types (Python `int`, `BigInt`) for counters and ids.
+</Callout>
+
+## Special Values
+
+Some exponent patterns are reserved. All-ones with a zero fraction is **infinity** (`inf`, with a sign); all-ones with a nonzero fraction is **NaN** (not a number), the result of an undefined operation. An all-zero exponent with a zero fraction is zero, and since the sign bit is separate there is a **negative zero**.
+
+```python
+import math
+
+inf, nan = math.inf, math.nan
+print(1 / inf, inf - inf, inf * 0)
+print("nan == nan:", nan == nan, "| isnan:", math.isnan(nan))
+print("-0.0 == 0.0:", -0.0 == 0.0, "| copysign:", math.copysign(1, -0.0))
+print("sorted with nan:", sorted([3.0, nan, 1.0, 2.0]))
+# 0.0 nan nan
+# nan == nan: False | isnan: True
+# -0.0 == 0.0: True | copysign: -1.0
+# sorted with nan: [3.0, nan, 1.0, 2.0]
+```
+
+In words: $1/\infty$ is 0, while $\infty - \infty$ and $\infty \times 0$ have no sensible value and give NaN. NaN compares unequal to everything, itself included, so test it with `math.isnan`. $-0.0$ equals $0.0$, but its sign survives (`copysign` reads $-1$). Because every comparison with NaN is false, `sorted` cannot order the list and returns it unsorted: one NaN in the data silently breaks sorting, `max` and `min`. (Python raises `ZeroDivisionError` for `1 / 0.0`; NumPy and C follow IEEE 754 and return `inf`.)
+
+## Comparing With Tolerance
+
+Since results carry rounding error, test whether two floats are **close**, not equal. A **relative tolerance** scales with the size of the numbers, which suits floats because their error does too. Near zero a relative test fails (nothing is relatively close to 0), so add an **absolute tolerance** there.
+
+```python
+import math
+
+a, b = 0.1 + 0.2, 0.3
+print("abs diff:", abs(a - b))
+print("isclose:", math.isclose(a, b))                          # default rel_tol=1e-09
+print("isclose to 0:", math.isclose(1e-17, 0.0), "| with abs_tol:", math.isclose(1e-17, 0.0, abs_tol=1e-12))
+
+total = 0.0
+for _ in range(10):
+    total += 0.1                                               # each += rounds, and the errors add up
+print("loop:", total, "| sum:", sum([0.1] * 10), "| fsum:", math.fsum([0.1] * 10))
+
+total = 1e16
+total += 1.0                                                   # 1.0 is below the spacing at 1e16 (2.0)
+print("1e16 + 1 - 1e16:", total - 1e16)
+# abs diff: 5.551115123125783e-17
+# isclose: True
+# isclose to 0: False | with abs_tol: True
+# loop: 0.9999999999999999 | sum: 1.0 | fsum: 1.0
+# 1e16 + 1 - 1e16: 0.0
+```
+
+In words: $0.1 + 0.2$ and $0.3$ differ by $5.6 \times 10^{-17}$, one ulp, and `isclose` accepts that. $10^{-17}$ is not close to 0 under the default relative test, and is with `abs_tol=1e-12`. Adding 0.1 ten times in a loop gives `0.9999999999999999`, because each step rounds; `math.fsum` tracks the lost low-order bits and returns `1.0`, and since Python 3.12 the built-in `sum` does the same compensation for floats. The last line shows **absorption**: adding 1.0 to $10^{16}$ does nothing, because 1.0 is smaller than half the gap there.
+
+Subtracting two nearly equal numbers has its own name, **catastrophic cancellation**: the leading digits cancel and the result keeps only the rounding noise. Rearranging a formula to avoid it (for example `math.log1p(x)` instead of `math.log(1 + x)` for tiny `x`) is a standard numerical trick.
+
+<Callout type="pitfall">
+`while x != 1.0: x += 0.1` never ends, because `x` steps from `0.9999999999999999` to `1.0999999999999999` and is never exactly 1.0. Loop over integers and compute the float (`i / 10`), or compare with `<` or `math.isclose`.
+</Callout>
+
+## Money and Exact Decimals
+
+Prices are decimal by definition: $19.99 must be exactly 1999 cents. Binary floats cannot promise that, and rounding them gives surprises. Python's `decimal.Decimal` stores base-10 digits exactly and lets you choose the rounding rule; integer cents work too.
+
+```python
+from decimal import Decimal, ROUND_HALF_EVEN, ROUND_HALF_UP
+
+print(round(2.675, 2))                                     # 2.675 is stored as 2.67499999...
+print(round(0.5), round(1.5), round(2.5))                  # round half to even
+price = Decimal("2.665")
+print(price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+print(price.quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN))
+print(sum([Decimal("0.10")] * 3), "| float:", sum([0.10] * 3))
+cents = 10 + 20                                             # integer cents are exact too
+print(f"${cents // 100}.{cents % 100:02d}")
+# 2.67
+# 0 2 2
+# 2.67
+# 2.66
+# 0.30 | float: 0.30000000000000004
+# $0.30
+```
+
+In words: `round(2.675, 2)` gives `2.67`, not `2.68`, because the float is really slightly below 2.675. Python's `round` uses round half to even, so `0.5`, `1.5` and `2.5` become `0`, `2` and `2`. `Decimal("2.665")` is exact, and you pick the rule: half up gives `2.67`, half even (banker's rounding) gives `2.66`. Three Decimal dimes sum to exactly `0.30`; three float dimes do not.
+
+<Callout type="key">
+Build a `Decimal` from a **string**, `Decimal("0.1")`. `Decimal(0.1)` copies the float's binary error into the decimal (the 55-digit value above).
+</Callout>
+
+## When Floats Are Right
+
+Floats are the correct tool for measurements, physics, graphics, statistics and machine learning: inputs already carry measurement error far larger than $10^{-16}$, and hardware runs float arithmetic very fast. ML often goes the other way and uses fewer bits (16-bit formats) because models tolerate the extra error. Use exact types where the answer must match a human ledger or an exact count: money, ids, counters and anything compared for equality.
