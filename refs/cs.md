@@ -32,15 +32,7 @@ Notes were meant to link glossary terms at first use (`/workbench/cs/appendix/gl
 
 Placeholder stubs were created on 2026-10-18 (body `_Placeholder. Content not written yet._`, `order` already set and neighbours renumbered). Overwrite each stub in place; do not create new files. Each needs the usual template: takeaways, resources (curl 200), at least one figure, verified standalone Python (`uv run scripts/check_notes.py cs <slug>`).
 
-1. `databases/storage-engines` (order 6, after transactions) — B-tree vs LSM-tree, write-ahead log, compaction, read/write amplification, MVCC. LSM appears today only in `case-studies/key-value-store`; MVCC nowhere.
-2. `foundations/floating-point` (order 3) — IEEE 754 layout, why `0.1 + 0.2 != 0.3`, rounding, NaN/inf, comparing with tolerance, `decimal` for money. Software side only; the hardware and FP16/BF16 story belongs to `infra/cpu-architecture` (refs/infra.md).
-3. `languages/memory-and-gc` (order 6, after compilers) — stack vs heap, manual memory, reference counting, tracing GC (mark-sweep, generational), leaks in GC languages, Rust ownership. GC is mentioned in four notes but explained in none.
-4. `system-design/rpc-and-serialization` (order 9, after api-design) — RPC vs REST, gRPC/Protocol Buffers, JSON vs binary formats, schema evolution, idempotent retries.
-5. `data-structures/union-find` (order 10, after graphs) — union by rank + path compression, near-constant amortized cost, uses (Kruskal, connected components). Link it from Kruskal in `algorithms/greedy-algorithms`, which uses an inline disjoint set without explaining it.
-6. `algorithms/randomized-algorithms` (order 12, last) — Las Vegas vs Monte Carlo, quickselect, reservoir sampling, Miller-Rabin. Pieces are scattered in sorting and skip lists; link them.
-7. `data-structures/range-queries` (order 13) — prefix sums, segment tree, Fenwick tree.
-8. `algorithms/network-flow` (order 10, after graph-algorithms) — max-flow/min-cut, Ford-Fulkerson/Edmonds-Karp, bipartite matching.
-9. `foundations/text-encoding` (order 4) — ASCII, Unicode code points, UTF-8 bytes, normalization, why `len()` differs from what users see. Partly in `data-structures/arrays-and-strings`; link both ways.
+The nine core stubs (storage-engines, floating-point, memory-and-gc, rpc-and-serialization, union-find, randomized-algorithms, range-queries, network-flow, text-encoding) were written on 2026-10-20. The five Data Engineering notes below were also written on 2026-10-20. Remaining: the appendix language sheets (section 4).
 
 ### New section: Data Engineering
 
