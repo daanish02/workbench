@@ -1,0 +1,142 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One string, four lengths"
+  caption="Type any text or pick a preset. Each box is one grapheme (what a user sees); inside it are its code points, and under each code point its UTF-8 bytes, with the lead byte in yellow and continuation bytes (10xxxxxx) in blue. Compare the two cafés: they look the same but differ in code points and bytes."
+>
+  <utf8-bytes>
+    <div class="ctl-row">
+      <label class="ctl-label" for="u8-t">Text</label>
+      <input class="input" id="u8-t" data-t type="text" value="café" style="width:12em" />
+    </div>
+    <div class="ctl-row">
+      <span class="choice">
+        <button type="button" class="btn" data-p="café" aria-pressed="true">café (NFC)</button>
+        <button type="button" class="btn" data-p="café" aria-pressed="false">café (NFD)</button>
+        <button type="button" class="btn" data-p="A€😀" aria-pressed="false">A€😀</button>
+        <button type="button" class="btn" data-p="👍🏽" aria-pressed="false">👍🏽</button>
+        <button type="button" class="btn" data-p="👨‍👩‍👧" aria-pressed="false">family</button>
+        <button type="button" class="btn" data-p="日本語" aria-pressed="false">日本語</button>
+      </span>
+    </div>
+    <div class="u8-row" data-row></div>
+    <p class="u8-stat mono" data-stat></p>
+  </utf8-bytes>
+</Figure>
+
+<style>
+  .u8-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 8px;
+    min-height: 5em;
+  }
+  .u8-row :global(.g) {
+    border: 1px solid var(--g-green);
+    background: rgba(52, 168, 83, 0.08);
+    border-radius: 10px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .u8-row :global(.glyph) {
+    text-align: center;
+    font-size: 1.5rem;
+    line-height: 1.2;
+    color: var(--text);
+  }
+  .u8-row :global(.cps) {
+    display: flex;
+    gap: 4px;
+  }
+  .u8-row :global(.cp) {
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .u8-row :global(.cp-name) {
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .u8-row :global(.bytes) {
+    display: flex;
+    gap: 2px;
+  }
+  .u8-row :global(.b) {
+    font: 0.6875rem var(--font-mono);
+    padding: 2px 4px;
+    border-radius: 4px;
+    color: var(--text);
+    background: rgba(66, 133, 244, 0.18);
+  }
+  .u8-row :global(.b.lead) {
+    background: rgba(251, 188, 5, 0.22);
+  }
+  .u8-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const enc = new TextEncoder();
+  const hex = (n: number) => n.toString(16).toUpperCase();
+  const unescape = (s: string) => s.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+
+  class Utf8Bytes extends HTMLElement {
+    connectedCallback() {
+      const input = this.querySelector<HTMLInputElement>('[data-t]')!;
+      const presets = this.querySelectorAll<HTMLButtonElement>('[data-p]');
+      const press = (on: Element | null) => presets.forEach((x) => x.setAttribute('aria-pressed', String(x === on)));
+      presets.forEach((b) =>
+        b.addEventListener('click', () => {
+          input.value = unescape(b.dataset.p!);
+          press(b);
+          this.draw(input.value);
+        }),
+      );
+      input.addEventListener('input', () => {
+        press(null);
+        this.draw(input.value);
+      });
+      input.value = unescape(presets[0].dataset.p!);
+      this.draw(input.value);
+    }
+    graphemes(s: string): string[] {
+      const Seg = (Intl as any).Segmenter;
+      if (Seg) return [...new Seg(undefined, { granularity: 'grapheme' }).segment(s)].map((x: any) => x.segment);
+      return [...s]; // fallback: code points
+    }
+    draw(s: string) {
+      const gs = this.graphemes(s);
+      let cps = 0;
+      this.querySelector('[data-row]')!.innerHTML = gs
+        .map((g) => {
+          const inner = [...g]
+            .map((c) => {
+              cps++;
+              const bytes = [...enc.encode(c)];
+              const bs = bytes.map((b, i) => `<span class="b${i === 0 ? ' lead' : ''}">${hex(b).padStart(2, '0')}</span>`).join('');
+              return `<div class="cp"><span class="cp-name">U+${hex(c.codePointAt(0)!).padStart(4, '0')}</span><span class="bytes">${bs}</span></div>`;
+            })
+            .join('');
+          const shown = g.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[m]!);
+          return `<div class="g"><div class="glyph">${shown.trim() ? shown : '␠'}</div><div class="cps">${inner}</div></div>`;
+        })
+        .join('');
+      this.querySelector('[data-stat]')!.textContent = `graphemes = ${gs.length} · code points = ${cps} · UTF-16 units (JS length) = ${s.length} · UTF-8 bytes = ${enc.encode(s).length}`;
+    }
+  }
+  customElements.define('utf8-bytes', Utf8Bytes);
+</script>

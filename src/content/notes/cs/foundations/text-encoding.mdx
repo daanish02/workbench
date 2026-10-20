@@ -3,6 +3,163 @@ title: "Text Encoding"
 description: "From ASCII to Unicode code points and UTF-8 bytes, and why string length is not what users see."
 order: 4
 tier: core
+takeaways:
+  - "Text is stored in two steps: **Unicode** gives every character a number (a **code point**, written U+00E9), and an **encoding** such as **UTF-8** turns code points into bytes."
+  - "UTF-8 uses **1 to 4 bytes** per code point, is identical to ASCII for the first 128, and is the default for the web, Linux and most files."
+  - "Bytes have no meaning without their encoding: decoding with the wrong one gives **mojibake** (`cafÃ©`) or an error."
+  - "One visible character (a **grapheme**) can be several code points, and the same text can have several code-point sequences: **normalize** (NFC) before comparing."
+  - "Bytes, UTF-16 units, code points and graphemes are four different lengths; pick the one the task needs."
+resources:
+  - title: "The Absolute Minimum About Unicode (Joel Spolsky)"
+    url: "https://www.joelonsoftware.com/2003/10/08/the-absolute-minimum-every-software-developer-absolutely-positively-must-know-about-unicode-and-character-sets-no-excuses/"
+    note: "The classic short essay on why 'plain text' does not exist."
+  - title: "Unicode HOWTO (Python docs)"
+    url: "https://docs.python.org/3/howto/unicode.html"
+    note: "Code points, encodings, normalization and file I/O in Python."
+  - title: "UTF-8 Everywhere"
+    url: "https://utf8everywhere.org/"
+    note: "The argument for using UTF-8 internally and on the wire, including on Windows."
 ---
 
-_Placeholder. Content not written yet._
+[Number Representation](../number-representation/) showed that bits mean nothing until something interprets them. Text is the most common case: a file, a network packet or a database column holds bytes, and turning them into letters needs an agreed table. Getting that agreement wrong produces garbled names, crashes on the first emoji, search that misses matches, and string lengths that disagree between languages. This note goes from **ASCII** to **Unicode code points** and the **UTF-8** encoding, then covers decoding errors, **normalization**, and the four different things "length" can mean. [Arrays & Strings](../../data-structures/arrays-and-strings/) shows the same lengths from the data-structure side.
+
+## ASCII: One Byte, One Letter
+
+**ASCII** (1963) assigns the numbers 0–127 to English letters, digits, punctuation and control codes such as newline (10). It needs 7 bits, so every character fits in one byte.
+
+```python
+for ch in "A", "a", "0", " ", "\n":
+    print(repr(ch), ord(ch), format(ord(ch), "07b"))
+print(chr(65 + 25), "| upper/lower differ by bit 5:", ord("a") - ord("A") == 0b100000)
+# 'A' 65 1000001
+# 'a' 97 1100001
+# '0' 48 0110000
+# ' ' 32 0100000
+# '\n' 10 0001010
+# Z | upper/lower differ by bit 5: True
+```
+
+In words: `ord` gives a character's number and `chr` goes back. `A` is 65 and `Z` is 65 + 25 = 90. Upper and lower case differ by exactly 32, a single bit, which is why old code could change case with one bitwise operation. ASCII had no room for `é`, `ß`, Greek, Cyrillic or Chinese. The 128 unused values of a byte were filled differently per region (**code pages** such as Latin-1 or Windows-1252), so the same byte meant different letters on different machines.
+
+## Unicode: Characters Become Numbers
+
+**Unicode** replaces all code pages with one table. Every character gets a **code point**: a number from 0 to 0x10FFFF, written `U+` plus hex digits, so `é` is U+00E9, `€` is U+20AC and `😀` is U+1F600. The first 128 code points are ASCII, unchanged. About 150,000 are assigned so far, covering modern and historic scripts, symbols and emoji.
+
+Unicode defines numbers, not bytes. Storing a code point needs an **encoding**:
+
+| Encoding | Bytes per code point | Notes |
+| --- | --- | --- |
+| UTF-8 | 1–4 | ASCII-compatible; default on the web, Linux, macOS, Python source files |
+| UTF-16 | 2 or 4 | Used inside Java, JavaScript, C# and the Windows API |
+| UTF-32 | 4 | Fixed width, simple to index, wasteful |
+
+## How UTF-8 Works
+
+**UTF-8** encodes a code point in as few bytes as it needs. The leading bits of each byte say what it is: `0xxxxxxx` is a complete ASCII character, `110xxxxx`, `1110xxxx` and `11110xxx` start a 2-, 3- or 4-byte sequence, and `10xxxxxx` is a **continuation byte** that carries 6 more bits. The code point's bits are poured into the `x` slots.
+
+```python
+def utf8(cp):
+    if cp < 0x80:                                  # 7 bits: one byte, identical to ASCII
+        return bytes([cp])
+    if cp < 0x800:                                 # 11 bits: 110xxxxx 10xxxxxx
+        return bytes([0xC0 | cp >> 6, 0x80 | cp & 0x3F])
+    if cp < 0x10000:                               # 16 bits: 1110xxxx then two continuation bytes
+        return bytes([0xE0 | cp >> 12, 0x80 | cp >> 6 & 0x3F, 0x80 | cp & 0x3F])
+    return bytes([0xF0 | cp >> 18, 0x80 | cp >> 12 & 0x3F,     # 21 bits: four bytes
+                  0x80 | cp >> 6 & 0x3F, 0x80 | cp & 0x3F])
+
+for ch in "A", "é", "€", "😀":
+    mine = utf8(ord(ch))
+    print(f"{ch}  U+{ord(ch):04X}  {mine.hex(' ')}  bytes={len(mine)}  matches: {mine == ch.encode('utf-8')}")
+# A  U+0041  41  bytes=1  matches: True
+# é  U+00E9  c3 a9  bytes=2  matches: True
+# €  U+20AC  e2 82 ac  bytes=3  matches: True
+# 😀  U+1F600  f0 9f 98 80  bytes=4  matches: True
+```
+
+In words: the hand-written encoder agrees with Python's `str.encode` on all four. `A` stays the single byte `41`, so every ASCII file is already valid UTF-8. `é` takes 2 bytes, `€` 3 and `😀` 4. The design has useful properties: a continuation byte can never be mistaken for the start of a character, so a program can find character boundaries from any position; and sorting UTF-8 bytes sorts by code point.
+
+Type text below to see each layer: graphemes, code points, and the UTF-8 bytes (lead bytes in yellow, continuation bytes in blue).
+
+<Utf8Bytes />
+
+## Wrong Decoder, Broken Text
+
+Bytes carry no label saying which encoding produced them. The reader has to know, from a header (`Content-Type: text/html; charset=utf-8`), a file format rule, or convention. Guess wrong and the result is either an error or **mojibake**, text decoded with the wrong table:
+
+```python
+data = "café".encode("utf-8")
+print(data)
+print(data.decode("latin-1"))                       # wrong decoder: mojibake, no error
+try:
+    data[:4].decode("utf-8")                        # cut in the middle of é
+except UnicodeDecodeError as e:
+    print("UnicodeDecodeError:", e.reason)
+print(data[:4].decode("utf-8", errors="replace"))
+print("😀".encode("utf-16-be").hex(" "), "| JS length:", len("😀".encode("utf-16-le")) // 2)
+# b'caf\xc3\xa9'
+# cafÃ©
+# UnicodeDecodeError: unexpected end of data
+# caf�
+# d8 3d de 00 | JS length: 2
+```
+
+In words: `é` becomes the two bytes `c3 a9`. Latin-1 maps every byte to some character, so decoding with it never fails; it silently shows `Ã©`. Cutting the bytes after 4 of 5 splits `é`, and strict UTF-8 decoding raises `unexpected end of data`; `errors="replace"` substitutes the replacement character `�` (U+FFFD). The last line shows UTF-16: `😀` is above U+FFFF, so it needs a **surrogate pair** (`d83d de00`), and JavaScript's `"😀".length` is 2.
+
+<Callout type="pitfall">
+Code that works on your machine can fail elsewhere because the default encoding differs. Python 3.14 on Windows still writes redirected output and opens files with the ANSI code page (often cp1252) unless told otherwise, so printing `😀` can raise `UnicodeEncodeError` there and nowhere else. Always pass `encoding="utf-8"` to `open()`, and set `PYTHONIOENCODING=utf-8` or run `python -X utf8` for console output.
+</Callout>
+
+## Same Text, Different Code Points
+
+Unicode often has more than one way to write the same visible text. `é` exists as one precomposed code point (U+00E9) and as `e` followed by a **combining** acute accent (U+0301). They look identical and compare unequal. **Normalization** rewrites strings into one canonical form: **NFC** composes where possible (the usual choice for storage and comparison), **NFD** decomposes. The **compatibility** forms NFKC and NFKD also fold look-alikes such as the ligature `ﬁ` into plain letters.
+
+```python
+import unicodedata
+
+composed = "café"                              # é as one code point
+decomposed = "café"                           # e followed by a combining acute accent
+print(composed, decomposed, composed == decomposed, len(composed), len(decomposed))
+nfc = [unicodedata.normalize("NFC", s) for s in (composed, decomposed)]
+print("after NFC:", nfc[0] == nfc[1], [len(s) for s in nfc])
+print("NFKC:", unicodedata.normalize("NFKC", "ﬁ ①"))   # compatibility forms fold to plain text
+print("lower:", "Straße".lower(), "| casefold:", "Straße".casefold(), "| match:", "STRASSE".casefold() == "Straße".casefold())
+# café café False 4 5
+# after NFC: True [4, 4]
+# NFKC: fi 1
+# lower: straße | casefold: strasse | match: True
+```
+
+In words: the two `café` strings print the same but are unequal, with lengths 4 and 5. After NFC both have 4 code points and compare equal. NFKC turns `ﬁ` into `fi` and `①` into `1`, which helps search but loses information, so it is not for storage. For case-insensitive matching, `casefold` is stronger than `lower`: it maps `ß` to `ss`, so `STRASSE` and `Straße` match.
+
+<Callout type="pitfall">
+Usernames, file names and search keys that are not normalized can collide or miss: macOS file systems have historically stored names decomposed, while most input arrives composed. Normalize to NFC on input, and compare with `casefold()` when case should not matter.
+</Callout>
+
+## What Length Means
+
+A user sees **graphemes** (user-perceived characters, formally *extended grapheme clusters*). One grapheme can be several code points: a letter plus combining marks, an emoji plus a skin-tone modifier, or several emoji glued by a **zero width joiner** (ZWJ):
+
+```python
+import unicodedata
+
+for s in ["é", "👍🏽", "👨‍👩‍👧"]:
+    names = [unicodedata.name(c, "?") for c in s]
+    print(s, len(s), "code points,", len(s.encode("utf-8")), "UTF-8 bytes:", names)
+# é 2 code points, 3 UTF-8 bytes: ['LATIN SMALL LETTER E', 'COMBINING ACUTE ACCENT']
+# 👍🏽 2 code points, 8 UTF-8 bytes: ['THUMBS UP SIGN', 'EMOJI MODIFIER FITZPATRICK TYPE-4']
+# 👨‍👩‍👧 5 code points, 18 UTF-8 bytes: ['MAN', 'ZERO WIDTH JOINER', 'WOMAN', 'ZERO WIDTH JOINER', 'GIRL']
+```
+
+In words: each of these is one grapheme on screen, but Python's `len` counts 2, 2 and 5 code points, and the UTF-8 sizes are 3, 8 and 18 bytes. The family emoji is three people joined by two ZWJs. Each length answers a different question:
+
+| Length | Answers | How to get it |
+| --- | --- | --- |
+| Bytes | Storage size, network limits, database column limits in bytes | `len(s.encode("utf-8"))` |
+| UTF-16 units | What Java, JavaScript and C# report | `s.length` in those languages |
+| Code points | Unicode processing | `len(s)` in Python |
+| Graphemes | What the user sees: cursor movement, "max 20 characters" | `Intl.Segmenter` in JavaScript, the `regex` package's `\X` in Python |
+
+<Callout type="key">
+Treat text as bytes only at the edges: **decode once** on input, work with `str` inside the program, **encode once** on output, always naming UTF-8 explicitly. Truncate and reverse by graphemes, never by bytes or code points, or you will cut an emoji or an accent in half.
+</Callout>
