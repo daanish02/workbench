@@ -1,0 +1,160 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Quickselect narrows to the median"
+  caption="Find the median (rank 12 of 24). Each step picks a pivot (yellow), compares every remaining candidate with it, and keeps only the side that holds rank 12 (blue); the rest turn grey. With random pivots, New run gives a different path to the same answer. With a first-element pivot on sorted input, each step removes one element and the comparison count climbs."
+>
+  <quickselect-steps>
+    <div class="ctl-row">
+      <span class="ctl-label">Input</span>
+      <input type="hidden" data-input value="shuffled" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="shuffled" aria-pressed="true">Shuffled</button>
+        <button type="button" class="btn" data-choice="sorted" aria-pressed="false">Sorted</button>
+      </span>
+      <span class="ctl-label">Pivot</span>
+      <input type="hidden" data-pivot value="random" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="random" aria-pressed="true">Random</button>
+        <button type="button" class="btn" data-choice="first" aria-pressed="false">First element</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">value</span>
+      <svg class="qs-svg" data-svg viewBox="0 0 440 160" role="img" aria-label="array as bars"></svg>
+      <span class="ax-x">array position</span>
+    </div>
+    <p class="qs-msg" data-msg></p>
+    <p class="qs-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+      <button type="button" class="btn" data-new>New run</button>
+    </div>
+  </quickselect-steps>
+</Figure>
+
+<style>
+  .qs-svg {
+    display: block;
+    width: 100%;
+  }
+  .qs-svg :global(rect) {
+    fill: rgba(66, 133, 244, 0.55);
+  }
+  .qs-svg :global(rect.out) {
+    fill: var(--border);
+  }
+  .qs-svg :global(rect.pv) {
+    fill: var(--g-yellow);
+  }
+  .qs-svg :global(rect.ans) {
+    fill: var(--g-green);
+  }
+  .qs-svg :global(text) {
+    fill: var(--text-faint);
+    font: 8px var(--font-mono);
+    text-anchor: middle;
+  }
+  .qs-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .qs-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const N = 24;
+  const K = 11; // 0-based rank: the 12th smallest
+  interface Frame {
+    alive: Set<number>; // values still candidates
+    pivot: number | null;
+    answer: number | null;
+    comps: number;
+    msg: string;
+  }
+  // small seeded generator so a run can be replayed with Reset
+  const mulberry = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  class QuickselectSteps extends HTMLElement {
+    seed = 3;
+    arr: number[] = [];
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      this.querySelectorAll('input[type=hidden]').forEach((x) => x.addEventListener('change', () => this.reset()));
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-new]')!.addEventListener('click', () => {
+        this.seed++;
+        this.reset();
+      });
+      this.reset();
+    }
+    reset() {
+      const sorted = this.querySelector<HTMLInputElement>('[data-input]')!.value === 'sorted';
+      const first = this.querySelector<HTMLInputElement>('[data-pivot]')!.value === 'first';
+      const shuffleRng = mulberry(99);
+      const a = Array.from({ length: N }, (_, i) => i + 1);
+      if (!sorted) for (let i = N - 1; i > 0; i--) { const j = Math.floor(shuffleRng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+      this.arr = a;
+      const rng = mulberry(this.seed);
+      let xs = [...a];
+      let k = K;
+      let comps = 0;
+      const out: Frame[] = [{ alive: new Set(xs), pivot: null, answer: null, comps, msg: `24 candidates. Looking for rank 12 (the 12th smallest value).` }];
+      for (;;) {
+        const pivot = first ? xs[0] : xs[Math.floor(rng() * xs.length)];
+        comps += xs.length - 1;
+        const lo = xs.filter((x) => x < pivot);
+        const hi = xs.filter((x) => x > pivot);
+        if (k < lo.length) {
+          out.push({ alive: new Set(lo), pivot, answer: null, comps, msg: `Pivot ${pivot}: ${lo.length} smaller, ${hi.length} larger. Rank ${k + 1} among the candidates is below the pivot: keep the ${lo.length} smaller values.` });
+          xs = lo;
+        } else if (k === lo.length) {
+          out.push({ alive: new Set([pivot]), pivot, answer: pivot, comps, msg: `Pivot ${pivot} has exactly ${lo.length} smaller candidates, so it is the answer: the median is ${pivot}.` });
+          break;
+        } else {
+          k -= lo.length + 1;
+          out.push({ alive: new Set(hi), pivot, answer: null, comps, msg: `Pivot ${pivot}: ${lo.length} smaller, ${hi.length} larger. The target is above the pivot: keep the ${hi.length} larger values and look for rank ${k + 1} among them.` });
+          xs = hi;
+        }
+      }
+      this.fr = out;
+      this.i = 0;
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const w = 440 / N;
+      let s = '';
+      this.arr.forEach((v, i) => {
+        const h = (v / N) * 140;
+        const cls = f.answer === v ? 'ans' : f.pivot === v ? 'pv' : f.alive.has(v) ? '' : 'out';
+        s += `<rect class="${cls}" x="${i * w + 2}" y="${148 - h}" width="${w - 4}" height="${h}" rx="2" /><text x="${i * w + w / 2}" y="158">${v}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · candidates = ${f.answer ? 1 : f.alive.size} · comparisons = ${f.comps}${f.answer ? ` · median = ${f.answer}` : ''}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('quickselect-steps', QuickselectSteps);
+</script>

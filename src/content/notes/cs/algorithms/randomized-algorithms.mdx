@@ -3,6 +3,201 @@ title: "Randomized Algorithms"
 description: "Las Vegas and Monte Carlo algorithms: quickselect, reservoir sampling and probabilistic primality tests."
 order: 12
 tier: advanced
+takeaways:
+  - "A **randomized algorithm** makes random choices while it runs; its guarantees are about **expected** time or **probability** of error, taken over its own coin flips, not over the input."
+  - "**Las Vegas** algorithms are always correct and only their running time is random (randomized quicksort, quickselect); **Monte Carlo** algorithms run in bounded time and may be wrong with small probability (Miller-Rabin)."
+  - "Random choices defeat **adversarial inputs**: no fixed input makes randomized quickselect slow, while a first-element pivot is quadratic on sorted data."
+  - "**Reservoir sampling** draws a uniform sample of $k$ items from a stream of unknown length in one pass with $O(k)$ memory."
+  - "Monte Carlo error shrinks **exponentially** with repetition: $k$ independent Miller-Rabin rounds wrongly accept a composite with probability at most $4^{-k}$."
+resources:
+  - title: "Probabilistic Analysis and Randomized Quicksort (CMU 15-451 lecture notes)"
+    url: "https://www.cs.cmu.edu/~avrim/451f11/lectures/lect0906.pdf"
+    note: "Expected running time made precise, with the full analysis of randomized quicksort."
+  - title: "Primality tests (cp-algorithms)"
+    url: "https://cp-algorithms.com/algebra/primality_tests.html"
+    note: "Fermat and Miller-Rabin tests, Carmichael numbers, and deterministic base sets for 64-bit integers."
+  - title: "Reservoir sampling (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Reservoir_sampling"
+    note: "Algorithm R used here, the faster Algorithm L, and weighted variants."
 ---
 
-_Placeholder. Content not written yet._
+Most algorithms in this section are **deterministic**: the same input always produces the same steps. A **randomized algorithm** flips coins while it runs, and that turns out to be a powerful tool: it makes some algorithms simpler, makes worst cases depend on luck rather than on the input, and solves some problems (sampling a stream, testing whether a 100-digit number is prime) far faster than any known deterministic method. Pieces of this idea already appeared in quicksort's pivot choice ([Sorting](../sorting/)), random levels in [skip lists](../../data-structures/skip-lists-and-b-trees/) and the false positives of [Bloom filters](../../data-structures/bloom-filters/). This note names the two families, **Las Vegas** and **Monte Carlo**, and works through three classics: **quickselect**, **reservoir sampling** and the **Miller-Rabin** primality test.
+
+## Two Kinds of Randomness
+
+The guarantees of a randomized algorithm are statements about its own random choices, for **every** input:
+
+- A **Las Vegas** algorithm always returns the correct answer; its **running time** is a random variable, and we bound its **expected** value. Randomized quicksort is Las Vegas: always sorted, expected $O(n \log n)$ comparisons.
+- A **Monte Carlo** algorithm always finishes within a time bound, but its **answer** may be wrong with some probability, which we bound. Miller-Rabin is Monte Carlo: fast, and wrong with tiny probability.
+
+The difference from **average-case analysis** matters. Average-case analysis assumes the inputs are random. A randomized algorithm assumes nothing about the input: the expected bound holds even for an input chosen by an adversary who knows the code, as long as they cannot predict the coin flips.
+
+```python
+import random
+
+def comparisons(a, pick):                      # quicksort that only counts comparisons
+    count, stack = 0, [a]
+    while stack:
+        xs = stack.pop()
+        if len(xs) <= 1:
+            continue
+        pivot = pick(xs)
+        count += len(xs) - 1
+        stack.append([x for x in xs if x < pivot])
+        stack.append([x for x in xs if x > pivot])
+    return count
+
+rng = random.Random(42)
+data = list(range(2000))                       # already sorted: the worst case for "first element" pivots
+print("first-element pivot:", comparisons(data, lambda xs: xs[0]))
+print("random pivot:       ", comparisons(data, lambda xs: rng.choice(xs)))
+# first-element pivot: 1999000
+# random pivot:        23613
+```
+
+In words: on 2,000 already-sorted numbers, taking the first element as the pivot splits off one element per round, for $\binom{2000}{2} = 1{,}999{,}000$ comparisons. A random pivot needs 23,613, close to the expected value $2(n+1)H_n - 4n \approx 24{,}700$ (where $H_n$ is the $n$-th harmonic number, about $\ln n$), and no input ordering can force it back to quadratic.
+
+## Quickselect
+
+**Selection** asks for the $k$-th smallest element, for example the median, without sorting everything. **Quickselect** partitions around a random pivot like quicksort but recurses into only the side that contains position $k$. Each random pivot discards a constant fraction of the candidates on average, so the expected work is $n + \tfrac{3}{4}n + (\tfrac{3}{4})^2 n + \dots$, a geometric series:
+
+$$
+\mathbb{E}[\text{comparisons}] = O(n).
+
+$$
+
+In words: finding the median costs linear expected time, cheaper than the $O(n \log n)$ of sorting. It is Las Vegas: an unlucky run is slower, never wrong.
+
+```python
+import random
+
+def quickselect(xs, k, rng):                   # k-th smallest, 0-based; Las Vegas: always right
+    while True:
+        pivot = rng.choice(xs)
+        lo = [x for x in xs if x < pivot]
+        eq = [x for x in xs if x == pivot]
+        if k < len(lo):
+            xs = lo
+        elif k < len(lo) + len(eq):
+            return pivot
+        else:
+            k -= len(lo) + len(eq)
+            xs = [x for x in xs if x > pivot]
+
+rng = random.Random(7)
+data = [rng.randint(0, 10_000) for _ in range(10_001)]
+median = quickselect(data, len(data) // 2, rng)
+print("median:", median, "| matches sorted:", median == sorted(data)[len(data) // 2])
+print("all 50 runs correct:", all(quickselect(data, 5000, random.Random(s)) == sorted(data)[5000] for s in range(50)))
+# median: 4940 | matches sorted: True
+# all 50 runs correct: True
+```
+
+In words: the median of 10,001 random numbers is 4,940, the same value sorting gives, and 50 runs with 50 different random seeds all return the right answer; only their speed differs. The `eq` list handles duplicates, which a two-way split would loop on. Watch how the candidate range shrinks, and compare with a first-element pivot on sorted input:
+
+<QuickselectSteps />
+
+<Callout type="pitfall">
+A "random" pivot drawn from a predictable generator is not random to an attacker. Servers that sort or hash untrusted input (web frameworks parsing request parameters, for example) have been slowed to a crawl by inputs crafted against a fixed seed. Seed from the operating system (`random.SystemRandom`, `secrets`) where inputs are hostile; fixed seeds belong in tests and examples, as here.
+</Callout>
+
+## Reservoir Sampling
+
+A log stream, a database cursor or a sensor feed may be too long to store and of unknown length. **Reservoir sampling** keeps a uniform random sample of $k$ items in one pass: keep the first $k$ items; then, for the item at position $i$ (0-based), draw $j$ uniformly from $0..i$ and, if $j < k$, let the item replace slot $j$. The item at position $i$ is kept with probability $\tfrac{k}{i+1}$, and a short induction shows that after $n$ items every item is in the sample with probability exactly $\tfrac{k}{n}$.
+
+```python
+import random
+from collections import Counter
+
+def reservoir(stream, k, rng):                 # uniform sample of k items from a stream of unknown length
+    sample = []
+    for i, item in enumerate(stream):
+        if i < k:
+            sample.append(item)
+        else:
+            j = rng.randrange(i + 1)           # keep item i with probability k / (i + 1)
+            if j < k:
+                sample[j] = item
+    return sample
+
+rng = random.Random(0)
+print("one sample of 3 from 1..1000:", reservoir(range(1, 1001), 3, rng))
+counts = Counter(x for _ in range(100_000) for x in reservoir(range(10), 2, rng))
+print("each of 10 items picked ~20000 times:", sorted(counts.values())[0], "to", sorted(counts.values())[-1])
+print("within 3% of 20000:", all(abs(c - 20_000) < 600 for c in counts.values()))
+# one sample of 3 from 1..1000: [818, 784, 29]
+# each of 10 items picked ~20000 times: 19828 to 20242
+# within 3% of 20000: True
+```
+
+In words: one pass over 1,000 items with 3 slots of memory gives a sample such as `[818, 784, 29]`. Repeating a 2-of-10 sample 100,000 times should pick each item $100{,}000 \times \tfrac{2}{10} = 20{,}000$ times, and the counts run from 19,828 to 20,242, within 3% of that: the first and last items of the stream are equally likely to survive.
+
+## Primality Testing
+
+Cryptography needs random primes with hundreds of digits ([Cryptography](../../security/cryptography/)). Trial division would take longer than the age of the universe. **Fermat's little theorem** gives a quick test: if $n$ is prime, then for every $a$ not divisible by $n$,
+
+$$
+a^{\,n-1} \equiv 1 \pmod{n}.
+
+$$
+
+In words: raise a random base to the power $n - 1$ modulo $n$ (fast, with repeated squaring); if the result is not 1, $n$ is certainly composite. Unfortunately some composites, the **Carmichael numbers**, pass this test for every base coprime to them. **Miller-Rabin** strengthens it: write $n - 1 = d \cdot 2^{r}$ with $d$ odd, and check that the sequence $a^{d}, a^{2d}, \dots$ reaches 1 only through $n - 1$, as it must for a prime (where 1 has no square roots other than $\pm 1$). For any odd composite $n$, at least 3/4 of all bases expose it, so $k$ random bases all fail to expose it with probability at most $4^{-k}$.
+
+```python
+import random
+
+def miller_rabin(n, rng, rounds=20):           # Monte Carlo: "composite" is certain, "prime" is very likely
+    if n < 4:
+        return n in (2, 3)
+    if n % 2 == 0:
+        return False
+    d, r = n - 1, 0
+    while d % 2 == 0:                          # n - 1 = d * 2^r with d odd
+        d, r = d // 2, r + 1
+    for _ in range(rounds):
+        x = pow(rng.randrange(2, n - 1), d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False                       # this base is a witness: n is certainly composite
+    return True
+
+rng = random.Random(1)
+carmichael = 561                               # 3 * 11 * 17, yet a^560 = 1 (mod 561) for every a coprime to it
+coprime_bases = [a for a in range(2, 561) if all(a % p for p in (3, 11, 17))]
+print("Fermat passes for every coprime base:", all(pow(a, 560, 561) == 1 for a in coprime_bases))
+print("Miller-Rabin on 561:", miller_rabin(561, rng))
+print("2**61 - 1 prime?", miller_rabin(2**61 - 1, rng), "| 2**61 + 1 prime?", miller_rabin(2**61 + 1, rng))
+
+import sympy
+print("agrees with sympy below 10000:", all(miller_rabin(n, rng) == sympy.isprime(n) for n in range(2, 10_000)))
+# Fermat passes for every coprime base: True
+# Miller-Rabin on 561: False
+# 2**61 - 1 prime? True | 2**61 + 1 prime? False
+# agrees with sympy below 10000: True
+```
+
+In words: 561 = 3 × 11 × 17 fools the Fermat test for every base coprime to it, but Miller-Rabin finds a witness and says composite. It identifies the Mersenne prime $2^{61} - 1$ and rejects $2^{61} + 1$ (divisible by 3), and it agrees with SymPy's `isprime` on every number below 10,000. With 20 rounds the chance of accepting a composite is at most $4^{-20} \approx 10^{-12}$; a "composite" answer is always correct. Run it with `uv run --with sympy`.
+
+<Callout type="pitfall">
+"Probably prime" is only as good as the randomness and the round count. Test with a fixed small number of bases against adversarially chosen numbers and an attacker can find composites that pass. Use random bases from a good source, enough rounds (40 is a common choice for cryptographic sizes), or a library function that documents its guarantees.
+</Callout>
+
+## Amplifying Success
+
+A Monte Carlo algorithm with **one-sided error** (its "no" is always right, like Miller-Rabin's "composite") improves with repetition: run it $k$ times independently and the error probability multiplies down to $p^{k}$. A Las Vegas algorithm can be turned into a Monte Carlo one by stopping it after a time limit (and answering "don't know"), and a Monte Carlo algorithm whose answers can be checked cheaply becomes Las Vegas by repeating until a check passes.
+
+| | Las Vegas | Monte Carlo |
+| --- | --- | --- |
+| Answer | Always correct | Correct with high probability |
+| Running time | Random; bound the expectation | Bounded |
+| Examples | Randomized quicksort, quickselect, hash tables with random hash functions | Miller-Rabin, Bloom filters, Karger's min cut, Monte Carlo integration |
+| Make it better | Restart when slow | Repeat and combine answers |
+
+<Callout type="key">
+Randomness moves the worst case from the **input**, which an adversary controls, to the **coin flips**, which nobody controls. That is why randomized algorithms are often both simpler and more robust than deterministic ones with the same expected cost.
+</Callout>
