@@ -1,0 +1,177 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Edmonds-Karp, one augmenting path per step"
+  caption="Edges show flow / capacity. Each step either finds the shortest augmenting path with BFS (yellow, with its bottleneck) or pushes flow along it. Full edges turn red. At the end the last BFS reaches only the green vertices; the dashed red edges leaving them are the minimum cut, and their capacities add up to the max flow."
+>
+  <max-flow-steps>
+    <svg class="mf-svg" data-svg viewBox="0 0 440 250" role="img" aria-label="flow network"></svg>
+    <p class="mf-msg" data-msg></p>
+    <p class="mf-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </max-flow-steps>
+</Figure>
+
+<style>
+  .mf-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .mf-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.8;
+  }
+  .mf-svg :global(line.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .mf-svg :global(line.full) {
+    stroke: var(--g-red);
+  }
+  .mf-svg :global(line.cut) {
+    stroke: var(--g-red);
+    stroke-width: 3;
+    stroke-dasharray: 6 4;
+  }
+  .mf-svg :global(circle) {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+    stroke-width: 1.8;
+  }
+  .mf-svg :global(.side circle) {
+    fill: rgba(52, 168, 83, 0.24);
+    stroke: var(--g-green);
+  }
+  .mf-svg :global(text) {
+    fill: var(--text);
+    font: 700 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .mf-svg :global(text.fl) {
+    font: 11px var(--font-mono);
+    fill: var(--text-muted);
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-width: 4px;
+  }
+  .mf-svg :global(text.fl.on) {
+    fill: var(--g-yellow-l);
+  }
+  .mf-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .mf-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const POS: Record<string, [number, number]> = { s: [30, 125], a: [150, 45], b: [150, 205], c: [290, 45], d: [290, 205], t: [410, 125] };
+  const CAP: [string, string, number][] = [
+    ['s', 'a', 16], ['s', 'b', 13], ['a', 'c', 12], ['b', 'a', 4], ['b', 'd', 14],
+    ['c', 'b', 9], ['c', 't', 20], ['d', 'c', 7], ['d', 't', 4],
+  ];
+  const V = Object.keys(POS);
+  const key = (u: string, v: string) => u + v;
+  interface Frame {
+    flow: Record<string, number>;
+    path: string[];
+    side: string[];
+    msg: string;
+  }
+
+  function frames(): Frame[] {
+    const cap: Record<string, number> = {};
+    const flow: Record<string, number> = {};
+    for (const u of V) for (const v of V) { cap[key(u, v)] = 0; flow[key(u, v)] = 0; }
+    for (const [u, v, c] of CAP) cap[key(u, v)] = c;
+    const res = (u: string, v: string) => cap[key(u, v)] - flow[key(u, v)];
+    const out: Frame[] = [{ flow: { ...flow }, path: [], side: [], msg: 'All flows start at 0. Find the shortest path from s to t with spare capacity.' }];
+    for (;;) {
+      const prev: Record<string, string | null> = { s: null };
+      const q = ['s'];
+      while (q.length && !('t' in prev)) {
+        const u = q.shift()!;
+        for (const v of V) if (!(v in prev) && res(u, v) > 0) { prev[v] = u; q.push(v); }
+      }
+      if (!('t' in prev)) {
+        const side = Object.keys(prev);
+        const cut = CAP.filter(([u, v]) => side.includes(u) && !side.includes(v));
+        const total = cut.reduce((x, [, , c]) => x + c, 0);
+        out.push({ flow: { ...flow }, path: [], side, msg: `No augmenting path left. BFS reached {${side.join(', ')}}; the edges leaving that set (${cut.map(([u, v, c]) => `${u}→${v} ${c}`).join(', ')}) form a cut of capacity ${total}, equal to the flow.` });
+        return out;
+      }
+      const path = ['t'];
+      while (prev[path[0]] !== null) path.unshift(prev[path[0]]!);
+      const pairs = path.slice(0, -1).map((u, i) => [u, path[i + 1]]);
+      const push = Math.min(...pairs.map(([u, v]) => res(u, v)));
+      const back = pairs.some(([u, v]) => cap[key(u, v)] === 0);
+      out.push({ flow: { ...flow }, path, side: [], msg: `BFS finds ${path.join(' → ')}; bottleneck = ${push}.${back ? ' It uses a reverse edge, cancelling earlier flow.' : ''}` });
+      for (const [u, v] of pairs) { flow[key(u, v)] += push; flow[key(v, u)] -= push; }
+      out.push({ flow: { ...flow }, path, side: [], msg: `Push ${push} along the path. Total flow is now ${['a', 'b'].reduce((x, v) => x + flow[key('s', v)], 0)}.` });
+    }
+  }
+
+  class MaxFlowSteps extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const R = 17;
+      const onPath = (u: string, v: string) => f.path.some((x, i) => x === u && f.path[i + 1] === v);
+      let s = '<defs><marker id="mf-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--text-muted)" /></marker></defs>';
+      let labels = '';
+      for (const [u, v, c] of CAP) {
+        const [x1, y1] = POS[u];
+        const [x2, y2] = POS[v];
+        const len = Math.hypot(x2 - x1, y2 - y1);
+        const ux = (x2 - x1) / len;
+        const uy = (y2 - y1) / len;
+        const fl = Math.max(0, f.flow[key(u, v)]);
+        const cut = f.side.length > 0 && f.side.includes(u) && !f.side.includes(v);
+        const on = onPath(u, v) || onPath(v, u);
+        const cls = cut ? 'cut' : on ? 'on' : fl === c ? 'full' : '';
+        s += `<line class="${cls}" x1="${x1 + ux * R}" y1="${y1 + uy * R}" x2="${x2 - ux * (R + 3)}" y2="${y2 - uy * (R + 3)}" marker-end="url(#mf-arr)" />`;
+        const mx = (x1 + x2) / 2 - uy * 12;
+        const my = (y1 + y2) / 2 + ux * 12;
+        labels += `<text class="fl${on ? ' on' : ''}" x="${mx}" y="${my}">${fl}/${c}</text>`;
+      }
+      s += labels;
+      for (const v of V) {
+        const [x, y] = POS[v];
+        s += `<g class="${f.side.includes(v) ? 'side' : ''}"><circle cx="${x}" cy="${y}" r="${R}" /><text x="${x}" y="${y}">${v}</text></g>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const total = ['a', 'b'].reduce((x, v) => x + f.flow[key('s', v)], 0);
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · flow = ${total} · path = ${f.path.length ? f.path.join('') : '–'}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('max-flow-steps', MaxFlowSteps);
+</script>

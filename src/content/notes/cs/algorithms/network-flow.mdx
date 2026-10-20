@@ -3,6 +3,207 @@ title: "Network Flow"
 description: "Max-flow and min-cut, Ford-Fulkerson and Edmonds-Karp, and bipartite matching."
 order: 10
 tier: advanced
+takeaways:
+  - "A **flow network** is a directed graph with edge **capacities**, a **source** $s$ and a **sink** $t$; the **max-flow** problem asks how much can travel from $s$ to $t$ without exceeding any capacity."
+  - "**Ford-Fulkerson** repeatedly finds an **augmenting path** in the **residual graph** and pushes flow along it; **reverse residual edges** let later paths undo earlier choices, which is why the greedy method becomes optimal."
+  - "**Edmonds-Karp** picks the shortest augmenting path with BFS and runs in $O(V E^2)$, independent of the capacity values."
+  - "**Max-flow min-cut theorem**: the maximum flow equals the smallest total capacity of edges whose removal separates $s$ from $t$; the final BFS finds that cut."
+  - "Many problems reduce to flow: **bipartite matching** (people to jobs), edge-disjoint paths, project selection and image segmentation."
+resources:
+  - title: "Maximum Flow: Edmonds-Karp (cp-algorithms)"
+    url: "https://cp-algorithms.com/graph/edmonds_karp.html"
+    note: "Residual networks, Ford-Fulkerson and Edmonds-Karp with a worked example and proof of the min-cut theorem."
+  - title: "Maximum Flows and Minimum Cuts (Erickson, Algorithms, ch. 10)"
+    url: "https://jeffe.cs.illinois.edu/teaching/algorithms/book/10-maxflow.pdf"
+    note: "A free textbook chapter with careful proofs and the history of the problem."
+  - title: "Flows (NetworkX docs)"
+    url: "https://networkx.org/documentation/stable/reference/algorithms/flow.html"
+    note: "Library max-flow and min-cut functions used to check this note's code."
 ---
 
-_Placeholder. Content not written yet._
+[Graph Algorithms](../graph-algorithms/) asked how to get from one vertex to another. **Network flow** asks how *much* can get through: how many gigabits per second between two data centres, how many trucks per hour from a factory to a port, how many people can be matched to jobs they are qualified for. Each edge has a **capacity**, and the answer is limited by the bottlenecks of the whole network, not of one path. This note defines flow networks, builds the **Ford-Fulkerson** method and its BFS version **Edmonds-Karp**, shows the **max-flow min-cut theorem** on a worked example, and reduces **bipartite matching** to a flow problem. It uses breadth-first search and the greedy reasoning from [Greedy Algorithms](../greedy-algorithms/).
+
+## Flow Networks
+
+A **flow network** is a directed graph in which each edge $(u, v)$ has a **capacity** $c(u, v) \ge 0$, with two special vertices: a **source** $s$ where flow starts and a **sink** $t$ where it ends. A **flow** assigns each edge an amount $f(u, v)$ with two rules:
+
+- **Capacity**: $0 \le f(u, v) \le c(u, v)$ on every edge.
+- **Conservation**: at every vertex other than $s$ and $t$, flow in equals flow out.
+
+The **value** of the flow is the net amount leaving $s$, which by conservation equals the amount entering $t$. The **maximum flow** problem asks for a flow of largest value.
+
+## Augmenting Paths
+
+The natural greedy idea: find any path from $s$ to $t$ with spare capacity on every edge, push as much as its tightest edge (the **bottleneck**) allows, and repeat. Plain greedy can get stuck. In the graph below every edge has capacity 1. If the first path chosen is $s \to a \to b \to t$, then edges $s \to a$ and $b \to t$ are full, no other path remains, and the greedy total is 1. The true maximum is 2: $s \to a \to t$ and $s \to b \to t$.
+
+The fix is the **residual graph**. For each edge carrying flow $f$ with capacity $c$, it has a forward edge with the remaining capacity $c - f$, and a **reverse edge** $v \to u$ with capacity $f$. Pushing flow along a reverse edge means cancelling flow that was sent forward earlier, which lets a later path reroute an earlier decision.
+
+```python
+def max_flow_dfs(cap, s, t, use_reverse):
+    res = {u: dict(vs) for u, vs in cap.items()}
+    paths = []
+
+    def dfs(u, seen):                                      # tries neighbours in the order listed
+        if u == t:
+            return [t]
+        seen.add(u)
+        for v, c in res[u].items():
+            if c > 0 and v not in seen:
+                rest = dfs(v, seen)
+                if rest:
+                    return [u] + rest
+        return None
+
+    while path := dfs(s, set()):
+        for u, v in zip(path, path[1:]):
+            res[u][v] -= 1
+            if use_reverse:
+                res[v][u] = res[v].get(u, 0) + 1           # residual capacity in the opposite direction
+        paths.append("".join(path))
+    return len(paths), paths
+
+cap = {"s": {"a": 1, "b": 1}, "a": {"b": 1, "t": 1}, "b": {"t": 1}, "t": {}}
+print("no reverse edges:", max_flow_dfs(cap, "s", "t", False))
+print("with reverse edges:", max_flow_dfs(cap, "s", "t", True))
+# no reverse edges: (1, ['sabt'])
+# with reverse edges: (2, ['sabt', 'sbat'])
+```
+
+In words: both runs first take $s \to a \to b \to t$. Without reverse edges nothing else fits and the answer is 1. With them, the second path $s \to b \to a \to t$ travels the reverse edge $b \to a$, cancelling the unit on $a \to b$; the net result is the optimal pair of paths $s \to a \to t$ and $s \to b \to t$, with flow 2.
+
+**Ford-Fulkerson** is exactly this loop: while the residual graph has an $s$–$t$ path, push the bottleneck amount along it. With integer capacities each step adds at least 1, so it terminates, in $O(E \cdot F)$ time where $F$ is the max-flow value. That bound depends on the numbers: with capacities in the millions and unlucky path choices, it can take millions of steps.
+
+## Edmonds-Karp
+
+**Edmonds-Karp** fixes the path choice: always augment along a **shortest** path (fewest edges), found by BFS. The length of the shortest augmenting path never decreases, and each edge can be the bottleneck only $O(V)$ times, which gives at most $O(VE)$ augmentations of $O(E)$ each:
+
+$$
+O(V E^{2}).
+
+$$
+
+In words: the running time depends only on the size of the graph, not on how large the capacities are. Faster algorithms exist (Dinic's, push-relabel, and recent near-linear-time methods), but Edmonds-Karp is the standard first implementation.
+
+```python
+from collections import deque
+
+def edmonds_karp(cap, s, t):
+    flow = {u: {v: 0 for v in cap} for u in cap}           # flow[u][v]; residual = cap - flow
+    paths = []
+    while True:
+        prev, queue = {s: None}, deque([s])
+        while queue and t not in prev:                     # BFS: the shortest augmenting path
+            u = queue.popleft()
+            for v in cap:
+                if v not in prev and cap[u].get(v, 0) - flow[u][v] > 0:
+                    prev[v] = u
+                    queue.append(v)
+        if t not in prev:
+            return sum(flow[s].values()), flow, prev, paths
+        path, v = [t], t
+        while prev[v] is not None:
+            path.append(prev[v]); v = prev[v]
+        path.reverse()
+        push = min(cap[u].get(v, 0) - flow[u][v] for u, v in zip(path, path[1:]))
+        for u, v in zip(path, path[1:]):
+            flow[u][v] += push
+            flow[v][u] -= push                             # the reverse edge lets later paths undo this
+        paths.append(("".join(path), push))
+
+cap = {
+    "s": {"a": 16, "b": 13}, "a": {"c": 12}, "b": {"a": 4, "d": 14},
+    "c": {"b": 9, "t": 20}, "d": {"c": 7, "t": 4}, "t": {},
+}
+value, flow, reachable, paths = edmonds_karp(cap, "s", "t")
+print("augmenting paths:", paths)
+print("max flow:", value)
+cut = [(u, v, c) for u in reachable for v, c in cap[u].items() if v not in reachable]
+print("min cut edges:", cut, "capacity:", sum(c for _, _, c in cut))
+
+import networkx as nx
+G = nx.DiGraph()
+for u in cap:
+    for v, c in cap[u].items():
+        G.add_edge(u, v, capacity=c)
+print("networkx max flow:", nx.maximum_flow_value(G, "s", "t"))
+# augmenting paths: [('sact', 12), ('sbdt', 4), ('sbdct', 7)]
+# max flow: 23
+# min cut edges: [('a', 'c', 12), ('d', 'c', 7), ('d', 't', 4)] capacity: 23
+# networkx max flow: 23
+```
+
+In words: three augmenting paths carry 12, 4 and 7 units, a maximum flow of 23, and networkx agrees. Storing `flow[v][u] = -flow[u][v]` is the compact way to represent reverse edges: residual capacity `cap - flow` on a reverse edge equals the flow that could be cancelled. Run it with `uv run --with networkx`. Step through the same run:
+
+<MaxFlowSteps />
+
+## Max-Flow Min-Cut
+
+An **$s$–$t$ cut** splits the vertices into a set $S$ containing $s$ and a set $T$ containing $t$; its **capacity** is the total capacity of edges from $S$ to $T$. Every unit of flow must cross the cut, so any flow is at most any cut's capacity. The **max-flow min-cut theorem** says the bound is tight:
+
+$$
+\max_{f} \lvert f \rvert = \min_{(S, T)} c(S, T).
+
+$$
+
+In words: the largest flow equals the capacity of the narrowest cut. When Edmonds-Karp stops, the vertices its last BFS reached form $S$. In the run above, $S = \{s, a, b, d\}$, and the edges leaving it are $a \to c$ (12), $d \to c$ (7) and $d \to t$ (4), total 23: exactly the max flow, so this cut is a certificate that no larger flow exists. The min cut also names the bottleneck: the max flow can grow only if the capacity of an edge lying in **every** minimum cut is raised.
+
+<Callout type="pitfall">
+Upgrading an edge of the minimum cut you found may not help: if the graph has **another** minimum cut that avoids that edge, the max flow stays the same. And even when it helps, the gain stops at the capacity of the next-smallest cut. Recompute the max flow after any capacity change instead of assuming the gain equals the increase.
+</Callout>
+
+## Bipartite Matching
+
+A **bipartite matching** pairs items from two groups (people and jobs, students and projects) along allowed edges, each item used at most once. It reduces to max flow: add a source with a capacity-1 edge to every person, capacity-1 edges from each person to each job they can do, and a capacity-1 edge from every job to the sink. Each unit of flow is one person–job pair, and integer capacities guarantee an integer flow, so the max flow is the size of a **maximum matching**.
+
+```python
+from collections import deque
+
+def max_flow(cap, s, t):
+    flow = 0
+    while True:
+        prev, queue = {s: None}, deque([s])
+        while queue and t not in prev:
+            u = queue.popleft()
+            for v, c in cap[u].items():
+                if c > 0 and v not in prev:
+                    prev[v] = u
+                    queue.append(v)
+        if t not in prev:
+            return flow
+        v = t
+        while prev[v] is not None:                         # unit capacities: push 1 along the path
+            u = prev[v]
+            cap[u][v] -= 1
+            cap[v][u] = cap[v].get(u, 0) + 1
+            v = u
+        flow += 1
+
+can_do = {"ana": ["db", "web"], "ben": ["web"], "cy": ["db", "ml"], "dee": ["web"]}
+jobs = sorted({j for js in can_do.values() for j in js})
+cap = {"s": {p: 1 for p in can_do}, "t": {}}               # source -> each person -> their jobs -> sink
+for p, js in can_do.items():
+    cap[p] = {j: 1 for j in js}
+for j in jobs:
+    cap[j] = {"t": 1}
+print("people matched to jobs:", max_flow(cap, "s", "t"))
+print("assignment:", sorted((p, j) for p in can_do for j in can_do[p] if cap[j].get(p, 0) == 1))
+
+import networkx as nx
+G = nx.Graph([(p, j) for p, js in can_do.items() for j in js])
+print("networkx matching size:", len(nx.bipartite.maximum_matching(G, top_nodes=can_do)) // 2)
+# people matched to jobs: 3
+# assignment: [('ana', 'db'), ('ben', 'web'), ('cy', 'ml')]
+# networkx matching size: 3
+```
+
+In words: four people and three jobs give a matching of size 3. Ben and Dee can only do `web`, so one of them must go without a job; Ana takes `db` and Cy takes `ml`. The assignment is read from the residual graph: a reverse edge job → person with capacity 1 means one unit flowed person → job. networkx's dedicated matching algorithm (Hopcroft-Karp, $O(E\sqrt{V})$) finds the same size.
+
+Other problems that become max flow or min cut:
+
+- **Edge-disjoint paths**: the number of $s$–$t$ paths sharing no edge equals the max flow with unit capacities, a measure of network redundancy.
+- **Project selection**: choose profitable projects whose prerequisites cost money; a min cut separates the chosen from the rejected.
+- **Image segmentation**: pixels are vertices, similar neighbours are joined by high-capacity edges, and a min cut splits foreground from background along weak boundaries.
+
+<Callout type="key">
+To use flow, model the problem so that **one unit of flow is one unit of the thing being assigned**, and capacities encode the limits ("each person once", "each job once"). Then max flow gives the best assignment and the min cut explains what blocks a better one.
+</Callout>
