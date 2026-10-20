@@ -1,0 +1,172 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A segment tree answers a range sum from a few nodes"
+  caption="Each node holds the sum of the leaves below it; its index range is printed under it. Move l and r: green nodes lie fully inside the range and are added, yellow nodes overlap it partly and are split further, grey nodes are never visited. Click a leaf to add 1 to it: only the blue path from that leaf to the root is recomputed."
+>
+  <segment-tree-viz>
+    <div class="ctl-row">
+      <label class="st-lbl">l <input type="range" min="0" max="7" value="1" data-l /> <b data-lv>1</b></label>
+      <label class="st-lbl">r <input type="range" min="0" max="7" value="6" data-r /> <b data-rv>6</b></label>
+      <button type="button" class="btn" data-reset>Reset values</button>
+    </div>
+    <svg class="st-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="segment tree"></svg>
+    <p class="st-stat mono" data-stat></p>
+  </segment-tree-viz>
+</Figure>
+
+<style>
+  .st-lbl {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .st-lbl b {
+    color: var(--text);
+    min-width: 1ch;
+  }
+  .st-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .st-svg :global(line) {
+    stroke: var(--border);
+    stroke-width: 1.4;
+  }
+  .st-svg :global(line.upd) {
+    stroke: var(--g-blue);
+    stroke-width: 2.6;
+  }
+  .st-svg :global(rect) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.4;
+  }
+  .st-svg :global(.used rect) {
+    fill: rgba(52, 168, 83, 0.24);
+    stroke: var(--g-green);
+  }
+  .st-svg :global(.part rect) {
+    fill: rgba(251, 188, 5, 0.18);
+    stroke: var(--g-yellow);
+  }
+  .st-svg :global(.upd rect) {
+    stroke: var(--g-blue);
+    stroke-width: 2.6;
+  }
+  .st-svg :global(.leaf) {
+    cursor: pointer;
+  }
+  .st-svg :global(text) {
+    fill: var(--text);
+    font: 700 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .st-svg :global(text.rg) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+  }
+  .st-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0 4px;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const START = [5, 2, 8, 1, 9, 3, 7, 4];
+  const N = 8;
+  class SegmentTreeViz extends HTMLElement {
+    a = [...START];
+    upd: number[] = []; // heap indices recomputed by the last update
+    connectedCallback() {
+      this.querySelectorAll('input[type=range]').forEach((x) => x.addEventListener('input', () => this.draw()));
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.a = [...START];
+        this.upd = [];
+        this.draw();
+      });
+      this.querySelector('[data-svg]')!.addEventListener('click', (e) => {
+        const g = (e.target as Element).closest<SVGGElement>('[data-leaf]');
+        if (!g) return;
+        const i = +g.dataset.leaf!;
+        this.a[i] += 1;
+        this.upd = [];
+        for (let h = i + N; h >= 1; h = Math.floor(h / 2)) this.upd.push(h);
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const lIn = this.querySelector<HTMLInputElement>('[data-l]')!;
+      const rIn = this.querySelector<HTMLInputElement>('[data-r]')!;
+      let l = +lIn.value;
+      let r = +rIn.value;
+      if (l > r) [l, r] = [r, l];
+      this.querySelector('[data-lv]')!.textContent = String(+lIn.value);
+      this.querySelector('[data-rv]')!.textContent = String(+rIn.value);
+      // heap-indexed tree: node h covers [lo, hi]
+      const sum: number[] = Array(2 * N).fill(0);
+      const span: [number, number][] = Array(2 * N);
+      for (let i = 0; i < N; i++) {
+        sum[N + i] = this.a[i];
+        span[N + i] = [i, i];
+      }
+      for (let h = N - 1; h >= 1; h--) {
+        sum[h] = sum[2 * h] + sum[2 * h + 1];
+        span[h] = [span[2 * h][0], span[2 * h + 1][1]];
+      }
+      const state: Record<number, string> = {};
+      let total = 0;
+      const visit = (h: number) => {
+        const [lo, hi] = span[h];
+        if (hi < l || lo > r) return;
+        if (l <= lo && hi <= r) {
+          state[h] = 'used';
+          total += sum[h];
+          return;
+        }
+        state[h] = 'part';
+        visit(2 * h);
+        visit(2 * h + 1);
+      };
+      visit(1);
+      const W = 440;
+      const pos = (h: number): [number, number] => {
+        const d = Math.floor(Math.log2(h));
+        const k = h - 2 ** d;
+        const slots = 2 ** d;
+        return [((k + 0.5) / slots) * W, 22 + d * 58];
+      };
+      let s = '';
+      for (let h = 2; h < 2 * N; h++) {
+        const [x1, y1] = pos(h);
+        const [x2, y2] = pos(Math.floor(h / 2));
+        const up = this.upd.includes(h) && this.upd.includes(Math.floor(h / 2));
+        s += `<line class="${up ? 'upd' : ''}" x1="${x1}" y1="${y1 - 12}" x2="${x2}" y2="${y2 + 12}" />`;
+      }
+      for (let h = 1; h < 2 * N; h++) {
+        const [x, y] = pos(h);
+        const leaf = h >= N;
+        const cls = [state[h] ?? '', this.upd.includes(h) ? 'upd' : '', leaf ? 'leaf' : ''].join(' ');
+        const w = leaf ? 40 : 46;
+        const [lo, hi] = span[h];
+        s += `<g class="${cls}"${leaf ? ` data-leaf="${h - N}" role="button" aria-label="add 1 to a[${h - N}]"` : ''}><rect x="${x - w / 2}" y="${y - 12}" width="${w}" height="24" rx="6" /><text x="${x}" y="${y}">${sum[h]}</text><text class="rg" x="${x}" y="${y + 20}">${lo === hi ? `a[${lo}]` : `${lo}..${hi}`}</text></g>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const used = Object.values(state).filter((v) => v === 'used').length;
+      const visited = Object.keys(state).length;
+      const brute = this.a.slice(l, r + 1).reduce((x, y) => x + y, 0);
+      this.querySelector('[data-stat]')!.textContent = `sum a[${l}..${r}] = ${total} (check ${brute}) · nodes added = ${used} · nodes visited = ${visited} · elements in range = ${r - l + 1}`;
+    }
+  }
+  customElements.define('segment-tree-viz', SegmentTreeViz);
+</script>
