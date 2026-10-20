@@ -1,0 +1,191 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="LSM write path: memtable, flush, compaction"
+  caption="Each step is one write. The memtable holds 3 entries; when full it is flushed to level 0 as an immutable sorted SSTable. When level 0 holds 3 tables, compaction merges them into level 1, keeping only the newest value of each key and dropping tombstones (red ✕). Once compaction rewrites data, SSTable entries written overtake user writes: that ratio is write amplification."
+>
+  <lsm-write-path>
+    <div class="lw-row">
+      <span class="lw-lbl">memtable<br /><small>in memory</small></span>
+      <div class="lw-tables" data-mem></div>
+    </div>
+    <div class="lw-row">
+      <span class="lw-lbl">L0<br /><small>disk, newest left</small></span>
+      <div class="lw-tables" data-l0></div>
+    </div>
+    <div class="lw-row">
+      <span class="lw-lbl">L1<br /><small>disk, merged</small></span>
+      <div class="lw-tables" data-l1></div>
+    </div>
+    <p class="lw-msg" data-msg></p>
+    <p class="lw-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </lsm-write-path>
+</Figure>
+
+<style>
+  .lw-row {
+    display: grid;
+    grid-template-columns: 6.5em 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border);
+    min-height: 3.4em;
+  }
+  .lw-lbl {
+    font: 700 0.8125rem var(--font-mono);
+    color: var(--text);
+  }
+  .lw-lbl small {
+    font-weight: 400;
+    color: var(--text-faint);
+  }
+  .lw-tables {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .lw-tables :global(.tbl) {
+    display: flex;
+    gap: 3px;
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid var(--g-blue);
+    background: rgba(66, 133, 244, 0.12);
+  }
+  .lw-tables :global(.tbl.mem) {
+    border-style: dashed;
+    border-color: var(--border-strong);
+    background: transparent;
+    min-width: 2em;
+    min-height: 1.9em;
+  }
+  .lw-tables :global(.tbl.l1) {
+    border-color: var(--g-green);
+    background: rgba(52, 168, 83, 0.12);
+  }
+  .lw-tables :global(.e) {
+    font: 0.75rem var(--font-mono);
+    color: var(--text);
+    padding: 2px 5px;
+    border-radius: 5px;
+    background: var(--bg-soft);
+  }
+  .lw-tables :global(.e.new) {
+    outline: 2px solid var(--g-yellow);
+    background: rgba(251, 188, 5, 0.18);
+  }
+  .lw-tables :global(.e.dead) {
+    color: var(--g-red-l);
+  }
+  .lw-msg {
+    min-height: 2.8em;
+    margin: 10px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .lw-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  type Entry = [string, number | null]; // value null = tombstone
+  interface Frame {
+    mem: Entry[];
+    l0: Entry[][];
+    l1: Entry[];
+    hot: string; // key just written
+    msg: string;
+    user: number;
+    disk: number;
+  }
+  const OPS: Entry[] = [
+    ['k3', 1], ['k1', 1], ['k7', 1],
+    ['k1', 2], ['k5', 1], ['k3', null],
+    ['k2', 1], ['k7', 2], ['k9', 1],
+    ['k4', 1], ['k1', 3], ['k6', 1],
+  ];
+  const MEM = 3;
+  const L0_MAX = 3;
+  const sortE = (es: Entry[]) => [...es].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+
+  function frames(): Frame[] {
+    let mem = new Map<string, number | null>();
+    let l0: Entry[][] = [];
+    let l1: Entry[] = [];
+    let user = 0;
+    let disk = 0;
+    const snap = (hot: string, msg: string): Frame => ({ mem: [...mem.entries()], l0: l0.map((t) => [...t]), l1: [...l1], hot, msg, user, disk });
+    const out: Frame[] = [snap('', 'Empty engine. Every write goes to the WAL (not drawn) and the in-memory memtable.')];
+    for (const [k, v] of OPS) {
+      user++;
+      mem.set(k, v);
+      const what = v === null ? `delete ${k}: stored as a tombstone` : `put ${k} = ${v}`;
+      if (mem.size < MEM) {
+        out.push(snap(k, `${what}. Memtable has ${mem.size} of ${MEM} entries.`));
+        continue;
+      }
+      out.push(snap(k, `${what}. Memtable is full.`));
+      l0.unshift(sortE([...mem.entries()]));
+      disk += mem.size;
+      mem = new Map();
+      out.push(snap('', `Flush: the memtable is written as one sorted, immutable SSTable at the front of L0 (${l0[0].length} entries, one sequential write).`));
+      if (l0.length === L0_MAX) {
+        const merged = new Map<string, number | null>(l1);
+        for (const t of [...l0].reverse()) for (const [key, val] of t) merged.set(key, val); // oldest first so newer wins
+        const before = l0.reduce((s, t) => s + t.length, 0) + l1.length;
+        l1 = sortE([...merged.entries()].filter(([, val]) => val !== null));
+        l0 = [];
+        disk += l1.length;
+        out.push(snap('', `Compaction: ${L0_MAX} L0 tables merged into L1. ${before} stored entries become ${l1.length}: older values of k1 and k7 and the tombstoned k3 are gone.`));
+      }
+    }
+    return out;
+  }
+
+  class LsmWritePath extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    chips(es: Entry[], hot: string) {
+      return es
+        .map(([k, v]) => {
+          const cls = ['e', v === null ? 'dead' : '', k === hot ? 'new' : ''].join(' ');
+          return `<span class="${cls}">${v === null ? `${k} ✕` : `${k}=${v}`}</span>`;
+        })
+        .join('');
+    }
+    draw() {
+      const f = this.fr[this.i];
+      this.querySelector('[data-mem]')!.innerHTML = `<div class="tbl mem">${this.chips(f.mem, f.hot)}</div>`;
+      this.querySelector('[data-l0]')!.innerHTML = f.l0.map((t) => `<div class="tbl">${this.chips(t, '')}</div>`).join('');
+      this.querySelector('[data-l1]')!.innerHTML = f.l1.length ? `<div class="tbl l1">${this.chips(f.l1, '')}</div>` : '';
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const amp = f.user ? (f.disk / f.user).toFixed(2) : '0';
+      const places = 1 + f.l0.length + (f.l1.length ? 1 : 0);
+      this.querySelector('[data-stat]')!.textContent = `user writes = ${f.user} · SSTable entries written = ${f.disk} · write amp (WAL not counted) = ${amp} · places a read checks = ${places}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('lsm-write-path', LsmWritePath);
+</script>

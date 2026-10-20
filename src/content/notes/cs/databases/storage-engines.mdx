@@ -3,6 +3,255 @@ title: "Storage Engines"
 description: "How databases lay data on disk: B-trees vs LSM-trees, the write-ahead log, compaction and MVCC."
 order: 6
 tier: advanced
+takeaways:
+  - "A **storage engine** is the part of a database that puts rows on disk and finds them again; SQL sits on top of it."
+  - "The **write-ahead log** makes a commit durable with one sequential append; data pages can be written later and rebuilt from the log after a crash."
+  - "**B-trees** update fixed-size pages in place: cheap reads (a few pages per lookup), costly random writes. **LSM-trees** buffer writes in memory and flush sorted files: cheap writes, more places to look on reads."
+  - "**Compaction** merges LSM files and drops overwritten values and **tombstones**; it is the price of the cheap writes, paid in background I/O (**write amplification**)."
+  - "**MVCC** keeps several versions of a row so readers see a fixed snapshot and never block writers; old versions must be cleaned up later."
+resources:
+  - title: "PostgreSQL: Write-Ahead Logging"
+    url: "https://www.postgresql.org/docs/current/wal-intro.html"
+    note: "Why logging changes first lets the database delay page writes, in two short paragraphs."
+  - title: "The Log-Structured Merge-Tree (O'Neil et al.)"
+    url: "https://www.cs.umb.edu/~poneil/lsmtree.pdf"
+    note: "The 1996 paper that introduced the LSM-tree and its cost argument."
+  - title: "RocksDB Overview (RocksDB wiki)"
+    url: "https://github.com/facebook/rocksdb/wiki/RocksDB-Overview"
+    note: "A production LSM engine: memtables, SSTables, compaction styles and their trade-offs."
 ---
 
-_Placeholder. Content not written yet._
+[Indexes](../indexes/) explain how a database finds a row quickly, and [Transactions & ACID](../transactions-and-acid/) explain what a commit promises. Both rest on a lower layer: the **storage engine**, the component that decides how rows are laid out on disk, how a write becomes durable, and how a read finds the newest value. Two designs dominate. **B-tree engines** (PostgreSQL, MySQL's InnoDB, SQLite) update pages in place; **LSM-tree engines** (RocksDB, Cassandra, LevelDB) only ever append. This note covers the write-ahead log both rely on, the two designs, the **compaction** work LSM-trees need, how to compare engines with **read and write amplification**, and **MVCC**, which lets readers and writers work at the same time. It builds on the page-based [B-trees](../../data-structures/skip-lists-and-b-trees/) from Data Structures.
+
+## Why Disks Shape Engines
+
+Disks and SSDs read and write in **blocks** (typically 4 KiB or more), not bytes. Changing one 100-byte row still costs a whole block write. **Sequential** I/O (consecutive blocks) is much faster than **random** I/O on spinning disks and still cheaper on SSDs, which erase in large units. An engine is a set of choices about which work to make sequential, which to batch, and which to defer.
+
+The other constraint is crashes. Memory is lost on power failure, and a block write can be interrupted halfway (a **torn page**). Every engine needs a way to say "this commit happened" that survives both.
+
+## The Write-Ahead Log
+
+The **write-ahead log (WAL)** is an append-only file of change records. The rule is in the name: a change is written to the log, and the log is flushed to stable storage with `fsync`, **before** the commit is acknowledged and before the changed data page may be written. Appending is sequential, so a commit costs one small sequential write instead of several random page writes.
+
+After a crash, **recovery** reads the log: it redoes changes of transactions that have a commit record and ignores (or undoes) those that do not. A toy version:
+
+```python
+log = []          # the write-ahead log: appended and fsynced before the commit is acknowledged
+pages = {}        # data pages: updated lazily, may be stale after a crash
+
+def commit(tx_id, writes):
+    for key, value in writes.items():
+        log.append({"tx": tx_id, "key": key, "value": value})
+    log.append({"tx": tx_id, "commit": True})    # the commit record makes the transaction durable
+
+def recover(log):
+    committed = {r["tx"] for r in log if r.get("commit")}
+    state = {}
+    for r in log:                                 # redo only the work of committed transactions
+        if "key" in r and r["tx"] in committed:
+            state[r["key"]] = r["value"]
+    return state
+
+commit(1, {"alice": 400, "bob": 300})
+log.append({"tx": 2, "key": "alice", "value": 0}) # tx 2 crashes before its commit record
+print("pages before crash:", pages)
+print("recovered:", recover(log))
+# pages before crash: {}
+# recovered: {'alice': 400, 'bob': 300}
+```
+
+In words: no data page was ever written (`{}`), yet recovery rebuilds `alice = 400, bob = 300` from the log alone, and transaction 2's half-finished write of `alice = 0` is dropped because it has no commit record. That is atomicity and durability from one mechanism. Real engines also write **checkpoints** (flush dirty pages, note the log position) so recovery need not replay the log from the beginning.
+
+<Callout type="pitfall">
+A commit is only as durable as the `fsync` behind it. Settings such as PostgreSQL's `synchronous_commit = off`, SQLite's `PRAGMA synchronous = OFF`, or a disk with a volatile write cache that lies about flushes all acknowledge commits before the log is on stable storage. They are faster, and a power cut can lose the last acknowledged transactions.
+</Callout>
+
+## B-Tree Engines
+
+A **B-tree engine** stores the table (or each index) as a [B-tree](../../data-structures/skip-lists-and-b-trees/) of fixed-size **pages**. Each internal page holds hundreds of keys and child pointers, so the tree is shallow: with a fan-out of 100, three levels address a million rows. A lookup reads one page per level; the top levels are almost always in the **buffer pool** (the engine's page cache in memory).
+
+An update finds the leaf page, changes the row **in place** in memory, logs the change to the WAL, and writes the dirty page back later. When a page is full, it **splits** in two and the parent gains a key; splits can propagate to the root, which is how the tree grows. Because a page write can tear, engines protect pages: PostgreSQL logs a full copy of a page the first time it changes after a checkpoint, and InnoDB writes pages to a **doublewrite buffer** first.
+
+Strengths: predictable reads, efficient range scans (leaves are in key order), one place per key. Weakness: every change dirties a whole page somewhere random on disk.
+
+## LSM-Tree Engines
+
+A **log-structured merge-tree (LSM-tree)** never updates data in place. A write goes to the WAL and into the **memtable**, a sorted in-memory structure (often a [skip list](../../data-structures/skip-lists-and-b-trees/)). When the memtable is full, it is written out in one sequential pass as an immutable sorted file, an **SSTable** (sorted string table). A delete is a write too: it stores a **tombstone**, a marker saying "this key is gone".
+
+A read checks the memtable, then SSTables from newest to oldest, and stops at the first hit, because the newest value wins. To avoid opening every file, each SSTable has a [Bloom filter](../../data-structures/bloom-filters/) that answers "definitely not here" for most absent keys, plus a sparse index of its key ranges.
+
+Step through the write path. Keys go into the memtable, full memtables flush to level 0, and a full level is compacted into the next:
+
+<LsmWritePath />
+
+A toy LSM with a 3-entry memtable:
+
+```python
+class LSM:
+    def __init__(self, memtable_size=3):
+        self.memtable = {}
+        self.sstables = []        # newest first; each is a sorted list of (key, value)
+        self.size = memtable_size
+
+    def put(self, key, value):
+        self.memtable[key] = value
+        if len(self.memtable) >= self.size:
+            self.sstables.insert(0, sorted(self.memtable.items()))   # flush: one sequential write
+            self.memtable = {}
+
+    def delete(self, key):
+        self.put(key, None)       # a tombstone: a delete is just another write
+
+    def get(self, key):
+        if key in self.memtable:
+            return self.memtable[key]
+        for table in self.sstables:                                   # newest file wins
+            for k, v in table:
+                if k == key:
+                    return v
+        return None
+
+    def compact(self):
+        merged = {}
+        for table in reversed(self.sstables):                         # oldest first, so newer values overwrite
+            merged.update(table)
+        self.sstables = [sorted((k, v) for k, v in merged.items() if v is not None)]
+
+db = LSM()
+for k, v in [("b", 1), ("a", 1), ("c", 1), ("a", 2), ("d", 1)]:
+    db.put(k, v)
+db.delete("b")
+print("sstables:", db.sstables)
+print("get a:", db.get("a"), "| get b:", db.get("b"))
+db.compact()
+print("after compaction:", db.sstables)
+# sstables: [[('a', 2), ('b', None), ('d', 1)], [('a', 1), ('b', 1), ('c', 1)]]
+# get a: 2 | get b: None
+# after compaction: [[('a', 2), ('c', 1), ('d', 1)]]
+```
+
+In words: after six writes there are two SSTables, and key `a` exists in both (`a = 1` in the old file, `a = 2` in the new one); `get` returns `2` because it searches newest first. Key `b` reads as `None` because the newer file holds its tombstone, even though the old file still has `b = 1`. Compaction merges both files into one, keeps only `a = 2`, and drops `b` entirely: 6 stored entries become 3.
+
+## Compaction
+
+Without **compaction**, an LSM-tree would accumulate files forever: reads would check more and more of them, and overwritten values and tombstones would waste space. Compaction is a background merge of sorted files (the merge step of merge sort), which writes a new file and deletes the inputs. Two common policies:
+
+- **Size-tiered**: when several files of similar size exist, merge them into one bigger file. Fewer rewrites per byte, but more files to check on reads and temporary space for big merges.
+- **Leveled**: data lives in levels $L_0, L_1, \dots$, each about 10 times larger than the last, and within a level ($L_1$ and below) key ranges do not overlap, so a read checks at most one file per level. Each byte is rewritten more often as it moves down.
+
+A tombstone can only be dropped when compaction reaches the oldest file that might still hold the key; until then it must be kept, or the old value would reappear.
+
+<Callout type="pitfall">
+LSM write throughput is not free; it is deferred. If writes arrive faster than compaction can merge, files pile up in $L_0$, reads slow down, and engines such as RocksDB **stall** incoming writes until compaction catches up. Benchmarks that run for a few minutes often miss this.
+</Callout>
+
+## Read and Write Amplification
+
+Engines are compared with three ratios:
+
+- **Write amplification**: bytes written to disk divided by bytes the application wrote.
+- **Read amplification**: pages or files read per lookup.
+- **Space amplification**: bytes on disk divided by the size of the live data.
+
+A rough count for 4,000 rows of 100 bytes. The B-tree writes the row to the log and rewrites its 4 KiB page each time (the worst case, with no batching of updates to the same page); the LSM writes each row to the log, to its flushed SSTable, and again at every size-tiered merge:
+
+```python
+import math
+
+ROW, PAGE = 100, 4096          # bytes per row, bytes per B-tree page
+N = 4000                       # rows inserted
+
+# B-tree: each row write logs the row, then rewrites the whole page it lives on
+btree_written = N * (ROW + PAGE)
+fanout = PAGE // ROW
+btree_height = math.ceil(math.log(N / fanout, fanout)) + 1
+
+# LSM, size-tiered: flush 4 rows per table; merge 4 tables of one tier into one table of the next
+MEM, MERGE = 4, 4
+lsm_written = N * ROW * 2      # once to the log, once when the memtable is flushed
+tiers = {}                     # tier -> number of tables waiting there
+for _ in range(N // MEM):
+    tier = 0
+    tiers[0] = tiers.get(0, 0) + 1
+    while tiers[tier] == MERGE:                 # a full tier is merged and rewritten one tier up
+        tiers[tier] = 0
+        lsm_written += MEM * MERGE ** (tier + 1) * ROW
+        tier += 1
+        tiers[tier] = tiers.get(tier, 0) + 1
+tables_left = sum(tiers.values())
+
+print("B-tree write amplification:", round(btree_written / (N * ROW), 1))
+print("LSM write amplification:   ", round(lsm_written / (N * ROW), 1))
+print("B-tree pages read per lookup:", btree_height)
+print("LSM places checked per lookup (worst case):", tables_left + 1, "(memtable + tables)")
+# B-tree write amplification: 42.0
+# LSM write amplification:    5.7
+# B-tree pages read per lookup: 3
+# LSM places checked per lookup (worst case): 11 (memtable + tables)
+```
+
+In words: rewriting a 4,096-byte page for every 100-byte row gives the B-tree a write amplification of 42, against 5.7 for the LSM-tree, which writes each row once to the log, once on flush, and a few more times as merges carry it down. Reads go the other way: the B-tree finds any row in 3 page reads, while the LSM may have to check the memtable and 10 SSTables, which is why Bloom filters and leveled compaction matter. The numbers are a model, not a benchmark: real B-trees batch many updates per page write, and real LSM engines use larger files and leveled merges.
+
+| | B-tree | LSM-tree |
+| --- | --- | --- |
+| Write path | Random page writes, in place | Sequential appends and merges |
+| Point read | One page per level | Memtable, then files newest first |
+| Range scan | Walk sorted leaf pages | Merge sorted runs from several files |
+| Background work | Checkpoints, vacuum | Compaction |
+| Typical use | OLTP with mixed reads and writes | Write-heavy: logs, metrics, time series, key-value stores |
+| Examples | PostgreSQL, InnoDB, SQLite | RocksDB, Cassandra, LevelDB |
+
+The [Key-Value Store](../../case-studies/key-value-store/) case study uses an LSM engine on each node for exactly this write-heavy reason.
+
+## MVCC: Readers Never Block
+
+Two transactions touch the same row: a long report reads `stock`, and a checkout updates it. With locks alone, one waits for the other. **Multi-version concurrency control (MVCC)** avoids the wait by keeping **several versions** of a row. An update does not overwrite: it marks the old version as deleted by its transaction and appends a new version. Each transaction reads from a **snapshot**: it sees only versions created by transactions that committed before the snapshot was taken, and not yet deleted by them.
+
+A toy model, where a snapshot taken at transaction id $s$ treats every transaction with an id below $s$ as committed (real engines also track which ids are still in progress):
+
+```python
+versions = []      # each row version: (key, value, created_by, deleted_by)
+next_tx = 1
+
+def begin():
+    global next_tx
+    tx, next_tx = next_tx, next_tx + 1
+    return tx
+
+def visible(v, snapshot):
+    key, value, created, deleted = v
+    return created < snapshot and (deleted is None or deleted >= snapshot)
+
+def read(key, snapshot):
+    return [v[1] for v in versions if v[0] == key and visible(v, snapshot)]
+
+def write(tx, key, value):
+    for i, v in enumerate(versions):            # mark the old version dead instead of overwriting it
+        if v[0] == key and v[3] is None:
+            versions[i] = (v[0], v[1], v[2], tx)
+    versions.append((key, value, tx, None))
+
+t1 = begin()
+write(t1, "stock", 5)                            # tx 1 commits stock = 5
+reader = begin()                                 # a long report starts: its snapshot sees tx < 2
+writer = begin()
+write(writer, "stock", 4)                        # tx 3 sells one unit
+print("reader sees:", read("stock", reader))
+print("a new transaction sees:", read("stock", begin()))
+print("versions kept:", len(versions))
+# reader sees: [5]
+# a new transaction sees: [4]
+# versions kept: 2
+```
+
+In words: the report (transaction 2) still reads `stock = 5` after transaction 3 changed it to 4, because version 4 was created by a transaction its snapshot does not include; a transaction that starts afterwards reads `4`. Neither had to wait, and the database now holds 2 versions of one row. This is how [snapshot isolation](../transactions-and-acid/) is built. Writers still conflict with each other: two transactions updating the same row are serialized by a row lock or by aborting one.
+
+The old versions must be removed once no snapshot can see them: PostgreSQL's **VACUUM** does this for its heap tables, and InnoDB purges its **undo log**. In an LSM engine, old versions are simply older entries that compaction drops.
+
+<Callout type="pitfall">
+A transaction left open for hours (an idle session, a forgotten `BEGIN` in a notebook) holds back the oldest visible snapshot, so no version newer than it can be cleaned up. Tables and indexes **bloat**, and queries slow down. Monitor the oldest open transaction, not just the slowest query.
+</Callout>
+
+<Callout type="key">
+Pick the engine by workload: B-trees for read-heavy and mixed transactional work with range scans; LSM-trees when sustained write rate dominates. MVCC is orthogonal: both B-tree (PostgreSQL, InnoDB) and LSM (RocksDB, CockroachDB) engines implement it.
+</Callout>
