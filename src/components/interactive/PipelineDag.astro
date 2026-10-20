@@ -1,0 +1,181 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An orchestrator runs a DAG, wave by wave"
+  caption="Each step runs every task whose dependencies have all succeeded (yellow while running, green when done). Pick a task to fail: it turns red, and everything downstream is skipped (dashed) rather than run on missing data. Fix and rerun runs only the failed and skipped tasks; finished work is kept."
+>
+  <pipeline-dag>
+    <div class="ctl-row">
+      <span class="ctl-label">Task that fails</span>
+      <input type="hidden" data-fail value="clean_orders" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="none" aria-pressed="false">None</button>
+        <button type="button" class="btn" data-choice="extract_customers" aria-pressed="false">extract_customers</button>
+        <button type="button" class="btn" data-choice="clean_orders" aria-pressed="true">clean_orders</button>
+        <button type="button" class="btn" data-choice="join" aria-pressed="false">join</button>
+      </span>
+    </div>
+    <svg class="pd-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="pipeline DAG"></svg>
+    <p class="pd-msg" data-msg></p>
+    <p class="pd-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+      <button type="button" class="btn" data-rerun disabled>Fix and rerun</button>
+    </div>
+  </pipeline-dag>
+</Figure>
+
+<style>
+  .pd-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .pd-svg :global(path.edge) {
+    fill: none;
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .pd-svg :global(rect) {
+    fill: var(--bg-soft);
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .pd-svg :global(.running rect) {
+    fill: rgba(251, 188, 5, 0.22);
+    stroke: var(--g-yellow);
+  }
+  .pd-svg :global(.success rect) {
+    fill: rgba(52, 168, 83, 0.22);
+    stroke: var(--g-green);
+  }
+  .pd-svg :global(.failed rect) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+  }
+  .pd-svg :global(.skipped rect) {
+    stroke-dasharray: 4 3;
+    opacity: 0.55;
+  }
+  .pd-svg :global(text) {
+    fill: var(--text);
+    font: 10.5px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .pd-svg :global(.skipped text) {
+    fill: var(--text-faint);
+  }
+  .pd-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .pd-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const DEPS: Record<string, string[]> = {
+    extract_orders: [],
+    extract_customers: [],
+    clean_orders: ['extract_orders'],
+    join: ['clean_orders', 'extract_customers'],
+    daily_report: ['join'],
+    ml_features: ['join'],
+  };
+  const POS: Record<string, [number, number]> = {
+    extract_orders: [60, 50], extract_customers: [60, 150], clean_orders: [190, 50],
+    join: [288, 100], daily_report: [382, 50], ml_features: [382, 150],
+  };
+  type St = 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+
+  class PipelineDag extends HTMLElement {
+    status: Record<string, St> = {};
+    fail = 'clean_orders';
+    wave = 0;
+    runs = 0;
+    connectedCallback() {
+      this.querySelector('[data-fail]')!.addEventListener('change', () => this.reset());
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-rerun]')!.addEventListener('click', () => {
+        this.fail = 'none';
+        for (const t in this.status) if (this.status[t] !== 'success') this.status[t] = 'pending';
+        this.msg('Bug fixed. Failed and skipped tasks are pending again; finished tasks keep their output.');
+        this.draw();
+      });
+      this.reset();
+    }
+    reset() {
+      this.fail = this.querySelector<HTMLInputElement>('[data-fail]')!.value;
+      for (const t in DEPS) this.status[t] = 'pending';
+      this.wave = 0;
+      this.runs = 0;
+      this.msg('All tasks pending. Step runs every task whose dependencies are done.');
+      this.draw();
+    }
+    msg(s: string) {
+      this.querySelector('[data-msg]')!.textContent = s;
+    }
+    step() {
+      const st = this.status;
+      // finish whatever was running
+      const running = Object.keys(st).filter((t) => st[t] === 'running');
+      if (running.length) {
+        for (const t of running) st[t] = t === this.fail ? 'failed' : 'success';
+        const failed = running.filter((t) => st[t] === 'failed');
+        // anything depending (transitively) on a failure is skipped
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const t in DEPS) if (st[t] === 'pending' && DEPS[t].some((d) => st[d] === 'failed' || st[d] === 'skipped')) { st[t] = 'skipped'; changed = true; }
+        }
+        this.msg(failed.length ? `${failed.join(', ')} failed. Downstream tasks are skipped instead of running on missing data.` : `${running.join(', ')} succeeded.`);
+        return this.draw();
+      }
+      const ready = Object.keys(st).filter((t) => st[t] === 'pending' && DEPS[t].every((d) => st[d] === 'success'));
+      if (ready.length) {
+        this.wave++;
+        this.runs += ready.length;
+        for (const t of ready) st[t] = 'running';
+        this.msg(`Wave ${this.wave}: ${ready.join(' and ')} ${ready.length > 1 ? 'run in parallel' : 'runs'}; all their dependencies are done.`);
+      }
+      this.draw();
+    }
+    draw() {
+      const st = this.status;
+      let s = '<defs><marker id="pd-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--border-strong)" /></marker></defs>';
+      const W = 112;
+      const H = 28;
+      for (const t in DEPS) for (const d of DEPS[t]) {
+        const [x1, y1] = POS[d];
+        const [x2, y2] = POS[t];
+        const sx = x1 + (d === 'join' ? 22 : W / 2);
+        const ex = x2 - (t === 'join' ? 22 : W / 2) - 3;
+        s += `<path class="edge" d="M${sx} ${y1} C ${(sx + ex) / 2} ${y1}, ${(sx + ex) / 2} ${y2}, ${ex} ${y2}" marker-end="url(#pd-arr)" />`;
+      }
+      for (const t in DEPS) {
+        const [x, y] = POS[t];
+        const w = t === 'join' ? 44 : W;
+        s += `<g class="${st[t]}"><rect x="${x - w / 2}" y="${y - H / 2}" width="${w}" height="${H}" rx="7" /><text x="${x}" y="${y}">${t}</text></g>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const count = (k: St) => Object.values(st).filter((v) => v === k).length;
+      this.querySelector('[data-stat]')!.textContent = `success = ${count('success')} · failed = ${count('failed')} · skipped = ${count('skipped')} · pending = ${count('pending') + count('running')} · task runs = ${this.runs}`;
+      const busy = Object.values(st).some((v) => v === 'running') || Object.keys(st).some((t) => st[t] === 'pending' && DEPS[t].every((d) => st[d] === 'success'));
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = !busy;
+      this.querySelector<HTMLButtonElement>('[data-rerun]')!.disabled = busy || count('failed') === 0;
+    }
+  }
+  customElements.define('pipeline-dag', PipelineDag);
+</script>

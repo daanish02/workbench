@@ -1,0 +1,172 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Watermarks decide when a window is final"
+  caption="The same 7 events as the note's code, one arrival per step. Each dot sits at its event time; rows are arrival order. The yellow line is the watermark (largest event time seen). A window closes, and its count becomes final, once the watermark passes its end plus the allowed lateness. Late events that still make it are green; events whose window already closed are red and dropped. Raise the lateness to 10 s to keep e4 and e7."
+>
+  <stream-windows>
+    <div class="ctl-row">
+      <label class="sw-lbl">allowed lateness <input type="range" min="0" max="10" step="1" value="0" data-late /> <b data-latev>0 s</b></label>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">arrival order</span>
+      <svg class="sw-svg" data-svg viewBox="0 0 440 210" role="img" aria-label="events by event time and arrival order"></svg>
+      <span class="ax-x">event time (s)</span>
+    </div>
+    <p class="sw-msg" data-msg></p>
+    <p class="sw-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </stream-windows>
+</Figure>
+
+<style>
+  .sw-lbl {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sw-lbl b {
+    color: var(--text);
+  }
+  .sw-svg {
+    display: block;
+    width: 100%;
+  }
+  .sw-svg :global(rect.win) {
+    fill: rgba(66, 133, 244, 0.07);
+    stroke: var(--border);
+  }
+  .sw-svg :global(rect.win.closed) {
+    fill: rgba(52, 168, 83, 0.1);
+    stroke: var(--g-green);
+  }
+  .sw-svg :global(circle) {
+    fill: var(--g-blue);
+  }
+  .sw-svg :global(circle.cur) {
+    fill: var(--g-yellow);
+  }
+  .sw-svg :global(circle.late) {
+    fill: var(--g-green);
+  }
+  .sw-svg :global(circle.drop) {
+    fill: var(--g-red);
+  }
+  .sw-svg :global(line.wm) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+    stroke-dasharray: 5 3;
+  }
+  .sw-svg :global(text) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+  .sw-svg :global(text.ax-tick) {
+    fill: var(--text-faint);
+    text-anchor: middle;
+  }
+  .sw-svg :global(text.cnt) {
+    fill: var(--text);
+    font-weight: 700;
+    text-anchor: middle;
+  }
+  .sw-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .sw-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const EVENTS: [string, number][] = [['e1', 1], ['e2', 4], ['e3', 8], ['e5', 12], ['e4', 9], ['e6', 18], ['e7', 3]];
+  const SIZE = 10;
+  const X = (t: number) => 20 + (t / 30) * 410;
+  const Y = (i: number) => 22 + i * 24;
+
+  class StreamWindows extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      const late = this.querySelector<HTMLInputElement>('[data-late]')!;
+      late.addEventListener('input', () => {
+        this.querySelector('[data-latev]')!.textContent = `${late.value} s`;
+        this.i = 0;
+        this.draw();
+      });
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < EVENTS.length) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const lateness = +this.querySelector<HTMLInputElement>('[data-late]')!.value;
+      let wm = -Infinity;
+      const open: Record<number, number> = {};
+      const final: Record<number, number> = {};
+      const kind: string[] = [];
+      let msg = 'No events yet. Step to deliver them in arrival order.';
+      for (let k = 0; k < this.i; k++) {
+        const [id, t] = EVENTS[k];
+        const start = Math.floor(t / SIZE) * SIZE;
+        if (start + SIZE + lateness <= wm) {
+          kind.push('drop');
+          msg = `${id} (event time ${t}) arrives, but window [${start}, ${start + SIZE}) closed when the watermark passed ${start + SIZE + lateness}: dropped.`;
+          continue;
+        }
+        const isLate = t < wm;
+        kind.push(isLate ? 'late' : '');
+        open[start] = (open[start] ?? 0) + 1;
+        const before = wm;
+        wm = Math.max(wm, t);
+        const closing = Object.keys(open).map(Number).filter((s) => s + SIZE + lateness <= wm);
+        for (const s of closing) {
+          final[s] = open[s];
+          delete open[s];
+        }
+        msg = `${id} (event time ${t}) arrives${isLate ? `, behind the watermark ${before}, but its window is still open` : ''}. Watermark = ${wm}.` + (closing.length ? ` Window [${closing[0]}, ${closing[0] + SIZE}) is now final with ${final[closing[0]]} events.` : '');
+      }
+      if (this.i === EVENTS.length) {
+        msg += ' End of input: open windows are flushed.';
+        for (const s in open) final[+s] = open[+s];
+      }
+      let s = '';
+      for (const ws of [0, 10, 20]) {
+        const closed = ws in final;
+        s += `<rect class="win${closed ? ' closed' : ''}" x="${X(ws)}" y="8" width="${X(ws + SIZE) - X(ws)}" height="176" rx="4" />`;
+        s += `<text class="cnt" x="${(X(ws) + X(ws + SIZE)) / 2}" y="198">${closed ? `final: ${final[ws]}` : ws in open ? `open: ${open[ws]}` : ''}</text>`;
+      }
+      for (const t of [0, 10, 20, 30]) s += `<text class="ax-tick" x="${X(t)}" y="208">${t}</text>`;
+      EVENTS.slice(0, this.i).forEach(([id, t], k) => {
+        const cls = k === this.i - 1 && kind[k] === '' ? 'cur' : kind[k];
+        s += `<circle class="${cls}" cx="${X(t)}" cy="${Y(k)}" r="6" /><text x="${X(t) + 9}" y="${Y(k) + 4}">${id}</text>`;
+      });
+      if (wm > -Infinity) s += `<line class="wm" x1="${X(wm)}" y1="8" x2="${X(wm)}" y2="184" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = msg;
+      const dropped = EVENTS.slice(0, this.i).filter((_, k) => kind[k] === 'drop').map(([id]) => id);
+      const res = Object.entries(final).map(([w, c]) => `[${w},${+w + SIZE})=${c}`).join(' ');
+      this.querySelector('[data-stat]')!.textContent = `arrived = ${this.i}/7 · watermark = ${wm > -Infinity ? wm : '–'} · final = ${res || 'none'} · dropped = ${dropped.join(', ') || 'none'}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === EVENTS.length;
+    }
+  }
+  customElements.define('stream-windows', StreamWindows);
+</script>

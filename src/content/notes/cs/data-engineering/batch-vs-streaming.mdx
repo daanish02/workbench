@@ -3,6 +3,170 @@ title: "Batch vs Streaming"
 description: "Processing data in bounded batches or unbounded streams: event time, windows and delivery guarantees."
 order: 2
 tier: core
+takeaways:
+  - "**Batch** processing runs over a **bounded** dataset that is complete (yesterday's orders); **streaming** processes an **unbounded** dataset continuously, updating results as each event arrives."
+  - "**Event time** is when something happened; **processing time** is when the system sees it. They differ because of network delays and offline devices, so group by event time when correctness matters."
+  - "Streams are aggregated in **windows**: **tumbling** (fixed, non-overlapping), **sliding** (overlapping) and **session** (split by gaps of inactivity)."
+  - "A **watermark** is the system's estimate that no older events will arrive; it decides when a window's result is final, and **allowed lateness** trades latency for completeness."
+  - "**At-least-once** delivery can duplicate events; \"exactly-once\" in practice means at-least-once plus **idempotent** or transactional processing, so each event **affects** the result once."
+resources:
+  - title: "The Dataflow Model (Akidau et al., VLDB 2015)"
+    url: "https://www.vldb.org/pvldb/vol8/p1792-Akidau.pdf"
+    note: "The paper behind modern stream processors: event time, windows, watermarks and triggers."
+  - title: "Timely Stream Processing (Apache Flink docs)"
+    url: "https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/"
+    note: "Event time versus processing time and how watermarks flow through a job."
+  - title: "Exactly-once Semantics in Apache Kafka (Confluent)"
+    url: "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+    note: "What exactly-once really guarantees, and the idempotent producer and transactions behind it."
 ---
 
-_Placeholder. Content not written yet._
+The pipelines in [ETL & Pipelines](../etl-and-pipelines/) ran once a day over yesterday's data. That is fine for a finance report, but not for fraud detection, which must flag a card within seconds, or for a dashboard of live orders. **Stream processing** handles data continuously, as each event arrives. It raises questions that batch never had to ask: when is a result "done" if more data may still come, and what does "per minute" mean when events arrive out of order? This note compares **batch** and **streaming**, then covers **event time** versus **processing time**, **windows**, **watermarks** and late data, and the **delivery guarantees** of streaming systems. It builds on [Message Queues](../../system-design/message-queues/); the log that most streaming systems read from is the subject of [Event Logs](../event-logs/).
+
+## Bounded and Unbounded Data
+
+**Batch processing** works on a **bounded** dataset: a fixed set of records, such as all orders of 2026-10-01, that is complete before the job starts. The job reads everything, computes, writes the result and stops (Spark, SQL in a warehouse, MapReduce). **Stream processing** works on an **unbounded** dataset that never ends, such as the stream of all orders, and keeps **state** (running totals, open windows) that each new event updates (Flink, Kafka Streams, Spark Structured Streaming).
+
+```python
+events = [("ana", 5), ("ben", 3), ("ana", 2), ("cy", 7), ("ben", 1)]
+
+batch = {}                                     # batch: the input is complete, compute once
+for user, amount in events:
+    batch[user] = batch.get(user, 0) + amount
+
+state, snapshots = {}, []                      # streaming: update state per event, emit as you go
+for user, amount in events:
+    state[user] = state.get(user, 0) + amount
+    snapshots.append(dict(state))
+
+print("batch result:", batch)
+print("stream after 2 events:", snapshots[1])
+print("stream after all events:", snapshots[-1], "| same as batch:", snapshots[-1] == batch)
+# batch result: {'ana': 7, 'ben': 4, 'cy': 7}
+# stream after 2 events: {'ana': 5, 'ben': 3}
+# stream after all events: {'ana': 7, 'ben': 4, 'cy': 7} | same as batch: True
+```
+
+In words: the batch job produces one answer at the end. The streaming version has an answer at every moment: after 2 events Ana has 5 and Ben 3, and after all 5 it equals the batch result. Streaming gives low **latency** (results within seconds); batch gives simplicity and easy reprocessing (rerun the job). Many systems run both: a stream for fresh approximate numbers and a nightly batch to correct them, or a single streaming engine that also replays history.
+
+| | Batch | Streaming |
+| --- | --- | --- |
+| Input | Bounded, complete | Unbounded, arriving |
+| Latency | Minutes to hours | Milliseconds to seconds |
+| State | Rebuilt each run | Kept and updated continuously |
+| Reprocessing | Rerun the job | Replay the log from an offset |
+| Typical uses | Reports, model training, backfills | Alerts, fraud detection, live dashboards, feature updates |
+
+## Event Time and Processing Time
+
+Every event has two timestamps that matter:
+
+- **Event time**: when it happened, recorded by the device or service that produced it.
+- **Processing time**: when the stream processor sees it.
+
+The gap, called **skew**, is usually small but unbounded: a phone loses signal and uploads an hour later, a queue backs up during an incident, a data centre fails over. Grouping by processing time is easy, because the clock is local, but it gives answers that depend on delays:
+
+```python
+# (event_id, event time in seconds, arrival time in seconds): the phone was offline, so e4 arrives late
+events = [("e1", 1, 2), ("e2", 4, 5), ("e3", 8, 9), ("e4", 9, 16), ("e5", 12, 13), ("e6", 18, 19)]
+
+def windows(events, key, size=10):             # tumbling windows: [0, 10), [10, 20), ...
+    counts = {}
+    for e in events:
+        start = key(e) // size * size
+        counts[start] = counts.get(start, 0) + 1
+    return dict(sorted(counts.items()))
+
+print("by processing time:", windows(events, key=lambda e: e[2]))
+print("by event time:     ", windows(events, key=lambda e: e[1]))
+# by processing time: {0: 3, 10: 3}
+# by event time:      {0: 4, 10: 2}
+```
+
+In words: event `e4` happened at second 9 but arrived at second 16. Counted by processing time, it lands in the second window (3 and 3); counted by event time it belongs to the first (4 and 2), which is what actually happened. If the network had been fast, both methods would agree; only event time gives the same answer however late data arrives.
+
+## Windows
+
+An aggregate over an unbounded stream needs a boundary: "orders per minute", not "orders". A **window** assigns each event to one or more finite groups by its (event) time:
+
+- **Tumbling** windows: fixed size, no overlap, every event in exactly one: `[0, 10)`, `[10, 20)`, and so on.
+- **Sliding** (hopping) windows: fixed size, starting every *hop*, so they overlap: a 10-minute window every minute gives a moving average.
+- **Session** windows: one per user activity burst, closed after a gap of inactivity (say 30 minutes); their length depends on the data.
+
+## Watermarks and Late Data
+
+With event time, a window `[0, 10)` cannot be finished at second 10, because an event with event time 9 may still be on its way. A **watermark** is the processor's running claim "no events with event time earlier than $W$ are still expected". When the watermark passes a window's end, the window's result is emitted as final. Events that arrive after that are **late**. An **allowed lateness** keeps windows open longer: more complete, but slower.
+
+```python
+events = [("e1", 1, 2), ("e2", 4, 5), ("e3", 8, 9), ("e5", 12, 13), ("e4", 9, 16), ("e6", 18, 19), ("e7", 3, 25)]
+SIZE = 10
+
+def run(allowed_lateness):
+    open_windows, results, dropped = {}, {}, []
+    watermark = float("-inf")
+    for eid, t_event, _ in events:             # events in arrival order
+        start = t_event // SIZE * SIZE
+        if start + SIZE + allowed_lateness <= watermark:
+            dropped.append(eid)                # its window was already closed and emitted
+            continue
+        open_windows[start] = open_windows.get(start, 0) + 1
+        watermark = max(watermark, t_event)    # "no event older than this is expected"
+        for s in [s for s in open_windows if s + SIZE + allowed_lateness <= watermark]:
+            results[s] = open_windows.pop(s)   # close the window and emit its final count
+    results.update(open_windows)               # end of input flushes the rest
+    return dict(sorted(results.items())), dropped
+
+for lateness in (0, 10):
+    print(f"allowed lateness {lateness}s:", run(lateness))
+# allowed lateness 0s: ({0: 3, 10: 2}, ['e4', 'e7'])
+# allowed lateness 10s: ({0: 5, 10: 2}, [])
+```
+
+In words: here the watermark is simply the largest event time seen so far. With no allowed lateness, `e5` (event time 12) moves the watermark past 10, so window `[0, 10)` is emitted with 3 events, and the late `e4` and `e7` are dropped. Allowing 10 seconds of lateness keeps the window open until the watermark reaches 20, so both late events are counted and the window's final count is 5; the price is that its result appears later. Real systems set the watermark a little behind the largest event time (a **bounded out-of-orderness**), and send events later than any allowance to a side output instead of losing them silently. Drag the lateness and step through arrivals:
+
+<StreamWindows />
+
+<Callout type="pitfall">
+A watermark is a heuristic, not a guarantee. Set it too eagerly and you drop real data; too conservatively and every result is late. Monitor the number of late events: a sudden rise usually means an upstream outage, not a tuning problem.
+</Callout>
+
+## Delivery Guarantees
+
+Between the source, the log and the processor, messages and acknowledgements can be lost. Systems state what they promise:
+
+- **At-most-once**: send and forget. Nothing is duplicated; anything lost stays lost.
+- **At-least-once**: resend until acknowledged. Nothing is lost, but a lost acknowledgement causes a duplicate.
+- **Exactly-once**: each event affects the result exactly once, even across failures.
+
+```python
+import random
+
+rng = random.Random(1)
+sent = [f"order-{i}" for i in range(1, 6)]
+delivered = []
+for msg in sent:                               # at-least-once: a lost ack makes the broker resend
+    delivered.append(msg)
+    while rng.random() < 0.4:
+        delivered.append(msg)
+
+total_naive = len(delivered)
+seen, total_dedup = set(), 0
+for msg in delivered:                          # an idempotent consumer remembers processed ids
+    if msg not in seen:
+        seen.add(msg)
+        total_dedup += 1
+print("delivered:", delivered)
+print("counted naively:", total_naive, "| counted with dedup:", total_dedup)
+# delivered: ['order-1', 'order-1', 'order-2', 'order-3', 'order-3', 'order-4', 'order-5']
+# counted naively: 7 | counted with dedup: 5
+```
+
+In words: 5 orders were sent and 7 messages delivered, because `order-1` and `order-3` were resent after lost acknowledgements. Counting messages gives 7; remembering processed ids gives the correct 5. That is how "exactly-once" works in practice: delivery is at-least-once, and processing is made **idempotent** (deduplicate by id, upsert by key) or **transactional** (Kafka and Flink commit the output and the consumer's read position together, so a restart neither loses nor repeats an effect).
+
+<Callout type="pitfall">
+Exactly-once covers only what the framework controls. If a stream job sends an email or calls a payment API for each event, a crash and replay sends it again. Side effects outside the system need their own idempotency keys, as in [RPC & Serialization](../../system-design/rpc-and-serialization/).
+</Callout>
+
+<Callout type="key">
+Choose streaming when a decision loses value with every second of delay; otherwise batch is simpler to build, test and rerun. Either way, aggregate by **event time**, decide explicitly how long to wait for late data, and make processing idempotent so that duplicates and replays are harmless.
+</Callout>

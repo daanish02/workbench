@@ -3,6 +3,216 @@ title: "ETL & Pipelines"
 description: "Moving data from sources to where it is analysed: extract, transform, load, and how pipelines are scheduled."
 order: 1
 tier: core
+takeaways:
+  - "A **data pipeline** moves data from the systems that produce it (app databases, logs, third-party APIs) to the systems that analyse it (warehouses, lakes, ML training)."
+  - "**ETL** transforms data before loading it; **ELT** loads raw data first and transforms it inside the warehouse with SQL, which keeps the raw copy for reprocessing."
+  - "An **orchestrator** (Airflow, Dagster, Prefect) runs tasks as a **DAG**: each task starts after its dependencies succeed, and a failure skips everything downstream."
+  - "Make every job **idempotent**: rerunning it for the same period must replace that period's output, not append to it. That is what makes retries and **backfills** safe."
+  - "Put **data quality checks** (row counts, uniqueness, nulls, ranges) between steps, and stop publishing when they fail."
+resources:
+  - title: "DAGs (Apache Airflow docs)"
+    url: "https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/dags.html"
+    note: "How the most widely used orchestrator defines tasks, dependencies, schedules and backfills."
+  - title: "ETL vs ELT (dbt Labs)"
+    url: "https://www.getdbt.com/blog/extract-load-transform"
+    note: "Why cheap warehouse compute moved transformation after loading, from the makers of the main ELT tool."
+  - title: "Data tests (dbt docs)"
+    url: "https://docs.getdbt.com/docs/build/data-tests"
+    note: "Declaring uniqueness, not-null and relationship checks next to the SQL they protect."
 ---
 
-_Placeholder. Content not written yet._
+An online shop keeps orders in PostgreSQL, payments in a vendor's API and page views in log files. The finance team wants daily revenue by country, and the ML team wants a year of purchase history to train a recommender. Neither should query the production database directly: analytical scans would slow down checkout, and the data they need is spread over several systems in several shapes. A **data pipeline** copies data from these **sources** to a system built for analysis, cleaning and reshaping it on the way, on a schedule, reliably. This note covers **ETL** and **ELT**, how **orchestrators** run pipelines as **DAGs**, the **idempotency** and **backfill** discipline that makes reruns safe, and **data quality checks**. It is the entry point of the Data Engineering section, and builds on [SQL Fundamentals](../../databases/sql-fundamentals/) and [Transactions & ACID](../../databases/transactions-and-acid/).
+
+## Extract, Transform, Load
+
+**ETL** names the three steps:
+
+- **Extract**: read data from a source: a database query, an API call, a file drop. **Full** extracts copy everything; **incremental** extracts copy only what changed since the last run, using an `updated_at` column or **change data capture** (CDC), which reads the database's own change log.
+- **Transform**: clean and reshape it: drop duplicates, fix types and units, normalise text, join sources, compute derived columns.
+- **Load**: write the result into the target, usually a [data warehouse](../data-warehouses/) or [data lake](../data-lakes/).
+
+```python
+import csv
+import io
+import sqlite3
+
+raw = """order_id,customer,amount,date
+1,ana,19.99,2026-10-01
+2,BEN ,5.00,2026-10-01
+2,BEN ,5.00,2026-10-01
+3,cy,,2026-10-02
+4,dee,42.50,2026-10-02
+"""
+
+rows = list(csv.DictReader(io.StringIO(raw)))                      # extract
+clean, seen = [], set()
+for r in rows:                                                     # transform: dedupe, normalise, drop bad rows
+    if r["order_id"] in seen or not r["amount"]:
+        continue
+    seen.add(r["order_id"])
+    clean.append((int(r["order_id"]), r["customer"].strip().lower(), round(float(r["amount"]) * 100), r["date"]))
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE orders (order_id INTEGER PRIMARY KEY, customer TEXT, cents INTEGER, date TEXT)")
+db.executemany("INSERT INTO orders VALUES (?, ?, ?, ?)", clean)    # load
+print("extracted:", len(rows), "| loaded:", len(clean))
+print(db.execute("SELECT date, COUNT(*), SUM(cents) FROM orders GROUP BY date").fetchall())
+# extracted: 5 | loaded: 3
+# [('2026-10-01', 2, 2499), ('2026-10-02', 1, 4250)]
+```
+
+In words: 5 rows come out of the source and 3 are loaded. The duplicate of order 2 is dropped, order 3 is dropped because it has no amount, `"BEN "` becomes `ben`, and amounts become integer cents (see [Floating Point](../../foundations/floating-point/) for why). The target then answers the business question directly: 2 orders worth 2,499 cents on October 1, one worth 4,250 on October 2.
+
+## ETL Versus ELT
+
+When warehouse storage and compute were expensive, data was transformed on a separate server and only the clean result was loaded: ETL. Modern cloud warehouses separate cheap storage from elastic compute, so the common pattern is now **ELT**: load the raw data as it is, then transform it inside the warehouse with SQL (often managed by **dbt**, which versions SQL transformations like code).
+
+```python
+import csv
+import io
+import sqlite3
+
+raw = """order_id,customer,amount,date
+1,ana,19.99,2026-10-01
+2,BEN ,5.00,2026-10-01
+2,BEN ,5.00,2026-10-01
+3,cy,,2026-10-02
+4,dee,42.50,2026-10-02
+"""
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE raw_orders (order_id TEXT, customer TEXT, amount TEXT, date TEXT)")
+db.executemany("INSERT INTO raw_orders VALUES (?, ?, ?, ?)",       # load first, as raw text
+               [tuple(r.values()) for r in csv.DictReader(io.StringIO(raw))])
+db.execute("""
+CREATE TABLE orders AS                                             -- transform inside the warehouse, in SQL
+SELECT DISTINCT CAST(order_id AS INTEGER) AS order_id,
+       LOWER(TRIM(customer)) AS customer,
+       CAST(ROUND(CAST(amount AS REAL) * 100) AS INTEGER) AS cents,
+       date
+FROM raw_orders
+WHERE amount <> ''
+""")
+print("raw rows kept:", db.execute("SELECT COUNT(*) FROM raw_orders").fetchone()[0])
+print(db.execute("SELECT * FROM orders ORDER BY order_id").fetchall())
+# raw rows kept: 5
+# [(1, 'ana', 1999, '2026-10-01'), (2, 'ben', 500, '2026-10-01'), (4, 'dee', 4250, '2026-10-02')]
+```
+
+In words: the result table is the same 3 clean orders, but all 5 raw rows stay in `raw_orders`. If a transformation turns out to be wrong (say order 3's missing amount should have been 0, not a reason to drop the row), you fix the SQL and rebuild `orders` from the raw table without touching the source again.
+
+| | ETL | ELT |
+| --- | --- | --- |
+| Where transforms run | A separate processing server or job | Inside the warehouse or lake |
+| Raw data kept | Often not | Yes, in a raw or "staging" layer |
+| Reprocessing after a bug | Re-extract from sources | Re-run the SQL |
+| Good for | Sensitive data that must be masked before landing; limited target compute | Cloud warehouses; analysts who write SQL |
+
+Most teams organise ELT tables in layers, for example **raw** (as extracted), **staging** (typed and cleaned) and **marts** (business-ready tables such as `daily_revenue`).
+
+## Orchestration and DAGs
+
+A real pipeline has dozens or hundreds of steps with dependencies: the join needs both cleaned orders and customers; the report and the ML features both need the join. An **orchestrator** such as Airflow, Dagster or Prefect describes these steps as a **DAG** (directed acyclic graph, see [Graph Algorithms](../../algorithms/graph-algorithms/)), runs them on a schedule in a [topological order](../../algorithms/graph-algorithms/), retries failures, and records every run.
+
+```python
+from graphlib import TopologicalSorter
+
+dag = {                                        # task -> tasks it depends on
+    "extract_orders": set(),
+    "extract_customers": set(),
+    "clean_orders": {"extract_orders"},
+    "join": {"clean_orders", "extract_customers"},
+    "daily_report": {"join"},
+    "ml_features": {"join"},
+}
+
+def run(dag, failing):
+    status = {}
+    for task in TopologicalSorter(dag).static_order():          # every task after all its dependencies
+        if any(status[d] != "success" for d in dag[task]):
+            status[task] = "skipped"                            # upstream failed: don't build on bad data
+        else:
+            status[task] = "failed" if task == failing else "success"
+    return status
+
+print(list(TopologicalSorter(dag).static_order()))
+print(run(dag, failing="clean_orders"))
+# ['extract_orders', 'extract_customers', 'clean_orders', 'join', 'daily_report', 'ml_features']
+# {'extract_orders': 'success', 'extract_customers': 'success', 'clean_orders': 'failed', 'join': 'skipped', 'daily_report': 'skipped', 'ml_features': 'skipped'}
+```
+
+In words: Python's `graphlib` puts both extracts first and the report and features last, after `join`. When `clean_orders` fails, `extract_customers` still succeeds (it does not depend on it), but `join`, `daily_report` and `ml_features` are skipped instead of running on missing data. Fix and rerun, and only the failed and skipped tasks need to run. Try it:
+
+<PipelineDag />
+
+<Callout type="pitfall">
+"The job succeeded" is not "the data is right". A task that reads an empty file, or a source that silently stopped sending one country, finishes green. Orchestrators know about task status; only data checks (below) know about content.
+</Callout>
+
+## Idempotency and Backfills
+
+Pipelines usually process data in **partitions**, one per period: "load the orders of 2026-10-01". The orchestrator retries a timed-out job, someone reruns yesterday after a fix, or a new table needs a year of history, a **backfill** that runs the job once per past day. All three are safe only if the job is **idempotent**: running it again for the same partition produces the same result as running it once.
+
+```python
+import sqlite3
+
+def load_day(db, day, rows, idempotent):
+    with db:                                   # one transaction: the day is replaced as a unit
+        if idempotent:
+            db.execute("DELETE FROM sales WHERE day = ?", (day,))
+        db.executemany("INSERT INTO sales VALUES (?, ?)", [(day, r) for r in rows])
+
+for idempotent in (False, True):
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE sales (day TEXT, amount INTEGER)")
+    for attempt in range(3):                   # the scheduler retried the job twice after timeouts
+        load_day(db, "2026-10-01", [10, 20, 30], idempotent)
+    total = db.execute("SELECT COUNT(*), SUM(amount) FROM sales").fetchone()
+    print(f"idempotent={idempotent}: rows={total[0]}, sum={total[1]}")
+# idempotent=False: rows=9, sum=180
+# idempotent=True: rows=3, sum=60
+```
+
+In words: appending on every attempt turns 3 rows worth 60 into 9 rows worth 180, triple-counting revenue. Deleting the day's partition and inserting it again in one transaction leaves 3 rows and 60 no matter how often it runs. Warehouses offer the same as `INSERT OVERWRITE` of a partition or `MERGE` (upsert) on a key.
+
+Two habits go with this:
+
+- Parameterise every job by its **logical date** (the period it processes), never by "now". A backfill for March then reads March's data, not today's.
+- Keep transforms **deterministic**: the same input partition gives the same output, so reruns are reproducible.
+
+<Callout type="pitfall">
+Late data breaks naive daily partitions: an order placed at 23:59 may arrive after the 00:30 job ran. Either rerun recent partitions for a few days (cheap, given idempotent jobs), or partition by arrival time and accept that "orders of the day" changes after the fact. [Batch vs Streaming](../batch-vs-streaming/) covers event time and late data in depth.
+</Callout>
+
+## Data Quality Checks
+
+A **data quality check** asserts something about the content of a table: it has a plausible number of rows, a key is unique, a column has no nulls, values are in range, every foreign key exists. Checks run after each step; a failing check stops the pipeline before bad data reaches dashboards or models.
+
+```python
+rows = [
+    {"order_id": 1, "customer": "ana", "cents": 1999},
+    {"order_id": 2, "customer": "ben", "cents": 500},
+    {"order_id": 2, "customer": "ben", "cents": 500},
+    {"order_id": 4, "customer": None, "cents": -300},
+]
+
+checks = {
+    "row count between 1 and 10000": 1 <= len(rows) <= 10_000,
+    "order_id unique": len({r["order_id"] for r in rows}) == len(rows),
+    "customer not null": all(r["customer"] is not None for r in rows),
+    "cents >= 0": all(r["cents"] >= 0 for r in rows),
+}
+for name, ok in checks.items():
+    print("PASS" if ok else "FAIL", name)
+print("publish table:", all(checks.values()))
+# PASS row count between 1 and 10000
+# FAIL order_id unique
+# FAIL customer not null
+# FAIL cents >= 0
+# publish table: False
+```
+
+In words: the row count is plausible, but order 2 appears twice, order 4 has no customer and a negative amount, so three checks fail and the table is not published. Tools such as dbt tests and Great Expectations declare checks like these next to the transformation, and **data contracts** agree on schema and checks with the team that owns the source, so a change upstream fails loudly instead of corrupting reports downstream.
+
+<Callout type="practice">
+Publish atomically: build the new version of a table under a temporary name, run the checks on it, and only then swap it in (rename, or update a view). Readers see either yesterday's good table or today's checked one, never a half-written or failing one. This is the **write-audit-publish** pattern.
+</Callout>
