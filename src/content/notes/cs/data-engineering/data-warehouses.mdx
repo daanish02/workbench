@@ -3,6 +3,170 @@ title: "Data Warehouses"
 description: "OLTP vs OLAP, columnar storage, star schemas and why analytical queries need a different database."
 order: 4
 tier: core
+takeaways:
+  - "**OLTP** databases serve the application: many small reads and writes of single rows. **OLAP** systems serve analysis: few queries, each scanning millions of rows but only a few columns."
+  - "A **data warehouse** is a database built for OLAP: it stores data **by column**, so a query reads only the columns it uses, and compresses each column well."
+  - "Columns compress because their values are similar: **dictionary encoding** and **run-length encoding** shrink a sorted country column by orders of magnitude."
+  - "Warehouses are modelled as a **star schema**: a large **fact** table of events (sales) with foreign keys to small **dimension** tables (product, store, date)."
+  - "Use the warehouse for history and aggregates; keep transactions and point lookups in the OLTP database, and feed the warehouse with pipelines."
+resources:
+  - title: "Dimensional Modeling Techniques (Kimball Group)"
+    url: "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/"
+    note: "The reference list of fact, dimension and slowly-changing-dimension patterns."
+  - title: "The Design and Implementation of Modern Column-Oriented Database Systems (Abadi et al.)"
+    url: "https://www.cs.umd.edu/~abadi/papers/abadi-column-stores.pdf"
+    note: "A survey of column stores: compression, late materialization and vectorized execution."
+  - title: "Why DuckDB"
+    url: "https://duckdb.org/why_duckdb"
+    note: "An embedded columnar OLAP database you can try locally on Parquet and CSV files."
 ---
 
-_Placeholder. Content not written yet._
+The database behind an online shop answers questions like "what is in cart 42?" and "record this payment" thousands of times a second. The analysts behind the same shop ask "what was revenue by country and category for each month of the last three years?", once, over every order ever placed. These two workloads want opposite things from storage, and running the second on the first slows down checkout while still being slow itself. A **data warehouse** is a database designed for the analytical side. This note contrasts **OLTP** and **OLAP**, explains **columnar storage** and why it compresses so well, introduces the **star schema**, and lists the engines in use. It builds on [Storage Engines](../../databases/storage-engines/) and [Indexes](../../databases/indexes/); data reaches the warehouse through [ETL & Pipelines](../etl-and-pipelines/).
+
+## OLTP and OLAP
+
+| | OLTP (online transaction processing) | OLAP (online analytical processing) |
+| --- | --- | --- |
+| Users | The application, for customers | Analysts, dashboards, ML pipelines |
+| Typical query | Read or update one order by key | Aggregate millions of rows, group by a few columns |
+| Rows touched per query | A few | Millions to billions |
+| Columns used | Most of the row | A few of many |
+| Data | Current state | History, often years |
+| Bottleneck | Latency, concurrent writes | Bytes scanned from disk |
+| Engines | PostgreSQL, MySQL, SQL Server | BigQuery, Snowflake, Redshift, ClickHouse, DuckDB |
+
+The last rows drive the design. An OLTP engine stores each row together in a B-tree page, which is ideal for "fetch order 42" ([Storage Engines](../../databases/storage-engines/)). An analytical query that sums one column out of thirty would read all thirty from disk to use one.
+
+## Storing Data by Column
+
+A **column store** keeps each column in its own file or block sequence: all `amount` values together, all `country` values together. A query reads only the columns it references, and can skip blocks whose stored min and max values cannot match a filter (**zone maps**).
+
+```python
+import random
+
+rng = random.Random(0)
+N = 100_000
+rows = [(i, rng.choice(["UK", "FR", "DE", "ES"]), rng.randint(1, 500), f"note {i}" * 3) for i in range(N)]
+
+# row store: each row's fields are stored together, so a scan touches every field
+row_bytes = sum(8 + len(r[1]) + 8 + len(r[3]) for r in rows)
+# column store: each column is stored separately, so SUM(amount) reads one column
+columns = {"id": [r[0] for r in rows], "country": [r[1] for r in rows],
+           "amount": [r[2] for r in rows], "note": [r[3] for r in rows]}
+amount_bytes = 8 * len(columns["amount"])
+
+print("SUM(amount):", sum(columns["amount"]))
+print(f"bytes scanned, row store: {row_bytes:,} | column store: {amount_bytes:,}")
+print("ratio:", round(row_bytes / amount_bytes, 1))
+# SUM(amount): 25122860
+# bytes scanned, row store: 4,766,670 | column store: 800,000
+# ratio: 6.0
+```
+
+In words: with only 4 columns, one of them a long text note, summing `amount` from a row layout reads about 4.8 MB, while the column layout reads 0.8 MB, 6 times less. Real fact tables have dozens or hundreds of columns and queries use a handful, so the ratio is often far larger. The cost is on the other side: inserting or updating one row now touches every column file, so column stores load data in large batches rather than row by row. Compare which blocks each layout reads:
+
+<RowVsColumn />
+
+## Compressing Columns
+
+Values in one column share a type and often repeat, so they compress far better than mixed rows. Two encodings do most of the work:
+
+- **Dictionary encoding** replaces each distinct value with a small integer code and stores the dictionary once.
+- **Run-length encoding (RLE)** stores a run of equal values as one (value, count) pair, which is very effective when the column is sorted.
+
+```python
+import random
+import zlib
+from itertools import groupby
+
+rng = random.Random(0)
+country = sorted(rng.choice(["UK", "FR", "DE", "ES"]) for _ in range(100_000))   # columns are often sorted
+
+dictionary = {c: i for i, c in enumerate(sorted(set(country)))}                # dictionary encoding
+codes = [dictionary[c] for c in country]
+runs = [(code, len(list(g))) for code, g in groupby(codes)]                    # run-length encoding
+
+raw = ",".join(country).encode()
+print("dictionary:", dictionary)
+print("runs:", runs)
+print(f"raw bytes: {len(raw):,} | dictionary codes (1 byte each): {len(codes):,} | RLE pairs: {len(runs)}")
+print(f"zlib on raw: {len(zlib.compress(raw)):,} bytes")
+# dictionary: {'DE': 0, 'ES': 1, 'FR': 2, 'UK': 3}
+# runs: [(0, 25067), (1, 24741), (2, 25192), (3, 25000)]
+# raw bytes: 299,999 | dictionary codes (1 byte each): 100,000 | RLE pairs: 4
+# zlib on raw: 330 bytes
+```
+
+In words: 100,000 country names take about 300 KB as text. Dictionary encoding maps the 4 countries to codes 0–3, one byte per row (100 KB), and because the column is sorted, RLE collapses those codes into just 4 (code, count) pairs. A general-purpose compressor gets the raw text down to 330 bytes for the same reason. Engines go further and run filters and aggregates **on the encoded data**: `COUNT(*) WHERE country = 'FR'` is answered from the run (2, 25192) without decoding a single row.
+
+Modern engines also use **vectorized execution**, processing a column in batches of thousands of values with tight loops and SIMD instructions, and **MPP** (massively parallel processing), splitting each scan across many machines.
+
+<Callout type="pitfall">
+`SELECT *` is cheap in PostgreSQL and expensive in a warehouse: it reads every column, and cloud warehouses that bill per byte scanned (BigQuery, for example) charge for all of them. Select the columns you need and filter on the partition column so the engine can skip data.
+</Callout>
+
+## Star Schemas
+
+Warehouse tables are modelled for analysis, not for avoiding redundancy as in [Normalization](../../databases/normalization/). The standard design is the **star schema** (dimensional modelling, after Ralph Kimball):
+
+- A **fact table** records events at a fixed **grain** (one row per sale line, per click, per shipment): foreign keys plus numeric **measures** (quantity, revenue). It is long and narrow and grows fastest.
+- **Dimension tables** describe the who, what, where and when: product, store, customer, date. They are short and wide, with descriptive text columns used for filtering and grouping.
+
+Normalizing the dimensions further (category in its own table) gives a **snowflake schema**: less duplication, more joins.
+
+```python
+import sqlite3
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE dim_product (product_id INTEGER PRIMARY KEY, name TEXT, category TEXT);
+CREATE TABLE dim_store   (store_id INTEGER PRIMARY KEY, city TEXT, country TEXT);
+CREATE TABLE dim_date    (date_id INTEGER PRIMARY KEY, day TEXT, month TEXT, weekday TEXT);
+CREATE TABLE fact_sales  (date_id INT, product_id INT, store_id INT, quantity INT, revenue_cents INT);
+
+INSERT INTO dim_product VALUES (1, 'kettle', 'kitchen'), (2, 'toaster', 'kitchen'), (3, 'lamp', 'living');
+INSERT INTO dim_store   VALUES (1, 'London', 'UK'), (2, 'Paris', 'FR');
+INSERT INTO dim_date    VALUES (20261001, '2026-10-01', '2026-10', 'Thu'), (20261002, '2026-10-02', '2026-10', 'Fri');
+INSERT INTO fact_sales  VALUES
+  (20261001, 1, 1, 2, 5000), (20261001, 3, 2, 1, 3500), (20261002, 2, 1, 1, 4000),
+  (20261002, 1, 2, 3, 7500), (20261002, 3, 1, 2, 7000);
+""")
+query = """
+SELECT s.country, p.category, SUM(f.quantity) AS units, SUM(f.revenue_cents) AS revenue
+FROM fact_sales f
+JOIN dim_store s   ON s.store_id = f.store_id
+JOIN dim_product p ON p.product_id = f.product_id
+JOIN dim_date d    ON d.date_id = f.date_id
+WHERE d.month = '2026-10'
+GROUP BY s.country, p.category
+ORDER BY revenue DESC
+"""
+for row in db.execute(query):
+    print(row)
+# ('UK', 'kitchen', 3, 9000)
+# ('FR', 'kitchen', 3, 7500)
+# ('UK', 'living', 2, 7000)
+# ('FR', 'living', 1, 3500)
+```
+
+In words: every analytical question has the same shape: filter on dimension attributes (`month = '2026-10'`), join the fact table to its dimensions, group by attributes, sum the measures. October's revenue splits into UK kitchen 9,000 cents (a kettle sale of 5,000 plus a toaster of 4,000), FR kitchen 7,500, UK living 7,000 and FR living 3,500. A **date dimension** looks redundant but pays off: weekday, holiday, fiscal quarter and month become simple columns instead of date arithmetic in every query.
+
+<Callout type="pitfall">
+Dimensions change: a store moves to a new region, a product changes category. Overwriting the dimension row silently rewrites history, so last year's sales now appear under the new region. Where history matters, keep versioned rows with valid-from and valid-to dates (a **type 2 slowly changing dimension**) and point each fact at the version that was current when it happened.
+</Callout>
+
+## Warehouse Engines
+
+| Engine | Model | Notes |
+| --- | --- | --- |
+| BigQuery | Serverless, pay per byte scanned | Storage and compute fully separate |
+| Snowflake | Virtual warehouses (compute clusters) over shared storage | Scale compute per team or workload |
+| Redshift | Clusters, plus a serverless option | Amazon's warehouse, PostgreSQL-flavoured SQL |
+| ClickHouse | Open source, self-hosted or cloud | Very fast for event and log analytics |
+| DuckDB | Embedded, in-process | Columnar OLAP on a laptop over Parquet and CSV |
+
+All of them store data by column, separate storage from compute in some form, and speak SQL. Many can also query open files in a [data lake](../data-lakes/) directly, which blurs the line between the two.
+
+<Callout type="key">
+Analytical queries are limited by **bytes read**. Columnar layout reads only the needed columns, compression shrinks those columns, and partitioning and zone maps skip whole blocks. Model the data as facts and dimensions so every question becomes the same fast join-filter-aggregate shape.
+</Callout>

@@ -1,0 +1,131 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Partition pruning skips folders by name"
+  caption="The lake from the note's code: one folder per day and country, one file of 1,000 rows each. Pick a day and a country filter. Green files match and are read; grey ones are skipped from the path alone, without being opened. Then turn on small files: the same data split into 50 files per folder, so even a pruned query opens many files."
+>
+  <lake-partitions>
+    <div class="ctl-row">
+      <span class="ctl-label">dt =</span>
+      <input type="hidden" data-day value="all" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="all" aria-pressed="true">any</button>
+        <button type="button" class="btn" data-choice="2026-10-01" aria-pressed="false">10-01</button>
+        <button type="button" class="btn" data-choice="2026-10-02" aria-pressed="false">10-02</button>
+        <button type="button" class="btn" data-choice="2026-10-03" aria-pressed="false">10-03</button>
+      </span>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">country =</span>
+      <input type="hidden" data-country value="any" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="any" aria-pressed="true">any</button>
+        <button type="button" class="btn" data-choice="UK" aria-pressed="false">UK</button>
+        <button type="button" class="btn" data-choice="FR" aria-pressed="false">FR</button>
+        <button type="button" class="btn" data-choice="DE" aria-pressed="false">DE</button>
+      </span>
+      <input type="checkbox" hidden data-small />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Small files</button>
+    </div>
+    <div class="lp-grid" data-grid></div>
+    <p class="lp-stat mono" data-stat></p>
+  </lake-partitions>
+</Figure>
+
+<style>
+  .lp-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin: 12px 0 8px;
+  }
+  .lp-grid :global(.day) {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .lp-grid :global(.day > b) {
+    font: 700 0.6875rem var(--font-mono);
+    color: var(--text);
+  }
+  .lp-grid :global(.part) {
+    border-radius: 6px;
+    padding: 4px 5px;
+    font: 0.625rem var(--font-mono);
+    color: var(--text-faint);
+    background: var(--bg-soft);
+    border: 1px dashed var(--border);
+  }
+  .lp-grid :global(.part.hit) {
+    color: var(--text);
+    background: rgba(52, 168, 83, 0.18);
+    border: 1px solid var(--g-green);
+  }
+  .lp-grid :global(.files) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    margin-top: 3px;
+  }
+  .lp-grid :global(.f) {
+    width: 5px;
+    height: 7px;
+    border-radius: 1px;
+    background: var(--border-strong);
+  }
+  .lp-grid :global(.f.big) {
+    width: 100%;
+    height: 9px;
+  }
+  .lp-grid :global(.hit .f) {
+    background: var(--g-green);
+  }
+  .lp-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 4px;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const DAYS = ['2026-10-01', '2026-10-02', '2026-10-03'];
+  const COUNTRIES = ['UK', 'FR', 'DE'];
+  const ROWS = 1000;
+  const SMALL = 50;
+
+  class LakePartitions extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((i) => i.addEventListener('change', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const day = this.querySelector<HTMLInputElement>('[data-day]')!.value;
+      const country = this.querySelector<HTMLInputElement>('[data-country]')!.value;
+      const small = this.querySelector<HTMLInputElement>('[data-small]')!.checked;
+      const per = small ? SMALL : 1;
+      let read = 0;
+      let rows = 0;
+      this.querySelector('[data-grid]')!.innerHTML = DAYS.map((d) => {
+        const parts = COUNTRIES.map((c) => {
+          const hit = (day === 'all' || day === d) && (country === 'any' || country === c);
+          if (hit) {
+            read += per;
+            rows += ROWS;
+          }
+          const files = Array.from({ length: per }, () => `<span class="f${small ? '' : ' big'}"></span>`).join('');
+          return `<div class="part${hit ? ' hit' : ''}">country=${c}/<div class="files">${files}</div></div>`;
+        }).join('');
+        return `<div class="day"><b>dt=${d}/</b>${parts}</div>`;
+      }).join('');
+      const total = DAYS.length * COUNTRIES.length * per;
+      this.querySelector('[data-stat]')!.textContent = `files opened = ${read}/${total} · rows read = ${rows.toLocaleString('en')}/${(DAYS.length * COUNTRIES.length * ROWS).toLocaleString('en')} · rows per file = ${ROWS / per}`;
+    }
+  }
+  customElements.define('lake-partitions', LakePartitions);
+</script>

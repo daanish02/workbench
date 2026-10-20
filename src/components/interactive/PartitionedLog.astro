@@ -1,0 +1,176 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A partitioned log and one consumer group"
+  caption="Produce events for a key: the key's CRC32 hash picks one of 3 partitions (the same hash as the note's code), so each key's events stay in order in one partition. Consume lets each consumer read up to 2 records from every partition it owns. Each partition label shows its owner; with 4 consumers one sits idle. Faded cells are consumed; lag is what is left. Only zoe hashes to p1, so p1 stays empty until you produce events for zoe: uneven keys mean uneven partitions."
+>
+  <partitioned-log>
+    <div class="ctl-row">
+      <span class="ctl-label">Produce</span>
+      <button type="button" class="btn" data-key="ana">ana</button>
+      <button type="button" class="btn" data-key="ben">ben</button>
+      <button type="button" class="btn" data-key="cy">cy</button>
+      <button type="button" class="btn" data-key="dee">dee</button>
+      <button type="button" class="btn" data-key="zoe">zoe</button>
+    </div>
+    <div class="ctl-row">
+      <span class="ctl-label">Consumers</span>
+      <input type="hidden" data-n value="2" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="1" aria-pressed="false">1</button>
+        <button type="button" class="btn" data-choice="2" aria-pressed="true">2</button>
+        <button type="button" class="btn" data-choice="3" aria-pressed="false">3</button>
+        <button type="button" class="btn" data-choice="4" aria-pressed="false">4</button>
+      </span>
+    </div>
+    <div class="pl" data-parts></div>
+    <p class="pl-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-consume>Consume</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </partitioned-log>
+</Figure>
+
+<style>
+  .pl {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0 8px;
+  }
+  .pl :global(.row) {
+    display: grid;
+    grid-template-columns: 5.5em 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+  .pl :global(.lbl) {
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+    border-left: 4px solid var(--border);
+    padding-left: 6px;
+    line-height: 1.3;
+  }
+  .pl :global(.lbl b) {
+    color: var(--text);
+  }
+  .pl :global(.lbl.c1) {
+    border-color: var(--g-blue);
+  }
+  .pl :global(.lbl.c2) {
+    border-color: var(--g-green);
+  }
+  .pl :global(.lbl.c3) {
+    border-color: var(--g-yellow);
+  }
+  .pl :global(.cells) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    min-height: 2.2em;
+    align-items: center;
+  }
+  .pl :global(.cell) {
+    font: 0.6875rem var(--font-mono);
+    color: var(--text);
+    border: 1px solid var(--g-blue);
+    background: rgba(66, 133, 244, 0.16);
+    border-radius: 5px;
+    padding: 2px 4px;
+    text-align: center;
+  }
+  .pl :global(.cell small) {
+    display: block;
+    color: var(--text-faint);
+    font-size: 0.5625rem;
+  }
+  .pl :global(.cell.done) {
+    opacity: 0.35;
+  }
+  .pl :global(.cell.new) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.2);
+  }
+  .pl-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+    overflow-wrap: anywhere;
+  }
+  .pl-stat :global(.bad) {
+    color: var(--g-red-l);
+  }
+</style>
+
+<script>
+  const P = 3;
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (s: string) => {
+    let c = 0xffffffff;
+    for (const b of new TextEncoder().encode(s)) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const ACTIONS = ['cart', 'pay', 'ship'];
+
+  class PartitionedLog extends HTMLElement {
+    parts: string[][] = [];
+    committed: number[] = [];
+    counts: Record<string, number> = {};
+    last = -1;
+    connectedCallback() {
+      this.querySelectorAll<HTMLButtonElement>('[data-key]').forEach((b) => b.addEventListener('click', () => this.produce(b.dataset.key!)));
+      this.querySelector('[data-n]')!.addEventListener('change', () => this.draw());
+      this.querySelector('[data-consume]')!.addEventListener('click', () => this.consume());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.parts = Array.from({ length: P }, () => []);
+      this.committed = Array(P).fill(0);
+      this.counts = {};
+      this.last = -1;
+      for (const k of ['ana', 'ben', 'ana', 'cy', 'ben', 'ana']) this.produce(k, false);
+      this.last = -1;
+      this.draw();
+    }
+    produce(key: string, redraw = true) {
+      const n = (this.counts[key] = (this.counts[key] ?? 0) + 1);
+      const p = crc32(key) % P;
+      this.parts[p].push(`${key}:${ACTIONS[(n - 1) % ACTIONS.length]}`);
+      this.last = p;
+      if (redraw) this.draw();
+    }
+    owners(): number[] {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      return Array.from({ length: P }, (_, p) => p % n); // round robin, as in the note
+    }
+    consume() {
+      this.last = -1;
+      for (let p = 0; p < P; p++) this.committed[p] = Math.min(this.parts[p].length, this.committed[p] + 2);
+      this.draw();
+    }
+    draw() {
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      const own = this.owners();
+      this.querySelector('[data-parts]')!.innerHTML = this.parts
+        .map((recs, p) => {
+          const cells = recs
+            .map((r, off) => `<span class="cell${off < this.committed[p] ? ' done' : ''}${p === this.last && off === recs.length - 1 ? ' new' : ''}">${r}<small>offset ${off}</small></span>`)
+            .join('');
+          return `<div class="row"><span class="lbl c${own[p] + 1}"><b>p${p}</b><br />c${own[p] + 1}</span><div class="cells">${cells}</div></div>`;
+        })
+        .join('');
+      const lag = this.parts.map((r, p) => r.length - this.committed[p]);
+      const idle = Array.from({ length: n }, (_, c) => c).filter((c) => !own.includes(c)).map((c) => `c${c + 1}`);
+      this.querySelector('[data-stat]')!.innerHTML = `lag = [${lag.join(', ')}] · total = ${lag.reduce((a, b) => a + b, 0)} · consumers = ${n}` + (idle.length ? ` · <span class="bad">idle: ${idle.join(', ')}</span>` : '');
+    }
+  }
+  customElements.define('partitioned-log', PartitionedLog);
+</script>

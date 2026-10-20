@@ -3,6 +3,167 @@ title: "Data Lakes"
 description: "Raw data in object storage, file formats such as Parquet, and the lakehouse pattern."
 order: 5
 tier: core
+takeaways:
+  - "A **data lake** stores raw and processed data as **files in object storage** (S3, GCS, Azure Blob): cheap, nearly unlimited, and readable by many engines."
+  - "Lakes use **schema-on-read**: data is stored as it arrived and each reader applies a schema at query time, unlike a warehouse's **schema-on-write**."
+  - "**Parquet** is the standard lake file format: columnar, compressed, with per-chunk min/max statistics, so engines read only the columns and row groups a query needs."
+  - "**Partitioning** by folder (`dt=2026-10-02/country=FR/`) lets engines skip whole directories; too many tiny files is the opposite failure."
+  - "**Table formats** (Delta Lake, Apache Iceberg, Apache Hudi) add a transaction log over the files, giving ACID commits, schema evolution and time travel: the **lakehouse**."
+resources:
+  - title: "Parquet documentation (Apache Parquet)"
+    url: "https://parquet.apache.org/docs/"
+    note: "File layout: row groups, column chunks, pages, encodings and statistics."
+  - title: "Delta Lake: High-Performance ACID Table Storage over Cloud Object Stores (VLDB 2020)"
+    url: "https://www.vldb.org/pvldb/vol13/p3411-armbrust.pdf"
+    note: "How a log of JSON commit files turns a folder of Parquet files into a transactional table."
+  - title: "Apache Iceberg table specification"
+    url: "https://iceberg.apache.org/spec/"
+    note: "Snapshots, manifests and hidden partitioning in the other major open table format."
 ---
 
-_Placeholder. Content not written yet._
+A [data warehouse](../data-warehouses/) is fast and tidy, but it expects data to be cleaned and typed before it is loaded, and storing years of raw clickstreams, images or model training data in it is expensive. A **data lake** takes the opposite approach: put everything, raw and processed, as files in cheap **object storage**, and let any engine (Spark, Trino, DuckDB, pandas, a warehouse, an ML training job) read them. Early lakes became "data swamps": undocumented files, no transactions, no way to update a row. This note covers object storage and **schema-on-read**, the **Parquet** format, **partitioning**, and the **table formats** that turn a lake into a **lakehouse**. It closes the Data Engineering section, after [ETL & Pipelines](../etl-and-pipelines/), [Batch vs Streaming](../batch-vs-streaming/), [Event Logs](../event-logs/) and Data Warehouses.
+
+## Files in Object Storage
+
+**Object storage** ([Storage Models](../../cloud/storage-models/)) stores immutable blobs under keys such as `s3://shop-lake/events/dt=2026-10-02/part-0000.parquet`. It costs a fraction of warehouse or block storage per gigabyte, scales without limits, and is shared: storage is one system, while compute engines come and go. Lakes are usually layered like ELT warehouses: a **raw** (bronze) zone with data exactly as received, a **cleaned** (silver) zone, and **curated** (gold) tables for consumers.
+
+Raw data lands without being forced into a table first. That is **schema-on-read**: the schema is applied by each reader at query time, while a warehouse uses **schema-on-write** and rejects rows that do not fit at load time.
+
+```python
+import json
+
+raw = [                                         # schema-on-read: the lake stores what arrived
+    '{"user": "ana", "amount": 5, "ts": "2026-10-01T10:00"}',
+    '{"user": "ben", "amount": "3.5", "ts": "2026-10-01T10:05"}',
+    '{"user": "cy", "ts": "2026-10-01T10:07", "coupon": "FALL"}',
+]
+schema = {"user": str, "amount": float, "coupon": str}
+defaults = {"amount": 0.0, "coupon": None}
+
+def read(line):                                 # each reader applies its own schema at query time
+    record = json.loads(line)
+    return {k: (t(record[k]) if k in record else defaults.get(k)) for k, t in schema.items()}
+
+for line in raw:
+    print(read(line))
+# {'user': 'ana', 'amount': 5.0, 'coupon': None}
+# {'user': 'ben', 'amount': 3.5, 'coupon': None}
+# {'user': 'cy', 'amount': 0.0, 'coupon': 'FALL'}
+```
+
+In words: the three raw records disagree, with `amount` as an integer, as a string, and missing, plus a new `coupon` field. All three were stored without complaint; this reader turns `amount` into a float, fills a missing amount with 0.0 and a missing coupon with `None`. Another reader could choose differently, which is both the flexibility and the danger: nothing guarantees two teams interpret the same file the same way.
+
+<Callout type="pitfall">
+"Store everything, decide later" turns into a **data swamp** when nobody records what files mean, who owns them or which are current. A lake needs a **catalog** (Hive Metastore, AWS Glue, Unity Catalog) that names tables, their schemas and locations, and owners for each table, just as a warehouse does.
+</Callout>
+
+## Parquet
+
+CSV and JSON lines are easy to write and slow to query: every reader parses text and reads every field. **Parquet** is a columnar binary file format, the file-level version of a warehouse's column store:
+
+- A file is split into **row groups** (for example 128 MB of rows each), and each row group stores every column as a separate **column chunk**.
+- Each chunk is encoded (dictionary, run-length) and compressed (Snappy, Zstandard), as in [Data Warehouses](../data-warehouses/).
+- The footer holds the **schema** and **statistics** per chunk: min, max and null count.
+
+A query that needs two columns reads only those chunks; a filter `amount > 1000` skips any row group whose `amount` max is below 1000 (**predicate pushdown**). Parquet files are immutable: changing one row means writing a new file. **ORC** is a similar format, common in Hadoop-era systems; **Avro** is row-based and better suited to streams of records than to analytical scans. In Python, `pyarrow`, `pandas` and DuckDB read and write Parquet directly.
+
+## Partitioning
+
+Engines skip data cheaply when the folder structure encodes the filter columns. **Hive-style partitioning** puts the partition values in the path, `dt=2026-10-02/country=FR/`, so a query with `WHERE dt = '2026-10-02'` never even lists the other folders:
+
+```python
+import csv
+import random
+import tempfile
+from pathlib import Path
+
+rng = random.Random(0)
+lake = Path(tempfile.mkdtemp()) / "events"
+for day in ["2026-10-01", "2026-10-02", "2026-10-03"]:
+    for country in ["UK", "FR", "DE"]:
+        folder = lake / f"dt={day}" / f"country={country}"      # Hive-style partition folders
+        folder.mkdir(parents=True)
+        with open(folder / "part-0000.csv", "w", newline="") as f:
+            csv.writer(f).writerows([[rng.randint(1, 100)] for _ in range(1000)])
+
+def total(day=None, country=None):
+    files = [p for p in lake.glob("dt=*/country=*/*.csv")
+             if (day is None or f"dt={day}" in p.parts)
+             and (country is None or f"country={country}" in p.parts)]   # pruning: skip folders by name
+    amount = sum(int(v) for p in files for v in p.read_text().split())
+    return amount, len(files)
+
+print("all data:      (sum, files read) =", total())
+print("one day:       (sum, files read) =", total(day="2026-10-02"))
+print("one day + FR:  (sum, files read) =", total(day="2026-10-02", country="FR"))
+# all data:      (sum, files read) = (452978, 9)
+# one day:       (sum, files read) = (153560, 3)
+# one day + FR:  (sum, files read) = (50913, 1)
+```
+
+In words: the lake holds 9 files, one per day and country. Summing everything reads all 9; filtering on one day reads 3, and on one day and one country reads 1, because the engine decides from folder names alone which files can match. Combined with Parquet's column and row-group skipping, a query over a petabyte lake may read only a few gigabytes. Pick partition filters before running a query:
+
+<LakePartitions />
+
+<Callout type="pitfall">
+Over-partitioning creates the **small files problem**: partitioning by user id or by minute produces millions of tiny files, and listing and opening them costs more than reading the data. Partition on low-cardinality columns that queries filter on (usually date), aim for files of roughly 100 MB to 1 GB, and run **compaction** jobs that merge small files.
+</Callout>
+
+## Table Formats and Lakehouses
+
+Plain files have no transactions. A job that writes 50 files and crashes after 30 leaves a half-written table; two jobs writing at once can overwrite each other; readers may see a mixture; deleting one customer's rows (a GDPR request) means finding and rewriting files by hand. **Open table formats** (Delta Lake, Apache Iceberg, Apache Hudi) solve this with a **transaction log**: an ordered series of small metadata files recording which data files make up each version of the table. A commit writes new data files and then atomically adds one log entry; readers replay the log to know which files are live.
+
+```python
+import json
+import os
+import tempfile
+from pathlib import Path
+
+table = Path(tempfile.mkdtemp())
+log = table / "_log"
+log.mkdir()
+
+def commit(version, add=(), remove=()):
+    entry = json.dumps({"add": list(add), "remove": list(remove)})
+    try:                                        # O_EXCL: creating the version file fails if it exists
+        fd = os.open(log / f"{version:05d}.json", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False                            # another writer won this version: re-read and retry
+    with os.fdopen(fd, "w") as f:
+        f.write(entry)
+    return True
+
+def files_at(version=None):                     # replay the log to find the live data files
+    live = set()
+    for entry in sorted(log.glob("*.json"))[: None if version is None else version + 1]:
+        e = json.loads(entry.read_text())
+        live |= set(e["add"])
+        live -= set(e["remove"])
+    return sorted(live)
+
+commit(0, add=["a.parquet", "b.parquet"])
+commit(1, add=["c.parquet"])
+print("writer 2 commits version 1 too:", commit(1, add=["x.parquet"]))
+commit(2, add=["ab.parquet"], remove=["a.parquet", "b.parquet"])   # compaction rewrites two files as one
+print("current files:", files_at())
+print("time travel to version 1:", files_at(1))
+# writer 2 commits version 1 too: False
+# current files: ['ab.parquet', 'c.parquet']
+# time travel to version 1: ['a.parquet', 'b.parquet', 'c.parquet']
+```
+
+In words: each commit is one new numbered file in `_log`. A second writer that also tries to create version 1 fails, because the file already exists, and must re-read the table and retry as version 2: **optimistic concurrency**, like the conflict detection in [Transactions & ACID](../../databases/transactions-and-acid/). Version 2 records a compaction, swapping `a` and `b` for `ab`, and readers of the current version see `ab` and `c`. Old files are kept until a cleanup job removes them, so reading at version 1 still returns `a`, `b` and `c`: **time travel**, useful for audits, reproducible ML training sets and undoing bad writes. The real formats store the same idea with more detail: Delta Lake writes JSON commits like these, and Iceberg writes snapshot and manifest files with per-file statistics.
+
+A **lakehouse** is a lake whose tables use such a format: open Parquet files in cheap storage, with warehouse features on top (ACID commits, `MERGE`/`UPDATE`/`DELETE`, schema evolution, time travel), queried by several engines at once. Warehouses have moved the other way, and many can now read and write Iceberg or Delta tables directly.
+
+| | Data warehouse | Data lake (plain files) | Lakehouse |
+| --- | --- | --- | --- |
+| Storage | Proprietary, managed | Open files in object storage | Open files plus a table log |
+| Schema | On write | On read | On write, with evolution |
+| Transactions | Yes | No | Yes |
+| Data types | Structured tables | Anything: logs, images, Parquet | Tables, plus other files beside them |
+| Engines | The warehouse's own | Any | Any engine that speaks the format |
+
+<Callout type="key">
+Keep raw data in open formats in object storage, organise it by partitions that match common filters, and put a table format and a catalog over the tables people rely on. That gives cheap storage and many engines without giving up transactions and trust in the data.
+</Callout>

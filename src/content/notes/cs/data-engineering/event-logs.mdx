@@ -3,6 +3,164 @@ title: "Event Logs"
 description: "The append-only log as the backbone of data systems, Kafka-style partitions, offsets and retention."
 order: 3
 tier: core
+takeaways:
+  - "An **event log** is an append-only, ordered sequence of records; each record's position, its **offset**, never changes, so any number of readers can read independently and **replay** from any point."
+  - "Logs scale by **partitioning**: records with the same **key** go to the same partition, which keeps per-key order; there is no order across partitions."
+  - "A **consumer group** shares the partitions of a topic among its members, at most one member per partition; adding consumers beyond the partition count leaves them idle."
+  - "Old data leaves by **retention** (delete segments older than a time or size limit) or **compaction** (keep only the newest record per key, so the log becomes a snapshot of current state)."
+  - "**Consumer lag**, end offset minus committed offset, is the key health metric: it says how far behind each reader is."
+resources:
+  - title: "Introduction (Apache Kafka docs)"
+    url: "https://kafka.apache.org/intro"
+    note: "Topics, partitions, producers, consumer groups and guarantees, from the project itself."
+  - title: "Logs for Data Infrastructure (Martin Kleppmann)"
+    url: "https://martin.kleppmann.com/2015/05/27/logs-for-data-infrastructure.html"
+    note: "Why one ordered log keeps databases, caches and search indexes consistent with each other."
+  - title: "Apache Kafka documentation: log compaction"
+    url: "https://kafka.apache.org/documentation/#compaction"
+    note: "Exactly what compaction keeps, when tombstones disappear, and the guarantees readers get."
 ---
 
-_Placeholder. Content not written yet._
+[Message Queues](../../system-design/message-queues/) introduced brokers that hand each message to a consumer and then forget it. A different design has taken over data infrastructure: keep every message in an **append-only log** and let readers track their own position. The same records can then feed a search index, a warehouse load and a fraud model, each at its own pace, and a new consumer can **replay** months of history. Apache Kafka is the best-known implementation; Amazon Kinesis, Apache Pulsar and Redpanda follow the same model. This note covers the log and its **offsets**, **partitions** and keys, **consumer groups**, **retention** and **compaction**, and **consumer lag**. It is the transport under [Batch vs Streaming](../batch-vs-streaming/), and the same structure as the write-ahead log in [Storage Engines](../../databases/storage-engines/).
+
+## The Append-Only Log
+
+A **log** is the simplest possible storage structure: an ordered sequence of records where new records are only ever **appended** at the end. Each record gets an **offset**, its position in the sequence, which never changes. Records are not deleted when read; each reader remembers the offset it has reached.
+
+```python
+log = []                                       # an append-only log: records are never changed in place
+
+def append(record):
+    log.append(record)
+    return len(log) - 1                        # the offset: the record's position, its permanent id
+
+def read(offset, max_records=10):
+    return log[offset:offset + max_records]
+
+for event in ["signup ana", "order ana 5", "signup ben", "order ben 3"]:
+    append(event)
+
+billing_offset, search_offset = 0, 0           # each reader keeps its own position
+billing = read(billing_offset)
+billing_offset += len(billing)
+search = read(search_offset, max_records=2)
+search_offset += len(search)
+print("billing read:", billing, "-> next offset", billing_offset)
+print("search read:", search, "-> next offset", search_offset)
+append("order ana 2")
+print("billing continues:", read(billing_offset))
+print("a new reader replays from 0:", len(read(0)), "records")
+# billing read: ['signup ana', 'order ana 5', 'signup ben', 'order ben 3'] -> next offset 4
+# search read: ['signup ana', 'order ana 5'] -> next offset 2
+# billing continues: ['order ana 2']
+# a new reader replays from 0: 5 records
+```
+
+In words: billing has read all 4 records and will continue at offset 4, while search, reading more slowly, is at offset 2; neither affects the other. When `order ana 2` is appended, billing picks up exactly that one record. A brand-new reader starts at offset 0 and sees all 5, which is how a new service is bootstrapped or a buggy one is rebuilt: reset its offset and replay.
+
+Because the log is ordered, every reader that processes it in order sees the same history, so derived systems (a cache, a search index, a warehouse table) converge to the same state. This is why the log is often called the **source of truth** of an event-driven system, with databases and indexes as **materialized views** of it.
+
+## Topics, Partitions and Keys
+
+A Kafka **topic** (say `orders`) is not one log but several **partitions**, each its own log on possibly different machines, so that writes and reads scale beyond one disk and one server. A **producer** chooses the partition for each record, normally by hashing the record's **key**:
+
+```python
+import zlib
+
+PARTITIONS = 3
+
+def partition_for(key):                        # stable hash: the same key always lands in the same partition
+    return zlib.crc32(key.encode()) % PARTITIONS
+
+partitions = [[] for _ in range(PARTITIONS)]
+events = [("ana", "cart"), ("ben", "cart"), ("ana", "pay"), ("cy", "cart"), ("ben", "pay"), ("ana", "ship")]
+for key, action in events:
+    partitions[partition_for(key)].append(f"{key}:{action}")
+
+for i, p in enumerate(partitions):
+    print(f"partition {i}:", p)
+# partition 0: ['ana:cart', 'ana:pay', 'ana:ship']
+# partition 1: []
+# partition 2: ['ben:cart', 'cy:cart', 'ben:pay']
+```
+
+In words: all of Ana's events land in partition 0, in the order they happened (`cart`, `pay`, `ship`), and Ben's and Cy's share partition 2. Order is guaranteed **within** a partition only: a consumer may see `cy:cart` before `ana:pay` or after it, but never `ana:ship` before `ana:cart`. Choose the key as the entity whose events must stay in order (user, order, account). The output also shows the usual risk of hashing few keys: partition 1 got nothing while partition 2 got half the traffic.
+
+<Callout type="pitfall">
+A **hot key** (one celebrity account, one giant customer) puts all its traffic on one partition and one consumer, which then lags while the others idle. Changing the partition count later also changes `hash % n` for most keys, which breaks per-key order across the change. Pick a key with many evenly active values, and size partitions for future throughput up front.
+</Callout>
+
+## Consumer Groups
+
+To process a topic faster, several consumer processes join a **consumer group**. The group divides the partitions among its members so that each partition is read by exactly one member at a time, which preserves per-partition order. When a member joins, leaves or crashes, the group **rebalances** and reassigns partitions.
+
+```python
+def assign(partitions, consumers):             # round-robin assignment inside one consumer group
+    plan = {c: [] for c in consumers}
+    for i, p in enumerate(partitions):
+        plan[consumers[i % len(consumers)]].append(p)
+    return plan
+
+parts = ["p0", "p1", "p2", "p3", "p4", "p5"]
+for group in (["c1", "c2"], ["c1", "c2", "c3"], ["c1", "c2", "c3", "c4", "c5", "c6", "c7"]):
+    plan = assign(parts, group)
+    idle = [c for c, ps in plan.items() if not ps]
+    print(f"{len(group)} consumers:", {c: ps for c, ps in plan.items() if ps}, "| idle:", idle)
+# 2 consumers: {'c1': ['p0', 'p2', 'p4'], 'c2': ['p1', 'p3', 'p5']} | idle: []
+# 3 consumers: {'c1': ['p0', 'p3'], 'c2': ['p1', 'p4'], 'c3': ['p2', 'p5']} | idle: []
+# 7 consumers: {'c1': ['p0'], 'c2': ['p1'], 'c3': ['p2'], 'c4': ['p3'], 'c5': ['p4'], 'c6': ['p5']} | idle: ['c7']
+```
+
+In words: with 6 partitions, 2 consumers take 3 each and 3 consumers take 2 each. A seventh consumer gets nothing: the partition count is the upper limit on parallelism within one group. Different groups are independent: a `billing` group and a `search` group each receive every record, each with its own offsets. That is how one log serves both **queue** semantics (work shared within a group) and **pub/sub** semantics (every group gets everything).
+
+Consumers periodically **commit** their offset back to the broker. After a crash, the replacement resumes from the last committed offset, so records processed after that commit are processed again: at-least-once delivery, handled with the idempotent processing described in [Batch vs Streaming](../batch-vs-streaming/).
+
+Produce events with keys, change the group size and consume to see assignment, offsets and lag:
+
+<PartitionedLog />
+
+## Retention and Compaction
+
+A log cannot grow forever. Two policies remove old records, chosen per topic:
+
+- **Retention** deletes whole old **segments** (the files a partition is split into) after a time or size limit, for example 7 days. Right for event streams where old events lose value: clicks, metrics, logs.
+- **Compaction** keeps the **newest record per key** and removes older ones with the same key. A record with a null value is a **tombstone** that deletes the key. The log becomes a snapshot of the current state of every key, which a new consumer can load to rebuild a table.
+
+```python
+log = [(0, "ana", "London"), (1, "ben", "Paris"), (2, "ana", "Berlin"),
+       (3, "cy", "Rome"), (4, "ben", None), (5, "ana", "Madrid")]       # (offset, key, value); None = tombstone
+
+retained = [r for r in log if r[0] >= 3]       # time/size retention: drop the oldest segment
+latest = {}
+for offset, key, value in log:                 # compaction: keep only the newest record per key
+    latest[key] = (offset, key, value)
+compacted = sorted(r for r in latest.values() if r[2] is not None)
+print("retention keeps:", retained)
+print("compaction keeps:", compacted)
+print("state rebuilt from compacted log:", {k: v for _, k, v in compacted})
+# retention keeps: [(3, 'cy', 'Rome'), (4, 'ben', None), (5, 'ana', 'Madrid')]
+# compaction keeps: [(3, 'cy', 'Rome'), (5, 'ana', 'Madrid')]
+# state rebuilt from compacted log: {'cy': 'Rome', 'ana': 'Madrid'}
+```
+
+In words: retention cuts by position and keeps offsets 3 to 5, losing the fact that Ben ever lived in Paris along with the older history. Compaction keeps Ana's latest city (Madrid, offset 5) and Cy's (Rome), and Ben's tombstone removes him entirely, so reading the compacted log gives the current table `{cy: Rome, ana: Madrid}`. Offsets survive compaction: the remaining records keep 3 and 5, with gaps. (Kafka keeps a tombstone for a configurable time before dropping it, so that consumers have a chance to see the delete; this sketch drops it at once.) This is the same merge-and-drop idea as LSM compaction in [Storage Engines](../../databases/storage-engines/).
+
+## Consumer Lag
+
+**Consumer lag** is, per partition, the log's end offset minus the group's committed offset: how many records are written but not yet processed. It is the first metric to watch on any log-based system.
+
+```python
+end_offsets = {"p0": 1_200, "p1": 950, "p2": 1_310}          # next offset each partition will write
+committed = {"p0": 1_200, "p1": 600, "p2": 1_305}            # next offset the group will read
+lag = {p: end_offsets[p] - committed[p] for p in end_offsets}
+print("lag per partition:", lag, "| total:", sum(lag.values()))
+print("partitions falling behind:", [p for p, l in lag.items() if l > 100])
+# lag per partition: {'p0': 0, 'p1': 350, 'p2': 5} | total: 355
+# partitions falling behind: ['p1']
+```
+
+In words: partitions 0 and 2 are essentially caught up (0 and 5 records behind), while partition 1 is 350 records behind. Lag concentrated in one partition points at a hot key or a stuck consumer, not at too few consumers; lag growing on every partition means the group as a whole is too slow for the write rate. If lag grows past the retention period, records are deleted before they are read: data loss.
+
+<Callout type="key">
+A log turns "send a message" into "record a fact". Producers append facts once; any number of consumers derive their own views at their own pace, and can be rebuilt by replaying. The costs are choosing partition keys carefully, handling duplicates, and watching lag.
+</Callout>

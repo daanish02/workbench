@@ -1,0 +1,139 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Row store vs column store: which blocks a query reads"
+  caption="The same 8-row table laid out on disk two ways, 4 values per block. Pick a query: green values are the ones it needs, and every block holding one of them must be read (yellow outline). Summing one column reads 2 of 8 blocks in the column layout and all 8 in the row layout; fetching one whole row is the reverse, 1 block versus 4."
+>
+  <row-vs-column>
+    <div class="ctl-row">
+      <span class="ctl-label">Query</span>
+      <input type="hidden" data-q value="sum" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="sum" aria-pressed="true">SUM(amount)</button>
+        <button type="button" class="btn" data-choice="count" aria-pressed="false">COUNT WHERE country='FR'</button>
+        <button type="button" class="btn" data-choice="row" aria-pressed="false">SELECT * WHERE id=3</button>
+      </span>
+    </div>
+    <div class="rc-layout">
+      <div>
+        <p class="rc-h">Row store</p>
+        <div class="rc-disk" data-row></div>
+      </div>
+      <div>
+        <p class="rc-h">Column store</p>
+        <div class="rc-disk" data-col></div>
+      </div>
+    </div>
+    <p class="rc-stat mono" data-stat></p>
+  </row-vs-column>
+</Figure>
+
+<style>
+  .rc-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 10px;
+  }
+  @media (max-width: 560px) {
+    .rc-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+  .rc-h {
+    margin: 0 0 6px;
+    font: 700 0.8125rem var(--font-mono);
+    color: var(--text);
+  }
+  .rc-disk {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 5px;
+  }
+  .rc-disk :global(.blk) {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2px;
+    padding: 3px;
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+  }
+  .rc-disk :global(.blk.read) {
+    border-color: var(--g-yellow);
+    background: rgba(251, 188, 5, 0.08);
+  }
+  .rc-disk :global(.v) {
+    font: 0.625rem var(--font-mono);
+    text-align: center;
+    padding: 3px 0;
+    border-radius: 3px;
+    color: var(--text-muted);
+    background: rgba(66, 133, 244, 0.1);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .rc-disk :global(.v.need) {
+    color: var(--text);
+    background: rgba(52, 168, 83, 0.35);
+  }
+  .rc-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 10px 0 4px;
+    overflow-wrap: anywhere;
+  }
+</style>
+
+<script>
+  const COLS = ['id', 'country', 'amount', 'note'];
+  const ROWS: (string | number)[][] = [
+    [1, 'UK', 20, 'gift'], [2, 'FR', 35, 'promo'], [3, 'DE', 12, 'none'], [4, 'FR', 50, 'gift'],
+    [5, 'ES', 8, 'none'], [6, 'UK', 41, 'promo'], [7, 'FR', 17, 'gift'], [8, 'DE', 29, 'none'],
+  ];
+  const BLOCK = 4;
+  type Cell = { r: number; c: number };
+
+  class RowVsColumn extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-q]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    need(q: string, { r, c }: Cell): boolean {
+      if (q === 'sum') return c === 2;
+      if (q === 'count') return c === 1;
+      return r === 2;
+    }
+    render(cells: Cell[], q: string) {
+      const blocks: Cell[][] = [];
+      for (let i = 0; i < cells.length; i += BLOCK) blocks.push(cells.slice(i, i + BLOCK));
+      let read = 0;
+      const html = blocks
+        .map((b) => {
+          const hit = b.some((x) => this.need(q, x));
+          if (hit) read++;
+          return `<div class="blk${hit ? ' read' : ''}">${b.map((x) => `<span class="v${this.need(q, x) ? ' need' : ''}" title="${COLS[x.c]}">${ROWS[x.r][x.c]}</span>`).join('')}</div>`;
+        })
+        .join('');
+      return { html, read, total: blocks.length };
+    }
+    draw() {
+      const q = this.querySelector<HTMLInputElement>('[data-q]')!.value;
+      const rowOrder: Cell[] = [];
+      const colOrder: Cell[] = [];
+      ROWS.forEach((_, r) => COLS.forEach((_, c) => rowOrder.push({ r, c })));
+      COLS.forEach((_, c) => ROWS.forEach((_, r) => colOrder.push({ r, c })));
+      const a = this.render(rowOrder, q);
+      const b = this.render(colOrder, q);
+      this.querySelector('[data-row]')!.innerHTML = a.html;
+      this.querySelector('[data-col]')!.innerHTML = b.html;
+      let answer = '';
+      if (q === 'sum') answer = `SUM = ${ROWS.reduce((s, r) => s + (r[2] as number), 0)}`;
+      else if (q === 'count') answer = `COUNT = ${ROWS.filter((r) => r[1] === 'FR').length}`;
+      else answer = `row = (${ROWS[2].join(', ')})`;
+      this.querySelector('[data-stat]')!.textContent = `${answer} · blocks read: row store ${a.read}/${a.total} · column store ${b.read}/${b.total}`;
+    }
+  }
+  customElements.define('row-vs-column', RowVsColumn);
+</script>
