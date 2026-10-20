@@ -3,6 +3,231 @@ title: "Memory & GC"
 description: "Stack and heap, manual memory, reference counting, tracing garbage collection and Rust-style ownership."
 order: 6
 tier: core
+takeaways:
+  - "The **stack** holds a function's local data and is freed automatically on return; the **heap** holds data whose lifetime is not tied to one call, and someone must decide when to free it."
+  - "**Manual memory** (C's `malloc`/`free`) is fast and predictable but allows **use-after-free**, **double free** and **leaks**."
+  - "**Reference counting** frees an object the moment its count hits zero, but cannot free **cycles** on its own."
+  - "A **tracing GC** marks everything reachable from the **roots** and frees the rest; **generational** collectors scan young objects often because most objects die young."
+  - "GC prevents dangling pointers, not leaks: anything still reachable (an unbounded cache, a forgotten listener) stays alive. **Rust ownership** frees memory at compile-time-known points with no collector."
+resources:
+  - title: "What Is Ownership? (The Rust Book)"
+    url: "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html"
+    note: "Stack vs heap and the ownership rules, explained from scratch."
+  - title: "A Guide to the Go Garbage Collector"
+    url: "https://go.dev/doc/gc-guide"
+    note: "How a production tracing GC trades CPU for memory, with interactive graphs of the GOGC knob."
+  - title: "gc: Garbage Collector interface (Python docs)"
+    url: "https://docs.python.org/3/library/gc.html"
+    note: "CPython's cycle collector on top of reference counting, and how to inspect it."
 ---
 
-_Placeholder. Content not written yet._
+Every value a program creates occupies memory, and that memory must be given back when the value is no longer needed. Give it back too late and the program **leaks** until it runs out; too early and some code reads memory that now holds something else. Languages split on who decides: the programmer (C, C++), a runtime **garbage collector** (Java, Go, Python, JavaScript), or the compiler (Rust). This note covers the stack and the heap, manual memory and its classic bugs, **reference counting**, **tracing garbage collection** (mark-sweep and generational), leaks that survive a GC, and **ownership**. It builds on [Compilers & Interpreters](../compilers-and-interpreters/), whose runtimes provide the collector, and on the address spaces in [Memory Management](../../operating-systems/memory-management/).
+
+## Stack and Heap
+
+A running program's memory has two regions that grow at runtime:
+
+- The **stack** holds one **frame** per active function call: its parameters, local variables and return address. Calling a function pushes a frame, returning pops it. Allocation is a pointer bump, and freeing is automatic and instant. The cost: a frame's data dies when the function returns, and the stack is small (often 1–8 MiB per thread).
+- The **heap** holds data whose size or lifetime is not known in advance: a list that grows, an object returned to the caller, a node shared by two data structures. Allocation asks an **allocator** for a free block; something must later free it.
+
+In C, `int x = 5;` inside a function lives on the stack, while `malloc(100)` returns a pointer to heap memory. In Python, every object lives on the heap; the stack frames hold only references (pointers) to them. The rest of this note is about the heap, because stack memory manages itself.
+
+## Manual Memory
+
+C hands the job to the programmer: `malloc` allocates, `free` releases. It is fast and predictable (no pauses, no hidden work), and three bugs come with it:
+
+```c
+char *name = malloc(16);
+strcpy(name, "ada");
+free(name);
+printf("%s\n", name);   // use-after-free: the block may already hold other data
+free(name);             // double free: corrupts the allocator's bookkeeping
+
+char *buf = malloc(1024);
+buf = malloc(2048);     // leak: the first block is unreachable and never freed
+```
+
+- **Use-after-free**: reading or writing through a **dangling pointer** to freed memory. The behaviour is undefined; it may print garbage, crash, or work in testing and fail in production.
+- **Double free**: freeing the same block twice, which corrupts the allocator.
+- **Leak**: losing the last pointer to a block without freeing it.
+
+Use-after-free and buffer overflows are also security holes: a large share of severe vulnerabilities in C and C++ code bases are memory-safety bugs. C++ reduces the risk with **RAII** (Resource Acquisition Is Initialization): an object's destructor frees its memory when the object goes out of scope, and smart pointers (`std::unique_ptr`, `std::shared_ptr`) apply that to the heap.
+
+## Reference Counting
+
+**Reference counting** stores a counter in each object: the number of references pointing at it. Creating a reference increments it, dropping one decrements it, and when it reaches zero the object is freed immediately (and the objects it referenced are decremented in turn). CPython, Swift, Objective-C and C++'s `shared_ptr` work this way.
+
+```python
+import sys
+import weakref
+
+class Node:
+    pass
+
+a = Node()
+weakref.finalize(a, print, "node freed")       # runs the moment the object is reclaimed
+b = a
+print("references:", sys.getrefcount(a) - 1)   # minus the temporary reference getrefcount itself holds
+del a
+print("after del a:", sys.getrefcount(b) - 1)
+b = None                                       # last reference gone: freed immediately
+print("end of script")
+# references: 2
+# after del a: 1
+# node freed
+# end of script
+```
+
+In words: two names point at one object, so its count is 2. `del a` drops it to 1, and the object lives. Setting `b = None` drops it to 0, and the object is freed on that line: "node freed" prints before "end of script". That promptness is the strength of reference counting: memory is returned at once, and files or sockets held by the object close deterministically. The costs are a counter update on every assignment (expensive with many threads, since updates must be atomic) and one structural blind spot, cycles:
+
+```python
+import gc
+import weakref
+
+class Node:
+    def __init__(self, name):
+        self.name, self.other = name, None
+
+gc.disable()                                   # only reference counting from here on
+a, b = Node("a"), Node("b")
+a.other, b.other = b, a                        # a reference cycle
+freed = []
+weakref.finalize(a, freed.append, "a")
+weakref.finalize(b, freed.append, "b")
+del a, b                                       # unreachable, but each still has a count of 1
+print("after del:", freed)
+gc.collect()                                   # the cycle detector finds the unreachable pair
+print("after gc.collect():", sorted(freed))
+# after del: []
+# after gc.collect(): ['a', 'b']
+```
+
+In words: after `del a, b` nothing in the program can reach either node, yet each still holds a reference to the other, so both counts stay at 1 and nothing is freed (`[]`). CPython adds a **cycle collector** for exactly this case; `gc.collect()` finds the pair and frees both. Swift has no cycle collector and asks programmers to break cycles with `weak` references instead.
+
+## Tracing Garbage Collection
+
+A **tracing garbage collector** asks a different question: not "how many references does this object have?" but "can the program still reach it?". It starts from the **roots** (local variables in every stack frame, globals and CPU registers) and follows every reference. Anything reached is live; everything else is garbage, cycles included. The simplest version is **mark-sweep**: a mark phase walks the object graph from the roots, and a sweep phase frees every unmarked object.
+
+```python
+heap = {                                       # object -> objects it references
+    "A": ["B", "C"], "B": [], "C": [], "D": ["C"],
+    "H": ["E"], "E": ["F", "G"], "F": ["E"], "G": [],
+}
+roots = ["A", "D"]                             # stack variables and globals; H lost its root
+
+def mark(roots):
+    marked, stack = set(), list(roots)
+    while stack:                               # depth-first walk of everything reachable
+        obj = stack.pop()
+        if obj not in marked:
+            marked.add(obj)
+            stack.extend(heap[obj])
+    return marked
+
+marked = mark(roots)
+garbage = sorted(set(heap) - marked)
+for obj in garbage:                            # sweep: free every object the walk did not reach
+    del heap[obj]
+print("marked:", sorted(marked))
+print("swept:", garbage)
+print("live heap:", sorted(heap))
+# marked: ['A', 'B', 'C', 'D']
+# swept: ['E', 'F', 'G', 'H']
+# live heap: ['A', 'B', 'C', 'D']
+```
+
+In words: the walk from roots `A` and `D` reaches `A`, `B`, `C` and `D` (`C` twice, marked once). `H` lost its root, and `E` and `F` reference each other, but none of them is reachable, so the sweep frees all four, the cycle included. Step through the same heap with both strategies:
+
+<GcMarkSweep />
+
+Real collectors refine this in three directions:
+
+- **Generational**: most objects die young (the **generational hypothesis**: temporary strings, iterators, request objects). The heap is split into a young generation, collected often and cheaply, and an old generation, collected rarely. Objects that survive a few young collections are **promoted**.
+- **Moving and compacting**: copying live objects together removes fragmentation and makes allocation a pointer bump, at the cost of updating every pointer to the moved objects.
+- **Concurrent and incremental**: marking runs alongside the program, or in small slices, so pauses stay short. Go and Java's ZGC keep typical pauses under a millisecond.
+
+The trade-off is CPU and memory for convenience: a collector needs headroom (often well above the live data size) to run efficiently, and it does its work at times the program does not choose, as a **GC pause**.
+
+<Callout type="pitfall">
+A GC does not run your cleanup on time. Files, sockets, locks and database connections must be released explicitly (`with open(...)`, `try`/`finally`, `using`, `defer`), not left to a finalizer, which a tracing collector may run late or never.
+</Callout>
+
+## Leaks With a GC
+
+A garbage collector frees **unreachable** objects. An object that is still reachable but never used again is a leak the collector cannot see. The common causes are unbounded caches, listeners and callbacks that are registered and never removed, and global collections that only grow:
+
+```python
+import functools
+import weakref
+
+class Image:
+    def __init__(self, n):
+        self.n = n
+
+cache = {}
+def load(n):                                   # an unbounded cache: a classic leak in GC languages
+    if n not in cache:
+        cache[n] = Image(n)
+    return cache[n]
+
+for n in range(10_000):
+    load(n)
+print("dict cache size:", len(cache))
+
+@functools.lru_cache(maxsize=128)              # bounded: old entries are evicted and become garbage
+def load_bounded(n):
+    return Image(n)
+
+for n in range(10_000):
+    load_bounded(n)
+print("lru_cache size:", load_bounded.cache_info().currsize)
+
+weak = weakref.WeakValueDictionary()           # holds entries only while someone else uses them
+img = Image(1)
+weak[1] = img
+print("weak entries while used:", len(weak))
+del img
+print("weak entries after del:", len(weak))
+# dict cache size: 10000
+# lru_cache size: 128
+# weak entries while used: 1
+# weak entries after del: 0
+```
+
+In words: the plain dict keeps all 10,000 images forever, because the cache itself is a reachable reference to each. `lru_cache(maxsize=128)` keeps only the newest 128, so the other 9,872 become unreachable and are collected. A **weak reference** does not keep its target alive: the `WeakValueDictionary` entry disappears as soon as the last strong reference (`img`) is gone, going from 1 entry to 0.
+
+<Callout type="pitfall">
+Memory that grows steadily under a constant load is almost always a reachable leak, not a GC bug. Take two heap snapshots some minutes apart (Python's `tracemalloc`, Chrome DevTools, Java heap dumps) and look for the object type whose count only rises.
+</Callout>
+
+## Ownership in Rust
+
+Rust frees heap memory without a collector and without manual `free`, by checking rules at compile time:
+
+- Each value has exactly one **owner** (a variable). When the owner goes out of scope, the value is dropped (freed).
+- Assigning or passing a heap value **moves** ownership; the old variable can no longer be used.
+- Code may **borrow** a reference instead: many shared (`&T`) borrows or one mutable (`&mut T`) borrow at a time, and no borrow may outlive the owner.
+
+```rust
+fn main() {
+    let s = String::from("ada");   // s owns a heap buffer
+    let t = s;                     // ownership moves to t; s is no longer valid
+    println!("{}", s);             // compile error E0382: borrow of moved value: `s`
+}                                  // t goes out of scope here and the buffer is freed
+```
+
+The compiler rejects the use of `s` after the move, so use-after-free and double free cannot compile, and the free point (end of `t`'s scope) is known statically: no runtime cost and no pauses. The price is learning curve and some designs (graphs with shared nodes, cycles) that need explicit tools such as `Rc` (reference counting) or arena allocation.
+
+## Comparing the Strategies
+
+| Strategy | Frees memory | Handles cycles | Runtime cost | Typical bugs | Used by |
+| --- | --- | --- | --- | --- | --- |
+| Manual | When you call `free` | Yes, if you free them | None | Use-after-free, double free, leaks | C |
+| RAII / smart pointers | At end of scope | No (`shared_ptr` cycles leak) | Small | Cycles, dangling raw pointers | C++ |
+| Reference counting | When count hits 0 | No, without a cycle collector | Counter updates | Cycles | CPython, Swift |
+| Tracing GC | At collection time | Yes | Pauses, memory headroom | Reachable leaks | Java, Go, JavaScript, C# |
+| Ownership | At end of owner's scope | Needs `Rc` + `Weak` | None | Few; fights with the borrow checker | Rust |
+
+<Callout type="key">
+The question every strategy answers is "when is this memory no longer needed?". Manual memory makes you answer it at each `free`; reference counting and tracing GC answer it at runtime (by counting or by reachability); ownership answers it at compile time. None of them can tell that a reachable object will never be used again.
+</Callout>

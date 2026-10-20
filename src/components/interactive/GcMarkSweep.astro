@@ -1,0 +1,220 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Reference counting vs mark-sweep on one heap"
+  caption="The same heap as the note's code: roots x and y on the stack, and root z, which is set to None in the first step. Reference counting frees H at once but leaves the cycle E ⇄ F (and G, which E points to) alive forever. Mark-sweep frees nothing at first, then marks everything reachable from the roots (green) and sweeps the rest (red), cycle included."
+>
+  <gc-mark-sweep>
+    <div class="ctl-row">
+      <input type="hidden" data-mode value="rc" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="rc" aria-pressed="true">Reference counting</button>
+        <button type="button" class="btn" data-choice="ms" aria-pressed="false">Mark-sweep</button>
+      </span>
+    </div>
+    <svg class="gc-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="object graph with roots"></svg>
+    <p class="gc-msg" data-msg></p>
+    <p class="gc-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </gc-mark-sweep>
+</Figure>
+
+<style>
+  .gc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .gc-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.6;
+  }
+  .gc-svg :global(line.gone) {
+    stroke-dasharray: 4 4;
+    opacity: 0.4;
+  }
+  .gc-svg :global(.root rect) {
+    fill: var(--bg-soft);
+    stroke: var(--text-muted);
+  }
+  .gc-svg :global(.root.dead rect) {
+    stroke-dasharray: 3 3;
+    opacity: 0.5;
+  }
+  .gc-svg :global(.obj circle) {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+    stroke-width: 1.8;
+  }
+  .gc-svg :global(.obj.cur circle) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .gc-svg :global(.obj.marked circle) {
+    fill: rgba(52, 168, 83, 0.22);
+    stroke: var(--g-green);
+  }
+  .gc-svg :global(.obj.freed circle) {
+    fill: rgba(234, 67, 53, 0.12);
+    stroke: var(--g-red);
+    stroke-dasharray: 4 3;
+  }
+  .gc-svg :global(.obj.leak circle) {
+    fill: rgba(234, 67, 53, 0.28);
+    stroke: var(--g-red);
+  }
+  .gc-svg :global(text) {
+    fill: var(--text);
+    font: 700 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .gc-svg :global(text.cnt) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+  }
+  .gc-svg :global(text.lbl) {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+    text-anchor: start;
+  }
+  .gc-msg {
+    min-height: 2.8em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .gc-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const POS: Record<string, [number, number]> = {
+    A: [120, 80], B: [70, 170], C: [170, 170], D: [230, 80],
+    H: [330, 80], E: [330, 165], F: [405, 165], G: [260, 205],
+  };
+  const ROOTS: [string, string, number][] = [['x', 'A', 120], ['y', 'D', 230], ['z', 'H', 330]];
+  const EDGES: [string, string][] = [['A', 'B'], ['A', 'C'], ['D', 'C'], ['H', 'E'], ['E', 'F'], ['F', 'E'], ['E', 'G']];
+
+  interface Frame {
+    zDead: boolean;
+    cls: Record<string, string>;
+    counts?: Record<string, number>;
+    msg: string;
+  }
+
+  function rcFrames(): Frame[] {
+    const counts: Record<string, number> = { A: 1, B: 1, C: 2, D: 1, H: 1, E: 2, F: 1, G: 1 };
+    const out: Frame[] = [];
+    const cls: Record<string, string> = {};
+    const push = (zDead: boolean, msg: string) => out.push({ zDead, cls: { ...cls }, counts: { ...counts }, msg });
+    push(false, 'Each object carries a count of references to it. E has 2: one from H and one from F.');
+    counts.H = 0;
+    cls.H = 'cur';
+    push(true, 'z = None: H loses its only reference, so its count drops to 0.');
+    cls.H = 'freed';
+    counts.E = 1;
+    cls.E = 'cur';
+    push(true, 'H is freed at once, and every object it referenced is decremented: E goes from 2 to 1.');
+    cls.E = 'leak';
+    cls.F = 'leak';
+    cls.G = 'leak';
+    push(true, 'E is still referenced by F, and F by E, so neither count reaches 0. E, F and G are unreachable but never freed: a leak. CPython runs a cycle collector for this.');
+    return out;
+  }
+
+  function msFrames(): Frame[] {
+    const out: Frame[] = [];
+    const cls: Record<string, string> = {};
+    const push = (zDead: boolean, msg: string) => out.push({ zDead, cls: { ...cls }, msg });
+    push(false, 'No counts. Objects are freed only when the collector runs.');
+    push(true, 'z = None: nothing happens yet. H, E, F and G are garbage, but the program keeps running until a collection starts.');
+    const order: [string, string][] = [
+      ['A', 'mark: start at root x, reach A'],
+      ['C', 'mark: follow A → C'],
+      ['B', 'mark: follow A → B'],
+      ['D', 'mark: start at root y, reach D. Its edge to C finds C already marked, so the walk skips it.'],
+    ];
+    for (const [o, m] of order) {
+      for (const k in cls) if (cls[k] === 'cur') cls[k] = 'marked';
+      cls[o] = 'cur';
+      push(true, m);
+    }
+    for (const k in cls) if (cls[k] === 'cur') cls[k] = 'marked';
+    push(true, 'Mark phase done: A, B, C and D are reachable from the roots.');
+    for (const o of ['H', 'E', 'F', 'G']) cls[o] = 'freed';
+    push(true, 'Sweep: every unmarked object is freed: H, E, F and G, including the cycle E ⇄ F.');
+    return out;
+  }
+
+  class GcMarkSweep extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!;
+      mode.addEventListener('change', () => this.reset());
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      const rc = this.querySelector<HTMLInputElement>('[data-mode]')!.value === 'rc';
+      this.fr = rc ? rcFrames() : msFrames();
+      this.i = 0;
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const R = 18;
+      const freed = (o: string) => f.cls[o] === 'freed';
+      const seg = (a: [number, number], b: [number, number], cls: string, curve = 0) => {
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        const len = Math.hypot(dx, dy);
+        const ux = dx / len;
+        const uy = dy / len;
+        const ox = -uy * curve;
+        const oy = ux * curve;
+        return `<line class="${cls}" x1="${a[0] + ux * R + ox}" y1="${a[1] + uy * R + oy}" x2="${b[0] - ux * (R + 4) + ox}" y2="${b[1] - uy * (R + 4) + oy}" marker-end="url(#gc-arrow)" />`;
+      };
+      let s = `<defs><marker id="gc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--border-strong)" /></marker></defs>`;
+      s += `<text class="lbl" x="4" y="14">stack roots</text><text class="lbl" x="4" y="60">heap</text>`;
+      for (const [r, o, x] of ROOTS) {
+        const dead = r === 'z' && f.zDead;
+        s += `<g class="root${dead ? ' dead' : ''}"><rect x="${x - 26}" y="4" width="52" height="22" rx="5" /><text x="${x}" y="15">${dead ? 'z=None' : r}</text></g>`;
+        if (!dead) s += `<line x1="${x}" y1="26" x2="${x}" y2="${POS[o][1] - R - 4}" marker-end="url(#gc-arrow)" />`;
+      }
+      for (const [a, b] of EDGES) {
+        const pair = (a === 'E' && b === 'F') || (a === 'F' && b === 'E');
+        s += seg(POS[a], POS[b], freed(a) ? 'gone' : '', pair ? 6 : 0);
+      }
+      for (const o in POS) {
+        const [x, y] = POS[o];
+        s += `<g class="obj ${f.cls[o] ?? ''}"><circle cx="${x}" cy="${y}" r="${R}" /><text x="${x}" y="${y}">${o}</text>`;
+        if (f.counts) s += `<text class="cnt" x="${x + R + 8}" y="${y - R + 2}">${f.counts[o]}</text>`;
+        s += `</g>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const all = Object.keys(POS);
+      const fr = all.filter(freed);
+      const leaked = all.filter((o) => f.cls[o] === 'leak');
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · freed = ${fr.length ? fr.join(', ') : 'none'} · live = ${all.length - fr.length}${leaked.length ? ` · leaked = ${leaked.join(', ')}` : ''}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('gc-mark-sweep', GcMarkSweep);
+</script>
