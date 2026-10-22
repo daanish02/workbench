@@ -3,19 +3,17 @@ import Figure from '../Figure.astro';
 ---
 
 <Figure
-  title="Encapsulation, layer by layer"
-  caption="Send a browser's request down the stack: each layer wraps what it was handed with its own header (the link layer adds a trailer too). Receive reverses it, each layer reading and removing only its own part. Switch the labels between the OSI and TCP/IP views of the same layers."
+  title="Seven OSI layers, four TCP/IP layers, one request"
+  caption="Step sends a browser's HTTP request down all seven OSI layers, then back up on the receiver. Each layer wraps the data with its own header (the data link layer adds a trailer too, the physical layer turns the frame into bits). The left column shows which TCP/IP layer owns each OSI layer; the right column shows who reads that layer on the way."
 >
   <encap-demo>
     <div class="ctl-row">
-      <button class="btn primary" data-act="down">Send ↓ (wrap)</button>
-      <button class="btn primary" data-act="up">Receive ↑ (unwrap)</button>
-      <button class="btn" data-act="reset">Reset</button>
-      <span class="ctl-label">Names</span>
-      <button class="btn" data-model="tcp" aria-pressed="true">TCP/IP</button>
-      <button class="btn" data-model="osi" aria-pressed="false">OSI</button>
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
     </div>
     <div class="en" data-layers></div>
+    <p class="en-stat" data-stat></p>
     <p class="en-msg" data-msg aria-live="polite"></p>
   </encap-demo>
 </Figure>
@@ -23,35 +21,66 @@ import Figure from '../Figure.astro';
 <style>
   .en {
     margin-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .en :global(.row) {
     display: grid;
-    grid-template-columns: 112px 1fr;
-    gap: 10px;
-    align-items: center;
+    grid-template-columns: 92px 128px 1fr 150px;
+    column-gap: 10px;
+    row-gap: 0;
+  }
+  .en :global(.hd) {
+    font: 700 0.625rem var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding-bottom: 6px;
+  }
+  .en :global(.cell) {
+    border-top: 1px solid var(--border);
+    padding: 7px 0;
     opacity: 0.35;
     transition: opacity 0.2s;
   }
-  .en :global(.row.on) {
+  .en :global(.cell.on) {
     opacity: 1;
+  }
+  .en :global(.grp) {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 4px 0;
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    font: 700 0.75rem var(--font-mono);
+    color: var(--text-faint);
+    transition: all 0.2s;
+  }
+  .en :global(.grp.on) {
+    color: #fff;
+    border-color: var(--c);
+    background: color-mix(in srgb, var(--c) 18%, transparent);
   }
   .en :global(.name) {
     font: 700 0.75rem var(--font-mono);
     color: var(--text-muted);
   }
-  .en :global(.name small) {
+  .en :global(.name small),
+  .en :global(.dev small) {
     display: block;
     font-weight: 500;
     color: var(--text-faint);
+  }
+  .en :global(.cur .name) {
+    color: #fff;
+  }
+  .en :global(.dev) {
+    font: 600 0.6875rem/1.3 var(--font-mono);
+    color: var(--text-muted);
   }
   .en :global(.pkt) {
     display: flex;
     flex-wrap: wrap;
     gap: 3px;
     min-height: 30px;
+    align-content: flex-start;
   }
   .en :global(.chip) {
     border: 1px solid var(--c);
@@ -61,74 +90,152 @@ import Figure from '../Figure.astro';
     font: 0.6875rem/1.3 var(--font-mono);
     color: #fff;
   }
-  .en-msg {
+  .en :global(.chip.none) {
+    border-style: dashed;
+    background: transparent;
+    color: var(--text-muted);
+  }
+  .en :global(.chip.read) {
+    box-shadow: 0 0 0 2px var(--g-yellow);
+  }
+  .en-stat {
     margin: 12px 0 0;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .en-msg {
+    margin: 6px 0 0;
     font-size: 0.875rem;
     color: var(--text-muted);
-    min-height: 3em;
+    min-height: 4.5em;
   }
-  @media (max-width: 520px) {
-    .en :global(.row) {
-      grid-template-columns: 1fr;
-      gap: 4px;
+  @media (max-width: 640px) {
+    .en {
+      grid-template-columns: 62px 74px 1fr;
+      column-gap: 6px;
+    }
+    .en :global(.dev),
+    .en :global(.hd.dev) {
+      display: none;
+    }
+    .en :global(.grp) {
+      font-size: 0.625rem;
+      padding: 4px;
     }
   }
 </style>
 
 <script>
-  const LAYERS = [
-    { tcp: 'Application', osi: 'Application (7)', unit: 'message', chips: [['HTTP', 'GET /index.html'], ], c: 'var(--g-blue)', says: 'The browser produces an HTTP request. This is the data everyone else will carry.' },
-    { tcp: 'Transport', osi: 'Transport (4)', unit: 'segment', chips: [['TCP', '52814 → 443'], ], c: 'var(--g-yellow)', says: 'TCP prepends ports (which process on which host) plus sequence numbers. The unit is now a segment.' },
-    { tcp: 'Internet', osi: 'Network (3)', unit: 'packet', chips: [['IP', '10.0.0.5 → 93.184.216.34'], ], c: 'var(--g-green)', says: 'IP prepends source and destination addresses, which routers read. The unit is a packet.' },
-    { tcp: 'Link', osi: 'Data link (2)', unit: 'frame', chips: [['Eth', 'to router MAC'], ], trailer: 'FCS', c: 'var(--g-red)', says: 'Ethernet prepends MAC addresses for the next hop only, and appends a checksum. The unit is a frame.' },
+  // Index 0..6 = OSI layer 7..1. g = TCP/IP group (0 application, 1 transport, 2 internet, 3 link).
+  type Layer = {
+    n: number;
+    osi: string;
+    g: number;
+    unit: string;
+    chip: [string, string] | null;
+    c: string;
+    dev: string;
+    devNote: string;
+    down: string;
+    up: string;
+  };
+  const GROUPS = [
+    { name: 'Application', c: 'var(--g-blue)' },
+    { name: 'Transport', c: 'var(--g-yellow)' },
+    { name: 'Internet', c: 'var(--g-green)' },
+    { name: 'Link', c: 'var(--g-red)' },
   ];
+  const LAYERS: Layer[] = [
+    { n: 7, osi: 'Application', g: 0, unit: 'message', chip: ['HTTP', 'GET /index.html'], c: 'var(--g-blue)', dev: 'The application', devNote: 'browser, web server',
+      down: 'The browser builds an HTTP request. Every layer below only carries it.',
+      up: 'The server application reads the plain HTTP request. Done.' },
+    { n: 6, osi: 'Presentation', g: 0, unit: 'message', chip: ['TLS', 'encrypted record'], c: 'var(--g-blue-l)', dev: 'A library', devNote: 'TLS, in the app process',
+      down: 'TLS encodes and encrypts the request into records. In practice this is a library under the application protocol, not a separate stack.',
+      up: 'TLS checks and decrypts the record, handing plain bytes to the application.' },
+    { n: 5, osi: 'Session', g: 0, unit: 'message', chip: null, c: 'var(--text-faint)', dev: 'A library', devNote: 'same TLS session state',
+      down: 'Session state (which TLS session this is) lives in the same library and adds no header of its own. That is why TCP/IP folds layers 7 to 5 into one.',
+      up: 'The library matches the bytes to their session. No header to strip.' },
+    { n: 4, osi: 'Transport', g: 1, unit: 'segment', chip: ['TCP', '52814 → 443'], c: 'var(--g-yellow)', dev: 'Endpoints only', devNote: 'the OS TCP stack',
+      down: 'TCP prepends ports (which process on which host) and sequence numbers. The unit is now a segment.',
+      up: 'TCP uses the port to pick the right process, orders data by sequence number, and passes it up.' },
+    { n: 3, osi: 'Network', g: 2, unit: 'packet', chip: ['IP', '10.0.0.5 → 93.184.216.34'], c: 'var(--g-green)', dev: 'Every router', devNote: 'reads it, then forwards',
+      down: 'IP prepends source and destination addresses, which every router on the path reads. The unit is a packet.',
+      up: 'IP checks the destination address matches this host (a router would forward it instead) and passes the segment up.' },
+    { n: 2, osi: 'Data link', g: 3, unit: 'frame', chip: ['Eth', 'to router MAC'], c: 'var(--g-red)', dev: 'Every switch', devNote: 'and each link\'s NIC',
+      down: 'Ethernet prepends MAC addresses for the next hop only, and appends an FCS checksum. The unit is a frame.',
+      up: 'Ethernet checks the FCS and destination MAC, strips its header and trailer, and passes the packet up.' },
+    { n: 1, osi: 'Physical', g: 3, unit: 'bits', chip: null, c: 'var(--text-muted)', dev: 'NIC and medium', devNote: 'cable, fibre, radio, repeaters',
+      down: 'The card prefixes a preamble and sends the frame as bits, encoded as electrical, optical or radio signals. No header here: only signals.',
+      up: 'The card decodes the signal back into bits and finds the frame start from the preamble.' },
+  ];
+  const BITS: [string, string][] = [
+    ['preamble', '10101010 … 10101011'],
+    ['bits', '10101010 10111011 11001100 …'],
+  ];
+  const TOTAL = 14; // 7 steps down, then 7 up
+
   class EncapDemo extends HTMLElement {
-    n = 0; // how many layers have wrapped (0..4)
-    model = 'tcp';
+    t = 0;
     connectedCallback() {
-      this.querySelector('[data-act="down"]')!.addEventListener('click', () => this.go(1));
-      this.querySelector('[data-act="up"]')!.addEventListener('click', () => this.go(-1));
-      this.querySelector('[data-act="reset"]')!.addEventListener('click', () => {
-        this.n = 0;
-        this.say('Nothing sent yet. Press Send to wrap the request layer by layer.');
+      const step = this.querySelector<HTMLButtonElement>('[data-step-btn]')!;
+      step.addEventListener('click', () => {
+        if (this.t < TOTAL) this.t++;
         this.draw();
       });
-      this.querySelectorAll<HTMLButtonElement>('[data-model]').forEach((b) =>
-        b.addEventListener('click', () => {
-          this.model = b.dataset.model!;
-          this.querySelectorAll('[data-model]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-          this.draw();
-        }),
-      );
-      this.say('Nothing sent yet. Press Send to wrap the request layer by layer.');
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.t = 0;
+        this.draw();
+      });
       this.draw();
     }
-    say(s: string) {
-      this.querySelector('[data-msg]')!.textContent = s;
-    }
-    go(d: number) {
-      if (d > 0) {
-        if (this.n >= 4) return this.say('Fully encapsulated: this frame is what the network card puts on the wire as bits.');
-        this.n++;
-        this.say(LAYERS[this.n - 1].says);
-      } else {
-        if (this.n <= 1) return this.say(this.n === 0 ? 'Nothing to unwrap yet. Send first.' : 'Only the application data is left: the receiving application reads it.');
-        this.n--;
-        const L = LAYERS[this.n];
-        this.say(`The ${L.tcp.toLowerCase()} layer reads its header, acts on it, and passes the ${L.unit}'s payload up.`);
+    // chips for the unit sitting at layer index i: outermost header first
+    chips(i: number, read: boolean) {
+      const L = LAYERS[i];
+      if (L.n === 1) return BITS.map(([a, b]) => `<span class="chip${read ? ' read' : ''}" style="--c:${L.c}">${a}: ${b}</span>`).join('');
+      const out: string[] = [];
+      for (let j = i; j >= 0; j--) {
+        const x = LAYERS[j];
+        if (!x.chip) {
+          if (j === i) out.push(`<span class="chip none${read ? ' read' : ''}">no own header</span>`);
+          continue;
+        }
+        out.push(`<span class="chip${read && j === i ? ' read' : ''}" style="--c:${x.c}">${x.chip[0]}: ${x.chip[1]}</span>`);
       }
-      this.draw();
+      if (L.n === 2) out.push(`<span class="chip${read ? ' read' : ''}" style="--c:${L.c}">FCS</span>`);
+      return out.join('');
     }
     draw() {
-      const rows = LAYERS.map((L, i) => {
-        const name = `<div class="name">${this.model === 'tcp' ? L.tcp : L.osi}<small>${L.unit}</small></div>`;
-        if (this.n <= i) return `<div class="row">${name}<div class="pkt"></div></div>`;
-        // outermost header first, application data last, link trailer at the end
-        const chip = (x: (typeof LAYERS)[number]) => `<span class="chip" style="--c:${x.c}">${x.chips[0][0]}: ${x.chips[0][1]}</span>`;
-        const html = LAYERS.slice(0, i + 1).reverse().map(chip).join('');
-        return `<div class="row on">${name}<div class="pkt">${html}${L.trailer ? `<span class="chip" style="--c:${L.c}">${L.trailer}</span>` : ''}</div></div>`;
+      // cur = index of the layer acting now (-1 before the first step)
+      const down = this.t >= 1 && this.t <= 7;
+      const up = this.t >= 8;
+      const cur = this.t === 0 ? -1 : down ? this.t - 1 : 6 - (this.t - 8);
+      const grpOn = GROUPS.map(() => false);
+      const heads = ['TCP/IP', 'OSI', 'Data on this layer', 'Who reads it'];
+      let html = heads.map((h, k) => `<div class="hd${k === 3 ? ' dev' : ''}" style="grid-row:1;grid-column:${k + 1}">${h}</div>`).join('');
+      LAYERS.forEach((L, i) => {
+        // rows hold a unit when going down (this layer or above done) or when going up (this layer not yet stripped)
+        const filled = down ? i <= cur : up ? i === cur : false;
+        if (i === cur) grpOn[L.g] = true;
+        const r = i + 2;
+        const on = filled ? ' on' : '';
+        const isCur = i === cur ? ' cur' : '';
+        html += `<div class="cell${on}${isCur}" style="grid-row:${r};grid-column:2"><div class="name">${L.n} ${L.osi}<small>${L.unit}</small></div></div>`;
+        html += `<div class="cell${on}${isCur}" style="grid-row:${r};grid-column:3"><div class="pkt">${filled ? this.chips(i, up) : ''}</div></div>`;
+        html += `<div class="cell dev${on}${isCur}" style="grid-row:${r};grid-column:4">${L.dev}<small>${L.devNote}</small></div>`;
       });
-      this.querySelector('[data-layers]')!.innerHTML = rows.join('');
+      GROUPS.forEach((G, g) => {
+        const rows = LAYERS.map((L, i) => (L.g === g ? i + 2 : 0)).filter(Boolean);
+        html += `<div class="grp${grpOn[g] ? ' on' : ''}" style="--c:${G.c};grid-row:${rows[0]} / ${rows[rows.length - 1] + 1};grid-column:1">${G.name}</div>`;
+      });
+      this.querySelector('[data-layers]')!.innerHTML = html;
+
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.t >= TOTAL;
+      const stat = this.t === 0 ? 'step 0/14 · idle' : `step ${this.t}/14 · ${down ? 'sending ↓' : 'receiving ↑'} · layer ${LAYERS[cur].n} ${LAYERS[cur].osi} · TCP/IP ${GROUPS[LAYERS[cur].g].name}`;
+      this.querySelector('[data-stat]')!.textContent = stat;
+      this.querySelector('[data-msg]')!.textContent =
+        this.t === 0 ? 'Nothing sent yet. Press Step to wrap the request layer by layer.'
+        : down ? LAYERS[cur].down
+        : LAYERS[cur].up + (this.t === TOTAL ? ' The request has crossed the network and been unwrapped layer by layer.' : '');
     }
   }
   customElements.define('encap-demo', EncapDemo);
