@@ -12,6 +12,7 @@ const PACKAGES = {
   statsmodels: { label: 'statsmodels', modules: ['statsmodels'] },
   cryptography: { label: 'cryptography', modules: ['cryptography'] },
   packaging: { label: 'packaging', modules: ['packaging'] },
+  capstone: { label: 'capstone', modules: ['capstone'] },
   pandas: { label: 'pandas', modules: ['pandas'] },
   matplotlib: { label: 'matplotlib', modules: ['matplotlib'] },
   seaborn: { label: 'seaborn', modules: ['seaborn'] },

@@ -13,6 +13,7 @@ const LANGUAGE_LABELS = {
   python: 'Python', sql: 'SQL', typescript: 'TypeScript', ts: 'TypeScript', javascript: 'JavaScript', js: 'JavaScript',
   rust: 'Rust', kotlin: 'Kotlin', java: 'Java', go: 'Go', swift: 'Swift', ruby: 'Ruby', r: 'R', php: 'PHP',
   lua: 'Lua', json: 'JSON', yaml: 'YAML', cypher: 'Cypher', csharp: 'C#', cpp: 'C++', c: 'C', html: 'HTML', css: 'CSS',
+  asm: 'Assembly', hcl: 'HCL', terraform: 'Terraform', dockerfile: 'Dockerfile', docker: 'Dockerfile',
 };
 // The header is the title's 1.9rem line plus 0.45rem padding above and below (about 46px).
 // The copy button (1.75rem) is centred in it: half the leftover space, minus the 1px frame border

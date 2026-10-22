@@ -7,6 +7,13 @@ A study site of notes (Astro 7 + MDX + KaTeX), deployed to GitHub Pages under `/
 - `bun run dev`: dev server with hot reload. The user reviews notes in the browser.
 - `bun run build`: display-math check, then `astro build`, then pagefind. Run it before claiming anything is done.
 - `uv run scripts/check_notes.py <area> [filter]`: runs every Python block in one area's notes (math, cs, …) on its own and checks its printed output. It must report 0 failing.
+- `uv run scripts/note_tools.py <command>`: the one entry point for checks while writing. Reuse it; add new helpers to it instead of writing throwaway scripts.
+  - `check <area> [filter]`: same as check_notes.py.
+  - `verify [area ...]`: `bun run build`, then fails on any `katex-error` in `dist/<area>` or control characters in `src`.
+  - `shots <path> ...` (e.g. `infra/storage/raid`): screenshots built pages with headless Edge and crops every figure to `.shots/<page>_fig<N>.png` (gitignored). Look at each crop before calling a figure done; it only shows the initial state, so step through steppers in `bun run dev` or say so.
+  - `pending <file> ...`: appends every code block still marked `// output: PENDING` to `refs/verify-snippets.md` (skips entries already there).
+  - `fill <note> <answers.txt>`: the user's pasted outputs (`answers/<lang>.txt`, numbered `1.`, `2.`, … in the order of the note's PENDING blocks) replace the markers; failed runs stay PENDING and the log is re-synced.
+  - `dollars [--apply] <file|dir> ...`: finds money such as `$30,000` in prose that KaTeX would read as math; `--apply` escapes it (`\$` in the body, `\\$` in YAML takeaways). Review the list before applying.
 - Tooling: bun only for JS (never npm, npx or yarn); uv only for Python (never bare pip). Pin exact versions.
 
 ## Where things live
@@ -39,7 +46,7 @@ resources:                    # 2–3 links, every URL checked with curl (200) b
 ### Appendix templates
 
 - **Library guide** (NumPy, SciPy, SymPy, pandas, seaborn, matplotlib, scikit-learn, PyTorch, Hugging Face): a `<FilterTable>` at the top mapping "I want to…" to the call, then `##` sections by task ("Creating arrays", "Linear algebra"), each with a short standalone code block and real output.
-- **Language sheet** (`cs/appendix/*-sheet`, `javascript-typescript`): the same `##` headings in every sheet, in this order: Types, Variables, Control Flow, Functions, Collections, Strings, Errors, Structs and Classes, Generics, Modules and Packages, Concurrency, Memory Model, Tooling, Idioms and Pitfalls. Code in that language. The checker only runs Python, and the user verifies other languages with online compilers, so: write each non-Python snippet with `// output: PENDING` where its output goes, and append it to `refs/verify-snippets.md` (one entry per snippet: note path, language, the code). The user runs them and pastes the outputs back; only then replace PENDING with the real output. Never guess an output. `rosetta-table` is a `<FilterTable>`: one concept per row, one column per language.
+- **Language and tool sheets** (`cs/appendix-languages/*-sheet`, `cs/appendix-tools/*`, `javascript-typescript`, `postgres`, `docker`, …): no shared heading list. Each sheet is structured around what that language or tool is for and where it is strong or weak (Rust leads with ownership, Go with goroutines, C++ with RAII and templates, SQL databases with queries, indexes and transactions). Open with a short "what it is good and bad at" section, then the **basics in that language** (types and variables, control flow, functions, core collections and strings, errors), then the language's own depth, and end with "Pitfalls" and "Tooling". The free structure is about emphasis and naming, never about skipping the basics. Cross-language comparison lives in `rosetta-table` (a `<FilterTable>`: one concept per row, one column per language), not in the sheets. Code in that language. The checker only runs Python, and the user verifies other code with online compilers, so: write each non-Python snippet with `// output: PENDING` (or the language's comment syntax) where its output goes, and log it with `note_tools.py pending <file>`. The user runs them and pastes the outputs back; only then replace PENDING with the real output. Never guess an output. Shell/config blocks that only show usage (no output to check) need no PENDING.
 - **Same code in several languages** (e.g. TypeScript and JavaScript): wrap the fenced blocks in `<CodeTabs>` with blank lines around each block. Each block's language becomes a tab in one shared header.
 - Lookup pages (glossary, cheat sheets, units): `<FilterTable>`.
 
@@ -104,6 +111,8 @@ import Figure from '../Figure.astro';
 ## Gotchas
 
 - Doubled backslashes are needed only in YAML double-quoted strings (takeaways). In the MDX body use single `\`.
+- A dollar sign before a number starts inline math: "costs $30,000 … $9,000" renders as garbled math. Write `\$30,000` in the body and `\\$30,000` in takeaways (`note_tools.py dollars` finds them).
+- In SVG figures, tinted fills (`rgba(…, 0.16)`) are see-through: lines drawn underneath show through boxes. Draw an opaque `fill: var(--bg)` rect first, then the tinted one.
 - When editing text with shell tools, beware escape sequences: `\t`, `\a` and `\f` in replacement strings turned `\times`, `\approx` and `\frac` into control characters in the past. Prefer the Edit tool, or Python with raw strings. Check with `grep -rP '[\x00-\x08\x0b\x0c\x0e-\x1f]' src`.
 - Inserting a note: renumber `order` in its section and fix any "next note" wording.
 - Never delete files, commit or push without asking. On push, the deploy workflow rebuilds the pagefind index; never commit `dist/` or `public/pagefind/`.
