@@ -1,0 +1,363 @@
+---
+title: "Assembly Sheet"
+description: "x86-64 and ARM64 assembly on one page, from registers and instructions to loops, functions and the calling convention, down to the machine-code bytes the CPU actually decodes."
+order: 9
+tier: advanced
+takeaways:
+  - "Assembly is a readable spelling of **machine code**: one line per instruction, operating on **registers** and memory. Each CPU family (x86-64, ARM64, RISC-V) has its own."
+  - "x86-64 has 16 general-purpose 64-bit registers (`rax` … `r15`); ARM64 has 31 (`x0` … `x30`). Arithmetic happens in registers; loads and stores move data to and from memory."
+  - "Control flow is compare-then-jump: `cmp` sets the flags, a conditional jump (`jl`, `jne`, …) reads them. Loops and `if`s are built from these."
+  - "The **calling convention** fixes where arguments and results go: on Linux x86-64, arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` and the result in `rax`."
+  - "x86-64 instructions are 1 to 15 bytes long (`ret` is 1 byte, a 64-bit immediate load 10); ARM64 instructions are always 4 bytes."
+resources:
+  - title: "Compiler Explorer (godbolt.org)"
+    url: "https://godbolt.org/"
+    note: "Shows the assembly any C, C++ or Rust function compiles to, line by line, for many compilers and CPUs."
+  - title: "x86 and amd64 instruction reference (felixcloutier.com)"
+    url: "https://www.felixcloutier.com/x86/"
+    note: "Every x86 instruction with its encodings and exact effect on registers and flags, from Intel's manuals."
+  - title: "NASM documentation"
+    url: "https://www.nasm.us/doc/"
+    note: "The assembler used for the x86-64 programs here: syntax, sections, directives and macros."
+---
+
+Every program, whatever it was written in, ends up as **machine code**: bytes the CPU fetches, decodes and executes ([Machine Code](../../../infra/computer-organization/machine-code/), [The Datapath](../../../infra/cpu-architecture/the-datapath/)). **Assembly language** writes those instructions as text, one per line, so people can read and write them. Few programs are written in assembly today, but reading it is a practical skill: it shows what the compiler really did, explains performance surprises, and is unavoidable in debugging crashes, security work and operating-system code. This sheet starts with registers and a first program, builds up loops and functions, compares x86-64 with ARM64, and ends at the bytes themselves. It assumes the [C Sheet](../c-sheet/).
+
+The x86-64 programs use NASM syntax on Linux and talk to the kernel directly with system calls, so they need no C library. Numeric results are returned as the program's **exit status** (0 to 255), which you read with `echo $?`. Build and run each one with:
+
+```bash
+nasm -f elf64 prog.asm -o prog.o && ld prog.o -o prog && ./prog; echo $?
+```
+
+Online, any "NASM" or "Assembly (x86-64)" compiler on a Linux back end runs them.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Total control: exact instructions, registers and memory layout | Portability: x86-64 code does not run on ARM64, and vice versa |
+| Reading what compilers produce, to explain speed or a crash | Productivity: a few lines of C become dozens of instructions |
+| Tiny hot loops, SIMD kernels, boot code, context switches | Correctness: no types, no bounds, no help from a compiler |
+| Understanding security bugs and exploits | Beating modern compilers, which usually generate better code than hand-written assembly |
+
+## Registers
+
+A **register** is a small storage slot inside the CPU, read and written in a fraction of a nanosecond ([Memory Hierarchy](../../../infra/memory-hierarchy/why-the-memory-hierarchy-exists/)). x86-64 has 16 general-purpose 64-bit registers. For historical reasons each can be used at smaller widths under different names:
+
+| 64-bit | 32-bit | 16-bit | 8-bit | Conventional use (Linux, System V ABI) |
+| --- | --- | --- | --- | --- |
+| `rax` | `eax` | `ax` | `al` | return value, syscall number |
+| `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` | `edi`, … `r9d` | `di`, … | `dil`, … | arguments 1 to 6 |
+| `rbx`, `rbp`, `r12`–`r15` | `ebx`, … | | | callee-saved: a function must restore them |
+| `r10`, `r11` | | | | scratch |
+| `rsp` | | | | stack pointer |
+| `rip` | | | | instruction pointer: address of the next instruction |
+
+A separate **flags** register records facts about the last arithmetic result (zero, negative, carry, overflow) for conditional jumps to read. Writing a 32-bit register (`mov eax, 1`) also clears the upper 32 bits of the 64-bit register; writing 8 or 16 bits does not.
+
+## A First Program
+
+A program has a **data section** for constants and variables and a **text section** for instructions. Execution starts at the `_start` label. Output goes through the `write` system call and the program ends with `exit` ([System Calls](../../operating-systems/system-calls/)).
+
+```asm
+section .data
+msg:    db "Hello, assembly", 10      ; the bytes of the string, then a newline (10)
+len:    equ $ - msg                   ; length: current address minus start
+
+section .text
+global _start
+_start:
+    mov eax, 1                        ; system call 1 = write
+    mov edi, 1                        ; argument 1: file descriptor 1 = stdout
+    lea rsi, [rel msg]                ; argument 2: address of the bytes
+    mov edx, len                      ; argument 3: how many bytes
+    syscall                           ; enter the kernel
+    mov eax, 60                       ; system call 60 = exit
+    xor edi, edi                      ; status 0 (xor of a register with itself is 0)
+    syscall
+; output: PENDING
+```
+
+In words: a system call puts its number in `rax` and its arguments in `rdi`, `rsi`, `rdx`, then executes `syscall`. `lea` (load effective address) computes an address without reading memory; `[rel msg]` makes it relative to `rip`, so the program works wherever it is loaded. `equ $ - msg` lets the assembler count the string's 16 bytes. There is no `return` from `_start`: the process must call `exit`.
+
+## Arithmetic
+
+Instructions take a destination first and a source second (Intel syntax): `add rax, rbx` means `rax = rax + rbx`. Operands are registers, constants (immediates) or memory, but at most one may be memory.
+
+```asm
+section .text
+global _start
+_start:
+    mov rax, 7
+    imul rax, rax, 6          ; rax = rax * 6 = 42
+    sub rax, 2                ; rax = 40
+    lea rbx, [rax + rax*4]    ; rbx = 5 * rax = 200, using the address unit as a calculator
+    shr rbx, 2                ; shift right by 2 = divide by 4: rbx = 50
+    add rax, rbx              ; rax = 90
+    mov rdi, rax              ; exit status = result
+    mov eax, 60
+    syscall
+; output: PENDING
+```
+
+In words: the program computes 7 × 6 − 2 = 40, then 40 + 200 ÷ 4 = 90 and exits with status 90. `lea` with a scaled index computes `rax + rax*4` in one instruction, a trick compilers use constantly for small multiplications. Shifts multiply or divide by powers of two; `idiv` exists but is far slower. Integer overflow simply wraps and sets the overflow flag.
+
+## Memory and Addressing
+
+Square brackets mean "the memory at this address". An address can be `[base + index*scale + displacement]`, with scale 1, 2, 4 or 8: exactly what indexing an array of 1-, 2-, 4- or 8-byte elements needs. `db`, `dw`, `dd`, `dq` define 1-, 2-, 4- and 8-byte data.
+
+```asm
+section .data
+nums:   dq 5, 3, 8, 1, 9, 2           ; six 8-byte integers
+count:  equ ($ - nums) / 8
+
+section .text
+global _start
+_start:
+    lea rsi, [rel nums]               ; rsi = address of nums[0]
+    xor eax, eax                      ; sum = 0
+    xor ecx, ecx                      ; i = 0
+.loop:
+    add rax, [rsi + rcx*8]            ; sum += nums[i]
+    inc rcx                           ; i++
+    cmp rcx, count
+    jl .loop                          ; repeat while i < count
+    mov rdi, rax                      ; exit status = sum
+    mov eax, 60
+    syscall
+; output: PENDING
+```
+
+In words: `[rsi + rcx*8]` is `nums[i]` for 8-byte elements, so the loop adds 5 + 3 + 8 + 1 + 9 + 2 = 28 and exits with 28. Labels starting with a dot are local to the preceding global label. The CPU does no bounds checking: reading `[rsi + 100*8]` would simply read whatever lies there, or crash if the page is not mapped ([TLBs & Paging](../../../infra/memory-hierarchy/virtual-memory-at-the-hardware-level/)).
+
+## Control Flow
+
+There are no `if` or `while` statements. A comparison (`cmp a, b` computes `a − b` and keeps only the flags) is followed by a **conditional jump** that tests the flags: `je`/`jne` (equal, not equal), `jl`/`jg`/`jle`/`jge` for signed and `jb`/`ja` for unsigned comparisons. `jmp` jumps unconditionally.
+
+```asm
+section .data
+nums:   dq 5, 3, 8, 1, 9, 2
+count:  equ ($ - nums) / 8
+
+section .text
+global _start
+_start:
+    lea rsi, [rel nums]
+    mov rax, [rsi]                    ; max = nums[0]
+    mov ecx, 1                        ; i = 1
+.next:
+    cmp rcx, count                    ; while (i < count)
+    jge .done
+    mov rdx, [rsi + rcx*8]
+    cmp rdx, rax                      ; if (nums[i] > max)
+    jle .skip
+    mov rax, rdx                      ;     max = nums[i]
+.skip:
+    inc rcx
+    jmp .next
+.done:
+    mov rdi, rax                      ; exit status = max
+    mov eax, 60
+    syscall
+; output: PENDING
+```
+
+In words: the `while` loop becomes a test at the top that jumps out (`jge .done`) and an unconditional jump back at the bottom; the `if` becomes a jump over the assignment when the condition is false. The maximum, 9, is the exit status. Unpredictable branches are expensive on pipelined CPUs ([Branch Prediction](../../../infra/cpu-architecture/branch-prediction/)), so compilers often replace this pattern with a conditional move, `cmovg rax, rdx`, which has no branch at all.
+
+## Functions and the Stack
+
+`call label` pushes the return address on the **stack** and jumps; `ret` pops it and jumps back. The stack grows downward from high addresses; `push` and `pop` move `rsp`. A **calling convention** (the System V ABI on Linux and macOS, a different one on Windows) fixes which registers carry arguments and results and which must be preserved, so code from different compilers can call each other.
+
+```asm
+section .text
+global _start
+
+factorial:                        ; input rdi = n, output rax = n!
+    cmp rdi, 1
+    jg .recurse
+    mov eax, 1                    ; base case: 0! = 1! = 1
+    ret
+.recurse:
+    push rdi                      ; save n: the recursive call may change rdi
+    dec rdi
+    call factorial                ; rax = (n - 1)!
+    pop rdi                       ; restore n
+    imul rax, rdi                 ; rax = n * (n - 1)!
+    ret
+
+_start:
+    mov edi, 5                    ; first argument goes in rdi
+    call factorial
+    mov rdi, rax                  ; exit status = 5!
+    mov eax, 60
+    syscall
+; output: PENDING
+```
+
+In words: each call pushes a return address and a saved `n`, so computing 5! uses five stack frames, which unwind as the calls return; the exit status is 120. Argument and result registers follow the convention (`rdi` in, `rax` out), so a C program could call this `factorial`. Real functions also keep `rsp` 16-byte aligned before a `call`, because library code may use aligned SIMD loads on the stack; ignoring that is a classic crash when calling C from assembly.
+
+## Calling Assembly from C
+
+The usual way to use assembly today is one hot function in a C or C++ program. The C side only needs a prototype; the linker joins the two object files.
+
+```asm
+; sum.asm: long sum_array(const long *a, long n)
+global sum_array
+section .text
+sum_array:                        ; rdi = a, rsi = n
+    xor eax, eax                  ; total = 0
+    test rsi, rsi                 ; n == 0?
+    jz .done
+.loop:
+    add rax, [rdi]                ; total += *a
+    add rdi, 8                    ; a++ (one 8-byte element)
+    dec rsi                       ; n--, sets the zero flag when it reaches 0
+    jnz .loop
+.done:
+    ret                           ; result in rax
+```
+
+```c
+// main.c: build with  nasm -f elf64 sum.asm && gcc main.c sum.o -o app && ./app
+#include <stdio.h>
+
+long sum_array(const long *a, long n);
+
+int main(void) {
+    long a[] = {1, 2, 3, 4, 10};
+    printf("%ld %ld\n", sum_array(a, 5), sum_array(a, 0));
+    return 0;
+}
+// output: PENDING
+```
+
+In words: C passes the pointer in `rdi` and the count in `rsi` and reads the result from `rax`, exactly as the convention says, so the two sides agree without any glue. `dec` sets the zero flag itself, so the loop needs no separate `cmp`. The other route is **inline assembly** (`asm` blocks in GCC and Clang) or, better, **intrinsics**: C functions that map to single SIMD instructions ([SIMD on CPUs](../../../infra/gpus-parallelism/simd-instructions-on-cpus/)).
+
+## ARM64
+
+ARM64 (AArch64), used by phones, Apple silicon and many cloud servers, is a **load/store** architecture: arithmetic works only on registers, and separate `ldr`/`str` instructions access memory. It has 31 general registers `x0`–`x30` (`w0`–`w30` for 32 bits), arguments in `x0`–`x7`, the result in `x0`, and `bl` (branch with link) stores the return address in `x30` instead of on the stack. The same factorial, iteratively, in GNU assembler syntax for ARM64 Linux:
+
+```asm
+// fact.s: as fact.s -o fact.o && ld fact.o -o fact && ./fact; echo $?   (on ARM64 Linux)
+    .global _start
+    .text
+factorial:                // x0 = n, returns x0 = n!
+    mov x1, #1            // result = 1
+1:  cmp x0, #1
+    b.le 2f               // if n <= 1, jump forward to label 2
+    mul x1, x1, x0        // result *= n
+    sub x0, x0, #1        // n -= 1
+    b 1b                  // jump back to label 1
+2:  mov x0, x1
+    ret                   // return to the address in x30
+_start:
+    mov x0, #5
+    bl factorial          // call: return address goes to x30
+    mov x8, #93           // system call 93 = exit on ARM64 Linux
+    svc #0                // exit status is x0 = 120
+// output: PENDING
+```
+
+In words: most instructions have three operands (`mul x1, x1, x0` is `x1 = x1 * x0`), and conditional branches read flags set by `cmp`, as on x86. Numbered local labels with `f`/`b` suffixes jump forward or backward to the nearest label of that number. System call numbers differ between architectures (exit is 60 on x86-64, 93 on ARM64) ([Instruction Sets](../../../infra/cpu-architecture/instruction-set-architectures-isa/)).
+
+## Machine Code
+
+The assembler turns each instruction into bytes. A **disassembler** does the reverse; the `capstone` library used below is the one many debuggers and security tools are built on. Run these blocks with `uv run --with capstone`.
+
+```python
+from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+
+code = bytes.fromhex("b83c000000" "31ff" "0f05" "4801d8" "488d0480" "c3")
+md = Cs(CS_ARCH_X86, CS_MODE_64)
+for ins in md.disasm(code, 0x401000):
+    print(f"{ins.address:#x}  {ins.bytes.hex(' '):<15} {ins.mnemonic} {ins.op_str}")
+# 0x401000  b8 3c 00 00 00  mov eax, 0x3c
+# 0x401005  31 ff           xor edi, edi
+# 0x401007  0f 05           syscall
+# 0x401009  48 01 d8        add rax, rbx
+# 0x40100c  48 8d 04 80     lea rax, [rax + rax*4]
+# 0x401010  c3              ret
+```
+
+In words: these 17 bytes are instructions from the programs above. `mov eax, 60` is the opcode `b8` (move an immediate into `eax`) followed by 60 as a 4-byte little-endian number, `3c 00 00 00`. `syscall` is the two bytes `0f 05` and `ret` is the single byte `c3`. The addresses show that each instruction starts right after the previous one ends: there is no separator, so the CPU must decode each instruction to know where the next begins.
+
+Inside an instruction, bit fields select the operation and the operands. `add rax, rbx` is three bytes: a **REX prefix** (its W bit selects 64-bit operands), the opcode `01` (add a register to a register or memory), and a **ModRM** byte whose fields name the two registers:
+
+```python
+REGS = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"]
+
+def decode_add(code: bytes) -> str:
+    rex, opcode, modrm = code
+    assert rex >> 4 == 0b0100 and opcode == 0x01   # REX prefix, then ADD r/m64, r64
+    w = (rex >> 3) & 1                              # REX.W = 1 selects 64-bit operands
+    mod, reg, rm = modrm >> 6, (modrm >> 3) & 7, modrm & 7
+    print(f"REX {rex:08b} (W={w})  opcode {opcode:#04x}  ModRM {mod:02b} {reg:03b} {rm:03b}")
+    assert mod == 0b11                              # 11 = register operand, not memory
+    return f"add {REGS[rm]}, {REGS[reg]}"
+
+print(decode_add(bytes.fromhex("4801d8")))
+print(decode_add(bytes.fromhex("4801c3")))
+# REX 01001000 (W=1)  opcode 0x01  ModRM 11 011 000
+# add rax, rbx
+# REX 01001000 (W=1)  opcode 0x01  ModRM 11 000 011
+# add rbx, rax
+```
+
+In words: in `d8` = `11 011 000`, the `mod` field 11 says both operands are registers, `reg` = 3 is `rbx` (the source) and `rm` = 0 is `rax` (the destination). Swapping the two 3-bit fields, `c3` = `11 000 011`, gives `add rbx, rax`. Other values of `mod` turn the `rm` operand into a memory address, which is how one opcode serves both `add rax, rbx` and `add [rax], rbx`.
+
+The two families encode very differently:
+
+```python
+from capstone import Cs, CS_ARCH_ARM64, CS_ARCH_X86, CS_MODE_64, CS_MODE_ARM
+
+arm = bytes.fromhex("400580d2" "0000018b" "c0035fd6")   # three 4-byte little-endian words
+for ins in Cs(CS_ARCH_ARM64, CS_MODE_ARM).disasm(arm, 0):
+    print(f"arm64  {ins.bytes.hex(' '):<12} {ins.mnemonic} {ins.op_str}")
+
+x86 = bytes.fromhex("c3" "4801d8" "b82a000000" "48b8efcdab8967452301")
+for ins in Cs(CS_ARCH_X86, CS_MODE_64).disasm(x86, 0):
+    print(f"x86-64 {ins.size:2} bytes  {ins.mnemonic} {ins.op_str}")
+# arm64  40 05 80 d2  mov x0, #0x2a
+# arm64  00 00 01 8b  add x0, x0, x1
+# arm64  c0 03 5f d6  ret
+# x86-64  1 bytes  ret
+# x86-64  3 bytes  add rax, rbx
+# x86-64  5 bytes  mov eax, 0x2a
+# x86-64 10 bytes  movabs rax, 0x123456789abcdef
+```
+
+In words: every ARM64 instruction is exactly 4 bytes, so the decoder always knows where the next one starts and can decode several in parallel cheaply. x86-64 instructions here range from 1 byte (`ret`) to 10 (`movabs`, which carries a full 64-bit constant), and can reach 15. Variable length makes x86 code compact but its decoders complex, one of the classic differences between CISC and RISC designs ([Instruction Sets](../../../infra/cpu-architecture/instruction-set-architectures-isa/)).
+
+## Reading Compiler Output
+
+Most assembly you meet is generated. To see it, compile with `gcc -O2 -S file.c` (writes `file.s`), disassemble a binary with `objdump -d -M intel prog`, or paste a function into [Compiler Explorer](https://godbolt.org/). Things to recognise:
+
+- **Prologue and epilogue**: `push rbp; mov rbp, rsp` … `pop rbp; ret` (often omitted at `-O2`).
+- **Syntax**: GCC and objdump default to AT&T syntax, which reverses operand order (`addq %rbx, %rax` means `rax += rbx`) and prefixes registers with `%` and constants with `$`. Pass `-masm=intel` or `-M intel` for the syntax used here.
+- **Idioms**: `xor eax, eax` (set to zero), `test rax, rax` (compare with zero), `lea` for arithmetic, `cmov` instead of branches, vector registers `xmm`/`ymm`/`zmm` for floating point and SIMD.
+- **Optimisation level**: at `-O0` every variable lives on the stack; at `-O2` most live in registers, loops are unrolled and whole functions may disappear by inlining.
+
+## Pitfalls
+
+- **Operand order**: Intel syntax is `dest, src`, AT&T is `src, dest`. Mixing documentation from both is the most common source of confusion.
+- **Clobbered registers**: a `call` may change every caller-saved register (`rax`, `rcx`, `rdx`, `rsi`, `rdi`, `r8`–`r11`); save what you need first, and restore callee-saved registers you use.
+- **Stack alignment**: `rsp` must be a multiple of 16 at every `call` into C code, or SIMD instructions in the callee can crash.
+- **Signed vs unsigned jumps**: `jl` treats values as signed, `jb` as unsigned; using the wrong one makes -1 larger than 1.
+- **Partial registers**: writing `eax` zeroes the top half of `rax`, writing `ax` or `al` leaves it unchanged.
+
+<Callout type="pitfall">
+Hand-written assembly is rarely faster than what a modern compiler produces from clear C, C++ or Rust, and it is never portable or checked. Before writing any, look at the compiler's output for the function on Compiler Explorer and measure. The usual wins come from changing the algorithm or the data layout ([Cache-Friendly Code](../../../infra/memory-hierarchy/cache-friendly-code/)), or from SIMD intrinsics, not from replacing compiled code with assembly.
+</Callout>
+
+## Tooling
+
+```bash
+nasm -f elf64 prog.asm -o prog.o && ld prog.o -o prog   # assemble and link (NASM syntax)
+as prog.s -o prog.o                                     # GNU assembler (AT&T or .intel_syntax)
+gcc -O2 -S -masm=intel file.c                           # see what the compiler generates
+objdump -d -M intel ./prog                              # disassemble a binary
+gdb ./prog                                              # layout asm; stepi; info registers
+strace ./prog                                           # list the system calls a program makes
+```
+
+NASM and the GNU assembler (`as`) are the common x86 assemblers; `as` also handles ARM64. GDB (or LLDB) steps one instruction at a time with `stepi` and shows registers; `strace` shows each `write` and `exit` the programs above make. Ghidra and IDA disassemble and decompile whole binaries.

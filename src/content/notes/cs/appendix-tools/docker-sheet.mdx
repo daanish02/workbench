@@ -1,0 +1,283 @@
+---
+title: "Docker Sheet"
+description: "Docker on one page, from running a container to writing Dockerfiles, layer caching, multi-stage builds, volumes, networks, Compose, image security and what containers are underneath."
+order: 5
+tier: core
+takeaways:
+  - "An **image** is a read-only, layered filesystem plus start-up settings; a **container** is a running process started from an image, with its own filesystem, network and process view."
+  - "A Dockerfile builds an image one **layer** per instruction; order instructions from least to most frequently changed so the build cache reuses work (dependencies before source code)."
+  - "**Multi-stage builds** compile in a large image and copy only the result into a small runtime image."
+  - "Container filesystems are disposable: keep data in **volumes**, configuration in environment variables, and logs on stdout."
+  - "Containers are ordinary Linux processes isolated by **namespaces** and limited by **cgroups**; they share the host kernel, so they start in milliseconds but isolate less than VMs."
+resources:
+  - title: "Docker documentation: Get started"
+    url: "https://docs.docker.com/get-started/"
+    note: "The official guide from first container to Compose, with concepts explained."
+  - title: "Dockerfile reference"
+    url: "https://docs.docker.com/reference/dockerfile/"
+    note: "Every Dockerfile instruction and its exact behaviour, including caching rules."
+  - title: "Play with Docker"
+    url: "https://labs.play-with-docker.com/"
+    note: "A free browser sandbox with Docker installed, for trying every command on this page."
+---
+
+**Docker** packages an application with everything it needs (runtime, libraries, configuration) into an **image** that runs the same way on a laptop, a CI runner and a production server. It made containers practical in 2013 and its formats became the **OCI** standards that Podman, containerd and Kubernetes also use. The concepts (why containers, how they differ from VMs) are in [Containerization](../../software-engineering/containerization/) and [VMs vs Containers](../../cloud/vms-vs-containers/); this sheet is the hands-on reference, from the first `docker run` to production-ready images. Orchestrating many containers across machines is the [Kubernetes Sheet](../kubernetes-sheet/).
+
+Command output depends on your machine (ids, sizes, times), so the blocks show commands without outputs; run them on any machine with Docker or in Play with Docker.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Reproducible environments: "works on my machine" becomes "works in this image" | Strong isolation: containers share the host kernel; untrusted code needs VMs or gVisor/Kata |
+| Fast start-up (milliseconds) and dense packing compared with VMs | Stateful data: container filesystems are disposable by design |
+| One artifact from development through CI to production | GUI and desktop apps; Windows and macOS hosts run a Linux VM underneath |
+| A huge library of ready images (databases, languages, tools) | Image sprawl: large, outdated images with known vulnerabilities |
+
+## Images and Containers
+
+| Term | Meaning |
+| --- | --- |
+| **Image** | Read-only template: stacked filesystem layers plus metadata (command, environment, ports) |
+| **Container** | A running (or stopped) instance of an image with a thin writable layer on top |
+| **Layer** | One filesystem diff, shared between images that use it |
+| **Registry** | Server that stores images: Docker Hub, GitHub Container Registry (ghcr.io), Amazon ECR, … |
+| **Tag** | Movable name for an image version: `postgres:17` |
+| **Digest** | Immutable content hash: `postgres@sha256:…`; the same digest is always the same bytes |
+
+## Running Containers
+
+```bash
+docker run --rm hello-world                      # pull if needed, run, remove when it exits
+docker run -it --rm python:3.14-slim python      # interactive (-i) with a terminal (-t)
+docker run -d --name web -p 8080:80 nginx:1.27   # detached; host port 8080 -> container port 80
+docker run -d --name db -e POSTGRES_PASSWORD=dev -v pgdata:/var/lib/postgresql/data postgres:17
+
+docker ps                    # running containers (-a: also stopped)
+docker logs -f web           # follow a container's stdout and stderr
+docker exec -it db psql -U postgres   # run a command inside a running container
+docker stop web && docker rm web      # stop (SIGTERM, then SIGKILL after 10 s) and delete
+docker images                # local images
+docker pull redis:7.4        # download an image without running it
+```
+
+`-p host:container` publishes a port; without it, a service inside the container is unreachable from the host. `-e` sets environment variables, `-v` mounts a volume, `--name` gives a stable name, and `--rm` deletes the container when it exits. A container lives as long as its main process (PID 1): when that process exits, the container stops.
+
+## Writing a Dockerfile
+
+A **Dockerfile** lists the steps that build an image. Each instruction adds a layer or sets metadata.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+# base image: Debian slim with Python
+FROM python:3.14-slim
+
+# working directory for the following steps
+WORKDIR /app
+# copy one binary from another image
+COPY --from=ghcr.io/astral-sh/uv:0.12.3 /uv /usr/local/bin/uv
+
+# dependency files first: this layer rarely changes
+COPY pyproject.toml uv.lock ./
+# install exact locked versions
+RUN uv sync --frozen --no-dev
+
+# source code last: changes often
+COPY src/ ./src/
+# log lines appear immediately
+ENV PYTHONUNBUFFERED=1
+# documents the port; does not publish it
+EXPOSE 8000
+# do not run as root
+USER 1000
+# default command (exec form)
+CMD ["uv", "run", "--no-sync", "python", "-m", "src.app"]
+```
+
+```bash
+docker build -t myapp:1.0 .          # build from the Dockerfile in the current directory
+docker run --rm -p 8000:8000 myapp:1.0
+docker history myapp:1.0             # the layers and their sizes
+```
+
+`RUN` executes at build time; `CMD` sets the default command at run time and is replaced by any command given to `docker run`. `ENTRYPOINT` sets a fixed executable that `CMD` supplies arguments to. Write `CMD` and `ENTRYPOINT` in the JSON **exec form** so the program runs as PID 1 and receives stop signals; the shell form wraps it in `/bin/sh -c`. A `.dockerignore` file (like `.gitignore`) keeps `.git`, `node_modules`, `.venv` and secrets out of the build context.
+
+## Layer Caching
+
+Docker caches each layer and reuses it if the instruction and its inputs are unchanged; the first changed layer and every layer after it are rebuilt. That is why the Dockerfile above copies the dependency files and installs packages **before** copying the source: editing code then rebuilds only the last layers, and the slow install is reused.
+
+```dockerfile
+# Slow: any code change invalidates the dependency install
+COPY . .
+RUN uv sync --frozen
+
+# Fast: dependencies are reinstalled only when the lockfile changes
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+COPY . .
+```
+
+Combine related commands in one `RUN` and clean up in the same step (`apt-get update && apt-get install -y … && rm -rf /var/lib/apt/lists/*`); a file deleted in a later layer still takes space in the earlier one. BuildKit cache mounts (`RUN --mount=type=cache,target=/root/.cache/uv uv sync`) keep package caches between builds without putting them in the image.
+
+<DockerLayerCache />
+
+## Multi-Stage Builds
+
+A multi-stage build uses one stage with compilers and build tools and copies only the finished artifact into a minimal final stage. The build tools never reach production.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM golang:1.24 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# static binary
+RUN CGO_ENABLED=0 go build -o /out/server ./cmd/server
+
+# no shell, no package manager
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /out/server /server
+USER nonroot
+ENTRYPOINT ["/server"]
+```
+
+The build stage is several hundred megabytes of Go toolchain; the final image is the distroless base (a few megabytes) plus the binary. Smaller images pull faster and contain fewer packages with vulnerabilities. `docker build --target build` stops at a named stage, useful for running tests in CI.
+
+## Volumes and Bind Mounts
+
+The writable container layer disappears with the container. Persistent or shared data goes in a mount:
+
+| Type | Syntax | Use |
+| --- | --- | --- |
+| **Named volume** | `-v pgdata:/var/lib/postgresql/data` | Data owned by the container (databases); managed by Docker |
+| **Bind mount** | `-v "$PWD/src:/app/src"` | Share a host directory, e.g. live-reload source code in development |
+| **tmpfs** | `--tmpfs /tmp` | In-memory scratch space, gone on stop |
+
+```bash
+docker volume ls
+docker volume inspect pgdata          # where it lives on the host
+docker run --rm -v pgdata:/data alpine:3.21 du -sh /data   # look inside a volume
+```
+
+<DockerVolumes />
+
+Deleting a container does not delete its named volumes; `docker volume rm` (or `docker compose down -v`) does.
+
+## Networking
+
+Containers on the same user-defined **bridge network** reach each other by container name through Docker's built-in DNS. Ports only need publishing (`-p`) for access from outside Docker.
+
+```bash
+docker network create appnet
+docker run -d --name db --network appnet -e POSTGRES_PASSWORD=dev postgres:17
+docker run --rm --network appnet postgres:17 pg_isready -h db   # "db" resolves to the database container
+docker network inspect appnet
+```
+
+<DockerNetwork />
+
+Inside a container, `localhost` is the container itself, not the host. To reach the other container use its name (`db:5432`); to reach a service on the host use `host.docker.internal` (Docker Desktop, or with `--add-host` on Linux).
+
+## Docker Compose
+
+**Compose** describes a multi-container application in one YAML file and starts it with one command, the usual way to run a development stack.
+
+```yaml
+# compose.yaml
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:dev@db:5432/postgres
+    depends_on:
+      db:
+        condition: service_healthy      # wait until the healthcheck passes
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src              # copy code changes into the running container
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 15
+volumes:
+  pgdata:
+```
+
+```bash
+docker compose up -d --build       # build and start everything in the background
+docker compose logs -f app
+docker compose exec db psql -U postgres
+docker compose watch               # sync code changes as you edit
+docker compose down                # stop and remove containers (add -v to remove volumes)
+```
+
+<ComposeUpSteps />
+
+Compose creates a network for the project, so `app` reaches the database at host name `db`. `depends_on` with `service_healthy` waits for the database to accept connections rather than merely start.
+
+## Tags, Registries, Multi-Arch
+
+```bash
+docker tag myapp:1.0 ghcr.io/acme/myapp:1.0
+docker login ghcr.io
+docker push ghcr.io/acme/myapp:1.0
+docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/acme/myapp:1.0 --push .
+docker image inspect --format '{{index .RepoDigests 0}}' ghcr.io/acme/myapp:1.0   # the immutable digest
+```
+
+Tags are mutable pointers: `latest` and even `17` can point to a different image tomorrow. Pin base images to a specific version (and, for full reproducibility, a digest) and deploy by digest. `buildx` builds one tag for several CPU architectures, so the same image runs on x86 servers and ARM machines such as Apple silicon or Graviton.
+
+## Security
+
+- Run as a **non-root user** (`USER`), and drop capabilities (`--cap-drop ALL`); root in a container is root on the kernel it shares.
+- Use small, maintained base images (`-slim`, Alpine, distroless) and rebuild regularly to pick up patches; scan with `docker scout cves` or Trivy.
+- Never put secrets in the image (`ENV`, `COPY`, `ARG` values remain in layers and history). Pass them at run time, or use BuildKit secret mounts (`RUN --mount=type=secret,id=npmrc …`) during builds.
+- Run with `--read-only` plus `tmpfs` for scratch where possible, and set memory and CPU limits (`--memory 512m --cpus 1`).
+- Do not mount the Docker socket (`/var/run/docker.sock`) into containers: it grants full control of the host.
+
+## Under the Hood
+
+A container is a normal Linux process started with:
+
+- **namespaces**, which give it its own view of process ids, mount points, network interfaces, host name and users;
+- **cgroups**, which limit and account its CPU, memory and I/O ([Processes & Threads](../../operating-systems/processes-and-threads/));
+- a **union filesystem** (overlayfs) that stacks the image layers read-only and adds a writable layer on top.
+
+<ContainerStack />
+
+Docker itself is a client (`docker`) talking to a daemon (`dockerd`) that uses **containerd** and **runc** to create containers. Images follow the OCI image specification, so Podman, Kubernetes and others run the same images. On macOS and Windows, Docker Desktop runs these Linux features inside a small virtual machine, which is why bind mounts there are slower than on Linux.
+
+<Callout type="pitfall">
+"It works in the container" can still hide problems that appear only in production: the app writing data into the container filesystem (lost on redeploy), a shell-form `CMD` that never receives SIGTERM (so every stop waits 10 seconds and is then killed), the `latest` tag silently changing the base image, or a process listening on `127.0.0.1` inside the container (unreachable through a published port; bind to `0.0.0.0`). Check these four before debugging anything more exotic.
+</Callout>
+
+## Pitfalls
+
+- **Huge images**: copying the whole repository, keeping build tools, or installing caches. Use `.dockerignore`, multi-stage builds and slim bases.
+- **Cache misses on every build**: `COPY . .` before installing dependencies.
+- **Time zone and locale** differences between the image and the host; set them explicitly when they matter.
+- **File ownership** with bind mounts: files created by the container's user id may be unwritable by you on the host.
+- **Disk filling up** with old images, stopped containers and build cache: `docker system df` shows it, `docker system prune` cleans it.
+
+## Tooling
+
+```bash
+docker system df            # disk used by images, containers, volumes, build cache
+docker system prune -a      # remove unused images, containers and networks (asks first)
+docker stats                # live CPU and memory per container
+docker inspect web          # full JSON configuration and state
+docker scout cves myapp:1.0 # known vulnerabilities in an image
+```
+
+Alternatives and companions: **Podman** (daemonless, rootless, mostly command-compatible), **Buildah** and **kaniko** (build images without a daemon, common in CI), **dive** (explore image layers), **hadolint** (lint Dockerfiles). In CI, build with BuildKit caching and push to a registry ([CI/CD](../../software-engineering/ci-cd/)); in production, an orchestrator such as Kubernetes runs the images.

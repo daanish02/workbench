@@ -1,0 +1,648 @@
+---
+title: "Python Sheet"
+description: "Python on one page: the basics, then what makes it Python: the data model, iterators and generators, decorators, context managers and the GIL."
+order: 2
+tier: core
+takeaways:
+  - "Python is **dynamically typed** and **strongly typed**: names have no fixed type, but `\"1\" + 1` is an error. Type hints are checked by tools such as mypy, not at run time."
+  - "Variables are **names bound to objects**. Assignment never copies; mutating through one name is visible through every other name for the same object."
+  - "The **data model**: special methods such as `__len__`, `__getitem__` and `__add__` plug your own classes into `len`, indexing, `for` and the operators. **Generators** make iteration lazy, and decorators and `with` blocks wrap behaviour around code."
+  - "Concurrency: threads for I/O-bound work, `asyncio` for many concurrent waits, processes for CPU-bound work, because the standard interpreter runs Python bytecode in one thread at a time (the GIL) unless built free-threaded."
+  - "Classic pitfalls: mutable default arguments, late-binding closures in loops, `[[0] * n] * m` sharing rows, and binary floating point."
+resources:
+  - title: "The Python Tutorial (python.org)"
+    url: "https://docs.python.org/3/tutorial/"
+    note: "The official tour of the language, from basics to classes and the standard library."
+  - title: "The Python Standard Library (python.org)"
+    url: "https://docs.python.org/3/library/"
+    note: "Reference for every built-in module: collections, itertools, pathlib, asyncio, and more."
+  - title: "uv documentation (Astral)"
+    url: "https://docs.astral.sh/uv/"
+    note: "The project and package manager used throughout these notes."
+---
+
+This sheet is a one-page reference for Python. It assumes you can program in some language and want Python quickly: first the basics (types, control flow, functions, collections, errors), then the parts that make Python Python: the **data model** that lets your classes work with built-ins and operators, lazy **iterators and generators**, **decorators** and **context managers**, optional type hints, and the GIL. [Rosetta Table](../rosetta-table/) compares the same concepts across languages, and [Language Reference](../language-reference/) compares the languages themselves. Every block below runs on its own; the output is in the comments at the end. Run them with `uv run python`.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Readability and speed of writing: little ceremony, huge standard library | Raw speed: pure-Python loops are tens of times slower than C (NumPy and compiled extensions close the gap) |
+| Data science, ML, scripting and glue code: NumPy, pandas, PyTorch, every API client | CPU-bound threads: the GIL in standard builds runs one thread of Python at a time |
+| Interactive work: REPL, notebooks, quick experiments | Mobile and browser front ends |
+| Ecosystem: PyPI has a package for almost anything | Packaging history (pip, venv, conda, poetry); uv now unifies it |
+
+## Types
+
+Everything is an object with a type. Integers have arbitrary precision; `float` is an IEEE 754 double ([Floating Point](../../foundations/floating-point/)); `bool` is a subclass of `int`.
+
+```python
+values = [42, 3.14, 2 + 3j, True, "text", b"bytes", None]
+for v in values:
+    print(type(v).__name__, repr(v))
+print(2**100, 7 // 2, -7 // 2, -7 % 3, 0.1 + 0.2 == 0.3)
+print(isinstance(True, int), int("ff", 16), float("inf") > 10**308)
+# int 42
+# float 3.14
+# complex (2+3j)
+# bool True
+# str 'text'
+# bytes b'bytes'
+# NoneType None
+# 1267650600228229401496703205376 3 -4 2 False
+# True 255 True
+```
+
+In words: `2**100` is exact, `//` is floor division so `-7 // 2` is -4, and `%` takes the sign of the divisor, so `-7 % 3` is 2. `0.1 + 0.2 == 0.3` is False because neither side is exactly representable in binary.
+
+## Variables
+
+A variable is a name bound to an object. There are no declarations; assignment creates the name in the current scope.
+
+```python
+x = 10                     # names are bound to objects, not declared
+x = "now a string"         # rebinding to another type is allowed
+a, b = 1, 2
+a, b = b, a                # tuple unpacking swaps without a temporary
+first, *rest = [1, 2, 3, 4]
+MAX_RETRIES: int = 3       # the annotation documents intent; nothing enforces it at run time
+print(x, a, b, first, rest, MAX_RETRIES)
+
+counter = 0
+def bump():
+    global counter         # without this, the assignment would create a local
+    counter += 1
+bump()
+bump()
+print(counter)
+# now a string 2 1 1 [2, 3, 4] 3
+# 2
+```
+
+In words: unpacking assigns several names at once, and `*rest` collects the remainder into a list. Constants are a naming convention (`UPPER_CASE`), not a language feature. Assigning to a module-level name inside a function needs `global`, otherwise it creates a new local.
+
+## Control Flow
+
+Blocks are defined by indentation. `for` iterates over any iterable; `range`, `enumerate` and `zip` cover most counting loops. `match` (3.10+) does structural pattern matching.
+
+```python
+for n in [3, 0, -2]:
+    if n > 0:
+        kind = "positive"
+    elif n == 0:
+        kind = "zero"
+    else:
+        kind = "negative"
+    print(n, kind, "even" if n % 2 == 0 else "odd")
+
+for i, ch in enumerate("ab"):
+    print(i, ch)
+for name, score in zip(["ana", "bo"], [91, 78]):
+    print(name, score)
+
+for n in range(2, 10):
+    if n % 7 == 0:
+        print("found", n)
+        break
+else:
+    print("no multiple of 7")   # runs only when the loop did not break
+
+command = ("move", 3, 4)
+match command:
+    case ("move", x, y):
+        print(f"move to {x},{y}")
+    case ("quit",):
+        print("bye")
+# 3 positive odd
+# 0 zero even
+# -2 negative even
+# 0 a
+# 1 b
+# ana 91
+# bo 78
+# found 7
+# move to 3,4
+```
+
+In words: the conditional expression `a if cond else b` replaces the ternary operator. A loop's `else` runs only if the loop finished without `break`; here 7 was found, so it did not run. The `match` case destructured the tuple into `x` and `y`.
+
+## Functions
+
+Functions are objects. Parameters can have defaults, be keyword-only (after `*`), or collect extra arguments with `*args` and `**kwargs`.
+
+```python
+from itertools import islice
+
+def greet(name, greeting="Hello", *, punct="!"):   # punct is keyword-only
+    return f"{greeting}, {name}{punct}"
+
+print(greet("Ada"), greet("Ada", "Hi", punct="."))
+
+def total(*args, **kwargs):
+    return sum(args) + sum(kwargs.values())
+print(total(1, 2, x=3))
+
+square = lambda v: v * v
+print(list(map(square, [1, 2, 3])), sorted(["bb", "a", "ccc"], key=len))
+
+def make_counter():
+    count = 0
+    def inc():
+        nonlocal count      # a closure rebinds an outer name with nonlocal
+        count += 1
+        return count
+    return inc
+c = make_counter()
+print(c(), c(), c())
+
+def fib():
+    a, b = 0, 1
+    while True:
+        yield a             # a generator produces values lazily
+        a, b = b, a + b
+print(list(islice(fib(), 8)))
+# Hello, Ada! Hi, Ada.
+# 6
+# [1, 4, 9] ['a', 'bb', 'ccc']
+# 1 2 3
+# [0, 1, 1, 2, 3, 5, 8, 13]
+```
+
+In words: `total(1, 2, x=3)` collects 1 and 2 into `args` and `x=3` into `kwargs`, summing to 6. The closure keeps `count` alive between calls, and the generator produces Fibonacci numbers only as `islice` asks for them, so an infinite loop is safe.
+
+## Collections
+
+`list` (mutable sequence), `tuple` (immutable), `dict` (hash map, keeps insertion order since 3.7) and `set`. Comprehensions build them in one expression.
+
+```python
+from collections import Counter, defaultdict, deque
+
+nums = [3, 1, 2]
+nums.append(4)
+nums.sort()
+print(nums, nums[-1], nums[1:3], nums[::-1])
+
+point = (2, 5)                       # tuple: immutable
+ages = {"ana": 31, "bo": 25}         # dict: keeps insertion order
+ages["cy"] = 40
+print(point[0], ages.get("dee", 0), list(ages), "bo" in ages)
+tags = {"x", "y"} | {"y", "z"}       # set union
+print(sorted(tags))
+
+squares = [n * n for n in range(5) if n % 2 == 0]
+lengths = {name: len(name) for name in ["ana", "bo"]}
+print(squares, lengths)
+
+print(Counter("banana").most_common(2))
+groups = defaultdict(list)
+for w in ["apple", "avocado", "bean"]:
+    groups[w[0]].append(w)
+print(dict(groups))
+q = deque([1, 2])
+q.appendleft(0)
+q.append(3)
+print(q.popleft(), q.pop(), list(q))
+# [1, 2, 3, 4] 4 [2, 3] [4, 3, 2, 1]
+# 2 0 ['ana', 'bo', 'cy'] True
+# ['x', 'y', 'z']
+# [0, 4, 16] {'ana': 3, 'bo': 2}
+# [('a', 3), ('n', 2)]
+# {'a': ['apple', 'avocado'], 'b': ['bean']}
+# 0 3 [1, 2]
+```
+
+In words: negative indices count from the end and slices `[start:stop:step]` return copies. `dict.get` gives a default instead of raising `KeyError`. `deque` adds and removes at both ends in O(1), unlike `list.insert(0, …)`, which is O(n) ([Big-O Cheat Sheet](../../appendix-reference/big-o-cheat-sheet/)).
+
+## Strings
+
+`str` is an immutable sequence of Unicode code points; `bytes` is raw bytes. f-strings format values inline.
+
+```python
+s = "Hello, World"
+print(s.lower(), s.split(", "), s.replace("World", "Py"), s[:5], len(s))
+print(" | ".join(["a", "b", "c"]), "  pad ".strip(), "x".rjust(3, "."))
+name, price = "tea", 3.5
+print(f"{name:>5} costs {price:6.2f}, {0.25:.0%} off")
+print(f"{12345678:,}", f"{255:#x}", f"{name=}")
+text = "naïve"
+print(len(text), len(text.encode("utf-8")), text.encode("utf-8"))
+print("ab" * 3, "lo" in "hello", "abc"[::-1], ord("A"), chr(97))
+# hello, world ['Hello', 'World'] Hello, Py Hello 12
+# a | b | c pad ..x
+#   tea costs   3.50, 25% off
+# 12,345,678 0xff name='tea'
+# 5 6 b'na\xc3\xafve'
+# ababab True cba 65 a
+```
+
+In words: format specs after `:` set alignment, width, precision, thousands separators and bases; `{name=}` prints the expression and its value, handy for debugging. "naïve" is 5 characters but 6 bytes in UTF-8, because "ï" takes two ([Text Encoding](../../foundations/text-encoding/)).
+
+## Errors
+
+Errors are exceptions. `try`/`except` catches them, `else` runs when nothing was raised, `finally` always runs. Custom errors subclass `Exception`.
+
+```python
+def parse_age(text):
+    try:
+        age = int(text)
+    except ValueError as e:
+        print("bad input:", e)
+        return None
+    else:
+        return age          # runs only if no exception was raised
+    finally:
+        print("checked", repr(text))   # always runs
+
+print(parse_age("42"))
+print(parse_age("forty"))
+
+class InsufficientFunds(Exception):
+    pass
+
+try:
+    raise InsufficientFunds("balance 5, need 9")
+except InsufficientFunds as e:
+    print(type(e).__name__, e)
+
+try:
+    try:
+        {}["missing"]
+    except KeyError as e:
+        raise RuntimeError("lookup failed") from e   # keep the original cause
+except RuntimeError as e:
+    print(e, "<- caused by", repr(e.__cause__))
+# checked '42'
+# 42
+# bad input: invalid literal for int() with base 10: 'forty'
+# checked 'forty'
+# None
+# InsufficientFunds balance 5, need 9
+# lookup failed <- caused by KeyError('missing')
+```
+
+In words: `finally` runs even after `return`, which is why "checked" prints before the returned value. `raise … from e` chains exceptions, so the traceback shows both the new error and its cause. Catch the narrowest exception type you can handle; a bare `except:` also swallows `KeyboardInterrupt`.
+
+## Classes and Dataclasses
+
+`@dataclass` generates `__init__`, `__repr__` and `__eq__` from annotated fields. Classes support single and multiple inheritance; `@property` turns a method into a computed attribute.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float = 0.0
+    def norm(self) -> float:
+        return (self.x**2 + self.y**2) ** 0.5
+
+p = Point(3, 4)
+print(p, p.norm(), p == Point(3, 4))
+
+@dataclass(frozen=True)
+class Tag:
+    name: str
+print(hash(Tag("a")) == hash(Tag("a")))
+
+class Animal:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return "..."
+    def __repr__(self):
+        return f"{type(self).__name__}({self.name!r})"
+
+class Dog(Animal):
+    def speak(self):
+        return "woof"
+
+for a in [Animal("generic"), Dog("rex")]:
+    print(a, a.speak())
+
+class Temperature:
+    def __init__(self, celsius):
+        self._c = celsius
+    @property
+    def fahrenheit(self):
+        return self._c * 9 / 5 + 32
+print(Temperature(100).fahrenheit)
+# Point(x=3, y=4) 5.0 True
+# True
+# Animal('generic') ...
+# Dog('rex') woof
+# 212.0
+```
+
+In words: dataclasses compare by value, and `frozen=True` makes instances immutable and hashable, so they can be dict keys. `Dog` overrides `speak` and inherits `__repr__`, which uses the runtime type name. There is no `private`: a leading underscore (`_c`) is a convention ([Object-Oriented Programming](../../languages/object-oriented-programming/)).
+
+## The Data Model
+
+Python's built-in operations call **special methods** ("dunder" methods, for the double underscores): `len(x)` calls `x.__len__()`, `a + b` calls `a.__add__(b)`, `for` calls `__iter__` or falls back to `__getitem__`. Implement a few of them and your own class works with the built-ins, slicing, `in` and the operators, which is why Python code rarely needs `getLength()`-style methods.
+
+```python
+class Playlist:
+    def __init__(self, *songs):
+        self.songs = list(songs)
+    def __len__(self):
+        return len(self.songs)
+    def __getitem__(self, i):             # indexing, slicing, iteration and "in" all use this
+        return self.songs[i]
+    def __repr__(self):
+        return f"Playlist{tuple(self.songs)}"
+
+p = Playlist("intro", "verse", "outro")
+print(p, len(p), p[0], p[1:], "verse" in p, list(reversed(p)))
+
+class Vec:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+    def __add__(self, other):             # v + w
+        return Vec(self.x + other.x, self.y + other.y)
+    def __mul__(self, k):                 # v * 2
+        return Vec(self.x * k, self.y * k)
+    def __eq__(self, other):              # v == w compares values, not identity
+        return (self.x, self.y) == (other.x, other.y)
+    def __abs__(self):                    # abs(v)
+        return (self.x**2 + self.y**2) ** 0.5
+    def __bool__(self):                   # if v: ...
+        return bool(self.x or self.y)
+    def __repr__(self):
+        return f"Vec({self.x}, {self.y})"
+
+v = Vec(3, 4)
+print(v + Vec(1, 1), v * 2, abs(v), v == Vec(3, 4), bool(Vec(0, 0)))
+print(Vec.__hash__ is None)               # defining __eq__ without __hash__ makes it unhashable
+# Playlist('intro', 'verse', 'outro') 3 intro ['verse', 'outro'] True ['outro', 'verse', 'intro']
+# Vec(4, 5) Vec(6, 8) 5.0 True False
+# True
+```
+
+In words: `Playlist` defines only `__len__` and `__getitem__`, yet `len`, indexing, slicing, `in` and `reversed` all work, because each falls back to those two methods. `Vec` gets `+`, `*`, `==`, `abs` and truthiness from one method each: `abs(Vec(3, 4))` is 5.0 and `Vec(0, 0)` is falsy. Defining `__eq__` sets `__hash__` to `None`, so a `Vec` cannot be a dict key unless you also define `__hash__` (or use a frozen dataclass).
+
+## Iterators and Generators
+
+An **iterable** is anything `iter()` accepts; an **iterator** hands out one item per `next()` call and raises `StopIteration` at the end. Every `for` loop, comprehension and unpacking runs on this protocol. A **generator** (a function with `yield`, or a generator expression in parentheses) is an iterator that computes each item only when asked, so pipelines over large files or infinite sequences use constant memory.
+
+```python
+from itertools import chain, groupby, islice, pairwise
+
+nums = [1, 2, 3]
+it = iter(nums)                           # the protocol behind every for loop
+print(next(it), next(it), next(it), next(it, "done"))
+
+squares = (n * n for n in range(10**9))   # generator expression: nothing computed yet
+print(sum(islice(squares, 5)))            # only the first 5 squares are ever made
+
+def read_records(lines):
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            yield line.split(",")
+
+data = ["# name,qty", "tea,2", "", "jam,1", "tea,3"]
+records = read_records(data)              # calling a generator function runs none of its body
+print(list(records))
+print(list(records))                      # a generator is used up after one pass
+print(list(chain([1, 2], (3, 4))), list(pairwise("abc")))
+for key, group in groupby(sorted(["tea", "jam", "tea"])):
+    print(key, len(list(group)))
+# 1 2 3 done
+# 30
+# [['tea', '2'], ['jam', '1'], ['tea', '3']]
+# []
+# [1, 2, 3, 4] [('a', 'b'), ('b', 'c')]
+# jam 1
+# tea 2
+```
+
+In words: `next(it, "done")` returns the default instead of raising once the list is exhausted. The generator expression over a billion numbers costs nothing because `islice` pulls only 5 squares (0 + 1 + 4 + 9 + 16 = 30). `read_records` skips the comment and the blank line, but the second `list(records)` is empty: a generator is consumed by one pass, unlike a list. `itertools` supplies the building blocks (`chain`, `pairwise`, `groupby`, `islice`); `groupby` groups only adjacent equal items, hence the `sorted` first.
+
+## Decorators and Context Managers
+
+A **decorator** is a function that takes a function and returns a replacement; `@name` above a `def` applies it. Decorators add logging, caching, retries, timing or route registration without touching the function body. A **context manager** pairs setup with guaranteed cleanup for a `with` block; files, locks and database transactions are context managers, and `contextlib.contextmanager` turns a generator into one.
+
+```python
+import functools
+from contextlib import contextmanager
+
+def logged(fn):
+    @functools.wraps(fn)                  # keep the wrapped function's name and docstring
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        print(f"{fn.__name__}{args} -> {result}")
+        return result
+    return wrapper
+
+@logged                                   # the same as add = logged(add)
+def add(a, b):
+    return a + b
+
+add(2, 3)
+print(add.__name__)
+
+@functools.cache                          # memoize: each n is computed once
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+print(fib(80), fib.cache_info().misses)
+
+@contextmanager
+def section(name):
+    print("enter", name)
+    try:
+        yield name.upper()                # the value bound by "as"
+    finally:
+        print("exit", name)               # runs even when the block raises
+
+with section("load") as tag:
+    print("inside", tag)
+try:
+    with section("parse"):
+        raise ValueError("bad row")
+except ValueError as e:
+    print("caught", e)
+# add(2, 3) -> 5
+# add
+# 23416728348467685 81
+# enter load
+# inside LOAD
+# exit load
+# enter parse
+# exit parse
+# caught bad row
+```
+
+In words: `@logged` wraps `add`, so the call prints its arguments and result; `functools.wraps` keeps the name `add` instead of `wrapper`. `@functools.cache` turns the exponential recursive Fibonacci into 81 computations (one per n from 0 to 80). The context manager prints "exit parse" before the exception reaches the `except`, because the `finally` around `yield` runs as the `with` block unwinds.
+
+## Type Hints
+
+Type hints are optional and ignored at run time; checkers such as mypy or pyright use them. Python 3.12 added `def f[T](…)` and `class C[T]` syntax. `Protocol` gives structural ("duck") typing.
+
+```python
+from typing import Protocol
+
+def first[T](items: list[T]) -> T:     # Python 3.12+ syntax for a type parameter
+    return items[0]
+
+class Stack[T]:
+    def __init__(self) -> None:
+        self.items: list[T] = []
+    def push(self, item: T) -> None:
+        self.items.append(item)
+    def pop(self) -> T:
+        return self.items.pop()
+
+class Sized(Protocol):
+    def __len__(self) -> int: ...
+
+def size(x: Sized) -> int:             # structural typing: anything with __len__
+    return len(x)
+
+s = Stack[int]()
+s.push(1)
+s.push(2)
+print(first(["a", "b"]), s.pop(), size("abc"), size({1: 2}))
+# a 2 3 1
+```
+
+In words: `first` works for a list of any element type and a checker infers the return type from the argument. `size` accepts a string and a dict because both have `__len__`, without either declaring that they implement `Sized` ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Names and References
+
+Every value is a heap object with a reference count; CPython frees an object as soon as its count reaches zero and runs a cycle collector for reference cycles ([Memory & GC](../../languages/memory-and-gc/)). Arguments are passed by object reference: a function can mutate a mutable argument but cannot rebind the caller's name.
+
+```python
+a = [1, 2]
+b = a                       # b names the same list object
+b.append(3)
+print(a, a is b)
+
+c = a.copy()                # shallow copy: a new list
+c.append(4)
+print(a, c)
+
+nested = [[0] * 2] * 2      # two references to one inner list
+nested[0][0] = 9
+print(nested)
+grid = [[0] * 2 for _ in range(2)]   # a new inner list per row
+grid[0][0] = 9
+print(grid)
+
+x = 1000
+def change(n):
+    n += 1                  # ints are immutable: this rebinds a local name
+change(x)
+print(x)
+# [1, 2, 3] True
+# [1, 2, 3] [1, 2, 3, 4]
+# [[9, 0], [9, 0]]
+# [[9, 0], [0, 0]]
+# 1000
+```
+
+In words: `b = a` copies the reference, so appending through `b` changes `a`. `[[0] * 2] * 2` repeats a reference to one inner list, so writing one cell changes both rows; the comprehension builds a separate list per row. `change(x)` leaves `x` at 1000 because `n += 1` makes `n` name a new int. Use `copy.deepcopy` to copy nested structures.
+
+## Concurrency and the GIL
+
+The standard CPython interpreter has a **global interpreter lock** (GIL): only one thread runs Python bytecode at a time, so threads speed up I/O-bound work but not pure-Python computation. Free-threaded builds without the GIL exist from 3.13 as an option. For CPU-bound work use processes (`ProcessPoolExecutor`, `multiprocessing`) or libraries that release the GIL, such as NumPy ([Concurrency Models](../../languages/concurrency-models/)).
+
+```python
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+def work(n):
+    return n * n
+
+with ThreadPoolExecutor(max_workers=4) as pool:      # threads: good for I/O-bound work
+    print(list(pool.map(work, range(5))))            # map keeps input order
+
+async def fetch(name, delay):
+    await asyncio.sleep(delay)                       # yields to the event loop while waiting
+    return f"{name} done"
+
+async def main():
+    results = await asyncio.gather(fetch("a", 0.02), fetch("b", 0.01))
+    print(results)                                   # gather keeps the order of its arguments
+
+asyncio.run(main())
+# [0, 1, 4, 9, 16]
+# ['a done', 'b done']
+```
+
+In words: `pool.map` returns results in input order even if tasks finish out of order. `asyncio.gather` runs both coroutines concurrently on one thread, so the total wait is about the longer delay, not the sum, and returns results in argument order although "b" finished first.
+
+## Modules and Packages
+
+A **module** is a `.py` file; a **package** is a directory of modules. `import` runs a module once and caches it. Third-party packages come from PyPI.
+
+```python
+import math
+from collections import namedtuple
+from pathlib import PurePosixPath
+
+print(math.sqrt(16), round(math.pi, 3))
+Pair = namedtuple("Pair", "a b")
+print(Pair(1, 2))
+print(PurePosixPath("/data/report.csv").suffix, PurePosixPath("a") / "b" / "c.txt")
+print(__name__)            # "__main__" when run as a script, the module's name when imported
+# 4.0 3.142
+# Pair(a=1, b=2)
+# .csv a/b/c.txt
+# __main__
+```
+
+In words: `from module import name` binds just that name; `pathlib` joins paths with `/` (the plain `Path` class uses the current OS's separator). The `if __name__ == "__main__":` guard runs code only when the file is executed directly, not when it is imported.
+
+## Pitfalls
+
+Idiomatic ("Pythonic") code iterates directly instead of over indices, uses comprehensions and unpacking, `with` for resources (files, locks), `enumerate` and `zip` instead of `range(len(…))`, and EAFP: try the operation and catch the exception rather than checking first.
+
+```python
+def append_to(item, bucket=[]):    # the default list is created once, when def runs
+    bucket.append(item)
+    return bucket
+print(append_to(1), append_to(2))
+
+def append_fixed(item, bucket=None):
+    if bucket is None:
+        bucket = []
+    bucket.append(item)
+    return bucket
+print(append_fixed(1), append_fixed(2))
+
+funcs = [lambda: i for i in range(3)]
+print([f() for f in funcs])         # late binding: every lambda sees the final i
+funcs = [lambda i=i: i for i in range(3)]
+print([f() for f in funcs])
+
+print(0.1 + 0.2, round(2.5), round(3.5))   # binary floats; round half to even
+print(sorted(["b", "C", "a"]), sorted(["b", "C", "a"], key=str.lower))
+print(1 == 1.0, "1" == 1, [] == [], [] is [])
+# [1, 2] [1, 2]
+# [1] [2]
+# [2, 2, 2]
+# [0, 1, 2]
+# 0.30000000000000004 2 4
+# ['C', 'a', 'b'] ['a', 'b', 'C']
+# True False True False
+```
+
+In words: the mutable default is shared across calls, so the second call returns `[1, 2]`; use `None` and create the list inside. Lambdas in a loop look up `i` when called, after the loop has finished, so all return 2 unless the value is captured as a default. `round` rounds halves to the even neighbour, so `round(2.5)` is 2. Plain sorting puts uppercase first (code point order); `key=str.lower` sorts case-insensitively. `==` compares values, `is` compares identity.
+
+<Callout type="pitfall">
+`is` is for `None`, `True`, `False` and sentinel objects only. `x is 1000` or `s is "text"` may be True or False depending on interpreter caching, and Python warns about it. Compare values with `==`, and write `if x is None`, not `if x == None` or `if not x` (which is also true for `0`, `""` and `[]`).
+</Callout>
+
+## Tooling
+
+```bash
+uv init myproject && cd myproject      # project with pyproject.toml
+uv add requests                        # add a dependency, pinned in uv.lock
+uv run python main.py                  # run inside the project's environment
+uv run --with numpy python -c "import numpy; print(numpy.__version__)"
+uv run pytest                          # tests
+uvx ruff check . && uvx ruff format .  # lint and format
+uvx mypy src                           # static type check
+```
+
+`pyproject.toml` declares the project and its dependencies; `uv.lock` pins exact versions ([Dependencies & Versioning](../../software-engineering/dependencies-and-versioning/)). pip and venv are the built-in alternatives; these notes use uv throughout. Other standard tools: `pytest` for tests, `ruff` for linting and formatting, `mypy` or `pyright` for types, `python -m cProfile` for profiling, `pdb` or `breakpoint()` for debugging.

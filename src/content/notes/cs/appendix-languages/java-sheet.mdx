@@ -1,0 +1,552 @@
+---
+title: "Java Sheet"
+description: "Java on one page, organised around what makes it Java: the JVM, classes and interfaces, records and sealed types, generics with erasure, collections and streams, checked exceptions, and virtual threads."
+order: 7
+tier: core
+takeaways:
+  - "Java compiles to **bytecode** that runs on the **JVM**, which JIT-compiles hot code to machine code and manages memory with a garbage collector: portable, fast after warm-up, and memory-safe."
+  - "Types split into **primitives** (`int`, `double`, `boolean`) stored by value and **references** to objects; generics work only on references, so `int` is boxed to `Integer` in a `List<Integer>`."
+  - "Modern Java (17–21) has **records** for data, **sealed** interfaces plus pattern-matching `switch` for closed type hierarchies, and `var` for local type inference."
+  - "Collections plus **streams** cover most data processing; lambdas implement one-method interfaces such as `Function` and `Predicate`."
+  - "**Virtual threads** (Java 21) make one-thread-per-task code scale to millions of concurrent tasks without async callbacks."
+resources:
+  - title: "Learn Java (dev.java)"
+    url: "https://dev.java/learn/"
+    note: "Oracle's official tutorials, updated for current Java: records, sealed types, pattern matching, virtual threads."
+  - title: "Java SE API documentation (Oracle)"
+    url: "https://docs.oracle.com/en/java/javase/21/docs/api/index.html"
+    note: "Reference for every standard class: collections, streams, concurrency, I/O."
+  - title: "JEP index (OpenJDK)"
+    url: "https://openjdk.org/jeps/0"
+    note: "Every Java Enhancement Proposal: the design and rationale behind records, sealed classes, pattern matching and virtual threads."
+---
+
+Java was designed in the 1990s for "write once, run anywhere": programs compile to bytecode for a virtual machine instead of to one CPU's instructions. Today it runs a large share of server back ends, Android apps (through Kotlin and Java), big data systems (Hadoop, Spark, Kafka) and enterprise software. The language changed a great deal from Java 8 (2014) to Java 21 (2023): this sheet covers the modern form. The comparison with other languages is in [Language Reference](../language-reference/) and the [Rosetta Table](../rosetta-table/). Each snippet is one file `Main.java`; run it with `java Main.java` (Java 11+ runs a single source file directly) or on an online Java 21 compiler.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Large, long-lived codebases: static types, strong tooling and refactoring | Verbosity, though records, `var` and lambdas removed much of it |
+| Throughput after warm-up: the JIT optimises using run-time profiles | Start-up time and memory footprint (GraalVM native images help) |
+| Memory safety through the GC, with low-pause collectors (ZGC, Shenandoah) | Low-level control: no value types on the stack beyond primitives (yet) |
+| The JVM ecosystem: Spring, Kafka, Spark, Maven Central, and other JVM languages (Kotlin, Scala) | Generics erased at run time, primitives outside generics |
+
+## The JVM and a Program's Shape
+
+Every function lives in a class; execution starts at `public static void main(String[] args)`. `javac` compiles `.java` to `.class` bytecode, and the **JVM** interprets it, then **JIT-compiles** frequently run methods to native code ([Compilers & Interpreters](../../languages/compilers-and-interpreters/)).
+
+```java
+public class Main {
+    static int square(int x) { return x * x; }       // static: belongs to the class, not an object
+
+    public static void main(String[] args) {
+        System.out.println("args: " + args.length);
+        System.out.println(square(12));
+        System.out.println(System.getProperty("java.version").isEmpty());
+        var runtime = Runtime.getRuntime();
+        System.out.println(runtime.availableProcessors() > 0);
+    }
+}
+// output:
+// args: 0
+// 144
+// false
+// true
+```
+
+In words: `static` methods are called on the class, like functions in other languages. `var` infers the local variable's type (`Runtime` here) at compile time; the variable is still statically typed. The JVM reports the processors it may use, which sizes its thread pools and garbage collector.
+
+## Variables, Control Flow, Methods
+
+Local variables are declared with a type or with `var` (inferred, Java 10+); `final` makes a binding unchangeable. Control flow is C-like (`if`, `for`, `while`, `do`), plus the enhanced `for` over arrays and collections and the arrow-form `switch` expression (Java 14+). Methods can be overloaded and take varargs.
+
+```java
+import java.util.List;
+
+public class Main {
+    static int add(int a, int b) { return a + b; }
+    static double add(double a, double b) { return a + b; }   // overload chosen by argument types
+    static int sum(int... nums) {                             // varargs arrive as an int[]
+        int total = 0;
+        for (int n : nums) total += n;
+        return total;
+    }
+
+    public static void main(String[] args) {
+        final int limit = 3;
+        var names = List.of("ana", "bo", "cy");
+        for (int i = 0; i < limit; i++) {
+            if (i == 1) continue;
+            System.out.println(i + " " + names.get(i));
+        }
+        int n = 1;
+        while (n < 100) n *= 3;
+        String size = switch (n % 3) {
+            case 0 -> "divisible by 3";
+            default -> "not divisible";
+        };
+        System.out.println(n + " " + size);
+        System.out.println(add(2, 3) + " " + add(2.5, 3) + " " + sum() + " " + sum(1, 2, 3));
+        String grade = n > 200 ? "big" : "small";
+        System.out.println(grade);
+    }
+}
+// output:
+// 0 ana
+// 2 cy
+// 243 divisible by 3
+// 5 5.5 0 6
+// big
+```
+
+In words: `continue` skips index 1, so only "0 ana" and "2 cy" print. `n` grows to 243, and the `switch` expression returns a value directly with no `break` and no fall-through. `add(2.5, 3)` widens the 3 to a double and calls the `double` overload; `sum()` with no arguments receives an empty array and returns 0.
+
+## Primitives and References
+
+Eight **primitive** types (`byte`, `short`, `int`, `long`, `float`, `double`, `char`, `boolean`) hold values directly with fixed sizes on every platform. Everything else is a **reference** to an object on the heap, or `null`. Generic collections hold only references, so primitives are **boxed** into wrapper objects (`Integer`, `Double`).
+
+```java
+import java.util.List;
+
+public class Main {
+    public static void main(String[] args) {
+        int a = 7 / 2;
+        double b = 7 / 2.0;
+        long big = Integer.MAX_VALUE + 1L;
+        int overflow = Integer.MAX_VALUE + 1;      // wraps silently
+        char c = 'A';
+        System.out.println(a + " " + b + " " + big + " " + overflow + " " + (c + 1) + " " + (char) (c + 1));
+
+        Integer x = 127, y = 127, p = 1000, q = 1000;
+        System.out.println((x == y) + " " + (p == q) + " " + p.equals(q));
+
+        List<Integer> nums = List.of(1, 2, 3);     // boxed Integers
+        int sum = 0;
+        for (int n : nums) sum += n;              // unboxed automatically
+        System.out.println(sum + " " + (0.1 + 0.2 == 0.3) + " " + Math.addExact(2, 3));
+    }
+}
+// output:
+// 3 3.5 2147483648 -2147483648 66 B
+// true false true
+// 6 false 5
+```
+
+In words: integer division truncates and `int` overflow wraps around without an error (`Math.addExact` throws instead). `char` is a 16-bit number, so `c + 1` is 66 until cast back to `char`. `==` on boxed `Integer` compares references: small values from -128 to 127 are cached and happen to be identical, larger ones are not, so `p == q` is false while `p.equals(q)` is true ([Floating Point](../../foundations/floating-point/)).
+
+## Strings
+
+`String` is immutable and stored as UTF-16 (compactly as Latin-1 when possible). Compare with `equals`, never `==`. `StringBuilder` builds strings in loops; text blocks (`"""`) hold multi-line literals.
+
+```java
+public class Main {
+    public static void main(String[] args) {
+        String s = "Hello, World";
+        System.out.println(s.toLowerCase() + " " + s.substring(0, 5) + " " + s.indexOf("World") + " " + s.length());
+        System.out.println(String.join(" | ", "a", "b", "c") + " " + "  pad ".strip() + " " + "ab".repeat(3));
+        System.out.println(String.format("%-5s|%6.2f|%x", "tea", 3.14159, 255));
+
+        String a = "hi", b = new String("hi");
+        System.out.println((a == b) + " " + a.equals(b));
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < 3; i++) sb.append(i).append(',');
+        System.out.println(sb);
+
+        String json = """
+            {"name": "Ada"}
+            """;
+        System.out.println(json.strip() + " " + "😀".length() + " " + "😀".codePointCount(0, 2));
+    }
+}
+// output:
+// hello, world Hello 7 12
+// a | b | c pad ababab
+// tea  |  3.14|ff
+// false true
+// 0,1,2,
+// {"name": "Ada"} 2 1
+```
+
+In words: `==` compares references, so a `new String("hi")` is not `==` to the literal even though `equals` is true. Concatenating with `+` in a loop creates a new string each time; `StringBuilder` appends in place. `length()` counts UTF-16 code units, so an emoji has length 2 but one code point ([Text Encoding](../../foundations/text-encoding/)).
+
+## Collections and Streams
+
+The collections framework provides `List` (`ArrayList`), `Set` (`HashSet`, `TreeSet`), `Map` (`HashMap`, `TreeMap`, `LinkedHashMap`) and `Deque` (`ArrayDeque`). `List.of` and `Map.of` create immutable collections. **Streams** process collections declaratively with lambdas. The example uses a `record` as a small data class; records are covered below.
+
+```java
+import java.util.*;
+import java.util.stream.*;
+
+public class Main {
+    record Person(String name, String city, int age) {}
+
+    public static void main(String[] args) {
+        var people = List.of(
+            new Person("Ana", "Lisbon", 31), new Person("Bo", "Oslo", 25),
+            new Person("Cy", "Lisbon", 40), new Person("Di", "Oslo", 35));
+
+        List<String> over30 = people.stream()
+            .filter(p -> p.age() > 30)
+            .map(Person::name)
+            .sorted()
+            .toList();
+        Map<String, Double> avgAge = people.stream()
+            .collect(Collectors.groupingBy(Person::city, TreeMap::new, Collectors.averagingInt(Person::age)));
+        int total = people.stream().mapToInt(Person::age).sum();
+        System.out.println(over30 + " " + avgAge + " " + total);
+
+        Map<String, Integer> counts = new HashMap<>();
+        for (String w : "the cat and the hat".split(" ")) counts.merge(w, 1, Integer::sum);
+        System.out.println(counts.get("the") + " " + counts.getOrDefault("dog", 0));
+
+        Deque<Integer> stack = new ArrayDeque<>();
+        stack.push(1);
+        stack.push(2);
+        System.out.println(stack.pop() + " " + IntStream.rangeClosed(1, 5).boxed().collect(Collectors.toList()));
+    }
+}
+// output:
+// [Ana, Cy, Di] {Lisbon=35.5, Oslo=30.0} 131
+// 2 0
+// 2 [1, 2, 3, 4, 5]
+```
+
+In words: the stream filters people over 30, maps to names and sorts them; `groupingBy` with a `TreeMap` gives average age per city in sorted key order. `merge` is the idiomatic word count: insert 1 or add 1 to the existing count. `ArrayDeque` is the recommended stack and queue; the old `Stack` class is synchronised and slow ([Hash Tables](../../data-structures/hash-tables/)).
+
+## Exceptions
+
+Java has **checked** exceptions (subclasses of `Exception`), which a method must catch or declare with `throws`, and **unchecked** ones (`RuntimeException` and `Error`), which it need not. `try`-with-resources closes anything `AutoCloseable` automatically.
+
+```java
+import java.io.*;
+
+public class Main {
+    static class InsufficientFunds extends RuntimeException {
+        InsufficientFunds(int balance, int need) { super("balance " + balance + ", need " + need); }
+    }
+
+    static int parseAge(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return -1;
+        } finally {
+            System.out.println("checked " + s);
+        }
+    }
+
+    static String firstLine(String text) throws IOException {     // checked: callers must handle
+        try (var reader = new BufferedReader(new StringReader(text))) {
+            return reader.readLine();
+        }                                                          // reader closed here
+    }
+
+    public static void main(String[] args) throws IOException {
+        System.out.println(parseAge("42") + " " + parseAge("forty"));
+        try {
+            throw new InsufficientFunds(5, 9);
+        } catch (InsufficientFunds e) {
+            System.out.println(e.getMessage());
+        }
+        System.out.println(firstLine("line one\nline two"));
+        try {
+            Object o = "text";
+            Integer i = (Integer) o;
+        } catch (ClassCastException | NullPointerException e) {
+            System.out.println(e.getClass().getSimpleName());
+        }
+    }
+}
+// output:
+// checked 42
+// checked forty
+// 42 -1
+// balance 5, need 9
+// line one
+// ClassCastException
+```
+
+In words: `finally` runs before each return, so "checked 42" prints before the line that uses the results. `firstLine` declares `throws IOException`, so the compiler forces callers to deal with it; `main` passes it on. The `try`-with-resources block closes the reader even if `readLine` throws. Multi-catch handles several exception types in one block.
+
+## Classes, Interfaces, Records
+
+Classes have fields, constructors and methods with access modifiers (`private`, package-private by default, `protected`, `public`). Single inheritance of classes, multiple inheritance of **interfaces**, which can carry `default` methods. **Records** (Java 16) are immutable data carriers with generated constructor, accessors, `equals`, `hashCode` and `toString`.
+
+```java
+import java.util.List;
+
+public class Main {
+    interface Shape {
+        double area();
+        default String describe() { return getClass().getSimpleName() + " with area " + Math.round(area()); }
+    }
+
+    record Circle(double r) implements Shape {
+        Circle {                                         // compact constructor: validation
+            if (r < 0) throw new IllegalArgumentException("negative radius");
+        }
+        public double area() { return Math.PI * r * r; }
+    }
+
+    record Square(double side) implements Shape {
+        public double area() { return side * side; }
+    }
+
+    static class Account {
+        private int balance;                             // encapsulated state
+        void deposit(int v) { balance += v; }
+        int balance() { return balance; }
+    }
+
+    public static void main(String[] args) {
+        List<Shape> shapes = List.of(new Circle(1), new Square(3));
+        for (Shape s : shapes) System.out.println(s.describe());
+        System.out.println(new Square(2).equals(new Square(2)) + " " + new Circle(2));
+        var acct = new Account();
+        acct.deposit(10);
+        acct.deposit(5);
+        System.out.println(acct.balance());
+    }
+}
+// output:
+// Circle with area 3
+// Square with area 9
+// true Circle[r=2.0]
+// 15
+```
+
+In words: both records implement `Shape` and inherit its `default` method, which uses the run-time class name. Records compare by value, so two `Square(2)` are equal, and print as `Circle[r=2.0]`. The compact constructor validates arguments before the fields are set. Ordinary classes are still the tool for mutable, encapsulated state ([Object-Oriented Programming](../../languages/object-oriented-programming/)).
+
+## Generics and Erasure
+
+Generics give compile-time type safety for collections and APIs. They are implemented by **erasure**: type arguments are checked by the compiler and removed from the bytecode, so at run time a `List<String>` is just a `List`. Wildcards (`? extends T`, `? super T`) express variance ([Generics & Variance](../../languages/generics-and-variance/)).
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class Main {
+    static <T extends Comparable<T>> T max(List<T> items) {
+        T best = items.get(0);
+        for (T x : items) if (x.compareTo(best) > 0) best = x;
+        return best;
+    }
+
+    static double sum(List<? extends Number> nums) {   // accepts List<Integer>, List<Double>, ...
+        double s = 0;
+        for (Number n : nums) s += n.doubleValue();
+        return s;
+    }
+
+    static class Box<T> {
+        private final T value;
+        Box(T value) { this.value = value; }
+        T get() { return value; }
+        <R> Box<R> map(java.util.function.Function<T, R> f) { return new Box<>(f.apply(value)); }
+    }
+
+    public static void main(String[] args) {
+        System.out.println(max(List.of(3, 9, 2)) + " " + max(List.of("pear", "apple")));
+        System.out.println(sum(List.of(1, 2)) + " " + sum(List.of(1.5, 2.5)));
+        System.out.println(new Box<>("hello").map(String::length).get());
+
+        List<String> strings = new ArrayList<>();
+        List<Integer> ints = new ArrayList<>();
+        System.out.println(strings.getClass() == ints.getClass());   // erasure: same class
+    }
+}
+// output:
+// 9 pear
+// 3.0 4.0
+// 5
+// true
+```
+
+In words: `max` works for any type that can compare itself to its own type. `List<? extends Number>` accepts lists of any numeric wrapper for reading. `String::length` is a method reference used as a function. Both lists have the same run-time class because type arguments are erased, which is why Java cannot do `new T()` or `instanceof List<String>`.
+
+## Sealed Types and Pattern Matching
+
+A **sealed** interface lists every permitted implementation, so the compiler knows the hierarchy is closed. Combined with record patterns in `switch` (Java 21), this gives algebraic data types: the compiler checks that every case is handled.
+
+```java
+public class Main {
+    sealed interface Expr permits Num, Add, Mul {}
+    record Num(int value) implements Expr {}
+    record Add(Expr left, Expr right) implements Expr {}
+    record Mul(Expr left, Expr right) implements Expr {}
+
+    static int eval(Expr e) {
+        return switch (e) {                          // no default needed: the hierarchy is sealed
+            case Num n -> n.value();
+            case Add(Expr l, Expr r) -> eval(l) + eval(r);
+            case Mul(Expr l, Expr r) -> eval(l) * eval(r);
+        };
+    }
+
+    static String classify(Object o) {
+        return switch (o) {
+            case Integer i when i > 100 -> "big int " + i;
+            case Integer i -> "int " + i;
+            case String s -> "string of length " + s.length();
+            case null -> "null";
+            default -> "something else";
+        };
+    }
+
+    public static void main(String[] args) {
+        Expr e = new Add(new Num(2), new Mul(new Num(3), new Num(4)));
+        System.out.println(eval(e) + " " + e);
+        System.out.println(classify(500) + ", " + classify(7) + ", " + classify("hi") + ", " + classify(null));
+    }
+}
+// output:
+// 14 Add[left=Num[value=2], right=Mul[left=Num[value=3], right=Num[value=4]]]
+// big int 500, int 7, string of length 2, null
+```
+
+In words: `eval` destructures each record in its `case` and recurses, computing 2 + 3 × 4 = 14; adding a new `Expr` type without handling it would be a compile error. `classify` matches on type with a `when` guard and handles `null` explicitly, which older `switch` statements could not.
+
+## Concurrency
+
+Threads share the heap, so shared mutable state needs `synchronized`, locks or atomic classes. `ExecutorService` manages pools of threads; `CompletableFuture` composes asynchronous results. **Virtual threads** (Java 21) are cheap threads scheduled by the JVM, so blocking code scales to very many concurrent tasks ([Concurrency Models](../../languages/concurrency-models/)).
+
+```java
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.IntStream;
+
+public class Main {
+    public static void main(String[] args) throws Exception {
+        var counter = new AtomicLong();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            IntStream.range(0, 10_000).forEach(i -> executor.submit(() -> {
+                Thread.sleep(10);                       // blocking is cheap on a virtual thread
+                counter.incrementAndGet();
+                return null;
+            }));
+        }                                               // close() waits for all tasks
+        System.out.println(counter.get());
+
+        var future = CompletableFuture.supplyAsync(() -> 6)
+            .thenApply(x -> x * 7)
+            .thenCombine(CompletableFuture.supplyAsync(() -> 100), Integer::sum);
+        System.out.println(future.get());
+
+        var map = new ConcurrentHashMap<String, Integer>();
+        IntStream.range(0, 1000).parallel().forEach(i -> map.merge("k", 1, Integer::sum));
+        System.out.println(map.get("k"));
+    }
+}
+// output:
+// 10000
+// 142
+// 1000
+```
+
+In words: ten thousand tasks each sleep 10 ms on their own virtual thread and the counter reaches 10,000; with platform threads that would need ten thousand OS threads. The `CompletableFuture` chain computes 6 × 7 = 42 and adds 100 from a second async task, giving 142. `ConcurrentHashMap.merge` is atomic, so 1000 parallel increments give exactly 1000.
+
+## Memory and the GC
+
+All objects live on the heap and are freed by a tracing **garbage collector** when unreachable; there is no `free` and no dangling pointer ([Memory & GC](../../languages/memory-and-gc/)). Arguments are passed by value, where the value of an object variable is a reference.
+
+```java
+import java.util.ArrayList;
+import java.util.List;
+
+public class Main {
+    static void reassign(List<Integer> list) { list = new ArrayList<>(); list.add(99); }
+    static void mutate(List<Integer> list) { list.add(42); }
+
+    public static void main(String[] args) {
+        List<Integer> nums = new ArrayList<>(List.of(1, 2));
+        reassign(nums);
+        mutate(nums);
+        System.out.println(nums);
+
+        int[] a = {1, 2, 3};
+        int[] b = a;                     // same array
+        int[] c = a.clone();             // shallow copy
+        b[0] = 100;
+        System.out.println(a[0] + " " + c[0]);
+
+        Runtime rt = Runtime.getRuntime();
+        System.out.println(rt.maxMemory() > 0);
+    }
+}
+// output:
+// [1, 2, 42]
+// 100 1
+// true
+```
+
+In words: `reassign` points its own parameter at a new list, which the caller never sees, while `mutate` changes the shared list, so `nums` is `[1, 2, 42]`. Arrays are objects too: `b` aliases `a`, `clone` copies. The heap size is set with `-Xmx`; the default collector is G1, and ZGC (`-XX:+UseZGC`) keeps pauses near a millisecond on large heaps.
+
+## Pitfalls
+
+```java
+import java.util.*;
+
+public class Main {
+    record Point(int x, int y) {}
+
+    static class MutableKey {
+        int id;
+        MutableKey(int id) { this.id = id; }
+        @Override public boolean equals(Object o) { return o instanceof MutableKey k && k.id == id; }
+        @Override public int hashCode() { return id; }
+    }
+
+    public static void main(String[] args) {
+        Map<String, Integer> m = new HashMap<>();
+        Integer missing = m.get("x");
+        try {
+            int v = missing;                         // auto-unboxing null
+        } catch (NullPointerException e) {
+            System.out.println("NPE from unboxing");
+        }
+
+        var key = new MutableKey(1);
+        Set<MutableKey> set = new HashSet<>(Set.of(key));
+        key.id = 2;                                  // hash changes after insertion
+        System.out.println(set.contains(key) + " " + set.size());
+
+        List<Integer> list = new ArrayList<>(List.of(1, 2, 3));
+        list.remove(1);                              // removes index 1, not the value 1
+        System.out.println(list);
+
+        try {
+            List.of(1, 2).add(3);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("List.of is immutable");
+        }
+        System.out.println(new Point(1, 2).equals(new Point(1, 2)) + " " + (1.0 / 0) + " " + (0.0 / 0));
+    }
+}
+// output:
+// NPE from unboxing
+// false 1
+// [1, 3]
+// List.of is immutable
+// true Infinity NaN
+```
+
+In words: unboxing a `null` `Integer` throws `NullPointerException`. Changing a field that `hashCode` uses after inserting the object into a `HashSet` puts it in the wrong bucket, so `contains` fails although the set still holds it. `list.remove(1)` picks the `remove(int index)` overload; write `list.remove(Integer.valueOf(1))` to remove the value. Floating-point division by zero gives `Infinity` and `NaN` rather than an exception.
+
+<Callout type="pitfall">
+If you override `equals`, you must override `hashCode` consistently, and the fields they use should not change while the object is in a hash-based collection. Breaking this makes `HashMap` and `HashSet` lose entries silently. Records and immutable classes avoid the problem by construction, which is one reason modern Java leans on them.
+</Callout>
+
+## Tooling
+
+```bash
+java Main.java                                  # run one file without a separate compile step
+javac -d out src/Main.java && java -cp out Main # compile, then run
+jshell                                          # interactive REPL
+mvn -q package && java -jar target/app.jar      # Maven build
+gradle build                                    # Gradle build
+jcmd <pid> GC.heap_info                         # inspect a running JVM
+```
+
+Maven (`pom.xml`) and Gradle (`build.gradle.kts`) manage dependencies from Maven Central and pin versions ([Dependencies & Versioning](../../software-engineering/dependencies-and-versioning/)). JUnit 5 is the standard test framework, IntelliJ IDEA the dominant IDE, and Java Flight Recorder plus VisualVM profile running applications. Use an LTS release (17, 21, 25) in production.

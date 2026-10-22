@@ -1,0 +1,693 @@
+---
+title: "Go Sheet"
+description: "Go on one page: the basics, then what Go is built for: implicit interfaces, goroutines and channels, context cancellation, and slices."
+order: 4
+tier: core
+takeaways:
+  - "Go is **statically typed** with type inference (`x := 3`), compiles to one native binary, and is garbage collected. Unused variables and imports are compile errors."
+  - "There are no classes or inheritance: **structs** hold data, methods attach to types, and **interfaces** are satisfied implicitly by any type with the right methods."
+  - "Errors are ordinary **values** returned alongside results (`v, err := f()`); `panic` is for bugs, not expected failures."
+  - "**Goroutines** are cheap concurrent functions and **channels** pass values between them; `sync.WaitGroup` and `sync.Mutex` cover the rest."
+  - "Slices are views onto arrays: `append` may or may not copy, so two slices can share and overwrite the same memory."
+resources:
+  - title: "A Tour of Go (go.dev)"
+    url: "https://go.dev/tour/"
+    note: "The official interactive introduction, runnable in the browser."
+  - title: "Effective Go (go.dev)"
+    url: "https://go.dev/doc/effective_go"
+    note: "How idiomatic Go is written: naming, errors, interfaces, concurrency."
+  - title: "The Go Playground (go.dev)"
+    url: "https://go.dev/play/"
+    note: "Runs every snippet on this page; each one is a complete program."
+---
+
+This sheet is a one-page reference for Go: first the basics, then the parts Go is built around: implicit **interfaces**, **goroutines and channels**, **context** cancellation for servers, and how slices share memory. [Rosetta Table](../rosetta-table/) compares the same concepts across languages, and [Language Reference](../language-reference/) compares the languages themselves. Go was designed at Google for large server codebases: a small language, fast compilation, built-in concurrency and one standard formatting. Each snippet is a complete program that runs in the [Go Playground](https://go.dev/play/) or with `go run main.go`.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Network services and CLIs: fast compiles, one static binary, easy cross-compilation | Expressive type-level abstractions: generics are deliberately simple |
+| Concurrency with goroutines and channels built into the language | Low-level control and predictable latency: a GC, though with short pauses |
+| Readability: small language, one formatter, few ways to do things | Verbose error handling (`if err != nil` everywhere) |
+| Cloud tooling: Docker, Kubernetes, Terraform and Prometheus are written in Go | GUI, data science and ML ecosystems |
+
+## Types
+
+Basic types are `bool`, `string`, signed and unsigned integers of fixed sizes (`int8` … `int64`, `uint8` … `uint64`; `int` is 64-bit on 64-bit platforms), `float32`, `float64`, `complex128`, `byte` (= `uint8`) and `rune` (= `int32`, a Unicode code point). Every type has a **zero value**; there is no uninitialised memory.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	var i int
+	var f float64
+	var s string
+	var p *int
+	fmt.Printf("%d %v %q %v\n", i, f, s, p) // zero values
+
+	n := 7 / 2   // integer division
+	x := 7.0 / 2 // float division
+	var b byte = 255
+	b++ // wraps around
+	fmt.Println(n, x, b, 0.1+0.2 == 0.3)
+	fmt.Printf("%T %T %T\n", n, x, 'A')
+	fmt.Println(float64(n)*1.5, int(3.99)) // conversions are explicit
+}
+// output: PENDING
+```
+
+In words: zero values are 0, "" and `nil`. Integer division truncates, `byte` overflow wraps silently, and conversions between numeric types must be written out; `int(3.99)` truncates toward zero. The `0.1 + 0.2` comparison is evaluated on constants, which Go computes exactly, so it differs from the same sum on float64 variables ([Floating Point](../../foundations/floating-point/)).
+
+## Variables
+
+`var` declares with an explicit type or initialiser; `:=` declares and infers inside functions. `const` values are computed at compile time; `iota` numbers consecutive constants.
+
+```go
+package main
+
+import "fmt"
+
+const Pi = 3.14159
+
+type Weekday int
+
+const (
+	Sunday Weekday = iota // 0
+	Monday                // 1
+	Tuesday               // 2
+)
+
+var counter = 0 // package-level variable
+
+func main() {
+	var a, b int = 1, 2
+	c := "inferred string"
+	a, b = b, a // parallel assignment swaps
+	counter++
+	fmt.Println(a, b, c, Pi, Tuesday, counter)
+
+	if v := a * 10; v > 5 { // v exists only inside the if
+		fmt.Println("v =", v)
+	}
+}
+// output: PENDING
+```
+
+In words: `:=` works only inside functions; at package level use `var`. `iota` starts at 0 in each `const` block, so `Tuesday` is 2. The `if v := …; cond` form scopes a variable to the statement, a common way to keep helpers out of the surrounding scope. Names starting with a capital letter are exported from the package.
+
+## Control Flow
+
+Go has one loop keyword, `for`, used in three forms, plus `range` over slices, maps, strings, channels and integers. `if` and `switch` need no parentheses; `switch` cases do not fall through.
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	for i := 0; i < 3; i++ {
+		fmt.Print(i, " ")
+	}
+	fmt.Println()
+
+	n := 1
+	for n < 100 { // while-style loop
+		n *= 3
+	}
+	fmt.Println(n)
+
+	for i, ch := range "héllo" { // i is a byte offset, ch a rune
+		if i > 3 {
+			break
+		}
+		fmt.Println(i, string(ch))
+	}
+
+	for i := range 3 { // range over an integer, Go 1.22+
+		switch {
+		case i == 0:
+			fmt.Println("zero")
+		case i%2 == 1:
+			fmt.Println("odd")
+		default:
+			fmt.Println("even")
+		}
+	}
+}
+// output: PENDING
+```
+
+In words: `for cond { }` is Go's while loop, and `for { }` loops forever. Ranging over a string yields byte offsets and runes, so after "h" the offset jumps from 1 to 3 because "é" takes two bytes in UTF-8. A `switch` with no value tests each case as a boolean, a cleaner `if`/`else if` chain; `fallthrough` must be written explicitly.
+
+## Functions
+
+Functions can return several values, often a result and an error. They are first-class values and can be closures. `defer` schedules a call to run when the function returns.
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+func divide(a, b float64) (float64, error) {
+	if b == 0 {
+		return 0, errors.New("division by zero")
+	}
+	return a / b, nil
+}
+
+func sum(nums ...int) int { // variadic
+	total := 0
+	for _, n := range nums {
+		total += n
+	}
+	return total
+}
+
+func makeCounter() func() int {
+	count := 0
+	return func() int { count++; return count }
+}
+
+func main() {
+	q, err := divide(7, 2)
+	fmt.Println(q, err)
+	_, err = divide(1, 0)
+	fmt.Println(err)
+	fmt.Println(sum(1, 2, 3), sum([]int{4, 5}...))
+
+	next := makeCounter()
+	fmt.Println(next(), next(), next())
+
+	defer fmt.Println("deferred: runs last")
+	fmt.Println("body done")
+}
+// output: PENDING
+```
+
+In words: callers receive both values and must handle or explicitly ignore (`_`) the error. `sum([]int{4, 5}...)` spreads a slice into variadic arguments. Deferred calls run in last-in, first-out order when the function exits, even on panic, which makes `defer f.Close()` right after opening a file the standard cleanup pattern.
+
+## Collections
+
+Arrays have a fixed length that is part of their type and are rarely used directly. **Slices** (`[]T`) are growable views onto arrays; **maps** (`map[K]V`) are hash tables. Both are reference-like: copying one copies a small header, not the data.
+
+```go
+package main
+
+import (
+	"fmt"
+	"maps"
+	"slices"
+	"sort"
+)
+
+func main() {
+	nums := []int{3, 1, 2}
+	nums = append(nums, 4)
+	slices.Sort(nums)
+	fmt.Println(nums, len(nums), nums[1:3], nums[len(nums)-1])
+
+	grid := make([][]int, 2) // 2 rows, each a separate slice
+	for i := range grid {
+		grid[i] = make([]int, 3)
+	}
+	grid[0][1] = 5
+	fmt.Println(grid)
+
+	ages := map[string]int{"ana": 31, "bo": 25}
+	ages["cy"] = 40
+	age, ok := ages["dee"] // comma-ok: was the key present?
+	delete(ages, "bo")
+	keys := slices.Collect(maps.Keys(ages))
+	sort.Strings(keys) // map iteration order is random
+	fmt.Println(age, ok, len(ages), keys)
+
+	set := map[string]struct{}{"x": {}, "y": {}}
+	_, has := set["x"]
+	fmt.Println(has, slices.Contains(nums, 9), slices.Index(nums, 3))
+}
+// output: PENDING
+```
+
+In words: `append` returns the (possibly new) slice, so its result must be assigned back. Looking up a missing key returns the zero value, and the second "comma-ok" result says whether the key existed. Map iteration order is deliberately randomised, so keys are sorted before printing. A map to the empty struct is the usual set.
+
+## Strings
+
+Strings are immutable byte sequences, by convention UTF-8. Indexing gives bytes; ranging gives runes. `strings`, `strconv` and `fmt` hold the helpers; `strings.Builder` builds strings efficiently.
+
+```go
+package main
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	s := "Hello, World"
+	fmt.Println(strings.ToLower(s), strings.Split(s, ", "), strings.ReplaceAll(s, "World", "Go"), s[:5])
+	fmt.Println(strings.Join([]string{"a", "b", "c"}, " | "), strings.TrimSpace("  pad "), strings.Contains(s, "World"))
+
+	n, err := strconv.Atoi("42")
+	fmt.Println(n+1, err, strconv.Itoa(7)+"!", fmt.Sprintf("%05.1f|%-4s|%x", 3.14159, "go", 255))
+
+	word := "naïve"
+	fmt.Println(len(word), len([]rune(word)), word[2])
+
+	var b strings.Builder
+	for i := range 3 {
+		fmt.Fprintf(&b, "%d,", i)
+	}
+	fmt.Println(b.String())
+}
+// output: PENDING
+```
+
+In words: `len` counts bytes, so "naïve" is 6 long, while converting to `[]rune` counts 5 code points; `word[2]` is a single byte of the two-byte "ï", printed as a number ([Text Encoding](../../foundations/text-encoding/)). `strconv.Atoi` returns an error for non-numeric input instead of panicking. Repeated `+=` on strings copies each time; `strings.Builder` appends into one buffer.
+
+## Errors
+
+An error is any value implementing `Error() string`. Functions return it last; callers check `if err != nil`. Wrap errors with `%w` to add context and keep the cause; inspect them with `errors.Is` and `errors.As`.
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+)
+
+var ErrNotFound = errors.New("not found") // sentinel error
+
+type InsufficientFunds struct{ Balance, Need int }
+
+func (e *InsufficientFunds) Error() string {
+	return fmt.Sprintf("balance %d, need %d", e.Balance, e.Need)
+}
+
+func withdraw(balance, amount int) (int, error) {
+	if amount > balance {
+		return balance, &InsufficientFunds{balance, amount}
+	}
+	return balance - amount, nil
+}
+
+func find(id string) error {
+	return fmt.Errorf("loading user %s: %w", id, ErrNotFound) // wrap with context
+}
+
+func main() {
+	if _, err := withdraw(5, 9); err != nil {
+		var funds *InsufficientFunds
+		if errors.As(err, &funds) {
+			fmt.Println("short by", funds.Need-funds.Balance, "-", err)
+		}
+	}
+	err := find("42")
+	fmt.Println(err, errors.Is(err, ErrNotFound))
+
+	_, err = strconv.Atoi("forty")
+	fmt.Println(err)
+
+	defer func() {
+		if r := recover(); r != nil { // recover stops a panic in a deferred call
+			fmt.Println("recovered:", r)
+		}
+	}()
+	var m map[string]int
+	m["x"] = 1 // writing to a nil map panics
+}
+// output: PENDING
+```
+
+In words: `errors.As` finds a typed error anywhere in a wrap chain and extracts its fields, and `errors.Is` matches a sentinel through the `%w` wrapping. `panic` is reserved for programming errors such as writing to a nil map; `recover` in a deferred function can stop it, which servers use to keep one bad request from crashing the process.
+
+## Structs, Methods, Embedding
+
+Structs group fields; methods have a **receiver** and can be declared on any named type. A pointer receiver can modify the value. **Embedding** reuses another struct's fields and methods without inheritance.
+
+```go
+package main
+
+import (
+	"fmt"
+	"math"
+)
+
+type Point struct {
+	X, Y float64
+}
+
+func (p Point) Norm() float64 { // value receiver: works on a copy
+	return math.Hypot(p.X, p.Y)
+}
+
+func (p *Point) Scale(k float64) { // pointer receiver: modifies the original
+	p.X *= k
+	p.Y *= k
+}
+
+type Animal struct{ Name string }
+
+func (a Animal) Describe() string { return "animal " + a.Name }
+
+type Dog struct {
+	Animal // embedded: Dog gets Name and Describe
+	Breed  string
+}
+
+func main() {
+	p := Point{X: 3, Y: 4}
+	p.Scale(2)
+	fmt.Println(p, p.Norm(), p == Point{6, 8})
+	fmt.Printf("%+v\n", p)
+
+	d := Dog{Animal{"rex"}, "collie"}
+	fmt.Println(d.Name, d.Describe(), d.Breed)
+}
+// output: PENDING
+```
+
+In words: `p.Scale(2)` is shorthand for `(&p).Scale(2)`, so the pointer receiver doubles the original point to `{6 8}`, with norm 10. Structs of comparable fields compare with `==`. `Dog` embeds `Animal`, so `d.Name` and `d.Describe()` are promoted, but a `Dog` is not an `Animal`: Go composes types rather than subclassing them ([Object-Oriented Programming](../../languages/object-oriented-programming/)).
+
+## Interfaces and Generics
+
+Interfaces describe behaviour and are satisfied implicitly. Type parameters (Go 1.18+) are written in square brackets with a **constraint**, itself an interface.
+
+```go
+package main
+
+import (
+	"cmp"
+	"fmt"
+	"math"
+)
+
+type Shape interface {
+	Area() float64
+}
+
+type Circle struct{ R float64 }
+type Square struct{ Side float64 }
+
+func (c Circle) Area() float64 { return math.Pi * c.R * c.R }
+func (s Square) Area() float64 { return s.Side * s.Side }
+
+func Max[T cmp.Ordered](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+type Stack[T any] struct{ items []T }
+
+func (s *Stack[T]) Push(v T) { s.items = append(s.items, v) }
+func (s *Stack[T]) Pop() T {
+	v := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return v
+}
+
+func main() {
+	for _, sh := range []Shape{Circle{1}, Square{3}} {
+		switch v := sh.(type) { // type switch
+		case Circle:
+			fmt.Printf("circle r=%v area %.2f\n", v.R, v.Area())
+		case Square:
+			fmt.Printf("square area %.0f\n", v.Area())
+		}
+	}
+	var s Stack[string]
+	s.Push("a")
+	s.Push("b")
+	fmt.Println(Max(3, 7), Max("pear", "apple"), s.Pop())
+}
+// output: PENDING
+```
+
+In words: `Circle` and `Square` never mention `Shape`, yet both satisfy it because they have an `Area` method. A type switch recovers the concrete type. `cmp.Ordered` allows any type with `<`, so `Max` works for ints and strings ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Goroutines and Channels
+
+A **goroutine** is a function running concurrently, started with `go`; the runtime multiplexes many thousands of them onto OS threads. **Channels** send values between goroutines and synchronise them; `select` waits on several channels. "Share memory by communicating" is the motto, but `sync.Mutex` exists for shared state ([Concurrency Models](../../languages/concurrency-models/)).
+
+```go
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+func worker(jobs <-chan int, results chan<- int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for j := range jobs { // ends when jobs is closed
+		results <- j * j
+	}
+}
+
+func main() {
+	jobs := make(chan int, 10)
+	results := make(chan int, 10)
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go worker(jobs, results, &wg)
+	}
+	for i := 1; i <= 5; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	sum := 0
+	for r := range results {
+		sum += r
+	}
+	fmt.Println("sum of squares:", sum)
+
+	var mu sync.Mutex
+	count := 0
+	var wg2 sync.WaitGroup
+	for range 100 {
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			mu.Lock()
+			count++
+			mu.Unlock()
+		}()
+	}
+	wg2.Wait()
+	fmt.Println("count:", count)
+
+	select {
+	case <-time.After(10 * time.Millisecond):
+		fmt.Println("timed out")
+	}
+}
+// output: PENDING
+```
+
+In words: three workers drain the `jobs` channel; closing it ends their `range` loops, and the `WaitGroup` waits for all of them before `results` is closed. The sum of squares of 1 to 5 is the same whatever order the workers ran in, which is why it is printed instead of the individual results. The mutex makes the 100 concurrent increments safe. `select` with `time.After` is the standard timeout pattern. Run code with `go run -race` to detect data races.
+
+## Context and Cancellation
+
+Servers start goroutines per request, and those goroutines must stop when the client disconnects or a deadline passes. The standard tool is `context.Context`: passed as the first parameter of every call that may block, it carries a deadline and a **cancellation signal** (`ctx.Done()`, a channel closed on cancel) down the whole call tree. `net/http` gives each request one (`r.Context()`), and database and HTTP clients accept it.
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// slowQuery stands in for a database call that honours cancellation.
+func slowQuery(ctx context.Context, d time.Duration) (string, error) {
+	select {
+	case <-time.After(d):
+		return "rows", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel() // always release the context's timer
+
+	res, err := slowQuery(ctx, 10*time.Millisecond)
+	fmt.Println(res, err)
+
+	_, err = slowQuery(ctx, time.Second) // same deadline: about 40 ms are left
+	fmt.Println(err, errors.Is(err, context.DeadlineExceeded))
+
+	parent, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	for range 3 {
+		go func() {
+			<-parent.Done() // every goroutine watching the context wakes up at once
+			done <- struct{}{}
+		}()
+	}
+	stop()
+	for range 3 {
+		<-done
+	}
+	fmt.Println("3 workers stopped:", parent.Err())
+}
+// output: PENDING
+```
+
+In words: the first query finishes inside the 50 ms budget; the second would take a second, so it returns when the deadline closes `ctx.Done()`, and `errors.Is` identifies the timeout. One `stop()` wakes all three goroutines, because a closed channel is readable by every receiver, so none of them leaks. Contexts form a tree: cancelling a parent cancels every context derived from it. Do not store a context in a struct, and do not use `context.WithValue` for ordinary parameters.
+
+## Values, Pointers, Slices
+
+Go is garbage collected; the compiler's **escape analysis** keeps values on the stack when they do not outlive the function and moves the rest to the heap. Everything is passed by value, but slices, maps, channels and pointers are small values that refer to shared data ([Memory & GC](../../languages/memory-and-gc/)).
+
+```go
+package main
+
+import "fmt"
+
+type Counter struct{ N int }
+
+func incValue(c Counter)    { c.N++ }
+func incPointer(c *Counter) { c.N++ }
+
+func newCounter() *Counter {
+	return &Counter{} // safe: escapes to the heap
+}
+
+func main() {
+	c := Counter{}
+	incValue(c)
+	incPointer(&c)
+	fmt.Println(c.N)
+
+	a := make([]int, 3, 4) // length 3, capacity 4
+	b := append(a, 99)     // fits in capacity: shares a's array
+	b[0] = 7
+	fmt.Println(a, b, len(b), cap(b))
+	d := append(b, 100) // over capacity: copies to a new array
+	d[1] = 8
+	fmt.Println(b, d)
+
+	p := newCounter()
+	p.N = 5
+	fmt.Println(*p, p.N)
+}
+// output: PENDING
+```
+
+In words: `incValue` changes a copy, so only `incPointer` counts and `c.N` is 1. `b := append(a, 99)` fits in `a`'s spare capacity and shares its array, so `b[0] = 7` also changes `a`; the next append exceeds the capacity and copies, so `d[1] = 8` leaves `b` alone. Returning a pointer to a local variable is safe in Go, unlike in C, because the compiler moves it to the heap.
+
+## Modules and Packages
+
+Code is organised in **packages** (one directory each) inside a **module** (a `go.mod` file with a module path and dependency versions). Exported names start with an uppercase letter.
+
+```go
+-- go.mod --
+module example.com/shop
+
+go 1.23
+-- price/price.go --
+package price
+
+func WithTax(cents int) int { return cents + cents*20/100 } // exported
+func round(x int) int       { return x }                     // unexported: package-private
+-- main.go --
+package main
+
+import (
+	"fmt"
+
+	"example.com/shop/price"
+)
+
+func main() {
+	fmt.Println(price.WithTax(1000))
+}
+// output: PENDING
+```
+
+In words: the snippet is in the txtar format the Go Playground accepts for several files. The import path is the module path plus the directory, and code outside the package can use only capitalised names, so `price.round` is not accessible from `main`. `go get example.com/lib@v1.4.0` adds a dependency and pins it in `go.mod` and `go.sum` ([Dependencies & Versioning](../../software-engineering/dependencies-and-versioning/)). There are no circular imports between packages.
+
+## Pitfalls
+
+Idiomatic Go handles errors right where they occur, keeps interfaces small (often one method, defined by the consumer), returns early instead of nesting, uses `defer` for cleanup, and lets `gofmt` decide formatting.
+
+```go
+package main
+
+import "fmt"
+
+type MyErr struct{}
+
+func (*MyErr) Error() string { return "my error" }
+
+func mayFail(fail bool) error {
+	var e *MyErr // nil pointer of a concrete type
+	if fail {
+		e = &MyErr{}
+	}
+	return e // wraps the nil pointer in a non-nil interface
+}
+
+func main() {
+	err := mayFail(false)
+	fmt.Println(err == nil)
+
+	var funcs []func()
+	for i := range 3 {
+		funcs = append(funcs, func() { fmt.Print(i, " ") }) // Go 1.22+: i is per iteration
+	}
+	for _, f := range funcs {
+		f()
+	}
+	fmt.Println()
+
+	var m map[string]int // nil map: reads work, writes panic
+	fmt.Println(m["missing"], len(m))
+
+	s := []int{1, 2, 3}
+	for _, v := range s {
+		v *= 10 // modifies a copy
+		_ = v
+	}
+	fmt.Println(s)
+}
+// output: PENDING
+```
+
+In words: a nil `*MyErr` stored in an `error` interface makes the interface non-nil, because the interface holds a type; return a literal `nil` instead. Since Go 1.22 each loop iteration has its own `i`, so the closures print 0 1 2 (older versions printed 3 3 3). Reading a nil map returns zero values, but writing panics. The range variable `v` is a copy, so the slice is unchanged; write `s[i] *= 10` instead.
+
+<Callout type="pitfall">
+Goroutines leak silently. A goroutine blocked forever on a channel that nobody will send to or receive from is never collected, and in a server that starts one per request, memory grows until the process dies. Give every goroutine a way to finish: close channels from the sender, pass a `context.Context` and return on `ctx.Done()`, and use buffered channels or `select` with a timeout where a receiver may go away.
+</Callout>
+
+## Tooling
+
+```bash
+go mod init example.com/app      # new module, creates go.mod
+go get github.com/google/uuid@v1.6.0   # add a pinned dependency
+go run .                         # build and run
+go build -o app .                # one static binary
+go test ./...                    # run tests (files ending _test.go)
+go vet ./... && gofmt -l .       # static checks and formatting
+go test -race ./...              # tests with the race detector
+```
+
+The toolchain ships everything: building, testing (`testing` package, benchmarks, fuzzing), formatting (`gofmt`, which every Go project uses), documentation (`go doc`), profiling (`pprof`) and cross-compilation (`GOOS=linux GOARCH=arm64 go build`). `go.sum` records checksums of every dependency.

@@ -1,0 +1,310 @@
+---
+title: "PostgreSQL Sheet"
+description: "PostgreSQL on one page, from psql and table design to queries, joins, CTEs, window functions, JSONB, indexes and EXPLAIN, transactions and MVCC, and day-to-day operations."
+order: 3
+tier: core
+takeaways:
+  - "PostgreSQL is an open-source relational database known for correctness, standard SQL and extensibility: rich types (`jsonb`, arrays, ranges, `uuid`), extensions (PostGIS, pgvector) and transactional DDL."
+  - "Design tables with real constraints (`PRIMARY KEY`, `REFERENCES`, `UNIQUE`, `CHECK`, `NOT NULL`): the database then rejects bad data whatever application writes it."
+  - "`RETURNING` and `INSERT … ON CONFLICT` (upsert) save round trips; CTEs and **window functions** answer ranking and running-total questions in one query."
+  - "Indexes speed reads and cost writes; `EXPLAIN ANALYZE` shows whether a query uses them. B-tree for equality and ranges, GIN for `jsonb`, arrays and full-text search."
+  - "**MVCC** keeps old row versions so readers never block writers; `VACUUM` (usually autovacuum) cleans them up, and long-open transactions stop it."
+resources:
+  - title: "PostgreSQL documentation"
+    url: "https://www.postgresql.org/docs/current/"
+    note: "The official manual: SQL reference, data types, indexes, concurrency control and administration."
+  - title: "Use The Index, Luke"
+    url: "https://use-the-index-luke.com/"
+    note: "A free guide to how SQL indexes work and how to write queries that use them, with PostgreSQL examples."
+  - title: "explain.dalibo.com"
+    url: "https://explain.dalibo.com/"
+    note: "Paste an EXPLAIN ANALYZE plan and see it as an annotated tree."
+---
+
+**PostgreSQL** ("Postgres") is the most widely used open-source relational database for new applications. It stores data in tables, answers SQL queries, and guarantees ACID transactions ([Transactions & ACID](../../databases/transactions-and-acid/)). This sheet goes from connecting and creating tables to the features Postgres is known for. The general ideas (the relational model, normalisation, how indexes and storage engines work) are in the [Databases](../../databases/relational-model/) section; this page is the practical Postgres dialect. The differences from MySQL are summarised in the [MySQL Sheet](../mysql-sheet/).
+
+Every block after the sample schema assumes that schema exists: run it first, then the blocks in order, in `psql` or an online Postgres playground (for example db-fiddle with PostgreSQL 16 or later).
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Correctness: strict types, constraints, transactional schema changes | Very high connection counts: each connection is a process, so use a pooler (PgBouncer) |
+| Rich SQL: CTEs, window functions, `LATERAL`, `jsonb`, arrays, full-text search | Write-heavy workloads with many updates: MVCC leaves dead rows that VACUUM must clean |
+| Extensibility: PostGIS (geospatial), pgvector (embeddings), TimescaleDB, custom types | Horizontal write scaling: one primary takes all writes (Citus and others add sharding) |
+| Open source under a permissive licence, offered by every cloud | Major-version upgrades need `pg_upgrade` or a dump and restore |
+
+## Connecting with psql
+
+`psql` is the command-line client. Lines without a backslash are SQL, ended by `;`. Backslash **meta-commands** inspect the database.
+
+```bash
+psql "postgresql://app:secret@localhost:5432/shop"   # connect with a URL
+psql -h localhost -U app -d shop -c "SELECT now();"  # run one command and exit
+```
+
+| Meta-command | Shows |
+| --- | --- |
+| `\l` | databases |
+| `\c shop` | connect to database `shop` |
+| `\dt`, `\d users` | tables; columns, indexes and constraints of `users` |
+| `\di`, `\dv`, `\df` | indexes, views, functions |
+| `\x` | toggle expanded (one column per line) output |
+| `\timing` | show how long each statement took |
+| `\e` | edit the last query in `$EDITOR` |
+| `\q` | quit |
+
+## Sample Schema
+
+Tables are created with column types and constraints. `GENERATED ALWAYS AS IDENTITY` creates an auto-incrementing key; `REFERENCES` creates a foreign key.
+
+```sql
+CREATE TABLE users (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email       text NOT NULL UNIQUE,
+    name        text NOT NULL,
+    country     char(2) NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE orders (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id     bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    amount      numeric(10, 2) NOT NULL CHECK (amount > 0),
+    status      text NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'paid', 'shipped')),
+    placed_on   date NOT NULL
+);
+
+INSERT INTO users (email, name, country) VALUES
+    ('ana@example.com', 'Ana', 'PT'),
+    ('bo@example.com',  'Bo',  'NO'),
+    ('cy@example.com',  'Cy',  'PT');
+
+INSERT INTO orders (user_id, amount, status, placed_on) VALUES
+    (1, 30.00, 'paid',    '2026-01-05'),
+    (1, 12.50, 'shipped', '2026-01-20'),
+    (2, 99.90, 'paid',    '2026-02-02'),
+    (1, 45.00, 'new',     '2026-02-14'),
+    (2, 20.00, 'paid',    '2026-03-01');
+```
+
+Useful types: `bigint` for ids and counts, `numeric(p, s)` for money (exact decimal, never `float`), `text` for strings (no performance reason to prefer `varchar(n)`), `timestamptz` for points in time (stored in UTC, shown in the session's time zone), `date`, `boolean`, `uuid`, `jsonb`, and arrays such as `text[]`. `ON DELETE CASCADE` deletes a user's orders with the user; the `CHECK` constraints reject non-positive amounts and unknown statuses.
+
+<SqlSchema db="postgres" />
+
+## Insert, Update, Delete
+
+```sql
+INSERT INTO users (email, name, country)
+VALUES ('di@example.com', 'Di', 'NO')
+RETURNING id, created_at IS NOT NULL AS has_timestamp;
+
+UPDATE orders SET status = 'shipped'
+WHERE status = 'paid' AND placed_on < '2026-02-01'
+RETURNING id, status;
+
+INSERT INTO users (email, name, country)
+VALUES ('ana@example.com', 'Ana Silva', 'PT')
+ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name   -- upsert: update the existing row
+RETURNING id, name;
+
+DELETE FROM users WHERE email = 'di@example.com' RETURNING name;
+-- output: PENDING
+```
+
+In words: `RETURNING` hands back columns of the affected rows, so the application gets generated ids and new values without a second query. The `UPDATE` ships only order 1, the one paid order placed before February. `ON CONFLICT (email) DO UPDATE` turns a duplicate insert into an update of the existing row (`EXCLUDED` is the row that was proposed); `DO NOTHING` would skip it instead. Always write the `WHERE` of an `UPDATE` or `DELETE` first: without it every row changes.
+
+## Querying and Joining
+
+```sql
+SELECT name, country FROM users WHERE country = 'PT' ORDER BY name;
+
+SELECT u.name, o.amount, o.status
+FROM orders AS o
+JOIN users AS u ON u.id = o.user_id               -- inner join: only matching rows
+WHERE o.amount >= 20
+ORDER BY o.amount DESC
+LIMIT 3;
+
+SELECT u.name, count(o.id) AS orders, coalesce(sum(o.amount), 0) AS total
+FROM users AS u
+LEFT JOIN orders AS o ON o.user_id = u.id          -- left join: keep users without orders
+GROUP BY u.name
+HAVING count(o.id) < 3                             -- filter groups, after aggregation
+ORDER BY total DESC;
+-- output: PENDING
+```
+
+In words: an inner `JOIN` keeps only orders with a matching user; a `LEFT JOIN` keeps every user and fills missing order columns with `NULL`, which is how Cy appears with 0 orders. `count(o.id)` counts only non-null ids, and `coalesce` turns Cy's `NULL` sum into 0. `WHERE` filters rows before grouping, `HAVING` filters groups after it, so Ana, with 3 orders, is excluded from the last result ([SQL Fundamentals](../../databases/sql-fundamentals/)).
+
+## CTEs and Window Functions
+
+A **CTE** (`WITH name AS (…)`) names a subquery so a complex query reads top to bottom. A **window function** computes a value over a set of rows related to the current row (its **window**) without collapsing them into one row the way `GROUP BY` does.
+
+```sql
+WITH monthly AS (
+    SELECT date_trunc('month', placed_on)::date AS month, sum(amount) AS revenue
+    FROM orders
+    GROUP BY 1
+)
+SELECT month, revenue,
+       sum(revenue) OVER (ORDER BY month) AS running_total,
+       revenue - lag(revenue) OVER (ORDER BY month) AS change
+FROM monthly
+ORDER BY month;
+
+SELECT user_id, placed_on, amount,
+       row_number() OVER (PARTITION BY user_id ORDER BY placed_on) AS nth_order,
+       rank() OVER (ORDER BY amount DESC) AS amount_rank
+FROM orders
+ORDER BY user_id, placed_on;
+-- output: PENDING
+```
+
+In words: the CTE sums revenue per month; `sum(…) OVER (ORDER BY month)` turns it into a running total, and `lag` reads the previous month's value, so the first month's change is `NULL`. `PARTITION BY user_id` restarts `row_number` for each user, numbering their orders in date order, while `rank` orders all orders by amount. Window functions are the standard answer to "top N per group", "running total" and "compare with the previous row" questions.
+
+## JSONB and Arrays
+
+`jsonb` stores JSON in a parsed binary form that can be indexed and queried. Arrays store lists in one column. Both suit data whose shape varies, alongside normal columns for the fields you filter and join on.
+
+```sql
+CREATE TABLE events (
+    id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    payload jsonb NOT NULL,
+    tags    text[] NOT NULL DEFAULT '{}'
+);
+INSERT INTO events (payload, tags) VALUES
+    ('{"type": "click", "user": {"id": 1}, "ms": 120}', '{web,mobile}'),
+    ('{"type": "view",  "user": {"id": 2}, "ms": 30}',  '{web}');
+
+SELECT payload->>'type' AS type,                  -- ->> returns text
+       (payload->'user'->>'id')::int AS user_id,  -- -> returns jsonb, for nesting
+       payload @> '{"type": "click"}' AS is_click, -- containment test
+       'mobile' = ANY (tags) AS on_mobile,
+       array_length(tags, 1) AS n_tags
+FROM events
+ORDER BY id;
+
+CREATE INDEX events_payload_gin ON events USING gin (payload);   -- speeds up @> queries
+-- output: PENDING
+```
+
+In words: `->` walks into the JSON and returns `jsonb`; `->>` returns the value as text, which is cast to `int` for the user id. `@>` asks whether the left document contains the right one and can use the GIN index. `ANY` tests array membership. Use `jsonb` (not `json`, which keeps the raw text and cannot be indexed the same way).
+
+## Indexes and EXPLAIN
+
+An index is a separate sorted structure that lets the database find rows without scanning the whole table ([Storage Engines](../../databases/storage-engines/), [Skip Lists, B-Trees](../../data-structures/skip-lists-and-b-trees/)). Every primary key and `UNIQUE` constraint creates one automatically; foreign keys do **not**.
+
+```sql
+CREATE INDEX orders_user_id_idx ON orders (user_id);                    -- for the foreign key and joins
+CREATE INDEX orders_status_placed_idx ON orders (status, placed_on);    -- composite: leftmost column first
+CREATE INDEX orders_unpaid_idx ON orders (placed_on) WHERE status = 'new';   -- partial: only some rows
+CREATE INDEX users_email_lower_idx ON users (lower(email));             -- expression index
+
+SET enable_seqscan = off;            -- tiny tables are always scanned; force index use for the demo
+EXPLAIN (COSTS OFF)
+SELECT * FROM orders WHERE status = 'paid' AND placed_on >= '2026-02-01';
+RESET enable_seqscan;
+-- output: PENDING
+```
+
+In words: the composite index on `(status, placed_on)` serves this query because it filters on the leading column `status` with equality and then ranges over `placed_on`; it could not serve a filter on `placed_on` alone. On a real table, `EXPLAIN ANALYZE` runs the query and shows the chosen plan with actual row counts and times: a `Seq Scan` on a big table where you expected an `Index Scan` is the classic sign of a missing or unusable index. The planner chooses using table statistics, refreshed by `ANALYZE`, so on five rows it prefers a sequential scan, which is why the demo disables it.
+
+## Transactions and MVCC
+
+Statements inside `BEGIN … COMMIT` succeed or fail together. Postgres uses **MVCC** (multi-version concurrency control): an update writes a new version of the row, and each transaction sees a consistent snapshot, so readers never wait for writers. The default isolation level is **Read Committed**; `REPEATABLE READ` and `SERIALIZABLE` give stronger guarantees ([Transactions & ACID](../../databases/transactions-and-acid/)).
+
+```sql
+BEGIN;
+UPDATE orders SET amount = amount - 5 WHERE id = 3;
+SAVEPOINT before_risky;
+UPDATE orders SET amount = -1 WHERE id = 4;           -- violates CHECK (amount > 0)
+ROLLBACK TO SAVEPOINT before_risky;                   -- undo only the failed part
+COMMIT;
+SELECT id, amount FROM orders WHERE id IN (3, 4) ORDER BY id;
+
+BEGIN;
+SELECT amount FROM orders WHERE id = 5 FOR UPDATE;    -- lock the row until COMMIT
+UPDATE orders SET status = 'shipped' WHERE id = 5;
+COMMIT;
+-- output: PENDING
+```
+
+In words: the failed update would abort the whole transaction, but rolling back to the savepoint keeps the first update, so order 3 is reduced by 5 and order 4 is unchanged. `SELECT … FOR UPDATE` locks the selected rows so that a concurrent transaction trying the same lock waits, which prevents lost updates in read-then-write logic. Schema changes (`CREATE`, `ALTER`, `DROP`) are transactional too, so a failed migration rolls back cleanly.
+
+## Views and Functions
+
+```sql
+CREATE VIEW user_totals AS
+SELECT u.id, u.name, coalesce(sum(o.amount), 0) AS total
+FROM users AS u LEFT JOIN orders AS o ON o.user_id = u.id
+GROUP BY u.id, u.name;
+
+CREATE MATERIALIZED VIEW revenue_by_country AS
+SELECT u.country, sum(o.amount) AS revenue
+FROM orders AS o JOIN users AS u ON u.id = o.user_id
+GROUP BY u.country;
+
+CREATE FUNCTION order_count(uid bigint) RETURNS bigint
+LANGUAGE sql STABLE
+AS $$ SELECT count(*) FROM orders WHERE user_id = uid $$;
+
+SELECT name, total, order_count(id) FROM user_totals ORDER BY total DESC;
+REFRESH MATERIALIZED VIEW revenue_by_country;          -- recompute the stored result
+SELECT * FROM revenue_by_country ORDER BY revenue DESC;
+-- output: PENDING
+```
+
+In words: a **view** is a stored query, recomputed on every use; a **materialized view** stores its result and must be refreshed, trading freshness for speed. Functions can be written in SQL or in PL/pgSQL (with variables, loops and exceptions), and also Python or JavaScript through extensions. Triggers call functions automatically on insert, update or delete.
+
+## Roles and Security
+
+```sql
+CREATE ROLE app_rw LOGIN PASSWORD 'change-me';
+GRANT CONNECT ON DATABASE shop TO app_rw;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw;
+CREATE ROLE reporting NOLOGIN;
+GRANT SELECT ON user_totals TO reporting;          -- read one view, not the tables
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;       -- per-row access policies
+CREATE POLICY own_orders ON orders USING (user_id = current_setting('app.user_id')::bigint);
+```
+
+Users and groups are both **roles**. Give each application its own role with only the privileges it needs, never the superuser. **Row-level security** filters rows per role or per session setting, a common way to isolate tenants in one table. Always pass user input as query **parameters** (`$1`), never by string concatenation, to prevent SQL injection ([Web Vulnerabilities](../../security/web-vulnerabilities/)).
+
+## Operations
+
+```bash
+pg_dump -Fc shop > shop.dump              # logical backup of one database (custom format)
+pg_restore -d shop_copy shop.dump         # restore it
+psql -c "SELECT pid, state, now() - xact_start AS age, query FROM pg_stat_activity ORDER BY age DESC NULLS LAST;"
+psql -c "SELECT relname, n_dead_tup, last_autovacuum FROM pg_stat_user_tables ORDER BY n_dead_tup DESC;"
+```
+
+- **VACUUM**: removes dead row versions left by MVCC so space can be reused; **autovacuum** runs it automatically. `VACUUM FULL` rewrites the table and locks it, so avoid it on live systems.
+- **Long transactions**: a transaction left open (often "idle in transaction") stops vacuum from cleaning anything newer, so tables bloat. `pg_stat_activity` shows them.
+- **Connection pooling**: each connection is an OS process using memory; put PgBouncer (or the driver's pool) in front instead of opening hundreds of connections.
+- **Replication**: streaming replication keeps read replicas and a failover standby in sync; logical replication copies selected tables ([Replication](../../distributed-systems/replication/)).
+- **Extensions**: `CREATE EXTENSION pg_stat_statements;` (slowest queries), `postgis`, `vector` (pgvector).
+
+## Pitfalls
+
+- **Missing index on a foreign key**: deleting a user then scans all orders, and joins on `user_id` are slow.
+- **`NULL` logic**: `NULL = NULL` is `NULL`, not true; use `IS NULL` and `IS DISTINCT FROM`. `NOT IN (subquery)` returns nothing if the subquery contains a `NULL`; use `NOT EXISTS`.
+- **`timestamp` without time zone** for real events: use `timestamptz`.
+- **`float` for money**: use `numeric`.
+- **`OFFSET` pagination** gets slower page by page; paginate by key (`WHERE id > $last ORDER BY id LIMIT 50`).
+- **Case**: unquoted identifiers are folded to lowercase; `"UserId"` in quotes is a different, case-sensitive name.
+
+<Callout type="pitfall">
+Adding a column with a volatile default, creating an index without `CONCURRENTLY`, or adding a `NOT NULL` constraint on a large table can take locks that block all writes for minutes. On production tables, use `CREATE INDEX CONCURRENTLY`, add constraints as `NOT VALID` and validate them separately, set a `lock_timeout` in migrations, and test migrations against a copy of production-sized data.
+</Callout>
+
+## Tooling
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:17    # local server
+psql -h localhost -U postgres                                               # client
+pgbench -i shop && pgbench -c 10 -T 30 shop                                 # benchmark
+```
+
+GUI clients include pgAdmin, DBeaver and DataGrip. Migration tools (Flyway, Liquibase, Alembic, Prisma, sqitch) version the schema alongside the code. `pg_stat_statements` finds the queries that use the most time, `auto_explain` logs slow plans, and explain.dalibo.com visualises them. Managed services (Amazon RDS and Aurora, Google Cloud SQL and AlloyDB, Azure, Neon, Supabase) run Postgres for you.

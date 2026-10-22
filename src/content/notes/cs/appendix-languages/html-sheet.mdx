@@ -1,0 +1,286 @@
+---
+title: "HTML Sheet"
+description: "HTML on one page, from the document skeleton and text elements to links, media, tables, forms, semantic layout and accessibility."
+order: 10
+tier: core
+takeaways:
+  - "HTML describes the **structure and meaning** of a page; CSS describes how it looks and JavaScript how it behaves. Keep the three apart."
+  - "The browser parses HTML into a tree of elements, the **DOM**; every script and style works on that tree."
+  - "Choose elements for their meaning: `<button>` for actions, `<a href>` for navigation, `<nav>`, `<main>`, `<article>` for page regions, headings in order. Meaning gives accessibility, keyboard support and search ranking for free."
+  - "Forms do a lot without JavaScript: input types (`email`, `number`, `date`), validation attributes (`required`, `min`, `pattern`) and labels tied to inputs."
+  - "HTML is forgiving: unclosed or misnested tags do not fail, they are silently repaired, so validate pages instead of trusting that they render."
+resources:
+  - title: "HTML: HyperText Markup Language (MDN)"
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTML"
+    note: "Reference for every element and attribute, with browser support tables and guides."
+  - title: "HTML Living Standard (WHATWG)"
+    url: "https://html.spec.whatwg.org/multipage/"
+    note: "The specification browsers implement, including the exact parsing rules."
+  - title: "Nu Html Checker (W3C)"
+    url: "https://validator.w3.org/nu/"
+    note: "Validates a page or a pasted document against the standard."
+---
+
+**HTML** (HyperText Markup Language) is the format of every web page: text marked up with **elements** that say what each part is, a heading, a paragraph, a link, a form. The browser parses it into a tree of objects, the **DOM** (Document Object Model), which CSS styles ([CSS Sheet](../css-sheet/)) and JavaScript manipulates ([JavaScript & TypeScript](../javascript-typescript/)). HTML is not a programming language: it has no variables or logic, only structure. This sheet goes from the minimal document to forms and accessibility; the network side (HTTP, status codes) is in [Ports & HTTP Codes](../../appendix-reference/ports-and-http-codes/). Paste any example into a file `index.html` and open it in a browser, or use an online editor such as CodePen.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Describing documents: text, links, media, tables, forms | Logic and state: that is JavaScript's job |
+| Accessibility and machine-readable meaning when elements are chosen well | Layout and appearance: that is CSS's job |
+| Working everywhere: every browser, screen reader and crawler reads it | Catching mistakes: invalid markup is silently repaired rather than rejected |
+| Progressive enhancement: plain HTML works before any script loads | Reuse: no built-in components or includes (Web Components and frameworks add them) |
+
+## Document Skeleton
+
+Every page has the same frame: a doctype, the root `<html>` with a language, a `<head>` with metadata, and a `<body>` with the content.
+
+```html
+<!doctype html>                         <!-- standards mode, not legacy "quirks" mode -->
+<html lang="en">                        <!-- language: used by screen readers and translators -->
+  <head>
+    <meta charset="utf-8">              <!-- how the bytes are decoded -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">  <!-- mobile layout -->
+    <title>Workbench Notes</title>      <!-- browser tab and search result title -->
+    <meta name="description" content="Study notes on computing.">
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>    <!-- defer: run after the document is parsed -->
+  </head>
+  <body>
+    <h1>Workbench Notes</h1>
+    <p>Hello, web.</p>
+  </body>
+</html>
+```
+
+An **element** is a start tag, content and an end tag: `<p>Hello</p>`. **Attributes** inside the start tag configure it: `lang="en"`. **Void elements** such as `<meta>`, `<img>`, `<br>` and `<input>` have no content and no end tag. Without the viewport `<meta>`, phones render the page at desktop width and shrink it. `defer` lets the browser keep parsing while the script downloads.
+
+## How the Browser Sees It
+
+The parser turns the text into a tree: each element becomes a node whose children are the elements and text inside it. Python's standard library has an HTML tokenizer that shows the same nesting:
+
+```python
+from html.parser import HTMLParser
+
+class TreePrinter(HTMLParser):
+    VOID = {"meta", "img", "br", "input", "link", "hr"}      # elements with no closing tag
+    def __init__(self):
+        super().__init__()
+        self.depth = 0
+    def handle_starttag(self, tag, attrs):
+        shown = " ".join(f'{k}="{v}"' for k, v in attrs)
+        print("  " * self.depth + f"<{tag}{' ' + shown if shown else ''}>")
+        if tag not in self.VOID:
+            self.depth += 1
+    def handle_endtag(self, tag):
+        self.depth -= 1
+    def handle_data(self, data):
+        if data.strip():
+            print("  " * self.depth + repr(data.strip()))
+
+TreePrinter().feed("""<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Notes</title></head>
+  <body>
+    <h1>Hello</h1>
+    <p>Read the <a href="/docs">docs</a>.<br>Thanks.</p>
+  </body>
+</html>""")
+# <html lang="en">
+#   <head>
+#     <meta charset="utf-8">
+#     <title>
+#       'Notes'
+#   <body>
+#     <h1>
+#       'Hello'
+#     <p>
+#       'Read the'
+#       <a href="/docs">
+#         'docs'
+#       '.'
+#       <br>
+#       'Thanks.'
+```
+
+In words: the paragraph is one node with five children: a text node, the `<a>` element (with its own text child), another text node, the void `<br>`, and the last text. Void elements open no new level, which is why `<meta>` and `<br>` have no children. In the browser this tree is what `document.querySelector` searches and what CSS selectors match. Browsers also repair errors while building it: a missing `</p>` or `</li>` is inserted where the standard says.
+
+## Text and Headings
+
+| Element | Meaning |
+| --- | --- |
+| `<h1>` … `<h6>` | Headings, one `<h1>` per page, levels not skipped |
+| `<p>` | Paragraph |
+| `<strong>`, `<em>` | Strong importance, stress emphasis (bold and italic by default) |
+| `<code>`, `<pre>`, `<kbd>` | Inline code, preformatted block, keyboard input |
+| `<blockquote>`, `<q>`, `<cite>` | Quotations and the title of a cited work |
+| `<abbr title="…">`, `<time datetime="…">` | Abbreviation with expansion, machine-readable date |
+| `<br>`, `<hr>` | Line break inside text, thematic break between sections |
+| `<span>`, `<div>` | Generic inline and block containers with no meaning, for styling |
+
+```html
+<h2>Release notes</h2>
+<p>Version <strong>2.0</strong> ships on <time datetime="2026-11-01">1 November</time>.
+   Run <code>npm install</code> or press <kbd>Ctrl</kbd>+<kbd>S</kbd>.</p>
+<blockquote cite="https://example.com/interview">
+  <p>Make it work, make it right, make it fast.</p>
+</blockquote>
+<pre><code>for i in range(3):
+    print(i)</code></pre>
+```
+
+Headings form the page's outline, which screen-reader users navigate by and search engines read; choose the level by structure, not by the size you want (size is CSS). Whitespace in HTML collapses to single spaces except inside `<pre>`. Special characters are written as **entities**: `&lt;` for `<`, `&amp;` for `&`, `&nbsp;` for a non-breaking space.
+
+## Links, Images, Media
+
+```html
+<a href="/docs/start">Getting started</a>                          <!-- same site, absolute path -->
+<a href="https://example.com" target="_blank" rel="noopener">External</a>
+<a href="#install">Jump to the install section</a>                 <!-- fragment: element with id="install" -->
+<a href="mailto:hi@example.com">Email us</a>
+
+<img src="chart.png" alt="Sales doubled from 2024 to 2025" width="640" height="360" loading="lazy">
+
+<picture>                                                           <!-- browser picks the first format it supports -->
+  <source srcset="photo.avif" type="image/avif">
+  <img src="photo.jpg" alt="Harbour at sunset" width="800" height="533">
+</picture>
+
+<video src="demo.mp4" controls muted playsinline width="640"></video>
+<figure>
+  <img src="diagram.svg" alt="Client, server and database connected in a line">
+  <figcaption>Three-tier architecture.</figcaption>
+</figure>
+```
+
+Every `<img>` needs `alt` text describing what the image conveys (empty `alt=""` for purely decorative ones), because screen readers read it and it shows when the image fails. Setting `width` and `height` lets the browser reserve space before the image loads, preventing layout jumps; `loading="lazy"` defers off-screen images. Links with `target="_blank"` open a new tab.
+
+## Lists and Tables
+
+```html
+<ul>                               <!-- unordered: bullets -->
+  <li>Milk</li>
+  <li>Bread</li>
+</ul>
+<ol start="3">                     <!-- ordered: numbers, starting at 3 -->
+  <li>Preheat the oven</li>
+  <li>Bake for 20 minutes</li>
+</ol>
+<dl>                               <!-- description list: terms and definitions -->
+  <dt>Latency</dt><dd>Time for one request to complete.</dd>
+</dl>
+
+<table>
+  <caption>Requests per region</caption>
+  <thead>
+    <tr><th scope="col">Region</th><th scope="col">Requests</th></tr>
+  </thead>
+  <tbody>
+    <tr><th scope="row">EU</th><td>1,200</td></tr>
+    <tr><th scope="row">US</th><td>3,400</td></tr>
+  </tbody>
+</table>
+```
+
+Tables are for tabular data, never for page layout. `<th>` with `scope` tells assistive technology which header belongs to each cell, and `<caption>` titles the table. Navigation menus are usually a `<ul>` of links inside `<nav>`.
+
+## Forms
+
+A form collects input and submits it as name–value pairs to the URL in `action`. Input types give the right keyboard on phones and built-in validation; every input needs a `<label>`.
+
+```html
+<form action="/signup" method="post">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" required autocomplete="email">
+
+  <label for="age">Age</label>
+  <input id="age" name="age" type="number" min="13" max="120">
+
+  <label>
+    <input type="checkbox" name="newsletter" checked> Send me the newsletter
+  </label>
+
+  <fieldset>
+    <legend>Plan</legend>
+    <label><input type="radio" name="plan" value="free" checked> Free</label>
+    <label><input type="radio" name="plan" value="pro"> Pro</label>
+  </fieldset>
+
+  <label for="country">Country</label>
+  <select id="country" name="country">
+    <option value="pt">Portugal</option>
+    <option value="no">Norway</option>
+  </select>
+
+  <textarea name="bio" rows="3" maxlength="500" placeholder="A few words about you"></textarea>
+  <button type="submit">Sign up</button>
+</form>
+```
+
+Submitting this form sends a body like `email=…&age=…&newsletter=on&plan=free&country=pt&bio=…` with `POST`; `method="get"` puts the same pairs in the URL instead, which suits searches. The browser blocks submission until `required`, `type="email"` and `min`/`max` are satisfied. Client-side validation is a convenience only: the server must validate everything again ([Web Vulnerabilities](../../security/web-vulnerabilities/)). A `<button>` inside a form defaults to `type="submit"`, so give other buttons `type="button"`.
+
+## Semantic Layout
+
+Instead of nesting anonymous `<div>`s, structural elements name the regions of a page:
+
+```html
+<body>
+  <header>
+    <a href="/">Workbench</a>
+    <nav aria-label="Main">
+      <ul><li><a href="/cs/">CS</a></li><li><a href="/math/">Math</a></li></ul>
+    </nav>
+  </header>
+  <main>                                   <!-- the unique main content, once per page -->
+    <article>                              <!-- self-contained: a post, a note, a card -->
+      <h1>Hash Tables</h1>
+      <section>
+        <h2>Collisions</h2>
+        <p>…</p>
+      </section>
+    </article>
+    <aside>Related notes</aside>           <!-- tangential content -->
+  </main>
+  <footer>© 2026</footer>
+  <details>
+    <summary>Show the proof</summary>      <!-- a disclosure widget with no JavaScript -->
+    <p>…</p>
+  </details>
+</body>
+```
+
+These elements render like `<div>` by default, but screen readers expose them as **landmarks** users can jump between, and they make the source readable. `<details>`/`<summary>` and `<dialog>` give interactive widgets without any script.
+
+## Accessibility
+
+Accessible HTML works with a keyboard, a screen reader, zoom and voice control. Most of it comes from choosing the right element:
+
+- Use `<button>` for actions and `<a href>` for navigation. A `<div onclick>` is not focusable, not announced as a button and ignores the Enter key.
+- Label every form control, and write link text that makes sense alone ("Download the report", not "click here").
+- Keep headings in order, give images `alt`, and set `lang` on `<html>`.
+- Use **ARIA** attributes (`aria-label`, `aria-expanded`, `role`) only to fill gaps the native elements cannot; wrong ARIA is worse than none.
+- Check colour contrast and that every interaction works with Tab, Enter, Space and Escape.
+
+<Callout type="pitfall">
+Do not build controls out of `<div>` and `<span>`. A clickable `<div>` looks like a button but cannot be reached with Tab, is not announced as a button, and does not respond to Enter or Space, so keyboard and screen-reader users cannot use it; adding `tabindex`, `role` and key handlers by hand rarely covers everything. Native `<button>`, `<a>`, `<input>`, `<select>`, `<details>` and `<dialog>` get all of this right by default and can be restyled freely with CSS.
+</Callout>
+
+## Pitfalls
+
+- **Silent repair**: `<p><div>…</div></p>` is invalid; the parser closes the `<p>` before the `<div>`, so the DOM differs from the source and CSS or scripts target the wrong nodes. Validate.
+- **Ids must be unique**: duplicate `id`s break `label for`, fragment links and `getElementById`.
+- **Unescaped user content**: inserting user text into HTML without escaping `<`, `>`, `&` and quotes allows cross-site scripting; use `textContent` in scripts and the template engine's escaping on the server.
+- **Missing `width`/`height` on images**: content jumps as images load.
+- **Missing `<meta charset>` or viewport**: garbled characters and desktop-sized pages on phones.
+- **Blocking scripts in `<head>`** without `defer` or `type="module"` delay rendering of the whole page.
+
+## Tooling
+
+```bash
+bunx html-validate index.html          # lint HTML locally
+bunx prettier --write "**/*.html"      # format
+bunx serve .                           # serve a folder on localhost
+```
+
+Browser **developer tools** (F12) show the live DOM (after repairs and scripts), the computed styles, network requests and an accessibility tree. Lighthouse in Chrome's devtools audits performance, accessibility and SEO. The W3C validator checks conformance, and axe or WAVE check accessibility. Static-site generators and frameworks (Astro, which builds this site, Next.js, Hugo) generate HTML from templates and Markdown.

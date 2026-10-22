@@ -1,0 +1,123 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Only mounts outlive the container"
+  caption="A container writes to three places: its own writable layer, a named volume managed by Docker, and a bind-mounted host directory. Step through removing the container, starting a new one, and removing the volume. Green data still exists; red data is gone."
+>
+  <docker-volumes>
+    <svg class="dv-svg" data-svg viewBox="0 0 440 170" role="img" aria-label="A container with its writable layer, a named volume and a bind mount, and which data survives"></svg>
+    <p class="dv-msg" data-msg></p>
+    <p class="dv-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </docker-volumes>
+</Figure>
+
+<style>
+  .dv-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .dv-svg :global(rect.zone) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .dv-svg :global(rect.ctr) {
+    fill: rgba(66, 133, 244, 0.1);
+    stroke: var(--g-blue);
+  }
+  .dv-svg :global(rect.ctr.gone) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 4 3;
+  }
+  .dv-svg :global(rect.ok) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .dv-svg :global(rect.lost) {
+    fill: rgba(234, 67, 53, 0.22);
+    stroke: var(--g-red);
+    stroke-dasharray: 4 3;
+  }
+  .dv-svg :global(line.mnt) {
+    stroke: var(--text-faint);
+    stroke-width: 1.3;
+    stroke-dasharray: 3 3;
+  }
+  .dv-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .dv-svg :global(text.m) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .dv-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .dv-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  // ctr: name of the running container ('' = none); layer/vol/bind: whether that data exists
+  interface Frame { ctr: string; layer: boolean; vol: boolean; bind: boolean; msg: string }
+  const FRAMES: Frame[] = [
+    { ctr: 'db-1', layer: true, vol: true, bind: true, msg: 'docker run --name db-1 -v pgdata:/var/lib/postgresql/data -v "$PWD/backup:/backup" postgres:17. The database writes its tables to the volume, a dump to /backup, and a temp file to /tmp.' },
+    { ctr: '', layer: false, vol: true, bind: true, msg: 'docker rm -f db-1: the container and its writable layer, including /tmp, are deleted. The named volume and the host directory are untouched.' },
+    { ctr: 'db-2', layer: false, vol: true, bind: true, msg: 'docker run --name db-2 with the same -v pgdata: the new container sees every table. This is how you upgrade a database image without losing data.' },
+    { ctr: '', layer: false, vol: false, bind: true, msg: 'docker volume rm pgdata (after removing db-2), or docker compose down -v: now the tables are gone. The bind-mounted host directory is never deleted by Docker.' },
+  ];
+
+  class DockerVolumes extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < FRAMES.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = FRAMES[this.i];
+      const live = f.ctr !== '';
+      let s = `<rect class="ctr${live ? '' : ' gone'}" x="6" y="6" width="200" height="158" rx="8" />`;
+      s += `<text x="16" y="22">${live ? 'container ' + f.ctr : 'no container'}</text>`;
+      s += `<rect class="${f.layer ? 'ok' : 'lost'}" x="16" y="38" width="180" height="34" rx="5" />`;
+      s += `<text x="24" y="50">writable layer</text><text class="m" x="24" y="63">/tmp/sort.tmp</text>`;
+      s += '<text class="m" x="20" y="96">/var/lib/postgresql/data</text><text class="m" x="24" y="136">/backup</text>';
+      s += '<rect class="zone" x="226" y="6" width="208" height="158" rx="8" /><text class="m" x="236" y="22">host disk</text>';
+      s += '<line class="mnt" x1="184" y1="96" x2="236" y2="96" /><line class="mnt" x1="80" y1="136" x2="236" y2="136" />';
+      s += `<rect class="${f.vol ? 'ok' : 'lost'}" x="236" y="78" width="188" height="36" rx="5" />`;
+      s += '<text x="244" y="90">volume pgdata</text><text class="m" x="244" y="104">managed by Docker</text>';
+      s += `<rect class="${f.bind ? 'ok' : 'lost'}" x="236" y="118" width="188" height="36" rx="5" />`;
+      s += '<text x="244" y="130">./backup (bind mount)</text><text class="m" x="244" y="144">your directory</text>';
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const st = (b: boolean) => (b ? 'kept' : 'gone');
+      this.querySelector('[data-stat]')!.textContent =
+        `step ${this.i}/${FRAMES.length - 1} · writable layer ${st(f.layer)} · pgdata ${st(f.vol)} · ./backup ${st(f.bind)}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === FRAMES.length - 1;
+    }
+  }
+  customElements.define('docker-volumes', DockerVolumes);
+</script>

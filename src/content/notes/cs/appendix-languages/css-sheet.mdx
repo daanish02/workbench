@@ -1,0 +1,285 @@
+---
+title: "CSS Sheet"
+description: "CSS on one page, from selectors and the cascade to the box model, units, flexbox, grid, responsive design, custom properties and animation."
+order: 11
+tier: core
+takeaways:
+  - "CSS is a list of **rules**: a selector chooses elements, declarations set properties. When rules conflict, the **cascade** decides: origin and importance, then **specificity**, then source order."
+  - "Every element is a **box**: content, padding, border, margin. Set `box-sizing: border-box` so `width` includes padding and border."
+  - "Use **flexbox** for one-dimensional layout (a row or a column) and **grid** for two-dimensional layout (rows and columns together)."
+  - "Responsive design: relative units (`rem`, `%`, `fr`, `vw`), `clamp()`, and media or container queries instead of fixed pixel widths."
+  - "**Custom properties** (`--accent: #4285f4`) are inherited variables; design tokens and dark themes are built on them."
+resources:
+  - title: "CSS: Cascading Style Sheets (MDN)"
+    url: "https://developer.mozilla.org/en-US/docs/Web/CSS"
+    note: "Reference for every property and selector, plus guides to the cascade, flexbox and grid."
+  - title: "A Complete Guide to Flexbox (CSS-Tricks)"
+    url: "https://css-tricks.com/snippets/css/a-guide-to-flexbox/"
+    note: "Every flexbox property with a picture, the page most people keep open while writing layouts."
+  - title: "Can I use"
+    url: "https://caniuse.com/"
+    note: "Which browsers support each CSS feature, and since when."
+---
+
+**CSS** (Cascading Style Sheets) controls how HTML looks: colours, fonts, spacing, layout, animation. It is **declarative**: you state what each element should look like, and the browser works out the result, resolving conflicts between rules with a fixed algorithm, the **cascade**. Most CSS frustration comes from not knowing that algorithm and the box model, so this sheet starts there and then goes through layout, responsive design and modern features. It builds on the [HTML Sheet](../html-sheet/). Try any example in a browser by putting it in a `<style>` element, or in CodePen.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Separating presentation from content: one stylesheet restyles a whole site | Global scope by default: any rule can affect any element |
+| Powerful layout engines (flexbox, grid) with very little code | Debugging conflicts without devtools: the winning rule is not obvious from the source |
+| Responsive design: one page adapts to any screen | Logic: limited to selectors, queries and `calc()` |
+| Hardware-accelerated transitions and animations | Consistency across very old browsers |
+
+## Rules and Selectors
+
+A **rule** is a selector and a block of `property: value` declarations. Selectors match elements by type, class, id, attribute, state and position in the tree.
+
+```css
+p { line-height: 1.6; }                      /* every <p> */
+.note { color: #4285f4; }                    /* class="note" */
+#main { max-width: 70ch; }                   /* id="main" */
+nav a { text-decoration: none; }             /* <a> anywhere inside <nav> (descendant) */
+ul > li { margin-block: 4px; }               /* <li> that is a direct child of <ul> */
+h2 + p { margin-top: 0; }                    /* <p> immediately after an <h2> */
+input[type="email"] { border-color: #34a853; }   /* attribute selector */
+a:hover, a:focus-visible { color: #fbbc05; } /* states (pseudo-classes) */
+li:nth-child(odd) { background: #111; }      /* position among siblings */
+p::first-line { font-weight: 600; }          /* part of an element (pseudo-element) */
+.card:has(img) { padding: 0; }               /* a card that contains an image */
+:is(h1, h2, h3) { font-family: Inter, sans-serif; }   /* any of a list */
+```
+
+A comma groups selectors that share declarations; a space means "descendant of", `>` "child of", `+` "immediately after" and `~` "any later sibling". `:hover`, `:focus-visible`, `:checked` and `:nth-child()` are **pseudo-classes** (states), `::before`, `::after` and `::first-line` are **pseudo-elements** (parts). `:has()` selects an element by what it contains, the long-missing "parent selector".
+
+## The Cascade and Specificity
+
+When several rules set the same property on the same element, the browser picks one in this order: **importance and origin** (`!important` beats normal; author styles beat browser defaults), then **cascade layers** (`@layer`), then **specificity**, then **source order** (the later rule wins). Specificity is a triple counted from the selector: (ids, classes + attributes + pseudo-classes, elements + pseudo-elements), compared left to right.
+
+```python
+import re
+
+def specificity(selector):
+    """(ids, classes/attributes/pseudo-classes, elements/pseudo-elements) for a simple selector."""
+    s = re.sub(r"::[\w-]+", " E", selector)                  # pseudo-elements count as elements
+    ids = len(re.findall(r"#[\w-]+", s))
+    classes = len(re.findall(r"\.[\w-]+|\[[^\]]+\]|:[\w-]+", s))
+    elements = len(re.findall(r"(?:^|[\s>+~])([a-zA-Z][\w-]*|E)", s))
+    return ids, classes, elements
+
+rules = ["p", "p.note", ".card .title", "#main p", "nav a:hover", "ul li::marker", "input[type=text]"]
+for sel in sorted(rules, key=specificity):
+    print(f"{sel:18} {specificity(sel)}")
+# p                  (0, 0, 1)
+# ul li::marker      (0, 0, 3)
+# p.note             (0, 1, 1)
+# input[type=text]   (0, 1, 1)
+# nav a:hover        (0, 1, 2)
+# .card .title       (0, 2, 0)
+# #main p            (1, 0, 1)
+```
+
+In words: sorted from weakest to strongest, one class beats any number of elements (`p.note` beats `ul li::marker` although it has fewer parts), and one id beats any number of classes, so `#main p` wins over everything else here. `p.note` and `input[type=text]` tie at (0, 1, 1), so between them the later rule in the source would win. This simplified counter ignores `:is()`, `:not()` and `:where()`, which count their argument (or, for `:where`, nothing). Inline `style=""` attributes beat all selectors, and `!important` beats all of them.
+
+**Inheritance** is separate from the cascade: some properties (`color`, `font-*`, `line-height`, custom properties) are inherited by children when not set on them; most others (`margin`, `border`, `width`) are not. The keywords `inherit`, `initial` and `unset` force either behaviour.
+
+## The Box Model
+
+Every element generates a box with four layers: **content**, **padding** (inside the border, takes the background), **border**, and **margin** (outside, transparent). By default `width` sets only the content, so padding and border are added on top; `box-sizing: border-box` makes `width` include them, which is what almost everyone wants.
+
+```css
+*, *::before, *::after { box-sizing: border-box; }   /* the usual first line of a stylesheet */
+
+.card {
+  width: 300px;              /* with border-box: the whole card is 300px wide */
+  padding: 16px 24px;        /* vertical, horizontal */
+  border: 1px solid #333;
+  margin: 0 auto;            /* auto horizontal margins centre a block with a width */
+}
+
+.badge { display: inline-block; }   /* inline flow, but honours width, height and vertical padding */
+.hidden { display: none; }          /* removed from layout entirely */
+```
+
+With the default `content-box`, the card above would be 300 + 2 × 24 + 2 × 1 = 350px wide. The `display` property sets how a box takes part in layout: **block** boxes stack vertically and fill the available width (`<div>`, `<p>`), **inline** boxes flow within a line of text and ignore `width` and `height` (`<span>`, `<a>`), and `flex` or `grid` make the element a layout container for its children. Vertical margins between adjacent blocks **collapse**: two 20px margins produce a 20px gap, not 40px.
+
+## Units and Values
+
+| Unit | Relative to | Typical use |
+| --- | --- | --- |
+| `px` | a CSS pixel (1/96 inch at standard zoom) | borders, small fixed sizes |
+| `rem` | the root element's font size (usually 16px) | font sizes, spacing that scales with user settings |
+| `em` | the current element's font size | padding that scales with the text it wraps |
+| `%` | the parent's size (for width: its width) | fluid widths |
+| `vw`, `vh`, `dvh` | 1% of the viewport width or height (`dvh` tracks mobile toolbars) | full-screen sections |
+| `ch` | width of the "0" character | readable line lengths (`max-width: 70ch`) |
+| `fr` | a fraction of the free space in a grid | grid columns |
+
+```css
+:root { font-size: 100%; }                         /* respect the user's browser setting */
+h1 { font-size: clamp(1.75rem, 4vw, 3rem); }       /* fluid, with a minimum and a maximum */
+.sidebar { width: calc(100% - 2rem); }             /* arithmetic across units */
+.logo { aspect-ratio: 16 / 9; width: min(100%, 480px); }
+```
+
+`clamp(min, preferred, max)` gives fluid sizes without media queries; `min()` and `max()` pick between values; `calc()` mixes units. Colours can be written as hex (`#4285f4`), `rgb()`, `hsl()` or the perceptually uniform `oklch()`; an alpha channel makes them translucent.
+
+## Flexbox
+
+A **flex container** (`display: flex`) lays its children out along one **main axis**, a row or a column. `justify-content` distributes space along the main axis, `align-items` positions items across it, `gap` sets spacing, and `flex-grow`, `flex-shrink` and `flex-basis` decide how items share leftover or missing space.
+
+<FlexPlayground />
+
+```css
+.toolbar {
+  display: flex;
+  align-items: center;          /* vertically centred in a row */
+  gap: 8px;
+}
+.toolbar .spacer { flex: 1; }   /* grows to push the following items to the right */
+
+.center-anything {
+  display: flex;
+  justify-content: center;
+  align-items: center;          /* centred on both axes */
+  min-height: 100dvh;
+}
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;              /* items move to new lines when out of room */
+  gap: 16px;
+}
+.cards > * { flex: 1 1 240px; } /* grow, shrink, start from 240px */
+```
+
+`flex: 1` is shorthand for `flex: 1 1 0%`: grow and shrink equally from zero, so all such items end up the same size. In a column, the main axis is vertical and the roles of `justify-content` and `align-items` swap, as the figure shows.
+
+## Grid
+
+**Grid** lays items out in rows and columns at once. The container defines tracks with `grid-template-columns` and `grid-template-rows`; items fill cells in order or are placed explicitly by line numbers or named areas.
+
+```css
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));   /* as many 200px+ columns as fit */
+  gap: 16px;
+}
+
+.page {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "header header"
+    "nav    main"
+    "footer footer";
+  min-height: 100dvh;
+}
+.page > header { grid-area: header; }
+.page > nav    { grid-area: nav; }
+.page > main   { grid-area: main; }
+.page > footer { grid-area: footer; }
+
+.feature { grid-column: 1 / -1; }   /* span from the first to the last column line */
+```
+
+`repeat(auto-fill, minmax(200px, 1fr))` builds a responsive gallery with no media queries: columns are at least 200px and share the rest equally. Named areas draw the layout as ASCII art. Use grid when rows and columns must line up with each other, flexbox when items only need to flow along one line.
+
+## Positioning and Stacking
+
+```css
+.parent { position: relative; }                 /* becomes the reference for absolute children */
+.badge  { position: absolute; top: 8px; right: 8px; }
+.header { position: sticky; top: 0; z-index: 10; }   /* scrolls, then sticks at the top */
+.modal  { position: fixed; inset: 0; }          /* fills the viewport, ignores scrolling */
+```
+
+`static` (default) follows normal flow; `relative` shifts an element without affecting others and anchors absolute children; `absolute` removes it from flow and places it against the nearest positioned ancestor; `fixed` places it against the viewport; `sticky` scrolls until a threshold, then sticks. `z-index` orders overlapping positioned boxes, but only within the same **stacking context**, which properties such as `opacity < 1`, `transform` and `isolation: isolate` create.
+
+## Responsive Design
+
+```css
+.layout { display: grid; gap: 16px; }
+@media (min-width: 768px) {                     /* tablets and up: two columns */
+  .layout { grid-template-columns: 1fr 2fr; }
+}
+
+.card-list { container-type: inline-size; }     /* container queries: size of the parent, not the screen */
+@container (min-width: 500px) {
+  .card { display: flex; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #000; --text: #e8e8e8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+img { max-width: 100%; height: auto; }          /* images never overflow their container */
+```
+
+Write the mobile layout first and add `min-width` media queries for larger screens. **Container queries** let a component adapt to the space it is given, wherever it is placed. User-preference queries follow the system's dark mode and reduced-motion settings.
+
+## Custom Properties
+
+**Custom properties** (CSS variables) start with `--`, are read with `var()`, inherit like `color`, and can change at run time, per element, in media queries or from JavaScript. This site's colours are custom properties defined once on `:root`.
+
+```css
+:root {
+  --g-blue: #4285f4;
+  --space: 8px;
+  --radius: 6px;
+}
+.button {
+  background: var(--accent, var(--g-blue));   /* fallback when --accent is not set */
+  padding: var(--space) calc(var(--space) * 2);
+  border-radius: var(--radius);
+}
+.button.danger { --accent: #ea4335; }         /* override for one variant */
+```
+
+Custom properties are resolved at use, so overriding `--accent` on `.danger` changes only those buttons. Preprocessor variables (Sass `$color`) are replaced at build time and cannot do this. Modern CSS also supports **nesting** (`.card { & .title { … } }`) and `@layer`, which removes most remaining reasons for a preprocessor.
+
+## Transitions and Animations
+
+```css
+.button {
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+.button:hover { background-color: #34a853; transform: translateY(-1px); }
+
+@keyframes pulse {
+  from { opacity: 1; }
+  50%  { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+.loading { animation: pulse 1.2s ease-in-out infinite; }
+```
+
+A **transition** animates a property between two states when it changes; **keyframe animations** run on their own. Animate `transform` and `opacity` where possible: the browser can move them on the GPU without recalculating layout, while animating `width`, `top` or `margin` triggers layout on every frame.
+
+<Callout type="pitfall">
+When a style "does not apply", it is almost never a browser bug: another rule with higher specificity or later source order wins, the property is not inherited, the element's `display` ignores it (`width` on an inline element), or a parent's layout overrides it. Open devtools, select the element, and read the Styles and Computed panels: they list every matching rule, cross out the losers and show where the final value came from. Fixing it with `!important` starts an escalation that makes the next conflict harder.
+</Callout>
+
+## Pitfalls
+
+- **Specificity wars**: ids and long selector chains make rules hard to override. Prefer single classes (or methodologies such as BEM, utility classes, or scoped component styles).
+- **Forgetting `box-sizing: border-box`**: padding makes boxes wider than their `width`.
+- **Margin collapse**: vertical margins of adjacent blocks (and of a parent and its first child) merge.
+- **Percentage heights**: `height: 50%` needs a parent with a defined height, otherwise it does nothing.
+- **`z-index` not working**: the element is not positioned, or it is inside a different stacking context.
+- **Fixed pixel layouts**: break on phones and when users enlarge text; use `rem`, `%`, `fr` and `clamp()`.
+- **`100vh` on mobile** includes the area behind browser toolbars; use `100dvh`.
+
+## Tooling
+
+```bash
+bunx stylelint "**/*.css"              # lint
+bunx prettier --write "**/*.css"       # format
+bunx lightningcss --minify --targets ">= 0.5%" style.css -o style.min.css   # transpile and minify
+```
+
+Browser devtools are the main CSS tool: inspect an element, edit rules live, toggle states such as `:hover`, and use the flexbox and grid overlays. Frameworks and approaches include Tailwind (utility classes), CSS Modules and scoped styles (as in Astro and Vue components), and Sass. Check feature support on Can I use before relying on newer features such as `:has()`, container queries or nesting.

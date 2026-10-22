@@ -1,0 +1,125 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The first changed layer rebuilds everything above it"
+  caption="An image is a stack of layers built bottom to top. Pick a Dockerfile order and a change to the build context. Green layers come from the cache; red layers rebuild, because their input changed or a layer below them was rebuilt. Copying the dependency files before the source keeps the slow uv sync cached when only code changes."
+>
+  <docker-layer-cache>
+    <div class="ctl-row">
+      <input type="hidden" data-order value="deps" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="deps" aria-pressed="true">Dependencies first</button>
+        <button type="button" class="btn" data-choice="all" aria-pressed="false">COPY . . first</button>
+      </span>
+    </div>
+    <div class="ctl-row">
+      <input type="hidden" data-change value="code" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="code" aria-pressed="true">Edit src/app.py</button>
+        <button type="button" class="btn" data-choice="lock" aria-pressed="false">Edit uv.lock</button>
+        <button type="button" class="btn" data-choice="none" aria-pressed="false">No change</button>
+      </span>
+    </div>
+    <svg class="dl-svg" data-svg viewBox="0 0 440 236" role="img" aria-label="Image layers, each marked cached or rebuilt"></svg>
+    <p class="dl-stat mono" data-stat></p>
+  </docker-layer-cache>
+</Figure>
+
+<style>
+  .dl-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .dl-svg :global(rect.bg) {
+    fill: var(--bg);
+  }
+  .dl-svg :global(rect.hit) {
+    fill: rgba(52, 168, 83, 0.22);
+    stroke: var(--g-green);
+  }
+  .dl-svg :global(rect.miss) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+  }
+  .dl-svg :global(rect.cause) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .dl-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .dl-svg :global(text.m) {
+    fill: var(--text-muted);
+    text-anchor: end;
+  }
+  .dl-svg :global(text.slow) {
+    fill: var(--g-yellow);
+  }
+  .dl-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  // inputs: build-context files the instruction reads; slow: the expensive step
+  interface Layer { cmd: string; inputs: string[]; slow?: boolean }
+
+  const ORDERS: Record<string, Layer[]> = {
+    deps: [
+      { cmd: 'FROM python:3.14-slim', inputs: [] },
+      { cmd: 'WORKDIR /app', inputs: [] },
+      { cmd: 'COPY pyproject.toml uv.lock ./', inputs: ['lock'] },
+      { cmd: 'RUN uv sync --frozen', inputs: [], slow: true },
+      { cmd: 'COPY src/ ./src/', inputs: ['code'] },
+      { cmd: 'CMD ["python", "-m", "src.app"]', inputs: [] },
+    ],
+    all: [
+      { cmd: 'FROM python:3.14-slim', inputs: [] },
+      { cmd: 'WORKDIR /app', inputs: [] },
+      { cmd: 'COPY . .', inputs: ['lock', 'code'] },
+      { cmd: 'RUN uv sync --frozen', inputs: [], slow: true },
+      { cmd: 'CMD ["python", "-m", "src.app"]', inputs: [] },
+    ],
+  };
+
+  class DockerLayerCache extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input[type=hidden]').forEach((el) => el.addEventListener('change', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const order = this.querySelector<HTMLInputElement>('[data-order]')!.value;
+      const change = this.querySelector<HTMLInputElement>('[data-change]')!.value;
+      const layers = ORDERS[order];
+      let broken = false;
+      let s = '';
+      let rebuilt = 0;
+      let slowRerun = false;
+      const h = 30, gap = 6, top = 236 - 10;
+      layers.forEach((l, i) => {
+        const cause = !broken && l.inputs.includes(change);
+        broken = broken || cause;
+        if (broken) rebuilt++;
+        if (broken && l.slow) slowRerun = true;
+        const y = top - (i + 1) * (h + gap) + gap;
+        s += `<rect class="bg" x="10" y="${y}" width="420" height="${h}" rx="5" />`;
+        s += `<rect class="${broken ? 'miss' : 'hit'}${cause ? ' cause' : ''}" x="10" y="${y}" width="420" height="${h}" rx="5" />`;
+        s += `<text x="20" y="${y + h / 2}">${l.cmd.replace(/"/g, '&quot;')}</text>`;
+        const tag = cause ? 'input changed' : broken ? 'rebuilt' : 'cached';
+        s += `<text class="m${l.slow ? ' slow' : ''}" x="420" y="${y + h / 2}">${l.slow ? 'slow · ' : ''}${tag}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent =
+        `rebuilt ${rebuilt} of ${layers.length} layers · uv sync ${slowRerun ? 're-runs' : 'cached'}`;
+    }
+  }
+  customElements.define('docker-layer-cache', DockerLayerCache);
+</script>

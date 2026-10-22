@@ -1,0 +1,199 @@
+---
+import Figure from '../Figure.astro';
+
+// The sample schema of the PostgreSQL and MySQL sheets: same tables and rows, different column types.
+interface Props { db?: 'postgres' | 'mysql' }
+const { db = 'postgres' } = Astro.props;
+
+const TYPES = {
+  postgres: {
+    users: [['id', 'bigint', 'PK'], ['email', 'text', 'UQ'], ['name', 'text', ''], ['country', 'char(2)', ''], ['created_at', 'timestamptz', '']],
+    orders: [['id', 'bigint', 'PK'], ['user_id', 'bigint', 'FK'], ['amount', 'numeric(10,2)', ''], ['status', 'text', ''], ['placed_on', 'date', '']],
+  },
+  mysql: {
+    users: [['id', 'BIGINT UNSIGNED', 'PK'], ['email', 'VARCHAR(255)', 'UQ'], ['name', 'VARCHAR(100)', ''], ['country', 'CHAR(2)', ''], ['created_at', 'TIMESTAMP', '']],
+    orders: [['id', 'BIGINT UNSIGNED', 'PK'], ['user_id', 'BIGINT UNSIGNED', 'FK'], ['amount', 'DECIMAL(10,2)', ''], ['status', 'ENUM(…)', ''], ['placed_on', 'DATE', '']],
+  },
+}[db];
+
+const users = [
+  [1, 'Ana', 'PT'],
+  [2, 'Bo', 'NO'],
+  [3, 'Cy', 'PT'],
+];
+const orders = [
+  [1, 1, '30.00', 'paid'],
+  [2, 1, '12.50', 'shipped'],
+  [3, 2, '99.90', 'paid'],
+  [4, 1, '45.00', 'new'],
+  [5, 2, '20.00', 'paid'],
+];
+const tables = [
+  { name: 'users', x: 6, cols: TYPES.users },
+  { name: 'orders', x: 234, cols: TYPES.orders },
+];
+const rowY = (i: number) => 44 + i * 20;
+---
+
+<Figure
+  title="One user has many orders"
+  caption="Top: the two tables of the sample schema, with primary keys (PK), the unique email (UQ) and the foreign key orders.user_id (FK) that points at users.id. Bottom: their rows. Pick a user to see which orders reference it and how many rows an inner and a left join return for that user; Cy has no orders, so only the left join keeps Cy."
+>
+  <sql-schema>
+    <input type="hidden" data-user value="1" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="1" aria-pressed="true">Ana</button>
+      <button type="button" class="btn" data-choice="2" aria-pressed="false">Bo</button>
+      <button type="button" class="btn" data-choice="3" aria-pressed="false">Cy</button>
+    </span>
+    <svg class="ss-svg" viewBox="0 0 440 150" role="img" aria-label="users and orders tables with their columns and a foreign key from orders.user_id to users.id">
+      {tables.map((t) => (
+        <g>
+          <rect class="ss-bg" x={t.x} y="6" width="200" height="138" rx="6"></rect>
+          <rect class="ss-tbl" x={t.x} y="6" width="200" height="138" rx="6"></rect>
+          <text class="ss-name" x={t.x + 10} y="19">{t.name}</text>
+          <line class="ss-sep" x1={t.x} y1="32" x2={t.x + 200} y2="32"></line>
+          {t.cols.map(([col, type, key], i) => (
+            <g>
+              {key && <rect class={`ss-key ss-${key}`} x={t.x + 4} y={rowY(i) - 9} width="192" height="18" rx="3"></rect>}
+              <text class="ss-col" x={t.x + 10} y={rowY(i)}>{col}</text>
+              <text class="ss-type" x={t.x + 76} y={rowY(i)}>{type}</text>
+              <text class="ss-k" x={t.x + 190} y={rowY(i)}>{key}</text>
+            </g>
+          ))}
+        </g>
+      ))}
+      <path class="ss-fk" d={`M 234 ${rowY(1)} C 220 ${rowY(1)}, 220 ${rowY(0)}, 206 ${rowY(0)}`}></path>
+      <text class="ss-card" x="214" y={rowY(0) - 10}>1</text>
+      <text class="ss-card" x="222" y={rowY(1) + 12}>n</text>
+    </svg>
+    <div class="ss-rows">
+      <table class="ss-data">
+        <thead><tr><th>id</th><th>name</th><th>country</th></tr></thead>
+        <tbody>
+          {users.map(([id, name, c]) => <tr data-u={id}><td>{id}</td><td>{name}</td><td>{c}</td></tr>)}
+        </tbody>
+      </table>
+      <table class="ss-data">
+        <thead><tr><th>id</th><th>user_id</th><th>amount</th><th>status</th></tr></thead>
+        <tbody>
+          {orders.map(([id, uid, amt, st]) => <tr data-o={uid} data-amt={amt}><td>{id}</td><td>{uid}</td><td>{amt}</td><td>{st}</td></tr>)}
+        </tbody>
+      </table>
+    </div>
+    <p class="ss-stat mono" data-stat></p>
+  </sql-schema>
+</Figure>
+
+<style>
+  .ss-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .ss-bg {
+    fill: var(--bg);
+  }
+  .ss-tbl {
+    fill: rgba(66, 133, 244, 0.08);
+    stroke: var(--g-blue);
+  }
+  .ss-sep {
+    stroke: var(--g-blue);
+  }
+  .ss-key {
+    fill: rgba(66, 133, 244, 0.16);
+  }
+  .ss-key.ss-FK {
+    fill: rgba(251, 188, 5, 0.22);
+  }
+  .ss-fk {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+  .ss-svg text {
+    font: 10px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ss-name {
+    fill: var(--text);
+    font-size: 12px !important;
+    font-weight: 600;
+  }
+  .ss-col {
+    fill: var(--text);
+  }
+  .ss-type,
+  .ss-k {
+    fill: var(--text-muted);
+  }
+  .ss-k {
+    text-anchor: end;
+  }
+  .ss-card {
+    fill: var(--g-yellow);
+    text-anchor: middle;
+  }
+  .ss-rows {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 10px;
+  }
+  .ss-data {
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+    margin: 0;
+  }
+  .ss-data th,
+  .ss-data td {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .ss-data th {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .ss-data :global(tr.on) td {
+    background: rgba(251, 188, 5, 0.18);
+  }
+  .ss-data :global(tr.ref) td {
+    background: rgba(52, 168, 83, 0.2);
+  }
+  .ss-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  class SqlSchema extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-user]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const u = this.querySelector<HTMLInputElement>('[data-user]')!.value;
+      this.querySelectorAll<HTMLElement>('[data-u]').forEach((r) => r.classList.toggle('on', r.dataset.u === u));
+      let n = 0;
+      let cents = 0;
+      this.querySelectorAll<HTMLElement>('[data-o]').forEach((r) => {
+        const hit = r.dataset.o === u;
+        r.classList.toggle('ref', hit);
+        if (hit) {
+          n++;
+          cents += Math.round(Number(r.dataset.amt) * 100);
+        }
+      });
+      const total = n ? (cents / 100).toFixed(2) : 'NULL';
+      this.querySelector('[data-stat]')!.textContent =
+        `user ${u}: ${n} orders · sum(amount) ${total} · INNER JOIN rows ${n} · LEFT JOIN rows ${Math.max(n, 1)}`;
+    }
+  }
+  customElements.define('sql-schema', SqlSchema);
+</script>

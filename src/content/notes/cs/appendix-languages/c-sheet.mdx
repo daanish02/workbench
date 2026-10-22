@@ -1,0 +1,548 @@
+---
+title: "C Sheet"
+description: "C on one page: the basics, then what C is for: pointers and manual memory, struct layout, bits, the preprocessor, linking and undefined behaviour."
+order: 5
+tier: core
+takeaways:
+  - "C is a small, **statically typed** language that compiles to machine code with almost no run time. You manage memory yourself with `malloc` and `free`; nothing checks array bounds or pointer validity."
+  - "**Undefined behaviour** (out-of-bounds access, signed overflow, use after free, uninitialised reads) is not an error the program reports: the compiler may assume it never happens, and the result can be anything."
+  - "Arrays decay to pointers when passed to functions, so a function never knows an array's length unless you pass it."
+  - "Strings are `char` arrays ending in `'\\0'`; every string function relies on that terminator, and missing it is a classic buffer overflow."
+  - "Compile with warnings and sanitizers on (`-Wall -Wextra -fsanitize=address,undefined`): they catch most memory bugs during testing."
+resources:
+  - title: "C reference (cppreference.com)"
+    url: "https://en.cppreference.com/w/c"
+    note: "The language and standard library, version by version from C89 to C23."
+  - title: "Compiler Explorer (godbolt.org)"
+    url: "https://godbolt.org/"
+    note: "Runs every snippet here and shows the assembly each compiler produces."
+  - title: "Modern C (Jens Gustedt)"
+    url: "https://gustedt.gitlabpages.inria.fr/modern-c/"
+    note: "A free book that teaches C as it is written today, including C23."
+---
+
+This sheet is a one-page reference for C: first the basics, then what C is used for: **pointers** and manual memory, structs and function pointers, **bits** and exact-width integers, the preprocessor, headers and linking, and the **undefined behaviour** that comes with all of it. [Rosetta Table](../rosetta-table/) compares the same concepts across languages, and [Language Reference](../language-reference/) compares the languages themselves. C is the language of operating systems, embedded devices and the runtimes of most other languages: it maps closely onto the hardware ([Memory Hierarchy](../../../infra/memory-hierarchy/why-the-memory-hierarchy-exists/)) and trusts the programmer completely. Each snippet is a complete program; run it on [Compiler Explorer](https://godbolt.org/) or with `gcc -std=c17 -Wall -Wextra main.c && ./a.out`.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Direct control of memory and hardware: kernels, drivers, embedded firmware | Memory safety: buffer overflows and use-after-free compile silently |
+| Portability: a C compiler exists for almost every CPU | Productivity: no strings, containers, generics or error handling built in |
+| Small, fast, predictable binaries and a stable ABI that every language can call | Undefined behaviour that optimisers exploit in surprising ways |
+| Longevity: code from decades ago still compiles | Large-scale structure: no namespaces or modules beyond files and headers |
+
+## Types
+
+Integer types have minimum sizes, not fixed ones: `int` is at least 16 bits (32 on every common platform), `long` is 32 bits on Windows and 64 on Linux. `<stdint.h>` gives exact widths (`int32_t`, `uint64_t`). `float` and `double` are IEEE 754 on every common platform ([Floating Point](../../foundations/floating-point/)).
+
+```c
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+int main(void) {
+    int i = 7 / 2;                 /* integer division truncates */
+    double d = 7 / 2.0;
+    unsigned char byte = 255;
+    byte++;                        /* unsigned arithmetic wraps: well defined */
+    int64_t big = INT64_MAX;
+    bool ok = true;
+    printf("%d %.1f %u %lld %d\n", i, d, byte, (long long)big, ok);
+    printf("%zu %zu %zu %zu\n", sizeof(char), sizeof(int), sizeof(double), sizeof(void *));
+    printf("%d %d\n", -7 / 2, -7 % 2);    /* truncates toward zero */
+    printf("%d\n", 0.1 + 0.2 == 0.3);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `7 / 2` is 3 because both operands are ints, and division truncates toward zero, so `-7 / 2` is -3 and `-7 % 2` is -1. Unsigned overflow wraps (255 + 1 is 0), but signed overflow is undefined behaviour. `sizeof` gives sizes in bytes; a pointer is 8 bytes on 64-bit platforms. `bool` is a macro for `_Bool` before C23 and a keyword from C23.
+
+## Variables
+
+Variables must be declared with a type before use. Locals are **uninitialised** unless you initialise them; globals and `static` variables start at zero. `const` makes an object read-only; `#define` creates a text-substitution macro.
+
+```c
+#include <stdio.h>
+
+#define MAX_USERS 100              /* macro: replaced before compilation */
+static int counter;                /* file scope, zero-initialised, invisible to other files */
+
+void bump(void) {
+    static int calls = 0;          /* keeps its value between calls */
+    calls++;
+    counter += calls;
+}
+
+int main(void) {
+    const double pi = 3.14159;
+    int a = 1, b = 2, tmp;
+    tmp = a; a = b; b = tmp;       /* swap needs a temporary */
+    bump();
+    bump();
+    printf("%d %d %.2f %d %d\n", a, b, pi, MAX_USERS, counter);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: the swap needs a temporary because C has no tuple assignment. The `static` local `calls` survives between calls, so `counter` becomes 1 + 2 = 3. Reading `tmp` before assigning it would be undefined behaviour; compile with `-Wall` and the compiler warns about most such reads.
+
+## Control Flow
+
+`if`, `while`, `do … while`, `for`, `switch`, `break`, `continue` and `goto`. Conditions are integers: zero is false, anything else true.
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    for (int n = -1; n <= 1; n++) {
+        const char *kind = n > 0 ? "positive" : n == 0 ? "zero" : "negative";
+        printf("%d %s\n", n, kind);
+    }
+
+    int n = 1;
+    while (n < 100) n *= 3;
+    printf("%d\n", n);
+
+    int day = 6;
+    switch (day) {
+    case 0:
+    case 6:
+        printf("weekend\n");
+        break;                     /* without break, execution falls into the next case */
+    default:
+        printf("weekday\n");
+    }
+
+    int x = 0;
+    if (x = 5) printf("assignment, not comparison: x is %d\n", x);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: the chained conditional expression picks a label without an `if` ladder. `switch` cases fall through without `break`, which lets 0 and 6 share a branch. `if (x = 5)` assigns 5 and tests it, so it is always true; it compiles (with a warning under `-Wall`) and is a classic bug. `goto` is mostly used for jumping to one cleanup block at the end of a function.
+
+## Functions
+
+Functions must be declared before use, usually through a prototype in a header. Arguments are passed by value; to let a function change a caller's variable, pass a pointer. Function pointers allow callbacks.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+void swap(int *a, int *b) {        /* pointers let the function modify the caller's ints */
+    int t = *a;
+    *a = *b;
+    *b = t;
+}
+
+int divide(int a, int b, int *out) {   /* status code plus output parameter */
+    if (b == 0) return -1;
+    *out = a / b;
+    return 0;
+}
+
+int cmp_int(const void *x, const void *y) {
+    int a = *(const int *)x, b = *(const int *)y;
+    return (a > b) - (a < b);
+}
+
+int main(void) {
+    int a = 1, b = 2, q;
+    swap(&a, &b);
+    printf("%d %d\n", a, b);
+    if (divide(7, 2, &q) == 0) printf("q = %d\n", q);
+    if (divide(1, 0, &q) != 0) printf("division by zero\n");
+
+    int nums[] = {3, 1, 2};
+    qsort(nums, 3, sizeof nums[0], cmp_int);   /* qsort takes a function pointer */
+    printf("%d %d %d\n", nums[0], nums[1], nums[2]);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `swap` receives the addresses of `a` and `b` and writes through them. C has one return value, so functions commonly return a status code and write results through pointer parameters. `qsort` is generic through `void *` and a comparison function; `(a > b) - (a < b)` returns -1, 0 or 1 without the overflow that `a - b` can cause.
+
+## Collections
+
+C has fixed-size arrays and structs, nothing else built in. Dynamic arrays, hash tables and lists are written by hand or taken from libraries. An array's size is known only where it was declared.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+    int *data;
+    size_t len, cap;
+} IntVec;
+
+void push(IntVec *v, int x) {
+    if (v->len == v->cap) {
+        v->cap = v->cap ? v->cap * 2 : 4;          /* grow geometrically */
+        int *p = realloc(v->data, v->cap * sizeof *p);
+        if (!p) { perror("realloc"); exit(1); }
+        v->data = p;
+    }
+    v->data[v->len++] = x;
+}
+
+int main(void) {
+    int fixed[5] = {1, 2, 3};                      /* the rest are zero */
+    size_t n = sizeof fixed / sizeof fixed[0];
+    printf("%zu %d %d\n", n, fixed[2], fixed[4]);
+
+    int grid[2][3] = {{1, 2, 3}, {4, 5, 6}};       /* row-major in memory */
+    printf("%d\n", grid[1][2]);
+
+    IntVec v = {0};
+    for (int i = 0; i < 10; i++) push(&v, i * i);
+    printf("len %zu cap %zu last %d\n", v.len, v.cap, v.data[v.len - 1]);
+    free(v.data);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `sizeof fixed / sizeof fixed[0]` gives the element count only where the array itself is in scope; inside a function that received it, it is a pointer. 2D arrays are stored row by row ([Cache-Friendly Code](../../../infra/memory-hierarchy/cache-friendly-code/)). The hand-written vector doubles its capacity, 4 → 8 → 16, so pushing 10 values reallocates only twice ([Arrays and Strings](../../data-structures/arrays-and-strings/)).
+
+## Strings
+
+A string is a `char` array terminated by a zero byte, `'\0'`. `<string.h>` functions find the end by scanning for it. The length is not stored anywhere.
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    char greeting[16] = "Hello";               /* 5 chars + '\0', rest zero */
+    printf("%zu %zu\n", strlen(greeting), sizeof greeting);
+
+    strncat(greeting, ", C", sizeof greeting - strlen(greeting) - 1);
+    printf("%s\n", greeting);
+
+    char buf[32];
+    int written = snprintf(buf, sizeof buf, "%s has %d chars", greeting, (int)strlen(greeting));
+    printf("%s (%d)\n", buf, written);
+
+    printf("%d %d\n", strcmp("apple", "banana") < 0, strcmp("a", "a"));
+    const char *s = "naïve";                   /* UTF-8 source: 'ï' is two bytes */
+    printf("%zu\n", strlen(s));
+    char *dot = strchr("file.tar.gz", '.');
+    printf("%s\n", dot);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `strlen` counts characters up to the terminator (5), while `sizeof` gives the array's full 16 bytes. Every copy or concatenation must respect the buffer size; `strncat` and `snprintf` take a limit, while `strcpy`, `strcat` and `sprintf` do not and cause most C buffer overflows. `strcmp` returns negative, zero or positive, not a boolean. `strlen("naïve")` is 6 bytes because C strings are bytes, not characters ([Text Encoding](../../foundations/text-encoding/)).
+
+## Errors
+
+C has no exceptions. Functions report failure through return values (`-1`, `NULL`) and the global `errno`; callers must check. Cleanup on failure is often a `goto` to one exit point.
+
+```c
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int parse_int(const char *s, long *out) {
+    char *end;
+    errno = 0;
+    long v = strtol(s, &end, 10);
+    if (errno == ERANGE || end == s || *end != '\0') return -1;
+    *out = v;
+    return 0;
+}
+
+int main(void) {
+    long v;
+    const char *inputs[] = {"42", "forty", "12px"};
+    for (int i = 0; i < 3; i++) {
+        if (parse_int(inputs[i], &v) == 0) printf("%s -> %ld\n", inputs[i], v);
+        else printf("%s -> invalid\n", inputs[i]);
+    }
+
+    FILE *f = fopen("/no/such/file", "r");
+    if (f == NULL) {
+        printf("fopen failed: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
+    fclose(f);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `strtol` reports where it stopped parsing, so "12px" is rejected because the end pointer does not reach the terminator; `atoi` would silently return 12, and 0 for "forty". `fopen` returns `NULL` and sets `errno`, which `strerror` turns into a message. Ignoring a return value is the most common C error-handling bug; `-Wall` and attributes like `[[nodiscard]]` (C23) help.
+
+## Pointers and Memory
+
+Locals live on the **stack** and vanish when the function returns; `malloc` allocates on the **heap** until `free`. There is no garbage collector, no bounds checking and no null checking ([Memory Management](../../operating-systems/memory-management/), [Memory & GC](../../languages/memory-and-gc/)).
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+char *duplicate(const char *s) {
+    size_t n = strlen(s) + 1;          /* + 1 for the terminator */
+    char *copy = malloc(n);
+    if (!copy) return NULL;
+    memcpy(copy, s, n);
+    return copy;                       /* caller must free */
+}
+
+int main(void) {
+    int arr[4] = {10, 20, 30, 40};
+    int *p = arr;                      /* the array decays to a pointer to its first element */
+    printf("%d %d %d\n", *p, *(p + 2), p[3]);
+    printf("%td\n", &arr[3] - &arr[0]);
+
+    char *s = duplicate("heap string");
+    printf("%s\n", s);
+    free(s);
+    s = NULL;                          /* avoid using the dangling pointer */
+
+    int *nums = calloc(3, sizeof *nums);   /* zero-initialised */
+    printf("%d %d %d\n", nums[0], nums[1], nums[2]);
+    free(nums);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `p[3]` is defined as `*(p + 3)`, and pointer arithmetic counts in elements, so `&arr[3] - &arr[0]` is 3. `duplicate` returns heap memory that outlives the call, and the caller owns it: forgetting `free` leaks, freeing twice or using it after `free` is undefined behaviour. Returning the address of a local array instead would hand the caller a pointer into a dead stack frame.
+
+## Structs and Function Pointers
+
+`struct` groups fields; there are no methods, constructors or access control. Object-like code passes a pointer to the struct as the first argument. **Opaque types** (declared in a header, defined in one `.c` file) hide the fields.
+
+```c
+#include <math.h>
+#include <stdio.h>
+
+typedef struct {
+    double x, y;
+} Point;
+
+double point_norm(const Point *p) { return sqrt(p->x * p->x + p->y * p->y); }
+void point_scale(Point *p, double k) { p->x *= k; p->y *= k; }
+
+typedef struct Shape Shape;
+struct Shape {
+    double (*area)(const Shape *);     /* function pointer: manual polymorphism */
+    double size;
+};
+double square_area(const Shape *s) { return s->size * s->size; }
+double circle_area(const Shape *s) { return 3.14159 * s->size * s->size; }
+
+int main(void) {
+    Point p = {.x = 3, .y = 4};        /* designated initialiser */
+    point_scale(&p, 2);
+    printf("%.1f %.1f %.1f\n", p.x, p.y, point_norm(&p));
+
+    Shape shapes[] = {{square_area, 3}, {circle_area, 1}};
+    for (int i = 0; i < 2; i++) printf("%.2f\n", shapes[i].area(&shapes[i]));
+    printf("%zu\n", sizeof(Point));
+    return 0;
+}
+// output: PENDING
+```
+
+In words: `p->x` is shorthand for `(*p).x`. Passing `const Point *` promises not to modify the point. A struct of function pointers is how C does polymorphism; the Linux kernel's file operations and C++'s virtual tables work the same way. Link with `-lm` on Linux for `sqrt` ([Object-Oriented Programming](../../languages/object-oriented-programming/)).
+
+## Bits and Fixed-Width Integers
+
+C is the language for code that talks to hardware, file formats and network protocols, where exact sizes and individual bits matter. `<stdint.h>` provides integers of exact width (`uint8_t`, `int32_t`, `uint64_t`); the bitwise operators `&`, `|`, `^`, `~`, `<<` and `>>` set, clear, test and shift bits ([Number Representation](../../foundations/number-representation/)).
+
+```c
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+
+enum { READ = 1u << 0, WRITE = 1u << 1, EXEC = 1u << 2 };   // one bit per flag
+
+int main(void) {
+    uint8_t flags = 0;
+    flags |= READ | EXEC;                 // set two bits
+    flags &= (uint8_t)~EXEC;              // clear one
+    printf("%d %d %d\n", flags, (flags & READ) != 0, (flags & EXEC) != 0);
+
+    uint32_t x = 0xF0u;
+    printf("%" PRIu32 " %" PRIu32 " %" PRIu32 "\n", x >> 4, x << 4, x ^ 0xFFu);
+    int bits = 0;
+    for (uint32_t t = x; t != 0; t &= t - 1) bits++;   // clears the lowest set bit each pass
+    int n = 12;
+    printf("%d %d\n", bits, (n & (n - 1)) == 0);       // power-of-two test
+
+    uint8_t u = 250;
+    u += 10;                              // unsigned arithmetic wraps modulo 256
+    printf("%d %" PRId64 " %zu\n", u, INT64_MAX, sizeof(int64_t));
+
+    uint32_t word = 0x12345678u;
+    uint8_t *byte = (uint8_t *)&word;     // inspecting an object's bytes through unsigned char is allowed
+    printf("%02x\n", byte[0]);
+}
+// output: PENDING
+```
+
+In words: `|=` sets bits, `&= ~mask` clears them and `&` tests them, so only READ remains set. `0xF0` is 240; shifting right by 4 divides by 16 and shifting left multiplies by 16. The loop counts set bits by clearing the lowest one each pass, and `n & (n - 1)` is zero only for powers of two, which 12 is not. Unsigned overflow is defined and wraps, so 250 + 10 is 4 in a `uint8_t`; signed overflow is undefined behaviour. The first byte of `0x12345678` in memory is `78` on little-endian machines (x86, most ARM) and `12` on big-endian ones ([Assembly Sheet](../assembly-sheet/)).
+
+## Macros and _Generic
+
+C has no generics. Code is made generic with `void *` plus an element size (like `qsort`), with macros, or with `_Generic` (C11), which chooses an expression by the static type of its argument.
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+#define MAX(a, b) ((a) > (b) ? (a) : (b))      /* text substitution: evaluates an argument twice */
+
+#define type_name(x) _Generic((x), int: "int", double: "double", char *: "char *", default: "other")
+
+void swap_any(void *a, void *b, size_t size) {  /* generic through void * and a byte count */
+    unsigned char tmp[64];
+    if (size > sizeof tmp) return;
+    memcpy(tmp, a, size);
+    memcpy(a, b, size);
+    memcpy(b, tmp, size);
+}
+
+int main(void) {
+    printf("%d %.1f\n", MAX(3, 7), MAX(2.5, 1.0));
+    printf("%s %s %s\n", type_name(1), type_name(1.0), type_name((char *)"s"));
+    double x = 1.5, y = 2.5;
+    swap_any(&x, &y, sizeof x);
+    printf("%.1f %.1f\n", x, y);
+    int i = 5;
+    int m = MAX(i++, 0);                        /* i++ runs twice */
+    printf("%d %d\n", m, i);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: the `MAX` macro works for any type because it is pasted in as text, but its arguments are evaluated more than once: `MAX(i++, 0)` increments `i` twice. `_Generic` dispatches on the type at compile time, the basis of `<tgmath.h>`. `void *` code gives up type checking entirely ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Headers and Linking
+
+A program is several `.c` files compiled separately and linked. **Headers** (`.h`) declare what other files may use; the preprocessor pastes them in with `#include`. There is no package manager in the language.
+
+```c
+/* geometry.h: the interface */
+#ifndef GEOMETRY_H
+#define GEOMETRY_H
+double circle_area(double r);
+#endif
+
+/* geometry.c: the implementation */
+#include "geometry.h"
+static const double PI = 3.14159;           /* static: private to this file */
+double circle_area(double r) { return PI * r * r; }
+
+/* main.c */
+#include <stdio.h>
+#include "geometry.h"
+int main(void) {
+    printf("%.2f\n", circle_area(2));
+    return 0;
+}
+/* build: gcc -c geometry.c && gcc -c main.c && gcc geometry.o main.o -o app */
+// output: PENDING
+```
+
+In words: the include guard (`#ifndef … #define … #endif`) stops a header from being pasted twice. `static` at file scope hides `PI` from other files, the closest C has to private. Each `.c` file compiles to an object file and the linker joins them; a declared but undefined function fails at link time, not compile time ([Compilers & Interpreters](../../languages/compilers-and-interpreters/)). Larger projects use Make or CMake and get libraries from the system package manager, vcpkg or Conan.
+
+## Threads and Atomics
+
+C11 added `<threads.h>` and `<stdatomic.h>`, but most code uses POSIX threads (`pthread`) on Unix-like systems. Shared data needs a mutex or atomics; a data race is undefined behaviour ([Memory Ordering](../../../infra/memory-hierarchy/memory-ordering/)).
+
+```c
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+
+static atomic_long atomic_count = 0;
+static long locked = 0;
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
+void *work(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 100000; i++) {
+        atomic_fetch_add(&atomic_count, 1);
+        pthread_mutex_lock(&lock);
+        locked++;
+        pthread_mutex_unlock(&lock);
+    }
+    return NULL;
+}
+
+int main(void) {
+    pthread_t t[4];
+    for (int i = 0; i < 4; i++) pthread_create(&t[i], NULL, work, NULL);
+    for (int i = 0; i < 4; i++) pthread_join(t[i], NULL);
+    printf("atomic %ld, mutex %ld\n", atomic_load(&atomic_count), locked);
+    return 0;
+}
+/* build: gcc -pthread main.c */
+// output: PENDING
+```
+
+In words: four threads each add 100,000 to two counters; the atomic and the mutex-protected counter both end at exactly 400,000. An unprotected `plain++` in the same loop would be a data race, usually ending well short of 400,000, and formally undefined behaviour. `pthread_join` waits for each thread to finish ([Synchronization](../../operating-systems/synchronization/)).
+
+## Pitfalls
+
+Idiomatic C checks every return value, pairs every `malloc` with exactly one `free` (ownership is documented in comments or names), passes buffer lengths alongside buffers, uses `const` for read-only pointers, and keeps one `goto cleanup` exit path in functions that acquire several resources.
+
+```c
+#include <stdio.h>
+#include <string.h>
+
+void print_size(int arr[]) {               /* really int *arr */
+    printf("inside function: %zu\n", sizeof arr);
+}
+
+int main(void) {
+    int arr[10];
+    printf("in main: %zu\n", sizeof arr);
+    print_size(arr);
+
+    unsigned int u = 1;
+    int neg = -1;
+    printf("%d\n", neg < u);               /* -1 is converted to unsigned */
+
+    char a[] = "abc", b[] = "abc";
+    printf("%d %d\n", a == b, strcmp(a, b) == 0);
+
+    int x = 4;
+    printf("%d\n", x & 1 == 0);            /* parsed as x & (1 == 0) */
+    double avg = 7 / 2;                    /* integer division happens before conversion */
+    printf("%.1f\n", avg);
+    return 0;
+}
+// output: PENDING
+```
+
+In words: inside `print_size`, `arr` is a pointer, so `sizeof` gives 8 on 64-bit systems instead of 40; pass lengths explicitly. Comparing a signed -1 with an unsigned converts -1 to a huge unsigned value, so `neg < u` is false. `==` on arrays compares addresses, not contents. `==` binds tighter than `&`, so `x & 1 == 0` is `x & 0`, which is 0 even though 4 is even; write `(x & 1) == 0`. `7 / 2` is computed in ints before being stored in a double, giving 3.0.
+
+<Callout type="pitfall">
+Undefined behaviour does not mean "crashes" or "gives a garbage value"; it means the C standard places no requirement on the program at all. Optimising compilers assume UB never happens and reason from that: a check like `if (x + 1 < x)` for signed overflow can be deleted, and a null check after a dereference can be removed. Code that "works" at `-O0` may break at `-O2` or with the next compiler version. Test with `-fsanitize=address,undefined`, and treat every warning as a bug.
+</Callout>
+
+## Tooling
+
+```bash
+gcc -std=c17 -Wall -Wextra -O2 -g main.c -o app          # build with warnings
+gcc -fsanitize=address,undefined -g main.c -o app && ./app  # catch memory errors and UB at run time
+valgrind --leak-check=full ./app                         # leaks and invalid accesses (Linux)
+gdb ./app                                                # debugger
+clang-format -i *.c && clang-tidy main.c --              # format and lint
+cmake -B build && cmake --build build                    # build a larger project
+```
+
+GCC and Clang are the main compilers (MSVC on Windows). AddressSanitizer and UndefinedBehaviorSanitizer make most memory bugs crash immediately with a clear report during testing; static analysers (`clang-tidy`, `cppcheck`) find more without running the code. Unit tests use small frameworks such as Unity or CMocka.

@@ -1,0 +1,818 @@
+---
+title: "JavaScript & TypeScript"
+description: "TypeScript and JavaScript on one page: the basics, then structural types, narrowing, generics and the event loop, every example in both languages."
+order: 3
+tier: core
+takeaways:
+  - "TypeScript is JavaScript plus a **static type system** that is checked at compile time and then **erased**: the code that runs is plain JavaScript, so types give no run-time checks."
+  - "Use `const` by default, `let` when a binding changes, never `var`; compare with `===`, which does not convert types."
+  - "Types are **structural**: an object fits a type if it has the right shape, whatever it was declared as. Union types plus narrowing (`typeof`, `in`, discriminant fields) replace most class hierarchies."
+  - "JavaScript runs on one thread with an **event loop**: `async`/`await` interleaves waits without blocking, and CPU-heavy work needs Web Workers or worker threads."
+  - "Pitfalls: `==` coercion, `this` depending on how a function is called, numbers being doubles (`0.1 + 0.2`), and `sort()` comparing as strings."
+resources:
+  - title: "The TypeScript Handbook (typescriptlang.org)"
+    url: "https://www.typescriptlang.org/docs/handbook/intro.html"
+    note: "The official guide to the type system, from basic types to generics and narrowing."
+  - title: "JavaScript Guide (MDN)"
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide"
+    note: "The reference guide to the language itself, with every built-in object documented."
+  - title: "TypeScript Playground"
+    url: "https://www.typescriptlang.org/play"
+    note: "Runs every snippet on this page in the browser and shows the JavaScript it compiles to."
+---
+
+This sheet is a one-page reference for TypeScript and JavaScript: every example has a **TypeScript** tab and a **JavaScript** tab with the same program, types removed. After the basics it spends its depth where TypeScript and JavaScript differ from other languages: **structural types**, **narrowing** over unions, generics that compute types, and the single-threaded **event loop**. [Rosetta Table](../rosetta-table/) compares the same concepts across languages, and [Language Reference](../language-reference/) compares the languages themselves. JavaScript is TypeScript without the type annotations: delete every `: Type`, `interface` and `<T>` and the rest runs unchanged, with the same output. The exceptions are TypeScript-only shorthands such as constructor parameter properties (`constructor(public name: string)`), which the JavaScript tab writes out in full. Each snippet runs on its own: TypeScript in the [TypeScript Playground](https://www.typescriptlang.org/play) or with `bun run file.ts`, JavaScript in any browser console, `node file.mjs` or `bun run file.mjs`.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| The only language that runs natively in every browser; also servers (Node, Bun, Deno), mobile and desktop | CPU-heavy work on the main thread: one thread per event loop |
+| I/O-heavy servers: the event loop handles many concurrent connections cheaply | Numeric precision: all numbers are doubles except `bigint` |
+| TypeScript's structural types catch most mistakes in large codebases | Type safety at run time: types are erased, so external data must be validated |
+| The largest package ecosystem (npm) | Dependency sprawl and supply-chain risk in that ecosystem |
+
+## Types
+
+JavaScript has seven primitive types (`number`, `bigint`, `string`, `boolean`, `undefined`, `null`, `symbol`) and objects. All numbers are IEEE 754 doubles ([Floating Point](../../foundations/floating-point/)). TypeScript adds annotations, literal types, unions, `unknown` (must be checked before use) and `any` (switches checking off).
+
+<CodeTabs>
+
+```ts
+const n: number = 7 / 2;
+const big: bigint = 2n ** 64n;
+const tags: string[] = ["a", "b"];
+const pair: [string, number] = ["age", 31];   // tuple
+let state: "idle" | "busy" = "idle";           // union of literal types
+const maybe: string | undefined = undefined;
+console.log(n, big, tags.length, pair[1], state, maybe ?? "none");
+console.log(typeof n, typeof big, typeof null, Number.MAX_SAFE_INTEGER);
+console.log(0.1 + 0.2 === 0.3, Number("12px"), parseInt("12px"));
+// output: PENDING
+```
+
+```js
+const n = 7 / 2;
+const big = 2n ** 64n;
+const tags = ["a", "b"];
+const pair = ["age", 31];
+let state = "idle";
+const maybe = undefined;
+console.log(n, big, tags.length, pair[1], state, maybe ?? "none");
+console.log(typeof n, typeof big, typeof null, Number.MAX_SAFE_INTEGER);
+console.log(0.1 + 0.2 === 0.3, Number("12px"), parseInt("12px"));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `7 / 2` is a float division, `bigint` literals end in `n`, and `??` supplies a default only for `null` or `undefined`. `typeof null` is `"object"`, a historic bug kept for compatibility. Integers are exact only up to `Number.MAX_SAFE_INTEGER`, $2^{53} - 1$.
+
+## Variables
+
+`const` binds a name once (the object it points to can still change); `let` allows reassignment; both are block-scoped. `var` is function-scoped and hoisted, a source of old bugs; do not use it.
+
+<CodeTabs>
+
+```ts
+const user = { name: "Ada", langs: ["en"] };
+user.langs.push("fr");            // allowed: const fixes the binding, not the object
+let count = 0;
+count += 1;
+let [a, b] = [1, 2];
+[a, b] = [b, a];                  // destructuring swap
+const { name: userName, langs: [first] } = user;
+console.log(user, count, a, b, userName, first);
+for (let i = 0; i < 2; i++) {
+  setTimeout(() => console.log("let i =", i));   // each iteration gets its own i
+}
+// output: PENDING
+```
+
+```js
+const user = { name: "Ada", langs: ["en"] };
+user.langs.push("fr");            // allowed: const fixes the binding, not the object
+let count = 0;
+count += 1;
+let [a, b] = [1, 2];
+[a, b] = [b, a];                  // destructuring swap
+const { name: userName, langs: [first] } = user;
+console.log(user, count, a, b, userName, first);
+for (let i = 0; i < 2; i++) {
+  setTimeout(() => console.log("let i =", i));   // each iteration gets its own i
+}
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `const` objects stay mutable, so pushing to `user.langs` works; `Object.freeze` makes an object shallowly immutable. Destructuring pulls fields out of objects and arrays. With `let`, every loop iteration gets a fresh `i`, so the callbacks print 0 and 1; with `var` they would both print 2.
+
+## Control Flow
+
+C-style `if`, `for`, `while` and `switch`, plus `for…of` over values of an iterable and `for…in` over an object's keys. TypeScript **narrows** types inside branches.
+
+<CodeTabs>
+
+```ts
+function describe(x: number | string | null): string {
+  if (x === null) return "nothing";
+  if (typeof x === "string") return `text of length ${x.length}`;   // x is string here
+  return x > 0 ? "positive" : "non-positive";                       // x is number here
+}
+console.log([5, "hi", null, -1].map(describe));
+
+for (const [i, ch] of ["a", "b"].entries()) console.log(i, ch);
+for (const key in { x: 1, y: 2 }) console.log(key);
+
+const day = 6;
+switch (day) {
+  case 0:
+  case 6:
+    console.log("weekend");
+    break;                         // without break, execution falls through
+  default:
+    console.log("weekday");
+}
+// output: PENDING
+```
+
+```js
+function describe(x) {
+  if (x === null) return "nothing";
+  if (typeof x === "string") return `text of length ${x.length}`;   // x is string here
+  return x > 0 ? "positive" : "non-positive";                       // x is number here
+}
+console.log([5, "hi", null, -1].map(describe));
+
+for (const [i, ch] of ["a", "b"].entries()) console.log(i, ch);
+for (const key in { x: 1, y: 2 }) console.log(key);
+
+const day = 6;
+switch (day) {
+  case 0:
+  case 6:
+    console.log("weekend");
+    break;                         // without break, execution falls through
+  default:
+    console.log("weekday");
+}
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: after the `typeof` check, TypeScript knows `x` is a string, so `x.length` is allowed; in the last line it can only be a number. `for…of` iterates values (here with `entries()` for indices) and `for…in` iterates keys. `switch` falls through without `break`, which is how cases 0 and 6 share one branch.
+
+## Functions
+
+Function declarations, arrow functions and methods. Parameters can have defaults, be optional (`?`) or collect the rest (`...args`). Functions are values and closures capture variables.
+
+<CodeTabs>
+
+```ts
+function greet(name: string, greeting = "Hello", punct?: string): string {
+  return `${greeting}, ${name}${punct ?? "!"}`;
+}
+const total = (...nums: number[]): number => nums.reduce((s, n) => s + n, 0);
+console.log(greet("Ada"), greet("Ada", "Hi", "."), total(1, 2, 3));
+
+function makeCounter() {
+  let count = 0;
+  return () => ++count;            // the closure keeps count alive
+}
+const next = makeCounter();
+console.log(next(), next(), next());
+
+const square = (v: number) => v * v;
+console.log([1, 2, 3].map(square), [3, 1, 2].filter((v) => v > 1));
+
+function* fib() {
+  let [a, b] = [0, 1];
+  while (true) { yield a; [a, b] = [b, a + b]; }
+}
+const it = fib();
+console.log(Array.from({ length: 8 }, () => it.next().value));
+// output: PENDING
+```
+
+```js
+function greet(name, greeting = "Hello", punct) {
+  return `${greeting}, ${name}${punct ?? "!"}`;
+}
+const total = (...nums) => nums.reduce((s, n) => s + n, 0);
+console.log(greet("Ada"), greet("Ada", "Hi", "."), total(1, 2, 3));
+
+function makeCounter() {
+  let count = 0;
+  return () => ++count;            // the closure keeps count alive
+}
+const next = makeCounter();
+console.log(next(), next(), next());
+
+const square = (v) => v * v;
+console.log([1, 2, 3].map(square), [3, 1, 2].filter((v) => v > 1));
+
+function* fib() {
+  let [a, b] = [0, 1];
+  while (true) { yield a; [a, b] = [b, a + b]; }
+}
+const it = fib();
+console.log(Array.from({ length: 8 }, () => it.next().value));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: the optional `punct` is `undefined` when omitted, so `??` supplies "!". Arrow functions are short and, unlike `function`, do not have their own `this`. Generators (`function*`) yield values lazily, like Python's.
+
+## Collections
+
+Arrays, plain objects as records, `Map` (any key type, keeps insertion order) and `Set`. Array methods return new arrays, except `push`, `pop`, `splice`, `sort` and `reverse`, which mutate.
+
+<CodeTabs>
+
+```ts
+const nums = [3, 1, 2];
+nums.push(4);
+const sorted = [...nums].sort((x, y) => x - y);   // copy, then sort numerically
+console.log(nums, sorted, sorted.at(-1), sorted.slice(1, 3), nums.includes(2));
+
+const ages: Record<string, number> = { ana: 31, bo: 25 };
+ages["cy"] = 40;
+console.log(Object.keys(ages), Object.entries(ages).length, ages["dee"] ?? 0);
+
+const m = new Map<string, number[]>();
+for (const w of ["apple", "avocado", "bean"]) {
+  const k = w[0];
+  m.set(k, [...(m.get(k) ?? []), w.length]);
+}
+console.log([...m], m.size);
+const s = new Set([1, 2, 2, 3]);
+console.log(s.has(2), [...s], [...nums.entries()].length);
+// output: PENDING
+```
+
+```js
+const nums = [3, 1, 2];
+nums.push(4);
+const sorted = [...nums].sort((x, y) => x - y);   // copy, then sort numerically
+console.log(nums, sorted, sorted.at(-1), sorted.slice(1, 3), nums.includes(2));
+
+const ages = { ana: 31, bo: 25 };
+ages["cy"] = 40;
+console.log(Object.keys(ages), Object.entries(ages).length, ages["dee"] ?? 0);
+
+const m = new Map();
+for (const w of ["apple", "avocado", "bean"]) {
+  const k = w[0];
+  m.set(k, [...(m.get(k) ?? []), w.length]);
+}
+console.log([...m], m.size);
+const s = new Set([1, 2, 2, 3]);
+console.log(s.has(2), [...s], [...nums.entries()].length);
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: spreading (`[...nums]`) copies an array before sorting, and the comparator `(x, y) => x - y` sorts numerically. `Record<string, number>` types an object used as a dictionary; use `Map` when keys are not strings or when entries are added and removed often. A `Set` drops the duplicate 2.
+
+## Strings
+
+Strings are immutable sequences of UTF-16 code units. Template literals (backticks) interpolate expressions and span lines.
+
+<CodeTabs>
+
+```ts
+const s = "Hello, World";
+console.log(s.toLowerCase(), s.split(", "), s.replace("World", "TS"), s.slice(0, 5));
+console.log(["a", "b", "c"].join(" | "), "  pad ".trim(), "7".padStart(3, "0"));
+const price = 3.5;
+console.log(`tea costs ${price.toFixed(2)}`, (12345678).toLocaleString("en-US"));
+console.log("naïve".length, "😀".length, [..."😀"].length);
+console.log(s.includes("World"), s.startsWith("He"), "ab".repeat(3), s.at(-1));
+// output: PENDING
+```
+
+```js
+const s = "Hello, World";
+console.log(s.toLowerCase(), s.split(", "), s.replace("World", "TS"), s.slice(0, 5));
+console.log(["a", "b", "c"].join(" | "), "  pad ".trim(), "7".padStart(3, "0"));
+const price = 3.5;
+console.log(`tea costs ${price.toFixed(2)}`, (12345678).toLocaleString("en-US"));
+console.log("naïve".length, "😀".length, [..."😀"].length);
+console.log(s.includes("World"), s.startsWith("He"), "ab".repeat(3), s.at(-1));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `slice`, `padStart`, `repeat` and `at` cover most string work; `toFixed` and `toLocaleString` format numbers. `length` counts UTF-16 code units, so an emoji outside the Basic Multilingual Plane has length 2, while spreading the string iterates by code point and gives 1 ([Text Encoding](../../foundations/text-encoding/)).
+
+## Errors
+
+`throw` any value (throw `Error` objects so they carry a stack), `try`/`catch`/`finally`. In TypeScript the caught value has type `unknown` and must be narrowed. Rejected promises are errors in `async` code.
+
+<CodeTabs>
+
+```ts
+class InsufficientFunds extends Error {
+  constructor(public balance: number, public need: number) {
+    super(`balance ${balance}, need ${need}`);
+    this.name = "InsufficientFunds";
+  }
+}
+
+function withdraw(balance: number, amount: number): number {
+  if (amount > balance) throw new InsufficientFunds(balance, amount);
+  return balance - amount;
+}
+
+try {
+  withdraw(5, 9);
+} catch (e: unknown) {
+  if (e instanceof InsufficientFunds) console.log(e.name, e.message, e.need);
+} finally {
+  console.log("done");
+}
+
+try {
+  JSON.parse("{bad json");
+} catch (e) {
+  const err = new Error("config unreadable", { cause: e });
+  console.log(err.message, "<-", (err.cause as Error).name);
+}
+// output: PENDING
+```
+
+```js
+class InsufficientFunds extends Error {
+  constructor(balance, need) {
+    super(`balance ${balance}, need ${need}`);
+    this.balance = balance;
+    this.need = need;
+    this.name = "InsufficientFunds";
+  }
+}
+
+function withdraw(balance, amount) {
+  if (amount > balance) throw new InsufficientFunds(balance, amount);
+  return balance - amount;
+}
+
+try {
+  withdraw(5, 9);
+} catch (e) {
+  if (e instanceof InsufficientFunds) console.log(e.name, e.message, e.need);
+} finally {
+  console.log("done");
+}
+
+try {
+  JSON.parse("{bad json");
+} catch (e) {
+  const err = new Error("config unreadable", { cause: e });
+  console.log(err.message, "<-", err.cause.name);
+}
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: subclassing `Error` gives a typed error with extra fields, and `instanceof` narrows the `unknown` catch value to it. The `cause` option chains a low-level error (a `SyntaxError` from `JSON.parse`) to a meaningful one. TypeScript cannot list which errors a function throws; many codebases return result objects instead for expected failures.
+
+## Objects, Classes, Interfaces
+
+Plain object types (`type` or `interface`) describe data; classes add methods, constructors, `private`/`readonly` modifiers (checked by TypeScript only) and `#private` fields (enforced at run time).
+
+<CodeTabs>
+
+```ts
+interface Point { readonly x: number; readonly y: number }
+const p: Point = { x: 3, y: 4 };
+const norm = (q: Point) => Math.hypot(q.x, q.y);
+console.log(norm(p), norm({ x: 6, y: 8 }));     // any object with x and y fits
+
+class Animal {
+  constructor(protected name: string) {}
+  speak(): string { return "..."; }
+  toString() { return `${this.constructor.name}(${this.name})`; }
+}
+class Dog extends Animal {
+  override speak() { return "woof"; }
+}
+for (const a of [new Animal("generic"), new Dog("rex")]) console.log(`${a}`, a.speak());
+
+class Account {
+  #balance = 0;                                  // truly private at run time
+  deposit(v: number) { this.#balance += v; return this; }
+  get balance() { return this.#balance; }
+}
+console.log(new Account().deposit(10).deposit(5).balance);
+
+type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
+const area = (s: Shape) => (s.kind === "circle" ? Math.PI * s.r ** 2 : s.side ** 2);
+console.log(area({ kind: "square", side: 3 }));
+// output: PENDING
+```
+
+```js
+const p = { x: 3, y: 4 };
+const norm = (q) => Math.hypot(q.x, q.y);
+console.log(norm(p), norm({ x: 6, y: 8 }));     // any object with x and y fits
+
+class Animal {
+  constructor(name) { this.name = name; }
+  speak() { return "..."; }
+  toString() { return `${this.constructor.name}(${this.name})`; }
+}
+class Dog extends Animal {
+  speak() { return "woof"; }
+}
+for (const a of [new Animal("generic"), new Dog("rex")]) console.log(`${a}`, a.speak());
+
+class Account {
+  #balance = 0;                                  // truly private at run time
+  deposit(v) { this.#balance += v; return this; }
+  get balance() { return this.#balance; }
+}
+console.log(new Account().deposit(10).deposit(5).balance);
+
+const area = (s) => (s.kind === "circle" ? Math.PI * s.r ** 2 : s.side ** 2);
+console.log(area({ kind: "square", side: 3 }));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `norm` accepts any object with numeric `x` and `y`, because typing is structural. Constructor parameters with a modifier (`protected name`) declare and assign a field in one step. A **discriminated union** (`kind` field) lets `area` handle each shape with full type checking, the usual TypeScript alternative to a class hierarchy ([Object-Oriented Programming](../../languages/object-oriented-programming/)).
+
+## Narrowing and Unions
+
+TypeScript's strongest feature is **narrowing**: inside an `if`, `switch` or early return, the checker tracks which member of a union a value can still be. `typeof`, `instanceof`, `in`, equality with a literal, and a shared **discriminant** field (`kind`, `ok`) all narrow. Assigning the leftover case to `never` turns a forgotten case into a compile error, and a **type guard** (`v is User`) connects a run-time check to the compile-time type, which is how untrusted `unknown` data becomes typed.
+
+<CodeTabs>
+
+```ts
+type Result = { ok: true; value: number } | { ok: false; error: string };
+
+function describe(x: string | number | Date | null): string {
+  if (x === null) return "null";
+  if (typeof x === "string") return `string of ${x.length}`;   // x: string here
+  if (typeof x === "number") return `number ${x.toFixed(1)}`;  // x: number
+  return `date ${x.getUTCFullYear()}`;                          // only Date is left
+}
+
+function unwrap(r: Result): number {
+  return r.ok ? r.value : -1;                     // the ok field picks the union member
+}
+
+type Shape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+function area(s: Shape): number {
+  switch (s.kind) {
+    case "circle": return Math.round(Math.PI * s.r ** 2);
+    case "rect": return s.w * s.h;
+    default: {
+      const unreachable: never = s;               // a new kind without a case fails to compile here
+      return unreachable;
+    }
+  }
+}
+
+interface User { id: number; name: string }
+function isUser(v: unknown): v is User {          // a type guard: checks at run time, narrows at compile time
+  return typeof v === "object" && v !== null && "id" in v && "name" in v
+    && typeof v.id === "number" && typeof v.name === "string";
+}
+
+console.log(describe("hey"), describe(2.345), describe(new Date(0)), describe(null));
+console.log(unwrap({ ok: true, value: 7 }), unwrap({ ok: false, error: "boom" }));
+console.log(area({ kind: "circle", r: 1 }), area({ kind: "rect", w: 2, h: 3 }));
+const data: unknown = JSON.parse('{"id": 1, "name": "Ada"}');
+console.log(isUser(data) ? data.name.toUpperCase() : "not a user", isUser({ id: "1" }));
+// output: PENDING
+```
+
+```js
+function describe(x) {
+  if (x === null) return "null";
+  if (typeof x === "string") return `string of ${x.length}`;
+  if (typeof x === "number") return `number ${x.toFixed(1)}`;
+  return `date ${x.getUTCFullYear()}`;
+}
+
+function unwrap(r) {
+  return r.ok ? r.value : -1;
+}
+
+function area(s) {
+  switch (s.kind) {
+    case "circle": return Math.round(Math.PI * s.r ** 2);
+    case "rect": return s.w * s.h;
+    default: throw new Error(`unknown shape ${s.kind}`);   // JavaScript can only catch this at run time
+  }
+}
+
+function isUser(v) {
+  return typeof v === "object" && v !== null && "id" in v && "name" in v
+    && typeof v.id === "number" && typeof v.name === "string";
+}
+
+console.log(describe("hey"), describe(2.345), describe(new Date(0)), describe(null));
+console.log(unwrap({ ok: true, value: 7 }), unwrap({ ok: false, error: "boom" }));
+console.log(area({ kind: "circle", r: 1 }), area({ kind: "rect", w: 2, h: 3 }));
+const data = JSON.parse('{"id": 1, "name": "Ada"}');
+console.log(isUser(data) ? data.name.toUpperCase() : "not a user", isUser({ id: "1" }));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: after each `typeof` check the checker knows the narrower type, so `x.length` and `x.toFixed` compile only on the branch where they are valid, and the final `return` knows only `Date` is left. The `ok` field selects the member of `Result`, so `r.value` is allowed only when `ok` is true. Adding a third `kind` to `Shape` without a `case` makes the `never` assignment fail to compile; the JavaScript tab can only throw at run time. `isUser` checks the parsed JSON field by field, and after it returns true `data.name` is a `string` ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Generics and Utility Types
+
+Type parameters in angle brackets, constrained with `extends`. Utility types (`Partial`, `Pick`, `Record`, `ReturnType`) transform types; `keyof` and indexed access types compute them.
+
+<CodeTabs>
+
+```ts
+function first<T>(items: T[]): T | undefined {
+  return items[0];
+}
+
+class Stack<T> {
+  private items: T[] = [];
+  push(item: T) { this.items.push(item); }
+  pop(): T | undefined { return this.items.pop(); }
+}
+
+function longest<T extends { length: number }>(a: T, b: T): T {
+  return a.length >= b.length ? a : b;
+}
+
+function pluck<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+
+const s = new Stack<number>();
+s.push(1);
+s.push(2);
+type User = { id: number; name: string };
+const patch: Partial<User> = { name: "Bo" };
+console.log(first(["a", "b"]), s.pop(), longest("abc", "de"), longest([1], [1, 2]));
+console.log(pluck({ id: 7, name: "Ada" }, "name"), patch);
+// output: PENDING
+```
+
+```js
+function first(items) {
+  return items[0];
+}
+
+class Stack {
+  items = [];
+  push(item) { this.items.push(item); }
+  pop() { return this.items.pop(); }
+}
+
+function longest(a, b) {
+  return a.length >= b.length ? a : b;
+}
+
+function pluck(obj, key) {
+  return obj[key];
+}
+
+const s = new Stack();
+s.push(1);
+s.push(2);
+const patch = { name: "Bo" };
+console.log(first(["a", "b"]), s.pop(), longest("abc", "de"), longest([1], [1, 2]));
+console.log(pluck({ id: 7, name: "Ada" }, "name"), patch);
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `T extends { length: number }` accepts strings and arrays alike. `K extends keyof T` restricts `key` to real property names, and the return type `T[K]` is the type of that property, so `pluck(user, "name")` is known to be a string. Generics are erased like all types, so code cannot ask what `T` is at run time ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Async and the Event Loop
+
+JavaScript runs your code on one thread. I/O and timers are handed to the runtime, and their callbacks are queued for the **event loop**. Promises represent future values; `async`/`await` writes promise code in sequential style ([Concurrency Models](../../languages/concurrency-models/)).
+
+<CodeTabs>
+
+```ts
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function fetchItem(name: string, ms: number): Promise<string> {
+  await sleep(ms);                       // yields to the event loop while waiting
+  return `${name} done`;
+}
+
+async function main() {
+  console.log(await Promise.all([fetchItem("a", 20), fetchItem("b", 10)]));  // keeps argument order
+  console.log(await Promise.race([fetchItem("slow", 30), fetchItem("fast", 5)]));
+  const results = await Promise.allSettled([Promise.reject(new Error("x")), fetchItem("c", 1)]);
+  console.log(results.map((r) => r.status));
+}
+
+console.log("start");
+setTimeout(() => console.log("timeout callback"), 0);
+Promise.resolve().then(() => console.log("microtask"));
+main();
+console.log("end of script");
+// output: PENDING
+```
+
+```js
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchItem(name, ms) {
+  await sleep(ms);                       // yields to the event loop while waiting
+  return `${name} done`;
+}
+
+async function main() {
+  console.log(await Promise.all([fetchItem("a", 20), fetchItem("b", 10)]));  // keeps argument order
+  console.log(await Promise.race([fetchItem("slow", 30), fetchItem("fast", 5)]));
+  const results = await Promise.allSettled([Promise.reject(new Error("x")), fetchItem("c", 1)]);
+  console.log(results.map((r) => r.status));
+}
+
+console.log("start");
+setTimeout(() => console.log("timeout callback"), 0);
+Promise.resolve().then(() => console.log("microtask"));
+main();
+console.log("end of script");
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: synchronous code runs to the end first, then queued **microtasks** (promise callbacks) run before **macrotasks** such as timers, which is why "microtask" prints before "timeout callback". `Promise.all` waits for all and keeps argument order, `race` returns the first to settle, `allSettled` reports each outcome without throwing. CPU-heavy work blocks the loop; move it to a Web Worker or Node `worker_threads`.
+
+## References and Copies
+
+Primitives are values; objects (including arrays and functions) are references to the heap, freed by a tracing garbage collector when unreachable ([Memory & GC](../../languages/memory-and-gc/)). Assignment and argument passing copy the reference, never the object.
+
+<CodeTabs>
+
+```ts
+const a = [1, 2];
+const b = a;                   // same array
+b.push(3);
+const c = [...a];              // shallow copy
+c.push(4);
+console.log(a, b === a, c);
+
+const nested = { inner: { v: 1 } };
+const shallow = { ...nested };
+const deep = structuredClone(nested);
+nested.inner.v = 99;
+console.log(shallow.inner.v, deep.inner.v);
+
+console.log([1, 2] === [1, 2], JSON.stringify([1, 2]) === JSON.stringify([1, 2]));
+let x = 1000;
+function change(n: number) { n += 1; }
+change(x);
+console.log(x);
+// output: PENDING
+```
+
+```js
+const a = [1, 2];
+const b = a;                   // same array
+b.push(3);
+const c = [...a];              // shallow copy
+c.push(4);
+console.log(a, b === a, c);
+
+const nested = { inner: { v: 1 } };
+const shallow = { ...nested };
+const deep = structuredClone(nested);
+nested.inner.v = 99;
+console.log(shallow.inner.v, deep.inner.v);
+
+console.log([1, 2] === [1, 2], JSON.stringify([1, 2]) === JSON.stringify([1, 2]));
+let x = 1000;
+function change(n) { n += 1; }
+change(x);
+console.log(x);
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: `b` and `a` are the same array, `c` is a new one. Spread copies one level only, so the shallow copy still shares `inner` and sees 99, while `structuredClone` makes a deep copy that keeps 1. `===` on objects compares identity, so two equal-looking arrays are not equal. Numbers are passed by value, so `x` stays 1000.
+
+## Modules and Packages
+
+Each file is an ES module: `export` what others may use, `import` it by relative path or package name. Packages come from the npm registry and are declared in `package.json`.
+
+<CodeTabs>
+
+```ts
+// math.ts
+export const TAU = 2 * Math.PI;
+export function circumference(r: number): number {
+  return TAU * r;
+}
+export default class Circle { constructor(public r: number) {} }
+
+// main.ts
+import Circle, { circumference, TAU as T } from "./math";
+console.log(circumference(1) === T, new Circle(2).r);
+// output: PENDING
+```
+
+```js
+// math.js
+export const TAU = 2 * Math.PI;
+export function circumference(r) {
+  return TAU * r;
+}
+export default class Circle { constructor(r) { this.r = r; } }
+
+// main.js
+import Circle, { circumference, TAU as T } from "./math";
+console.log(circumference(1) === T, new Circle(2).r);
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: named exports are imported in braces and can be renamed with `as`; a file has at most one default export. `import type { User } from "./models"` brings in only types and disappears from the output. Run the pair with `bun run main.ts`. Node's older CommonJS system (`require`, `module.exports`) still appears in older packages; new code uses ES modules.
+
+## Pitfalls
+
+Idiomatic code uses `const`, `===`, optional chaining (`a?.b`), nullish coalescing (`??`), array methods (`map`, `filter`, `reduce`) over index loops, destructuring, and discriminated unions with `strict` mode on.
+
+<CodeTabs>
+
+```ts
+const loose: any = 0;                 // any switches off the checks that would reject these lines
+console.log(loose == "", null == undefined, "1" + 1, ("3" as any) * ("4" as any));
+console.log([10, 9, 1].sort(), [10, 9, 1].sort((a, b) => a - b));
+console.log(0.1 + 0.2, Math.round(2.5), Math.round(-2.5));
+console.log(typeof NaN, NaN === NaN, Number.isNaN(NaN));
+
+class Counter {
+  count = 0;
+  inc() { this.count++; return this.count; }
+}
+const counter = new Counter();
+const inc = counter.inc;
+try {
+  inc();                              // this is undefined when called detached
+} catch (e) {
+  console.log("detached call failed:", (e as Error).constructor.name);
+}
+console.log(counter.inc(), ["1", "2", "3"].map(Number.parseInt), ["1", "2", "3"].map((s) => Number.parseInt(s)));
+// output: PENDING
+```
+
+```js
+console.log(0 == "", null == undefined, "1" + 1, "3" * "4");
+console.log([10, 9, 1].sort(), [10, 9, 1].sort((a, b) => a - b));
+console.log(0.1 + 0.2, Math.round(2.5), Math.round(-2.5));
+console.log(typeof NaN, NaN === NaN, Number.isNaN(NaN));
+
+class Counter {
+  count = 0;
+  inc() { this.count++; return this.count; }
+}
+const counter = new Counter();
+const inc = counter.inc;
+try {
+  inc();                              // this is undefined when called detached
+} catch (e) {
+  console.log("detached call failed:", e.constructor.name);
+}
+console.log(counter.inc(), ["1", "2", "3"].map(Number.parseInt), ["1", "2", "3"].map((s) => Number.parseInt(s)));
+// output: same as the TypeScript tab
+```
+
+</CodeTabs>
+
+In words: loose `==` converts types, so `0 == ""` is true (TypeScript rejects that comparison unless one side is `any`); `+` with a string concatenates while `*` converts to numbers. `sort()` without a comparator sorts as strings, putting 10 before 9. `Math.round` rounds halves up, so -2.5 becomes -2. `NaN` is not equal to itself; test it with `Number.isNaN`. A method pulled off its object loses `this`, and `map(parseInt)` passes the index as the radix, producing `NaN`s.
+
+<Callout type="pitfall">
+TypeScript types are promises the compiler checks, not run-time guarantees. Data from `JSON.parse`, `fetch` or user input is whatever it is, and annotating it as `User` does not make it one; an `as` cast silences the checker without checking anything. Validate untrusted data at the boundary (with a schema library such as zod, or hand-written checks) and keep `any` out of the codebase with `strict` mode.
+</Callout>
+
+## Tooling
+
+```bash
+bun init                         # new project with package.json and tsconfig.json
+bun add zod                      # add a dependency, pinned in bun.lock
+bun add -d typescript @types/node
+bun run index.ts                 # run TypeScript directly
+bunx tsc --noEmit                # type-check only
+bun test                         # tests
+bunx eslint . && bunx prettier --check .
+```
+
+`tsconfig.json` sets the compiler options; turn on `"strict": true` in every new project. Bun and Deno run TypeScript directly; Node runs it after a build step or, in recent versions, by stripping types. Lockfiles (`bun.lock`, `package-lock.json`) pin exact versions ([Dependencies & Versioning](../../software-engineering/dependencies-and-versioning/)). These notes use bun throughout.

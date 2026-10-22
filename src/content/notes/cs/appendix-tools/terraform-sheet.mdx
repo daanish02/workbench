@@ -1,0 +1,272 @@
+---
+title: "Terraform Sheet"
+description: "Terraform on one page, from the init–plan–apply workflow and HCL syntax to providers, variables, for_each, state and remote backends, modules, imports and safe changes to production."
+order: 6
+tier: core
+takeaways:
+  - "Terraform is **declarative infrastructure as code**: you describe the resources you want in HCL, and `plan` computes the changes needed to get from the current state to that description."
+  - "The workflow is `init` (download providers), `plan` (preview), `apply` (make the changes), with the plan reviewed before every apply."
+  - "**State** maps your configuration to real resource ids. Keep it in a remote backend with locking, never edit it by hand, and treat it as a secret."
+  - "`for_each` over a map creates one resource per key with stable addresses; `count` indexes by position and shifts when the list changes."
+  - "**Modules** package resources for reuse; pin provider and module versions so the same code produces the same plan."
+resources:
+  - title: "Terraform language documentation (HashiCorp)"
+    url: "https://developer.hashicorp.com/terraform/language"
+    note: "Reference for HCL, resources, variables, expressions, functions, state and modules."
+  - title: "Terraform Registry"
+    url: "https://registry.terraform.io/"
+    note: "Every provider and public module with its arguments, attributes and examples."
+  - title: "Terraform documentation (HashiCorp)"
+    url: "https://developer.hashicorp.com/terraform/docs"
+    note: "Tutorials and CLI reference, from the first configuration to team workflows."
+---
+
+**Terraform** (HashiCorp, 2014) manages cloud and on-premises infrastructure as code: networks, virtual machines, databases, DNS records, Kubernetes objects, even GitHub repositories. You write the desired end state in **HCL** (HashiCorp Configuration Language) files; Terraform compares it with what exists and creates, updates or deletes resources to match. **OpenTofu** is an open-source fork with the same language and commands. The ideas behind infrastructure as code are in [Infrastructure as Code](../../software-engineering/infrastructure-as-code/); this sheet is the practical reference.
+
+The first example uses only Terraform's built-in features, so it runs anywhere with no cloud account: save it as `main.tf` in an empty directory and run `terraform init && terraform apply`. The later cloud examples need credentials for that provider.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| One language and workflow for every cloud and SaaS API (thousands of providers) | Imperative steps (run a migration, wait for a condition): it describes end states, not procedures |
+| Reviewable changes: the plan shows exactly what will be created, changed or destroyed | State management: the state file must be stored, locked and protected |
+| Reuse through modules and variables across environments | Logic-heavy configuration: HCL loops and conditionals get awkward (CDK for Terraform or Pulumi use general languages) |
+| Detecting drift between code and reality | Resources changed outside Terraform cause surprising plans |
+
+## The Workflow
+
+```bash
+terraform init                # download providers and modules, configure the backend
+terraform fmt                 # format the .tf files
+terraform validate            # check syntax and references
+terraform plan -out=tfplan    # compute and save the changes
+terraform apply tfplan        # apply exactly the saved plan
+terraform output              # show output values
+terraform destroy             # delete everything this configuration manages
+```
+
+`plan` refreshes the state from the real infrastructure, compares it with the configuration and lists actions with symbols: `+` create, `~` update in place, `-/+` replace (destroy and recreate), `-` destroy. Applying a saved plan guarantees that what was reviewed is what runs. In CI, `plan` runs on every pull request and `apply` after merge ([CI/CD](../../software-engineering/ci-cd/)).
+
+<TerraformPlanSteps />
+
+## HCL Basics
+
+A configuration is a set of **blocks** (`resource`, `variable`, `output`, `locals`, …) containing **arguments**. Values have types: `string`, `number`, `bool`, `list`, `map`, `object`. Expressions reference other values (`var.env`, `local.prefix`, `resource_type.name.attribute`) and Terraform works out the order from those references.
+
+```hcl
+variable "env" {
+  type    = string
+  default = "staging"
+}
+
+variable "services" {
+  type = map(object({
+    port     = number
+    replicas = number
+  }))
+  default = {
+    api    = { port = 8080, replicas = 3 }
+    worker = { port = 9090, replicas = 1 }
+  }
+}
+
+locals {
+  prefix       = "shop-${var.env}"
+  is_prod      = var.env == "prod"
+  total_pods   = sum([for s in values(var.services) : s.replicas])
+  names        = [for name, s in var.services : "${local.prefix}-${name}"]
+  public_ports = { for name, s in var.services : name => s.port if s.port < 9000 }
+}
+
+resource "terraform_data" "service" {
+  for_each = var.services
+  input = {
+    name     = "${local.prefix}-${each.key}"
+    replicas = local.is_prod ? each.value.replicas * 2 : each.value.replicas
+  }
+}
+
+output "names" { value = local.names }
+output "total_pods" { value = local.total_pods }
+output "public_ports" { value = local.public_ports }
+output "replicas" { value = { for k, r in terraform_data.service : k => r.output.replicas } }
+output "upper" { value = upper(local.prefix) }
+# output: PENDING
+```
+
+In words: `"shop-${var.env}"` interpolates a variable into a string. `for` expressions build lists (`[for …]`) and maps (`{for … => …}`), with an optional `if` filter, so `public_ports` keeps only the API's port 8080. `for_each` creates one `terraform_data` resource per map key, addressed as `terraform_data.service["api"]`, and `each.key` / `each.value` refer to the current entry. Running `terraform apply -var env=prod` afterwards plans to change both resources in place, renaming them and doubling their replicas.
+
+## Providers and Resources
+
+A **provider** is a plugin that talks to one API. A **resource** block declares an object the provider manages; a **data** block reads an existing object without managing it.
+
+```hcl
+terraform {
+  required_version = ">= 1.9"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.80" # any 5.x from 5.80 on
+    }
+  }
+}
+
+provider "aws" {
+  region = "eu-west-1"
+}
+
+data "aws_caller_identity" "me" {} # read-only: the account the credentials belong to
+
+resource "aws_s3_bucket" "logs" {
+  bucket = "shop-logs-${data.aws_caller_identity.me.account_id}"
+  tags   = { team = "platform", env = "prod" }
+}
+
+resource "aws_s3_bucket_versioning" "logs" {
+  bucket = aws_s3_bucket.logs.id # reference: creates the bucket first
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+```
+
+The resource address is `type.name` (`aws_s3_bucket.logs`); attributes known only after creation, such as `id` and `arn`, are read from it. The reference from the versioning resource to `aws_s3_bucket.logs.id` makes Terraform create the bucket first; resources with no dependency are created in parallel. `terraform init` writes `.terraform.lock.hcl`, which pins the exact provider versions and checksums; commit it.
+
+## Variables, Outputs, Locals
+
+```hcl
+variable "instance_count" {
+  type        = number
+  description = "How many web servers to run"
+  default     = 2
+  validation {
+    condition     = var.instance_count >= 1 && var.instance_count <= 10
+    error_message = "instance_count must be between 1 and 10."
+  }
+}
+
+variable "db_password" {
+  type      = string
+  sensitive = true # hidden in plan output and logs
+}
+
+output "bucket_arn" {
+  value       = aws_s3_bucket.logs.arn
+  description = "ARN of the log bucket"
+}
+```
+
+```bash
+terraform apply -var instance_count=3            # one value on the command line
+terraform apply -var-file=prod.tfvars            # values from a file
+export TF_VAR_db_password="from-a-secret-store"  # values from the environment
+```
+
+**Variables** are the inputs, **outputs** the results other configurations or scripts read, and **locals** named intermediate values. `sensitive = true` hides a value in output, but it is still stored in plain text in the state.
+
+## count, for_each, lifecycle
+
+```hcl
+resource "aws_iam_user" "dev" {
+  for_each = toset(["ana", "bo", "cy"]) # addresses: aws_iam_user.dev["ana"], …
+  name     = each.key
+}
+
+resource "aws_instance" "web" {
+  count         = var.instance_count # addresses: aws_instance.web[0], [1], …
+  ami           = "ami-0123456789abcdef0"
+  instance_type = "t3.micro"
+  tags          = { Name = "web-${count.index}" }
+
+  lifecycle {
+    create_before_destroy = true   # replace without a gap
+    ignore_changes        = [tags] # do not fight changes made elsewhere
+  }
+}
+
+resource "aws_db_instance" "main" {
+  # …
+  lifecycle {
+    prevent_destroy = true # plan fails rather than delete the database
+  }
+}
+```
+
+With `count`, resources are numbered by position: removing "bo" from a three-element list shifts "cy" from index 2 to 1, so Terraform destroys and recreates it. `for_each` keys resources by name, so removing "bo" removes only bo. Use `count` for identical copies and `for_each` for anything with an identity. `lifecycle` controls replacement order, ignored attributes and accidental deletion; `depends_on` adds a dependency Terraform cannot see from references.
+
+## State
+
+The **state file** (`terraform.tfstate`) records which real object each resource address corresponds to, plus all its attributes. Terraform needs it to know what it manages. Locally it is a JSON file; in a team it lives in a **remote backend** with locking, so two applies cannot run at once.
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "acme-terraform-state"
+    key          = "shop/prod/terraform.tfstate"
+    region       = "eu-west-1"
+    encrypt      = true
+    use_lockfile = true # lock with a file in the bucket
+  }
+}
+```
+
+```bash
+terraform state list                              # every managed resource address
+terraform state show 'aws_s3_bucket.logs'         # its recorded attributes
+terraform import aws_s3_bucket.logs shop-logs-123 # adopt an existing bucket (or an import block)
+terraform state mv aws_s3_bucket.logs aws_s3_bucket.audit   # rename without recreating (or a moved block)
+terraform plan -refresh-only                      # show drift: real changes made outside Terraform
+```
+
+The state contains every attribute, including passwords and keys, so encrypt the backend and restrict access. Renaming a resource in code without a `moved` block (or `state mv`) makes Terraform plan to destroy the old one and create a new one. `import` and `moved` blocks in the configuration do the same as the commands but go through review like any other change.
+
+## Modules
+
+A **module** is a directory of `.tf` files with variables as inputs and outputs as results. The root configuration calls modules; modules come from local paths, Git or the Registry.
+
+```hcl
+module "network" {
+  source          = "terraform-aws-modules/vpc/aws"
+  version         = "5.16.0" # pin module versions like provider versions
+  name            = "shop-${var.env}"
+  cidr            = "10.0.0.0/16"
+  azs             = ["eu-west-1a", "eu-west-1b"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24"]
+}
+
+module "app" {
+  source     = "./modules/app"                # a local module
+  subnet_ids = module.network.private_subnets # one module's output is another's input
+  env        = var.env
+}
+```
+
+A good module has a small, documented interface and hides the rest. Typical layout: `modules/` for reusable pieces, and one root configuration (with its own state) per environment, such as `envs/staging` and `envs/prod`, each calling the same modules with different variables. Separate state per environment and per system limits the blast radius of a mistake.
+
+## Pitfalls
+
+- **Applying an unreviewed plan**: always read the plan, especially lines with `-/+` (replace) or `-` on databases and storage.
+- **Changes outside Terraform** (console edits) cause drift and surprising plans; make every change in code.
+- **Secrets in state and in `.tfvars` files committed to Git**: keep secrets in a secret manager and the state encrypted.
+- **One giant state** for everything: slow plans and a huge blast radius. Split by environment and component.
+- **Unpinned versions**: an unpinned provider or module upgrade can change plans without any code change.
+- **Using `count` for named things**: removing one element renumbers and replaces the rest.
+
+<Callout type="pitfall">
+Some argument changes cannot be made in place, and the provider replaces the resource: renaming an RDS instance, changing a subnet of an instance, or altering a key attribute can mean destroy and recreate, and for a database that means data loss. The plan marks these with `-/+` and "forces replacement". Add `prevent_destroy` to stateful resources, read every replacement line before applying, and back up first.
+</Callout>
+
+## Tooling
+
+```bash
+terraform fmt -recursive && terraform validate
+tflint                                   # provider-aware linting (wrong instance types, deprecated arguments)
+checkov -d . && trivy config .           # security and policy scanning
+terraform graph | dot -Tsvg > graph.svg  # dependency graph (needs Graphviz)
+infracost breakdown --path .             # cost estimate of a plan
+tofu init && tofu plan                   # OpenTofu: the same workflow
+```
+
+Team workflows run plans in pull requests with Atlantis, HCP Terraform (Terraform Cloud), Spacelift or plain CI. Terragrunt reduces repetition across many environments. Alternatives include Pulumi and CDK for Terraform (real programming languages), AWS CloudFormation and CDK, and Crossplane (infrastructure managed from Kubernetes).

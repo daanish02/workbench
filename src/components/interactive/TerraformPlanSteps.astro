@@ -1,0 +1,159 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Plan compares configuration, state and reality"
+  caption="Three copies of the truth: the configuration you wrote (.tf), the state file that maps each resource address to a real object, and the real infrastructure. Plan refreshes the state from reality, then diffs the configuration against it: green is created, yellow changed in place, red destroyed. Apply makes reality match and records it in the state."
+>
+  <terraform-plan-steps>
+    <input type="hidden" data-mode value="edit" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="edit" aria-pressed="true">Edit config</button>
+      <button type="button" class="btn" data-choice="drift" aria-pressed="false">Drift</button>
+      <button type="button" class="btn" data-choice="rename" aria-pressed="false">Rename</button>
+    </span>
+    <svg class="tp-svg" data-svg viewBox="0 0 440 150" role="img" aria-label="Configuration, state and real infrastructure side by side"></svg>
+    <p class="tp-plan mono" data-plan></p>
+    <p class="tp-msg" data-msg></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </terraform-plan-steps>
+</Figure>
+
+<style>
+  .tp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .tp-svg :global(rect.zone) {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke: var(--border-strong);
+  }
+  .tp-svg :global(rect.zone.on) {
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .tp-svg :global(rect.row) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .tp-svg :global(rect.row.add) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .tp-svg :global(rect.row.chg) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .tp-svg :global(rect.row.del) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+  }
+  .tp-svg :global(text) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .tp-svg :global(text.h) {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .tp-svg :global(text.a) {
+    fill: var(--text-muted);
+  }
+  .tp-plan {
+    min-height: 1.5em;
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0 0;
+    white-space: pre-wrap;
+  }
+  .tp-msg {
+    min-height: 3em;
+    margin: 6px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  // mark: '' plain, add / chg / del for what plan or apply touches
+  interface Row { name: string; attr: string; mark?: string }
+  interface Frame { cfg: Row[]; state: Row[]; real: Row[]; focus: number; plan: string; msg: string }
+
+  const logs = (v: string, mark = ''): Row => ({ name: 'aws_s3_bucket.logs', attr: `versioning ${v}`, mark });
+  const audit = (mark = ''): Row => ({ name: 'aws_s3_bucket.audit', attr: 'bucket shop-logs', mark });
+  const real = (v: string, mark = ''): Row => ({ name: 'bucket shop-logs', attr: `versioning ${v}`, mark });
+  const assets = (mark = ''): Row => ({ name: 'aws_s3_bucket.web', attr: 'versioning on', mark });
+  const realAssets = (mark = ''): Row => ({ name: 'bucket shop-web', attr: 'versioning on', mark });
+
+  function frames(mode: string): Frame[] {
+    if (mode === 'edit') {
+      return [
+        { cfg: [logs('on', 'chg'), assets('add')], state: [logs('off')], real: [real('off')], focus: 0, plan: '', msg: 'You turn on versioning for the logs bucket and add a web bucket in the .tf files. Nothing else knows yet.' },
+        { cfg: [logs('on'), assets()], state: [logs('off')], real: [real('off')], focus: 2, plan: '', msg: 'terraform plan first refreshes: it reads the real bucket through the provider API. Reality matches the state, so nothing changes.' },
+        { cfg: [logs('on', 'chg'), assets('add')], state: [logs('off', 'chg')], real: [real('off')], focus: 1, plan: '~ aws_s3_bucket.logs  versioning: off -> on\n+ aws_s3_bucket.web\nPlan: 1 to add, 1 to change, 0 to destroy.', msg: 'Plan diffs configuration against state. The logs bucket changes in place; web has no state entry, so it is created.' },
+        { cfg: [logs('on'), assets()], state: [logs('on', 'chg'), assets('add')], real: [real('on', 'chg'), realAssets('add')], focus: 2, plan: 'Apply complete! Resources: 1 added, 1 changed, 0 destroyed.', msg: 'terraform apply calls the API, then writes the new objects and their attributes into the state. All three copies agree again.' },
+      ];
+    }
+    if (mode === 'drift') {
+      return [
+        { cfg: [logs('on')], state: [logs('on')], real: [real('off', 'chg')], focus: 2, plan: '', msg: 'Someone turns versioning off in the cloud console. The configuration and the state still say on: the state is now stale.' },
+        { cfg: [logs('on')], state: [logs('off', 'chg')], real: [real('off')], focus: 1, plan: '', msg: 'plan refreshes the state from reality (terraform plan -refresh-only shows just this drift).' },
+        { cfg: [logs('on')], state: [logs('off', 'chg')], real: [real('off')], focus: 0, plan: '~ aws_s3_bucket.logs  versioning: off -> on\nPlan: 0 to add, 1 to change, 0 to destroy.', msg: 'The configuration still says on, so plan proposes to undo the manual change.' },
+        { cfg: [logs('on')], state: [logs('on', 'chg')], real: [real('on', 'chg')], focus: 2, plan: 'Apply complete! Resources: 0 added, 1 changed, 0 destroyed.', msg: 'Apply restores the configured value. Manual changes survive only if you also put them in the configuration.' },
+      ];
+    }
+    return [
+      { cfg: [audit('chg')], state: [logs('on')], real: [real('on')], focus: 0, plan: '', msg: 'You rename the resource in code from logs to audit. The bucket itself is the same.' },
+      { cfg: [audit('add')], state: [logs('on', 'del')], real: [real('on')], focus: 1, plan: '- aws_s3_bucket.logs\n+ aws_s3_bucket.audit\nPlan: 1 to add, 0 to change, 1 to destroy.', msg: 'The state has no entry for audit and the configuration no longer has logs, so plan destroys the bucket (and its objects, if allowed) and creates an empty new one.' },
+      { cfg: [audit()], state: [{ name: 'aws_s3_bucket.audit', attr: 'versioning on', mark: 'chg' }], real: [real('on')], focus: 1, plan: 'moved { from = aws_s3_bucket.logs  to = aws_s3_bucket.audit }\nPlan: 0 to add, 0 to change, 0 to destroy.', msg: 'A moved block (or terraform state mv) renames the address in the state instead. Plan now shows no changes, and the bucket is untouched.' },
+    ];
+  }
+
+  class TerraformPlanSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!;
+      const reset = () => {
+        this.fr = frames(mode.value);
+        this.i = 0;
+        this.draw();
+      };
+      mode.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      let s = '';
+      [['configuration (.tf)', f.cfg], ['state', f.state], ['real infrastructure', f.real]].forEach(([title, rows], c) => {
+        const x = 4 + c * 146;
+        s += `<rect class="zone${f.focus === c ? ' on' : ''}" x="${x}" y="4" width="140" height="142" rx="6" />`;
+        s += `<text class="h" x="${x + 8}" y="18">${title}</text>`;
+        (rows as Row[]).forEach((r, n) => {
+          const y = 32 + n * 52;
+          s += `<rect class="row ${r.mark ?? ''}" x="${x + 6}" y="${y}" width="128" height="42" rx="4" />`;
+          s += `<text x="${x + 12}" y="${y + 13}">${r.name}</text>`;
+          s += `<text class="a" x="${x + 12}" y="${y + 29}">${r.attr}</text>`;
+        });
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-plan]')!.textContent = f.plan;
+      this.querySelector('[data-msg]')!.textContent = `step ${this.i}/${this.fr.length - 1} · ${f.msg}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('terraform-plan-steps', TerraformPlanSteps);
+</script>

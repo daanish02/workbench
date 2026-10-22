@@ -1,0 +1,119 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A Service sends traffic to ready Pods whose labels match"
+  caption="The Ingress routes shop.example.com to the Service web, and the Service picks its Pods with the selector app=web. Only Pods that match the selector and pass their readiness probe are endpoints (green lines). Make a Pod fail its probe or change its label and watch it leave the endpoint list; the db Pod never matches. A relabelled Pod also leaves its ReplicaSet, which starts a replacement (not drawn): a way to take one Pod out of rotation and debug it live."
+>
+  <service-endpoints>
+    <div class="ctl-row">
+      <input type="checkbox" hidden data-unready />
+      <button type="button" class="btn" data-toggle aria-pressed="false">web-b fails readiness</button>
+      <input type="checkbox" hidden data-relabel />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Relabel web-c app=debug</button>
+    </div>
+    <svg class="se-svg" data-svg viewBox="0 0 440 220" role="img" aria-label="Ingress, Service and four Pods, with lines to the Pods that are endpoints"></svg>
+    <p class="se-stat mono" data-stat></p>
+  </service-endpoints>
+</Figure>
+
+<style>
+  .se-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .se-svg :global(rect.bg) {
+    fill: var(--bg);
+  }
+  .se-svg :global(rect.ing) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .se-svg :global(rect.svc) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .se-svg :global(rect.pod) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .se-svg :global(rect.pod.ep) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .se-svg :global(rect.pod.bad) {
+    fill: rgba(234, 67, 53, 0.22);
+    stroke: var(--g-red);
+  }
+  .se-svg :global(line.ep) {
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .se-svg :global(line.no) {
+    stroke: var(--g-red);
+    stroke-width: 1.3;
+    stroke-dasharray: 4 3;
+  }
+  .se-svg :global(line.in) {
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .se-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .se-svg :global(text.s) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .se-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  class ServiceEndpoints extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('change', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const unready = this.querySelector<HTMLInputElement>('[data-unready]')!.checked;
+      const relabel = this.querySelector<HTMLInputElement>('[data-relabel]')!.checked;
+      const pods = [
+        { name: 'web-a', app: 'web', ready: true, ip: '10.1.0.4' },
+        { name: 'web-b', app: 'web', ready: !unready, ip: '10.1.1.7' },
+        { name: 'web-c', app: relabel ? 'debug' : 'web', ready: true, ip: '10.1.1.9' },
+        { name: 'db-0', app: 'db', ready: true, ip: '10.1.0.5' },
+      ];
+      let s = '<rect class="ing" x="120" y="8" width="200" height="34" rx="6" />';
+      s += '<text x="220" y="18">Ingress</text><text class="s" x="220" y="33">shop.example.com /</text>';
+      s += '<line class="in" x1="220" y1="42" x2="220" y2="66" />';
+      s += '<rect class="svc" x="120" y="66" width="200" height="40" rx="6" />';
+      s += '<text x="220" y="79">Service web :80</text><text class="s" x="220" y="95">selector app=web</text>';
+      const eps: string[] = [];
+      pods.forEach((p, i) => {
+        const x = 10 + i * 108;
+        const match = p.app === 'web';
+        const ep = match && p.ready;
+        if (ep) eps.push(`${p.ip}:8000`);
+        if (match) s += `<line class="${ep ? 'ep' : 'no'}" x1="220" y1="106" x2="${x + 46}" y2="150" />`;
+        s += `<rect class="bg" x="${x}" y="150" width="92" height="62" rx="6" />`;
+        s += `<rect class="pod${ep ? ' ep' : match ? ' bad' : ''}" x="${x}" y="150" width="92" height="62" rx="6" />`;
+        s += `<text x="${x + 46}" y="164">${p.name}</text>`;
+        s += `<text class="s" x="${x + 46}" y="181">app=${p.app}</text>`;
+        s += `<text class="s" x="${x + 46}" y="198">${p.ready ? 'ready' : 'not ready'}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = `endpoints ${eps.length}: ${eps.join(', ') || 'none'}`;
+    }
+  }
+  customElements.define('service-endpoints', ServiceEndpoints);
+</script>

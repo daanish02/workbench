@@ -26,7 +26,7 @@ Shorten each without losing meaning, and check that no link points at a changed 
 
 ### 1c. Glossary links
 
-Notes were meant to link glossary terms at first use (`/workbench/cs/appendix/glossary/`). Spot-check; most notes do not yet.
+Notes were meant to link glossary terms at first use (`/workbench/cs/appendix-reference/glossary/`). Spot-check; most notes do not yet.
 
 ## 2. Notes to write (stubs exist)
 

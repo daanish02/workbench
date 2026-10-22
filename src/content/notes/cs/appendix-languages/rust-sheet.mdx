@@ -1,0 +1,658 @@
+---
+title: "Rust Sheet"
+description: "Rust on one page, from the basics to what makes it Rust: ownership, borrowing and lifetimes, enums and pattern matching, Result-based errors, traits, iterators and fearless concurrency."
+order: 8
+tier: core
+takeaways:
+  - "Rust gives C and C++ performance with **memory safety checked at compile time**: no garbage collector, no null, no data races in safe code."
+  - "**Ownership**: every value has one owner and is dropped when the owner goes out of scope. Assigning or passing a heap value **moves** it; the old name can no longer be used."
+  - "**Borrowing**: you can have many shared references (`&T`) or exactly one mutable reference (`&mut T`) at a time, never both. The borrow checker enforces it."
+  - "Errors are values: `Result<T, E>` and `Option<T>` replace exceptions and null, and the `?` operator passes errors up in one character."
+  - "**Traits** define shared behaviour; generics with trait bounds compile to specialised code, and `Send`/`Sync` let the compiler reject thread-unsafe sharing."
+resources:
+  - title: "The Rust Programming Language (\"the book\")"
+    url: "https://doc.rust-lang.org/book/"
+    note: "The official, free introduction, from basics through ownership, traits, concurrency and unsafe."
+  - title: "Rust by Example"
+    url: "https://doc.rust-lang.org/rust-by-example/"
+    note: "Short runnable examples for every language feature."
+  - title: "Rust Playground"
+    url: "https://play.rust-lang.org/"
+    note: "Runs every snippet on this page in the browser, with Clippy and rustfmt."
+---
+
+Rust (1.0 in 2015) set out to make systems programming safe without giving up speed. Its compiler tracks who owns each value and who is borrowing it, so use-after-free, double free, null dereferences and data races become compile errors instead of crashes in production. It is used for browsers (parts of Firefox and Chrome), operating systems (drivers in Linux and Windows), cloud infrastructure, command-line tools and WebAssembly. This sheet goes from the basics to the ideas that make Rust different; the comparison with other languages is in [Language Reference](../language-reference/) and the [Rosetta Table](../rosetta-table/). Each snippet is a complete program for the [Rust Playground](https://play.rust-lang.org/) or `cargo run`.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Memory and thread safety without a garbage collector | Learning curve: the borrow checker rejects patterns common elsewhere (cyclic graphs, shared mutable state) |
+| Performance on par with C and C++, predictable latency | Compile times, especially for large dependency trees |
+| Expressive types: enums with data, pattern matching, traits | Prototyping speed: the compiler insists on handling every case up front |
+| Tooling: Cargo, rustfmt, Clippy, docs and tests built in | Younger ecosystem than C++ or Java in some domains (GUI, games) |
+
+## Types and Variables
+
+Variables are **immutable by default**; `mut` makes them mutable. Types are inferred but static. Integers have explicit sizes (`i32`, `u8`, `i64`, `usize` for indices), floats are `f32` and `f64`, and `char` is a 4-byte Unicode scalar value. **Shadowing** declares a new variable with the same name.
+
+```rust
+fn main() {
+    let x = 5;                   // immutable, type inferred as i32
+    // x = 6;                    // compile error: cannot assign twice to immutable variable
+    let mut count = 0;
+    count += 1;
+    let x = x * 2;               // shadowing: a new x
+    let spaces = "   ";
+    let spaces = spaces.len();   // shadowing may change the type
+    let big: u64 = 2u64.pow(40);
+    let ratio = 7.0 / 2.0;
+    let tuple: (i32, f64, char) = (1, 2.5, 'é');
+    let (a, _, c) = tuple;
+    const MAX_USERS: u32 = 100;
+    println!("{x} {count} {spaces} {big} {ratio} {a} {c} {MAX_USERS}");
+    println!("{} {} {}", 7 / 2, -7 / 2, -7 % 3);
+    println!("{:?} {:?}", 250u8.checked_add(10), 250u8.wrapping_add(10));
+}
+// output:
+// 10 1 3 1099511627776 3.5 1 é 100
+// 3 -3 -1
+// None 4
+```
+
+In words: shadowing lets `x` become 10 and `spaces` change from a string to its length 3 without `mut`. Integer division truncates toward zero, like C. Overflow panics in debug builds and wraps in release builds, so code that cares says which it wants: `checked_add` returns `None` on overflow and `wrapping_add` wraps to 4.
+
+## Control Flow
+
+`if`, `loop`, `while` and `for` over iterators. Almost everything is an **expression** with a value: `if` and `match` return values, and a block's last expression (without a semicolon) is its value. `match` must cover every case.
+
+```rust
+fn main() {
+    for n in [3, 0, -2] {
+        let kind = if n > 0 { "positive" } else if n == 0 { "zero" } else { "negative" };
+        println!("{n} {kind}");
+    }
+    for i in 0..3 { print!("{i} "); }                // 0..3 excludes 3, 0..=3 includes it
+    println!();
+
+    let mut n = 1;
+    let steps = loop {
+        n *= 3;
+        if n > 100 { break n; }                      // loop returns a value through break
+    };
+    println!("{steps}");
+
+    let grade = match 87 {
+        90..=100 => 'A',
+        80..=89 => 'B',
+        _ => 'C',                                    // _ matches everything else
+    };
+    let squares: Vec<i32> = (1..=4).map(|x| x * x).collect();
+    println!("{grade} {squares:?}");
+}
+// output:
+// 3 positive
+// 0 zero
+// -2 negative
+// 0 1 2
+// 243
+// B [1, 4, 9, 16]
+```
+
+In words: `if` is an expression, so it can initialise `kind` directly. `loop` with `break value` returns 243. `match` arms can be ranges and must be exhaustive; `_` is the catch-all. `{:?}` prints a value with its `Debug` format, which vectors and most types implement.
+
+## Functions and Closures
+
+Functions declare parameter and return types; the last expression is the return value. Closures (`|x| x + 1`) capture variables from their environment.
+
+```rust
+fn add(a: i32, b: i32) -> i32 {
+    a + b                                    // no semicolon: this is the return value
+}
+
+fn divmod(a: i32, b: i32) -> (i32, i32) {
+    (a / b, a % b)
+}
+
+fn apply<F: Fn(i32) -> i32>(f: F, x: i32) -> i32 {
+    f(x)
+}
+
+fn main() {
+    let (q, r) = divmod(17, 5);
+    println!("{} {q} {r}", add(2, 3));
+
+    let offset = 10;
+    let shift = |x| x + offset;              // captures offset by reference
+    println!("{}", apply(shift, 5));
+
+    let mut total = 0;
+    let mut add_to_total = |x: i32| total += x;   // FnMut: mutates captured state
+    add_to_total(3);
+    add_to_total(4);
+    println!("{total}");
+
+    let name = String::from("Ada");
+    let greet = move || format!("Hello, {name}");  // move: the closure takes ownership of name
+    println!("{}", greet());
+}
+// output:
+// 5 3 2
+// 15
+// 7
+// Hello, Ada
+```
+
+In words: `a + b` without a semicolon is the function's value; adding a semicolon would make it return `()` and fail to compile. Closures implement `Fn` (read captures), `FnMut` (mutate them) or `FnOnce` (consume them), and generic functions name which they need. `move` transfers ownership of `name` into the closure, which is required when a closure outlives its scope, for example in a thread.
+
+## Strings
+
+There are two main string types. `String` is an owned, growable UTF-8 buffer on the heap. `&str` is a borrowed **string slice**, a view into UTF-8 bytes owned elsewhere (string literals are `&'static str`). Functions that only read text take `&str`.
+
+```rust
+fn shout(s: &str) -> String {          // borrow text, return a new owned String
+    s.to_uppercase() + "!"
+}
+
+fn main() {
+    let mut s = String::from("Hello");
+    s.push_str(", World");
+    let hello: &str = &s[0..5];        // slice of bytes 0 to 4
+    println!("{s} | {hello} | {} | {}", shout(hello), s.len());
+    println!("{:?} {}", s.find("World"), s.replace("World", "Rust"));
+    let words: Vec<&str> = "a b c".split(' ').collect();
+    println!("{} {}", words.join("|"), format!("{:>6}|{:.2}|{:#x}", "tea", 3.14159, 255));
+
+    let word = "naïve";
+    println!("{} {} {:?}", word.len(), word.chars().count(), word.chars().nth(2));
+    let n: i32 = "42".parse().unwrap();
+    println!("{}", n + 1);
+}
+// output:
+// Hello, World | Hello | HELLO! | 12
+// Some(7) Hello, Rust
+// a|b|c    tea|3.14|0xff
+// 6 5 Some('ï')
+// 43
+```
+
+In words: `&s[0..5]` borrows part of `s` without copying. `len()` counts bytes, so "naïve" is 6 while `chars().count()` is 5, and indexing a string by an integer (`word[2]`) is a compile error because a byte index can fall inside a character ([Text Encoding](../../foundations/text-encoding/)). `parse` returns a `Result`; `unwrap` takes the value or panics.
+
+## Collections
+
+`Vec<T>` (growable array), `HashMap<K, V>`, `HashSet<T>`, `BTreeMap` (sorted) and `VecDeque`, all in the standard library and all owning their contents.
+
+```rust
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+
+fn main() {
+    let mut v = vec![3, 1, 2];
+    v.push(4);
+    v.sort();
+    println!("{v:?} {} {:?} {:?}", v.len(), v.first(), v.get(10));
+
+    let mut counts: HashMap<&str, i32> = HashMap::new();
+    for w in "the cat and the hat".split_whitespace() {
+        *counts.entry(w).or_insert(0) += 1;
+    }
+    println!("{} {:?}", counts["the"], counts.get("dog"));
+
+    let ages: BTreeMap<&str, u32> = [("bo", 25), ("ana", 31)].iter().copied().collect();
+    println!("{ages:?}");
+
+    let set: HashSet<i32> = [1, 2, 2, 3].iter().copied().collect();
+    let mut q = VecDeque::from([1, 2]);
+    q.push_front(0);
+    let front = q.pop_front();
+    println!("{} {:?} {:?}", set.len(), front, q);
+}
+// output:
+// [1, 2, 3, 4] 4 Some(1) None
+// 2 None
+// {"ana": 31, "bo": 25}
+// 3 Some(0) [1, 2]
+```
+
+In words: `v.get(10)` returns `None` instead of crashing; `v[10]` would panic. The `entry` API inserts a default or updates in place, the idiomatic word count. `BTreeMap` iterates in key order, so it prints ana before bo; `HashMap` order is unspecified ([Hash Tables](../../data-structures/hash-tables/)).
+
+## Structs, Enums, Pattern Matching
+
+**Structs** hold named fields; methods go in `impl` blocks. **Enums** are sum types whose variants can carry data, and `match` destructures them. `Option<T>` (`Some(v)` or `None`) is an enum that replaces null.
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+impl Point {
+    fn new(x: f64, y: f64) -> Self { Point { x, y } }
+    fn norm(&self) -> f64 { (self.x * self.x + self.y * self.y).sqrt() }
+    fn scale(&mut self, k: f64) { self.x *= k; self.y *= k; }
+}
+
+enum Shape {
+    Circle { r: f64 },
+    Rect { w: f64, h: f64 },
+    Empty,
+}
+
+fn area(s: &Shape) -> f64 {
+    match s {
+        Shape::Circle { r } => std::f64::consts::PI * r * r,
+        Shape::Rect { w, h } => w * h,
+        Shape::Empty => 0.0,
+    }
+}
+
+fn main() {
+    let mut p = Point::new(3.0, 4.0);
+    p.scale(2.0);
+    println!("{:?} {} {}", p, p.norm(), p == Point::new(6.0, 8.0));
+
+    let shapes = [Shape::Circle { r: 1.0 }, Shape::Rect { w: 2.0, h: 3.0 }, Shape::Empty];
+    let total: f64 = shapes.iter().map(area).sum();
+    println!("{total:.3}");
+
+    let maybe: Option<i32> = [1, 5, 9].iter().copied().find(|&x| x > 4);
+    if let Some(v) = maybe { println!("found {v}"); }
+    println!("{}", maybe.map(|v| v * 10).unwrap_or(0));
+}
+// output:
+// Point { x: 6.0, y: 8.0 } 10 true
+// 9.142
+// found 5
+// 50
+```
+
+In words: `#[derive]` generates debug printing, cloning and equality. `&self` borrows the struct to read it, `&mut self` to change it. `match` on `Shape` must handle all three variants, so adding a variant forces every `match` to be updated. `Option` has no null to forget to check: the value inside is reached only through `match`, `if let`, or methods such as `map` and `unwrap_or`.
+
+## Errors: Result and ?
+
+Recoverable errors are values of type `Result<T, E>`: `Ok(value)` or `Err(error)`. The `?` operator returns the error to the caller early, converting its type when a `From` conversion exists. `panic!` is for bugs and unrecoverable states.
+
+```rust
+use std::fmt;
+use std::num::ParseIntError;
+
+#[derive(Debug)]
+enum AgeError {
+    NotANumber(ParseIntError),
+    TooOld(u32),
+}
+
+impl fmt::Display for AgeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            AgeError::NotANumber(e) => write!(f, "not a number: {e}"),
+            AgeError::TooOld(a) => write!(f, "{a} is too old"),
+        }
+    }
+}
+
+impl From<ParseIntError> for AgeError {
+    fn from(e: ParseIntError) -> Self { AgeError::NotANumber(e) }
+}
+
+fn parse_age(s: &str) -> Result<u32, AgeError> {
+    let age: u32 = s.trim().parse()?;        // ? converts ParseIntError via From
+    if age > 150 { return Err(AgeError::TooOld(age)); }
+    Ok(age)
+}
+
+fn main() {
+    for input in ["42", "forty", "200"] {
+        match parse_age(input) {
+            Ok(a) => println!("{input} -> {a}"),
+            Err(e) => println!("{input} -> error: {e}"),
+        }
+    }
+    let ages: Result<Vec<u32>, AgeError> = ["1", "2", "3"].iter().map(|s| parse_age(s)).collect();
+    println!("{:?}", ages.map(|v| v.iter().sum::<u32>()).ok());
+}
+// output:
+// 42 -> 42
+// forty -> error: not a number: invalid digit found in string
+// 200 -> error: 200 is too old
+// Some(6)
+```
+
+In words: `?` on the `parse` result either unwraps the number or returns early with the error converted into `AgeError`. Each failure is a typed value the caller must handle; nothing is thrown past it. Collecting an iterator of `Result`s into `Result<Vec<_>, _>` stops at the first error, or gives all values. Applications often use the `anyhow` crate and libraries the `thiserror` crate to cut this boilerplate.
+
+## Ownership and Moves
+
+Each value has exactly one **owner**. When the owner goes out of scope the value is **dropped** (its memory freed, its file closed). Assigning or passing a value that owns heap data **moves** it: the source can no longer be used. Types that are cheap to duplicate (integers, `bool`, `char`, `&T`) implement `Copy` and are copied instead.
+
+```rust
+fn take(s: String) -> usize { s.len() }        // takes ownership; s is dropped at the end
+
+fn give_back(mut s: String) -> String {        // takes ownership, returns it
+    s.push('!');
+    s
+}
+
+struct Noisy(&'static str);
+impl Drop for Noisy {
+    fn drop(&mut self) { println!("drop {}", self.0); }
+}
+
+fn main() {
+    let a = String::from("hello");
+    let b = a;                                 // move: a is no longer valid
+    // println!("{a}");                        // compile error: borrow of moved value
+    let n = take(b);
+    println!("{n}");
+
+    let c = give_back(String::from("hi"));
+    let d = c.clone();                         // explicit deep copy
+    println!("{c} {d}");
+
+    let x = 5;
+    let y = x;                                 // i32 is Copy: x is still usable
+    println!("{x} {y}");
+
+    let _first = Noisy("first");
+    {
+        let _inner = Noisy("inner");
+    }                                          // inner dropped here
+    let _second = Noisy("second");
+    println!("end of main");
+}                                              // second, then first, are dropped
+// output:
+// 5
+// hi! hi!
+// 5 5
+// drop inner
+// end of main
+// drop second
+// drop first
+```
+
+In words: after `let b = a`, only `b` owns the string, so using `a` is a compile error rather than a double free at run time. Copies of heap data must be asked for with `clone`. `Drop` runs deterministically at the end of scope, in reverse order of declaration, exactly like C++ destructors ([C++ Sheet](../cpp-sheet/)), so "end of main" prints before "drop second" and "drop first" ([Memory & GC](../../languages/memory-and-gc/)).
+
+## Borrowing and Lifetimes
+
+A **reference** borrows a value without taking ownership. The rule: at any time, either any number of shared references `&T` or exactly one mutable reference `&mut T`, and a reference may not outlive its value. **Lifetimes** (`'a`) name how long references are valid; the compiler infers most of them.
+
+```rust
+fn longest<'a>(a: &'a str, b: &'a str) -> &'a str {   // the result lives as long as both inputs
+    if a.len() >= b.len() { a } else { b }
+}
+
+fn total(v: &[i32]) -> i32 { v.iter().sum() }            // shared borrow of a slice
+fn add_one(v: &mut Vec<i32>) { v.push(1); }              // exclusive mutable borrow
+
+fn main() {
+    let mut v = vec![1, 2, 3];
+    let r1 = &v;
+    let r2 = &v;                                         // many shared borrows are fine
+    println!("{} {}", total(r1), r2.len());
+    add_one(&mut v);                                     // r1 and r2 are no longer used, so this is allowed
+    println!("{v:?}");
+
+    let first = &v[0];
+    // v.push(4);                                        // error: cannot borrow v as mutable while first is in use
+    println!("{first}");
+
+    let s1 = String::from("longer text");
+    let result;
+    {
+        let s2 = String::from("short");
+        result = longest(&s1, &s2);
+        println!("{result}");
+    }
+    // println!("{result}");                             // error: s2 does not live long enough
+}
+// output:
+// 6 3
+// [1, 2, 3, 1]
+// 1
+// longer text
+```
+
+In words: the commented-out `v.push(4)` is rejected because a push may reallocate the vector and leave `first` dangling, the exact bug that compiles silently in C++. Borrows end at their last use, so `add_one(&mut v)` is allowed after the shared references are done. `longest` says its result is valid only as long as both arguments, so using `result` after `s2` is dropped is a compile error.
+
+## Traits and Generics
+
+A **trait** declares methods a type can implement, like an interface; traits can have default methods and be implemented for existing types. Generic functions with trait bounds are compiled separately for each type (static dispatch); `dyn Trait` gives run-time dispatch.
+
+```rust
+use std::fmt::Display;
+
+trait Shape {
+    fn area(&self) -> f64;
+    fn describe(&self) -> String { format!("shape with area {:.2}", self.area()) }   // default method
+}
+
+struct Circle { r: f64 }
+struct Square { side: f64 }
+
+impl Shape for Circle { fn area(&self) -> f64 { std::f64::consts::PI * self.r * self.r } }
+impl Shape for Square {
+    fn area(&self) -> f64 { self.side * self.side }
+    fn describe(&self) -> String { format!("square of side {}", self.side) }
+}
+
+fn largest<T: PartialOrd + Copy>(items: &[T]) -> T {
+    let mut best = items[0];
+    for &x in items { if x > best { best = x; } }
+    best
+}
+
+fn show_all(items: &[impl Display]) -> String {
+    items.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
+}
+
+fn main() {
+    let shapes: Vec<Box<dyn Shape>> = vec![Box::new(Circle { r: 1.0 }), Box::new(Square { side: 3.0 })];
+    for s in &shapes { println!("{}", s.describe()); }
+    println!("{} {} {}", largest(&[3, 9, 2]), largest(&[1.5, 0.5]), show_all(&["a", "b"]));
+}
+// output:
+// shape with area 3.14
+// square of side 3
+// 9 1.5 a, b
+```
+
+In words: `Circle` uses the default `describe`, `Square` overrides it, and `Box<dyn Shape>` lets one vector hold both, calling through a vtable. `largest` works for any type that can be compared and copied, and the compiler generates one version for integers and one for floats. Common standard traits include `Debug`, `Clone`, `PartialEq`, `Display`, `Iterator` and `From` ([Generics & Variance](../../languages/generics-and-variance/)).
+
+## Iterators
+
+Iterator adapters (`map`, `filter`, `zip`, `enumerate`, `take`, …) are lazy and chain into pipelines that compile to tight loops, usually as fast as a hand-written `for`.
+
+```rust
+fn main() {
+    let words = ["apple", "bob", "kayak", "rust", "level"];
+    let palindromes: Vec<&str> = words
+        .iter()
+        .copied()
+        .filter(|w| w.chars().eq(w.chars().rev()))
+        .collect();
+    println!("{palindromes:?}");
+
+    let total: i32 = (1..=10).filter(|n| n % 2 == 0).map(|n| n * n).sum();
+    let pairs: Vec<(usize, char)> = "abc".chars().enumerate().collect();
+    let max_len = words.iter().map(|w| w.len()).max();
+    println!("{total} {pairs:?} {max_len:?}");
+
+    let mut fib = (0u64, 1u64);
+    let first_10: Vec<u64> = std::iter::from_fn(|| {
+        let next = fib.0;
+        fib = (fib.1, fib.0 + fib.1);
+        Some(next)
+    }).take(10).collect();
+    println!("{first_10:?}");
+}
+// output:
+// ["bob", "kayak", "level"]
+// 220 [(0, 'a'), (1, 'b'), (2, 'c')] Some(5)
+// [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+```
+
+In words: the pipeline keeps the three palindromes, and the sum of squares of the even numbers up to 10 is 4 + 16 + 36 + 64 + 100 = 220. `max` returns an `Option` because the iterator could be empty. `from_fn` builds an infinite iterator from a closure, and `take(10)` stops it, so laziness makes infinite sequences safe.
+
+## Smart Pointers
+
+`Box<T>` puts a value on the heap with one owner. `Rc<T>` shares ownership with a reference count (one thread); `Arc<T>` does the same atomically across threads. `RefCell<T>` moves the borrow check to run time, allowing mutation through a shared reference (interior mutability).
+
+```rust
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Debug)]
+enum List {
+    Cons(i32, Box<List>),                    // recursive type needs indirection
+    Nil,
+}
+
+fn main() {
+    let list = List::Cons(1, Box::new(List::Cons(2, Box::new(List::Nil))));
+    println!("{list:?}");
+
+    let shared = Rc::new(RefCell::new(vec![1, 2]));
+    let other = Rc::clone(&shared);         // second owner, same vector
+    other.borrow_mut().push(3);             // mutate through a shared handle
+    println!("{:?} owners={}", shared.borrow(), Rc::strong_count(&shared));
+
+    let cell = RefCell::new(5);
+    let r1 = cell.borrow_mut();
+    let r2 = cell.try_borrow_mut();          // a second mutable borrow fails at run time
+    println!("{} {}", r1, r2.is_err());
+}
+// output:
+// Cons(1, Cons(2, Nil))
+// [1, 2, 3] owners=2
+// 5 true
+```
+
+In words: a recursive enum needs `Box` because its size must be known at compile time. `Rc<RefCell<…>>` lets two owners mutate one vector, so both see `[1, 2, 3]` and the count is 2. `RefCell` still enforces one mutable borrow at a time, but at run time: `try_borrow_mut` returns an error here, and `borrow_mut` would panic.
+
+## Concurrency
+
+Threads come from `std::thread`; data is shared with `Arc` and protected with `Mutex` or atomics, or sent through channels. The traits `Send` (safe to move to another thread) and `Sync` (safe to share) are checked by the compiler, so a data race in safe Rust does not compile ([Concurrency Models](../../languages/concurrency-models/)). Async code uses `async`/`await` with a runtime such as Tokio.
+
+```rust
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+
+fn main() {
+    let counter = Arc::new(Mutex::new(0));
+    let hits = Arc::new(AtomicU64::new(0));
+    let mut handles = vec![];
+    for _ in 0..4 {
+        let counter = Arc::clone(&counter);
+        let hits = Arc::clone(&hits);
+        handles.push(thread::spawn(move || {
+            for _ in 0..100_000 {
+                *counter.lock().unwrap() += 1;           // the lock is released at the end of the statement
+                hits.fetch_add(1, Ordering::Relaxed);
+            }
+        }));
+    }
+    for h in handles { h.join().unwrap(); }
+    println!("{} {}", *counter.lock().unwrap(), hits.load(Ordering::Relaxed));
+
+    let (tx, rx) = mpsc::channel();
+    for id in 0..3 {
+        let tx = tx.clone();
+        thread::spawn(move || tx.send(id * 10).unwrap());
+    }
+    drop(tx);                                            // close the original sender
+    let mut got: Vec<i32> = rx.iter().collect();         // ends when all senders are dropped
+    got.sort();
+    println!("{got:?}");
+
+    let data = vec![1, 2, 3];
+    let sum = thread::scope(|s| s.spawn(|| data.iter().sum::<i32>()).join().unwrap());
+    println!("{sum} {data:?}");
+}
+// output:
+// 400000 400000
+// [0, 10, 20]
+// 6 [1, 2, 3]
+```
+
+In words: four threads add 100,000 each, and both the mutex counter and the atomic end at 400,000. Sharing a plain `Vec` or an `Rc` across threads would be a compile error because they are not `Sync` or `Send`. The channel collects one message per thread; results are sorted because arrival order varies. Scoped threads can borrow local data such as `data` because the scope guarantees they finish first.
+
+## Unsafe
+
+`unsafe` blocks allow five extra operations, mainly dereferencing raw pointers and calling `unsafe` functions (including C code through FFI). The compiler still checks everything else; the programmer promises the rules hold inside the block. Safe abstractions such as `Vec` are built on small amounts of `unsafe`.
+
+```rust
+fn main() {
+    let mut x = 10;
+    let p = &mut x as *mut i32;          // creating a raw pointer is safe
+    unsafe {
+        *p += 1;                         // dereferencing it is not
+    }
+    println!("{x}");
+
+    let v = vec![1, 2, 3];
+    let third = unsafe { *v.get_unchecked(2) };   // skips the bounds check
+    println!("{third}");
+}
+// output:
+// 11
+// 3
+```
+
+In words: the raw pointer write changes `x` to 11, and `get_unchecked` reads index 2 without a bounds check. Calling `get_unchecked(10)` would be undefined behaviour, exactly as in C. Keeping `unsafe` small and wrapped in safe functions means memory bugs can only come from those few audited blocks.
+
+## Pitfalls
+
+```rust
+use std::collections::HashMap;
+use std::convert::TryFrom;                         // in the prelude from edition 2021; explicit for older editions
+
+fn main() {
+    let v: Vec<i32> = Vec::new();
+    println!("{:?}", v.first());                  // None, not a crash
+    // let x = v[0];                              // panics at run time: index out of bounds
+
+    let r: Result<i32, String> = Err("bad".into());
+    println!("{}", r.clone().unwrap_or(-1));      // unwrap() here would panic
+
+    let s = String::from("héllo");
+    println!("{}", s.chars().nth(1).unwrap());     // &s[1..2] would panic: not a char boundary
+
+    let mut scores: HashMap<String, i32> = HashMap::new();
+    scores.insert("ana".to_string(), 1);
+    if let Some(score) = scores.get_mut("ana") {   // borrow the value, not the map, while updating
+        *score += 10;
+    }
+    println!("{:?}", scores.get("ana"));
+
+    let a: i32 = 300;
+    let b = a as u8;                               // as truncates silently
+    let c = u8::try_from(a);                       // try_from reports the overflow
+    println!("{b} {}", c.is_err());
+}
+// output:
+// None
+// -1
+// é
+// Some(11)
+// 44 true
+```
+
+In words: indexing (`v[0]`, `&s[1..2]`) and `unwrap` are the main sources of panics in safe Rust; prefer `get`, `chars` and `?` or `unwrap_or`. Fighting the borrow checker over maps is usually solved with `get_mut` or the `entry` API. `as` casts truncate, so 300 becomes 44 as a `u8`; `try_from` returns an error instead.
+
+<Callout type="pitfall">
+Do not try to write C++ or Java structure in Rust. Object graphs with parent pointers, shared mutable state everywhere and long-lived references stored in structs fight the borrow checker, and `Rc<RefCell<…>>` or `clone()` scattered to silence it hides the problem. Prefer tree-shaped ownership, indices into a `Vec` instead of references for graphs, passing data by value through functions, and short-lived borrows; the compiler then becomes an ally instead of an obstacle.
+</Callout>
+
+## Tooling
+
+```bash
+cargo new app && cd app        # new project with Cargo.toml and src/main.rs
+cargo add serde --features derive   # add a dependency, pinned in Cargo.lock
+cargo run                      # build and run (debug)
+cargo build --release          # optimised build
+cargo test                     # unit tests (#[test]) and doc tests
+cargo clippy && cargo fmt      # lints and formatting
+cargo doc --open               # documentation for the project and its dependencies
+```
+
+`rustup` installs and updates the toolchain; Cargo builds, tests, documents and publishes to crates.io, with `Cargo.lock` pinning exact versions ([Dependencies & Versioning](../../software-engineering/dependencies-and-versioning/)). Clippy catches hundreds of common mistakes and unidiomatic patterns. Editions (2018, 2021, 2024) let the language evolve without breaking old code.

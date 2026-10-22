@@ -74,7 +74,9 @@ export const areas: Area[] = [
       { id: 'case-studies', title: 'Design Case Studies' },
       { id: 'cloud', title: 'Cloud Computing' },
       { id: 'software-engineering', title: 'Software Engineering' },
-      { id: 'appendix', title: 'Appendix' },
+      { id: 'appendix-reference', title: 'Appendix A' },
+      { id: 'appendix-languages', title: 'Appendix B' },
+      { id: 'appendix-tools', title: 'Appendix C' },
     ],
   },
   {

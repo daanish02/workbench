@@ -1,0 +1,252 @@
+---
+title: "MySQL Sheet"
+description: "MySQL on one page, from the client and table design to queries, upserts, JSON, InnoDB's clustered indexes, locking and isolation, replication, and how it differs from PostgreSQL."
+order: 4
+tier: core
+takeaways:
+  - "MySQL is the most widely deployed open-source database, behind much of the web (WordPress, Facebook, GitHub, Shopify). Its default engine, **InnoDB**, is transactional and ACID."
+  - "InnoDB stores each table **clustered by its primary key**: rows live inside the primary-key B-tree, and secondary indexes point to the primary key. Keep primary keys short and increasing."
+  - "Use `utf8mb4`, not `utf8` (which in MySQL means at most 3 bytes and cannot store emoji), and keep strict `sql_mode` on so bad data is rejected instead of silently changed."
+  - "Upserts are `INSERT … ON DUPLICATE KEY UPDATE`; CTEs, window functions and a `JSON` type exist since MySQL 8.0."
+  - "The default isolation level is **Repeatable Read**, enforced with next-key (gap) locks, which can cause unexpected lock waits and deadlocks."
+resources:
+  - title: "MySQL for Developers (PlanetScale)"
+    url: "https://planetscale.com/learn/courses/mysql-for-developers"
+    note: "A free video course on schema design, indexes, query optimisation and examples, by people who run MySQL at scale."
+  - title: "Use The Index, Luke"
+    url: "https://use-the-index-luke.com/"
+    note: "How indexes work and how to write queries that use them, with MySQL-specific notes."
+  - title: "DB Fiddle"
+    url: "https://www.db-fiddle.com/"
+    note: "Runs the snippets on this page against real MySQL (and PostgreSQL) servers in the browser."
+---
+
+**MySQL** has been the default database of the web since the LAMP stack (Linux, Apache, MySQL, PHP) of the late 1990s; Oracle owns it today, and **MariaDB** is a community fork that stays largely compatible. Its strengths are operational: fast simple reads and writes, mature replication, and a huge base of tooling and expertise. This sheet covers MySQL 8.0 and 8.4 LTS with the InnoDB engine, in the same order as the [PostgreSQL Sheet](../postgres-sheet/), and ends with what differs between the two. The general theory is in the [Databases](../../databases/relational-model/) section.
+
+Every block after the sample schema assumes that schema exists: run it first, then the blocks in order, in the `mysql` client or on DB Fiddle with MySQL 8.
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| High-throughput simple queries (primary-key lookups, short transactions) | Complex analytical SQL: the optimiser is weaker than Postgres's on big joins and subqueries |
+| Replication and scale-out tooling: binlog replicas, Group Replication, Vitess, PlanetScale | Fewer advanced types and features (no arrays, no partial indexes, no transactional DDL; expression indexes only since 8.0.13) |
+| Many connections per server (threads, not processes) | Surprising defaults in older setups: non-strict modes, `utf8` meaning 3 bytes, case-insensitive comparisons |
+| Ubiquity: every host, framework and ORM supports it | Licensing split: GPL community edition, commercial enterprise features |
+
+## The mysql Client
+
+```bash
+mysql -h 127.0.0.1 -u app -p shop        # connect; -p prompts for the password
+mysql -u app -p -e "SELECT NOW();" shop  # run one statement and exit
+```
+
+| Command | Shows |
+| --- | --- |
+| `SHOW DATABASES;`, `USE shop;` | databases; switch to one |
+| `SHOW TABLES;` | tables in the current database |
+| `DESCRIBE users;` | columns of `users` |
+| `SHOW CREATE TABLE users\G` | the full DDL, one field per line (`\G` instead of `;`) |
+| `SHOW INDEX FROM orders;` | indexes |
+| `SHOW PROCESSLIST;` | running connections and queries |
+| `SHOW ENGINE INNODB STATUS\G` | locks, the latest deadlock, buffer pool use |
+
+## Sample Schema
+
+```sql
+CREATE TABLE users (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    email       VARCHAR(255) NOT NULL UNIQUE,
+    name        VARCHAR(100) NOT NULL,
+    country     CHAR(2) NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;
+
+CREATE TABLE orders (
+    id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id     BIGINT UNSIGNED NOT NULL,
+    amount      DECIMAL(10, 2) NOT NULL,
+    status      ENUM('new', 'paid', 'shipped') NOT NULL DEFAULT 'new',
+    placed_on   DATE NOT NULL,
+    CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    CONSTRAINT chk_amount CHECK (amount > 0)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+INSERT INTO users (email, name, country) VALUES
+    ('ana@example.com', 'Ana', 'PT'),
+    ('bo@example.com',  'Bo',  'NO'),
+    ('cy@example.com',  'Cy',  'PT');
+
+INSERT INTO orders (user_id, amount, status, placed_on) VALUES
+    (1, 30.00, 'paid',    '2026-01-05'),
+    (1, 12.50, 'shipped', '2026-01-20'),
+    (2, 99.90, 'paid',    '2026-02-02'),
+    (1, 45.00, 'new',     '2026-02-14'),
+    (2, 20.00, 'paid',    '2026-03-01');
+```
+
+`AUTO_INCREMENT` generates ids; `DECIMAL` stores money exactly; `ENUM` restricts a column to listed strings. `utf8mb4` is real UTF-8 (up to 4 bytes per character); the `_ai_ci` collation compares accent- and case-insensitively, so `'ana' = 'ANA'` is true. InnoDB creates an index for the foreign key automatically. `CHECK` constraints are enforced from MySQL 8.0.16; older versions parsed and ignored them.
+
+<SqlSchema db="mysql" />
+
+## Insert, Update, Upsert
+
+```sql
+INSERT INTO users (email, name, country) VALUES ('di@example.com', 'Di', 'NO');
+SELECT LAST_INSERT_ID() AS new_id;                  -- id generated on this connection
+
+UPDATE orders SET status = 'shipped'
+WHERE status = 'paid' AND placed_on < '2026-02-01';
+SELECT ROW_COUNT() AS changed;
+
+INSERT INTO users (email, name, country) VALUES ('ana@example.com', 'Ana Silva', 'PT')
+AS new
+ON DUPLICATE KEY UPDATE name = new.name;            -- upsert on the UNIQUE email
+SELECT id, name FROM users WHERE email = 'ana@example.com';
+
+DELETE FROM users WHERE email = 'di@example.com';
+-- output: PENDING
+```
+
+In words: MySQL has no `RETURNING`, so generated ids come from `LAST_INSERT_ID()`, which is per connection and therefore safe under concurrency. `ROW_COUNT()` reports how many rows the last statement changed (1 here: only order 1 was paid and placed before February). `ON DUPLICATE KEY UPDATE` updates the existing row when an insert hits a `PRIMARY KEY` or `UNIQUE` index; the `AS new` alias (8.0.19+) replaces the older `VALUES(name)` function. `INSERT IGNORE` skips duplicates silently and also hides other errors, so avoid it.
+
+## Querying and Joining
+
+```sql
+SELECT u.name, COUNT(o.id) AS orders, COALESCE(SUM(o.amount), 0) AS total
+FROM users AS u
+LEFT JOIN orders AS o ON o.user_id = u.id
+GROUP BY u.id, u.name
+ORDER BY total DESC;
+
+WITH monthly AS (
+    SELECT DATE_FORMAT(placed_on, '%Y-%m') AS month, SUM(amount) AS revenue
+    FROM orders
+    GROUP BY month
+)
+SELECT month, revenue,
+       SUM(revenue) OVER (ORDER BY month) AS running_total
+FROM monthly
+ORDER BY month;
+-- output: PENDING
+```
+
+In words: joins, `GROUP BY`, CTEs and window functions work as in standard SQL ([SQL Fundamentals](../../databases/sql-fundamentals/)); CTEs and window functions need MySQL 8.0 or later. With the default `ONLY_FULL_GROUP_BY` mode, every selected column must be grouped or aggregated, which is why `u.id` and `u.name` are both in the `GROUP BY`. Date formatting uses MySQL's own functions (`DATE_FORMAT`, `DATE_ADD`, `TIMESTAMPDIFF`).
+
+## JSON
+
+```sql
+CREATE TABLE events (
+    id       BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    payload  JSON NOT NULL,
+    type     VARCHAR(20) AS (payload->>'$.type') STORED,   -- generated column from the JSON
+    INDEX idx_type (type)
+);
+INSERT INTO events (payload) VALUES
+    ('{"type": "click", "user": {"id": 1}, "ms": 120}'),
+    ('{"type": "view",  "user": {"id": 2}, "ms": 30}');
+
+SELECT type,
+       payload->'$.user.id' AS user_id,                  -- -> returns JSON
+       JSON_EXTRACT(payload, '$.ms') AS ms,
+       JSON_CONTAINS(payload, '"click"', '$.type') AS is_click
+FROM events
+ORDER BY id;
+-- output: PENDING
+```
+
+In words: JSON paths start with `$`; `->` returns a JSON value and `->>` unquotes it to text. JSON columns cannot be indexed directly, so the usual pattern is a **generated column** that extracts a field, with an ordinary index on it (or, from 8.0.13, a functional index; multi-valued indexes cover JSON arrays).
+
+## InnoDB Indexes and EXPLAIN
+
+InnoDB stores every table as a B-tree ordered by the **primary key** (a **clustered index**): the leaf pages hold the rows themselves. Each **secondary index** stores the indexed columns plus the primary key, so a lookup through a secondary index finds the primary key and then searches the clustered index a second time, unless the index already contains every column the query needs (a **covering index**) ([Indexes](../../databases/indexes/)).
+
+```sql
+CREATE INDEX idx_status_placed ON orders (status, placed_on);   -- composite, leftmost first
+
+EXPLAIN
+SELECT id, placed_on FROM orders
+WHERE status = 'paid' AND placed_on >= '2026-02-01';
+-- output: PENDING
+```
+
+In words: `EXPLAIN` shows the access `type` (`ALL` is a full scan, `ref` and `range` use an index, `const` is a single-row primary-key lookup), the `key` chosen, the estimated `rows`, and in `Extra` "Using index" when the index covers the query. This query can be covered because `id` (the primary key) is stored in every secondary index. `EXPLAIN ANALYZE` (8.0.18+) actually runs the query and reports real timings. Because rows are stored in primary-key order, random keys such as UUIDv4 scatter inserts across the whole tree and fragment it; use auto-increment or time-ordered ids (UUIDv7).
+
+## Transactions and Locking
+
+InnoDB is ACID with MVCC like Postgres, but its default isolation level is **Repeatable Read**: a transaction sees one snapshot for all its plain reads. Locking reads and writes take **next-key locks**, which lock index records and the gaps between them, so other transactions cannot insert into a range being read with a lock (this prevents phantoms) ([Transactions & ACID](../../databases/transactions-and-acid/)).
+
+```sql
+SELECT @@transaction_isolation;
+
+START TRANSACTION;
+SELECT amount FROM orders WHERE id = 3 FOR UPDATE;      -- lock the row
+UPDATE orders SET amount = amount - 5 WHERE id = 3;
+SAVEPOINT s1;
+UPDATE orders SET amount = 1 WHERE id = 4;
+ROLLBACK TO SAVEPOINT s1;
+COMMIT;
+SELECT id, amount FROM orders WHERE id IN (3, 4) ORDER BY id;
+-- output: PENDING
+```
+
+In words: the session reports `REPEATABLE-READ`. `FOR UPDATE` locks order 3 until `COMMIT`; the savepoint undoes the change to order 4, so only order 3 changes. Unlike Postgres, an error inside a MySQL transaction does not abort the whole transaction: the failed statement is rolled back and the others stand, so the application must decide whether to roll back. DDL statements (`CREATE`, `ALTER`) commit implicitly and cannot be rolled back.
+
+## Users, Replication, Operations
+
+```sql
+CREATE USER 'app'@'%' IDENTIFIED BY 'change-me';
+GRANT SELECT, INSERT, UPDATE, DELETE ON shop.* TO 'app'@'%';
+SHOW GRANTS FOR 'app'@'%';
+```
+
+```bash
+mysqldump --single-transaction --routines shop > shop.sql   # consistent logical backup without locking InnoDB tables
+mysql shop_copy < shop.sql                                  # restore
+mysqlsh -- util dump-instance /backups/full                 # faster parallel dump (MySQL Shell)
+```
+
+- Accounts are `'user'@'host'` pairs: the same name from a different host is a different account.
+- **Replication** ships the **binary log** (binlog) of changes from a source to replicas; GTIDs identify each transaction so replicas can switch sources. Group Replication and InnoDB Cluster add automatic failover; Vitess shards MySQL horizontally ([Replication](../../distributed-systems/replication/)).
+- The **slow query log** (`long_query_time`) and `performance_schema` / `sys` schema find expensive queries.
+- `innodb_buffer_pool_size` is the most important setting: the memory cache for data and indexes, commonly 50–75% of RAM on a dedicated server.
+
+## MySQL vs PostgreSQL
+
+| Topic | MySQL (InnoDB) | PostgreSQL |
+| --- | --- | --- |
+| Table storage | clustered by primary key | heap, all indexes secondary |
+| Default isolation | Repeatable Read (next-key locks) | Read Committed |
+| Error inside a transaction | that statement fails, transaction continues | whole transaction aborted until rollback |
+| Schema changes | implicit commit, many online (`ALGORITHM=INSTANT`) | transactional, rolled back on failure |
+| Get generated values back | `LAST_INSERT_ID()` | `RETURNING` |
+| Upsert | `ON DUPLICATE KEY UPDATE` | `ON CONFLICT … DO UPDATE` |
+| Strings | case-insensitive by default collation | case-sensitive |
+| Types | `JSON`, `ENUM`, no arrays | `jsonb`, arrays, ranges, custom types |
+| Connections | thread per connection | process per connection (pool them) |
+| Identifier quoting | backticks: `` `order` `` | double quotes: `"order"` |
+
+Both are excellent general-purpose databases. Postgres tends to be chosen for rich SQL, data integrity and extensions; MySQL for simple high-volume workloads, existing expertise and its scale-out ecosystem.
+
+## Pitfalls
+
+- **`utf8` is not UTF-8**: it is the 3-byte `utf8mb3`; emoji and some CJK characters fail or are cut. Use `utf8mb4` everywhere, including the connection.
+- **Non-strict `sql_mode`**: on old or misconfigured servers, too-long strings are truncated and invalid dates become `0000-00-00` with only a warning. Keep `STRICT_TRANS_TABLES` on.
+- **Implicit type conversion**: `WHERE varchar_col = 123` converts every row to a number and cannot use the index; compare strings with strings.
+- **Case-insensitive collations**: `'a' = 'A'` is true, which surprises uniqueness checks and joins; use a `_bin` or `_cs` collation where case matters.
+- **Large `OFFSET`s** scan and discard rows; paginate by key.
+- **`TIMESTAMP` range** ends in 2038; use `DATETIME` for dates beyond that.
+
+<Callout type="pitfall">
+`ALTER TABLE` on a big table may copy the whole table and block writes, depending on the change. Check whether the change supports `ALGORITHM=INSTANT` or `INPLACE, LOCK=NONE` (adding a column at the end usually does; changing a column type usually does not), and use online schema-change tools such as gh-ost or pt-online-schema-change for the rest. Test on production-sized data first.
+</Callout>
+
+## Tooling
+
+```bash
+docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=dev -p 3306:3306 mysql:8.4   # local server
+mysql -h 127.0.0.1 -u root -p                                                # client
+mysqlsh                                                                      # MySQL Shell: SQL, JS and Python modes, admin utilities
+```
+
+GUI clients include MySQL Workbench, DBeaver and DataGrip. Percona Toolkit (`pt-query-digest`, `pt-online-schema-change`) and gh-ost help operate large installations. Managed services include Amazon RDS and Aurora MySQL, Google Cloud SQL, Azure Database for MySQL and PlanetScale.

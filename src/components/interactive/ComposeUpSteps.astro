@@ -1,0 +1,157 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="depends_on waits for healthy, not just started"
+  caption="What docker compose up does with the compose.yaml above: create the project network and the volume, start db, then start app. With condition: service_healthy, app waits until db's healthcheck passes. With a plain depends_on list, app starts as soon as the db container exists, before Postgres accepts connections, and its first connection fails."
+>
+  <compose-up-steps>
+    <input type="hidden" data-mode value="healthy" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="healthy" aria-pressed="true">service_healthy</button>
+      <button type="button" class="btn" data-choice="started" aria-pressed="false">plain depends_on</button>
+    </span>
+    <svg class="cu-svg" data-svg viewBox="0 0 440 170" role="img" aria-label="Compose project network with the app and db containers and the pgdata volume"></svg>
+    <p class="cu-msg" data-msg></p>
+    <p class="cu-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </compose-up-steps>
+</Figure>
+
+<style>
+  .cu-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .cu-svg :global(rect.net) {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke: var(--g-blue);
+    stroke-dasharray: 5 3;
+  }
+  .cu-svg :global(rect.none) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 4 3;
+  }
+  .cu-svg :global(rect.starting) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .cu-svg :global(rect.up) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .cu-svg :global(rect.failed) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+  }
+  .cu-svg :global(path.dep) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.3;
+    stroke-dasharray: 4 3;
+  }
+  .cu-svg :global(path.conn) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .cu-svg :global(path.conn.bad) {
+    stroke: var(--g-red);
+    stroke-dasharray: 5 4;
+  }
+  .cu-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cu-svg :global(text.m) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .cu-svg :global(text.l) {
+    text-anchor: start;
+  }
+  .cu-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cu-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  // states: '' not created, starting, up (running or healthy), failed; conn: app's connection to db
+  interface Frame { net: boolean; db: string; dbLabel: string; app: string; appLabel: string; conn: string; msg: string }
+
+  function frames(mode: string): Frame[] {
+    const base = { net: true, db: '', dbLabel: 'not created', app: '', appLabel: 'not created', conn: '' };
+    const out: Frame[] = [
+      { ...base, net: false, msg: 'docker compose up reads compose.yaml. Nothing exists yet.' },
+      { ...base, msg: 'Compose creates the project network (shop_default) and the named volume pgdata.' },
+      { ...base, db: 'starting', dbLabel: 'health: starting', msg: 'db has no dependencies, so it starts first. Postgres is initialising; pg_isready fails for now.' },
+    ];
+    if (mode === 'healthy') {
+      out.push({ ...base, db: 'starting', dbLabel: 'health: starting', app: '', appLabel: 'waiting', msg: 'app depends on db with condition: service_healthy, so Compose holds it back and keeps polling the healthcheck every 2 s.' });
+      out.push({ ...base, db: 'up', dbLabel: 'healthy', app: '', appLabel: 'waiting', msg: 'pg_isready succeeds: db is healthy.' });
+      out.push({ ...base, db: 'up', dbLabel: 'healthy', app: 'up', appLabel: 'running', conn: 'ok', msg: 'Now app starts and connects to db:5432 through the project network on the first try.' });
+    } else {
+      out.push({ ...base, db: 'starting', dbLabel: 'health: starting', app: 'starting', appLabel: 'running', msg: 'A plain depends_on: [db] only waits for the db container to start, so app starts immediately.' });
+      out.push({ ...base, db: 'starting', dbLabel: 'health: starting', app: 'failed', appLabel: 'exited (1)', conn: 'bad', msg: 'app connects to db:5432 before Postgres listens: connection refused, and app exits.' });
+      out.push({ ...base, db: 'up', dbLabel: 'healthy', app: 'failed', appLabel: 'exited (1)', msg: 'db becomes healthy a moment later, but app is already down unless it retries or has a restart policy. Use service_healthy, and make the app retry anyway: databases also restart in production.' });
+    }
+    return out;
+  }
+
+  class ComposeUpSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!;
+      const reset = () => {
+        this.fr = frames(mode.value);
+        this.i = 0;
+        this.draw();
+      };
+      mode.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      let s = `<rect class="${f.net ? 'net' : 'none'}" x="6" y="6" width="428" height="108" rx="8" />`;
+      s += `<text class="m l" x="16" y="20">${f.net ? 'network shop_default' : 'no network yet'}</text>`;
+      s += '<text class="m l" x="16" y="38">host :8000</text><path class="dep" d="M 40 46 L 40 64" />';
+      s += `<rect class="${f.app || 'none'}" x="20" y="66" width="150" height="40" rx="6" />`;
+      s += `<text x="95" y="78">app</text><text class="m" x="95" y="96">${f.appLabel}</text>`;
+      s += `<rect class="${f.db || 'none'}" x="270" y="66" width="150" height="40" rx="6" />`;
+      s += `<text x="345" y="78">db</text><text class="m" x="345" y="96">${f.dbLabel}</text>`;
+      s += '<path class="dep" d="M 170 74 L 268 74" /><text class="m" x="220" y="64">depends_on</text>';
+      if (f.conn) s += `<path class="conn${f.conn === 'bad' ? ' bad' : ''}" d="M 170 96 L 268 96" /><text class="m" x="220" y="106">db:5432</text>`;
+      s += `<rect class="${f.net ? 'up' : 'none'}" x="270" y="128" width="150" height="34" rx="6" />`;
+      s += `<text x="345" y="145">volume pgdata</text><path class="dep" d="M 345 106 L 345 128" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · db ${f.dbLabel} · app ${f.appLabel}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('compose-up-steps', ComposeUpSteps);
+</script>

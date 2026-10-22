@@ -1,0 +1,140 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Names inside the network, published ports from outside"
+  caption="Two containers on the user-defined bridge network appnet: web listens on 8000 and is published with -p 8080:8000; db listens on 5432 and is not published. Pick a request. Inside appnet, Docker's DNS turns the name db into the db container's address. From the host only published ports are reachable, and inside a container localhost means that container itself."
+>
+  <docker-network>
+    <input type="hidden" data-req value="browser" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="browser" aria-pressed="true">browser → localhost:8080</button>
+      <button type="button" class="btn" data-choice="name" aria-pressed="false">web → db:5432</button>
+      <button type="button" class="btn" data-choice="local" aria-pressed="false">web → localhost:5432</button>
+      <button type="button" class="btn" data-choice="unpub" aria-pressed="false">browser → localhost:5432</button>
+    </span>
+    <svg class="dn-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="Host with a browser, a published port and a bridge network holding web and db containers"></svg>
+    <p class="dn-stat mono" data-stat></p>
+  </docker-network>
+</Figure>
+
+<style>
+  .dn-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .dn-svg :global(rect.zone) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .dn-svg :global(rect.net) {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke: var(--g-blue);
+    stroke-dasharray: 5 3;
+  }
+  .dn-svg :global(rect.box) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .dn-svg :global(rect.box.src) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .dn-svg :global(rect.port) {
+    fill: var(--bg);
+    stroke: var(--border-strong);
+  }
+  .dn-svg :global(rect.port.open) {
+    stroke: var(--g-green);
+  }
+  .dn-svg :global(path.ok) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2.2;
+  }
+  .dn-svg :global(path.bad) {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 2.2;
+    stroke-dasharray: 5 4;
+  }
+  .dn-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .dn-svg :global(text.m) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .dn-svg :global(text.c) {
+    text-anchor: middle;
+  }
+  .dn-svg :global(text.x) {
+    fill: var(--g-red);
+    font-size: 16px;
+    text-anchor: middle;
+  }
+  .dn-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  // path: SVG path of the request; ok: whether it connects; src: which box sends it
+  const REQS: Record<string, { src: string; path: string; ok: boolean; xAt?: [number, number]; stat: string }> = {
+    browser: {
+      src: 'browser', ok: true,
+      path: 'M 80 70 L 128 70 M 172 70 L 206 70 L 206 92 L 236 92',
+      stat: 'localhost:8080 on the host · published to web:8000 · connects',
+    },
+    name: {
+      src: 'web', ok: true,
+      path: 'M 296 120 L 296 140 L 380 140 L 380 120',
+      stat: 'db resolved by Docker DNS to the db container · 5432 · connects',
+    },
+    local: {
+      src: 'web', ok: false,
+      path: 'M 270 120 C 270 150, 230 150, 236 108',
+      xAt: [244, 146],
+      stat: 'localhost = the web container itself · nothing on 5432 · refused',
+    },
+    unpub: {
+      src: 'browser', ok: false,
+      path: 'M 80 140 L 114 140',
+      xAt: [120, 140],
+      stat: 'localhost:5432 on the host · db port not published · refused',
+    },
+  };
+
+  class DockerNetwork extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-req]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const r = REQS[this.querySelector<HTMLInputElement>('[data-req]')!.value];
+      let s = '<rect class="zone" x="92" y="6" width="344" height="188" rx="8" /><text class="m" x="102" y="20">host</text>';
+      s += `<rect class="box${r.src === 'browser' ? ' src' : ''}" x="4" y="50" width="76" height="130" rx="6" />`;
+      s += '<text class="c" x="42" y="104">browser</text><text class="m c" x="42" y="120">on the host</text>';
+      s += '<rect class="port open" x="128" y="58" width="44" height="24" rx="4" /><text class="m c" x="150" y="70">8080</text>';
+      s += '<rect class="port" x="128" y="128" width="44" height="24" rx="4" /><text class="m c" x="150" y="140">5432</text>';
+      s += '<text class="m c" x="150" y="46">-p 8080:8000</text><text class="m c" x="150" y="166">not published</text>';
+      s += '<rect class="net" x="196" y="30" width="232" height="128" rx="8" /><text class="m" x="206" y="44">network appnet</text>';
+      s += `<rect class="box${r.src === 'web' ? ' src' : ''}" x="236" y="64" width="90" height="56" rx="6" />`;
+      s += '<text class="c" x="281" y="84">web</text><text class="m c" x="281" y="102">:8000</text>';
+      s += '<rect class="box" x="340" y="64" width="80" height="56" rx="6" />';
+      s += '<text class="c" x="380" y="84">db</text><text class="m c" x="380" y="102">:5432</text>';
+      s += `<path class="${r.ok ? 'ok' : 'bad'}" d="${r.path}" />`;
+      if (r.xAt) s += `<text class="x" x="${r.xAt[0]}" y="${r.xAt[1]}">✕</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = r.stat;
+    }
+  }
+  customElements.define('docker-network', DockerNetwork);
+</script>

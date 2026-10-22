@@ -1,0 +1,404 @@
+---
+title: "Git & GitHub"
+description: "Git and the GitHub CLI on one page: searchable command tables, everyday workflows from branch to merged pull request, history editing, recovery, and gh for pull requests, issues, Actions, releases and the API."
+order: 2
+tier: core
+takeaways:
+  - "Git commands read and change the same few things: the **working tree**, the **staging area** and the **commit graph**. Know which one a command touches."
+  - "`git status` and `git log --oneline --graph` are the two commands to run when you are unsure what state you are in."
+  - "Commands that rewrite history (`reset --hard`, `rebase`, `commit --amend`, `push --force`) can lose work. Prefer `revert` on shared branches and `--force-with-lease` over `--force`."
+  - "Almost nothing committed is truly lost: `git reflog` lists where `HEAD` has been, so a bad reset can be undone."
+  - "The GitHub CLI `gh` does from the terminal what you would otherwise click through on github.com: create and review pull requests, watch CI runs, manage issues and releases, and script anything with `gh api`."
+resources:
+  - title: "Git documentation: command reference"
+    url: "https://git-scm.com/docs"
+    note: "The authoritative page for every command and option."
+  - title: "Pro Git (Chacon and Straub)"
+    url: "https://git-scm.com/book/en/v2"
+    note: "The free book on Git, from basics to internals, branching workflows and rewriting history."
+  - title: "GitHub CLI manual"
+    url: "https://cli.github.com/manual/"
+    note: "Every gh command and flag, including gh api and output formatting with --json and --jq."
+---
+
+Git stores history as a graph of commits, and every command moves something in that picture: a file in your **working tree**, a file in the **staging area** (the index), or a pointer such as a branch. The [Git](../../software-engineering/git-internals/) note explains that model and why it works the way it does; [Code Review](../../software-engineering/code-review/) and [CI/CD](../../software-engineering/ci-cd/) cover the practices around pull requests. This page is the working reference: two searchable tables (Git, then the GitHub CLI `gh`), followed by the everyday workflows written out step by step, history editing, and recovery.
+
+## Git Commands
+
+Type to filter by command or purpose (for example "undo", "remote" or "branch"), or choose a group. Options shown are the ones you will use most; `git <command> --help` lists the rest.
+
+<FilterTable placeholder="Filter commands, e.g. undo, remote, branch, stash">
+
+### Setup and Config
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git config --global user.name` | Set the author name on your commits | `git config --global user.name "Ada Lovelace"` |
+| `git config --global user.email` | Set the author email on your commits | `git config --global user.email "ada@example.com"` |
+| `git config --global init.defaultBranch` | Name the first branch of new repositories | `git config --global init.defaultBranch main` |
+| `git config --global pull.rebase` | Make `git pull` rebase instead of merge | `git config --global pull.rebase true` |
+| `git config --global alias.*` | Define a shortcut | `git config --global alias.lg "log --oneline --graph --all"` |
+| `git config --list --show-origin` | Show every setting and the file it came from | `git config --list --show-origin` |
+
+### Starting a Repository
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git init` | Turn the current folder into a repository | `git init` |
+| `git clone` | Copy a remote repository, with its history | `git clone https://github.com/user/repo.git` |
+| `git clone --depth 1` | Copy only the latest commit (fast, for CI or large repos) | `git clone --depth 1 https://github.com/user/repo.git` |
+
+### Looking at State
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git status` | Show changed, staged and untracked files and the current branch | `git status` |
+| `git status -s` | Short form of status, one line per file | `git status -s` |
+| `git diff` | Show unstaged changes | `git diff` |
+| `git diff --staged` | Show changes that are staged for the next commit | `git diff --staged` |
+| `git diff main...feature` | Show what a branch changed since it split from `main` | `git diff main...feature/login` |
+| `git log` | Show commit history (`--oneline` compact, `--graph` draws branches, `--all` every branch) | `git log --oneline --graph --all` |
+| `git log main..feature` | Commits on `feature` that are not on `main` | `git log --oneline main..feature/login` |
+| `git show` | Show one commit: its message and changes | `git show a1b2c3d` |
+| `git show branch:path` | Show a file as it is on another branch | `git show main:src/app.py` |
+| `git blame` | Show who last changed each line of a file | `git blame -L 10,30 src/app.py` |
+| `git shortlog -sn` | Count commits per author | `git shortlog -sn --since="1 year ago"` |
+
+### Saving Changes
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git add` | Stage a file for the next commit | `git add app.py` |
+| `git add -p` | Stage part of a file, hunk by hunk | `git add -p` |
+| `git commit` | Record the staged changes as a commit | `git commit -m "fix: handle empty input"` |
+| `git commit --amend` | Change the last commit's message or contents (rewrites it) | `git commit --amend --no-edit` |
+| `git commit --fixup` | Make a commit marked to be squashed into an earlier one | `git commit --fixup a1b2c3d` |
+| `git restore --staged` | Unstage a file, keeping its changes | `git restore --staged app.py` |
+| `git restore` | Discard unstaged edits to a file (permanent) | `git restore app.py` |
+| `git rm --cached` | Stop tracking a file but keep it on disk | `git rm --cached .env` |
+| `git mv` | Rename a file and stage the rename | `git mv old.py new.py` |
+
+### Branches
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git branch` | List local branches (`-a` includes remote ones, `-vv` shows tracking) | `git branch -vv` |
+| `git switch -c` | Create a branch and move to it | `git switch -c feature/login` |
+| `git switch` | Move to an existing branch (`-` for the previous one) | `git switch main` |
+| `git branch -d` | Delete a branch that is already merged | `git branch -d feature/login` |
+| `git branch -D` | Delete a branch even if unmerged (its commits become unreachable) | `git branch -D old-idea` |
+| `git branch -m` | Rename a branch | `git branch -m oldname newname` |
+| `git branch --merged` | List branches already merged into the current one | `git branch --merged main` |
+| `git worktree add` | Check out another branch in a second folder, without stashing | `git worktree add ../hotfix hotfix/1.2.1` |
+
+### Merging, Rebasing and Cherry-Picking
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git merge` | Join another branch's history into the current branch | `git merge feature/login` |
+| `git merge --no-ff` | Always create a merge commit, even when a fast-forward is possible | `git merge --no-ff feature/login` |
+| `git merge --squash` | Stage another branch's combined changes as one new commit | `git merge --squash feature/login` |
+| `git rebase` | Replay the current branch's commits on top of another (rewrites them) | `git rebase main` |
+| `git rebase -i` | Edit, squash, reorder or drop recent commits | `git rebase -i HEAD~3` |
+| `git rebase -i --autosquash` | Apply `--fixup` commits automatically | `git rebase -i --autosquash main` |
+| `git rebase --onto` | Move a range of commits onto a different base | `git rebase --onto main old-base feature` |
+| `git rebase --continue` / `--abort` | Resume or cancel a rebase after a conflict | `git rebase --continue` |
+| `git merge --abort` | Cancel a merge that hit conflicts | `git merge --abort` |
+| `git cherry-pick` | Copy one commit onto the current branch | `git cherry-pick a1b2c3d` |
+| `git config rerere.enabled` | Remember how you resolved a conflict and reuse it | `git config --global rerere.enabled true` |
+
+### Remotes
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git remote -v` | List remote names and URLs | `git remote -v` |
+| `git remote add` | Add a remote, such as the original repo of a fork | `git remote add upstream https://github.com/org/repo.git` |
+| `git fetch` | Download remote commits without changing your branches (`--prune` drops deleted ones) | `git fetch --prune origin` |
+| `git pull` | Fetch and integrate the remote branch (`--rebase` to rebase instead of merge) | `git pull --rebase` |
+| `git push -u` | Push a branch and set it to track the remote one | `git push -u origin feature/login` |
+| `git push --force-with-lease` | Force-push only if the remote is where you last saw it | `git push --force-with-lease` |
+| `git push --delete` | Delete a branch on the remote | `git push origin --delete old-idea` |
+| `git push --tags` | Push tags to the remote | `git push --tags` |
+
+### Stash
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git stash` | Shelve uncommitted changes and return to a clean tree (`-u` includes untracked files) | `git stash push -u -m "wip login"` |
+| `git stash pop` | Reapply the latest stash and remove it from the list | `git stash pop` |
+| `git stash list` | Show saved stashes | `git stash list` |
+| `git stash apply` | Reapply a stash and keep it in the list | `git stash apply stash@{1}` |
+| `git stash show -p` | Show a stash's changes as a diff | `git stash show -p stash@{0}` |
+
+### Undoing
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git reset --soft HEAD~1` | Undo the last commit, keeping its changes staged | `git reset --soft HEAD~1` |
+| `git reset HEAD~1` | Undo the last commit, keeping its changes unstaged | `git reset HEAD~1` |
+| `git reset --hard` | Move the branch and discard working changes (permanent for uncommitted work) | `git reset --hard origin/main` |
+| `git revert` | Add a new commit that undoes an earlier one; safe on shared branches | `git revert a1b2c3d` |
+| `git restore --source` | Bring a file back from an older commit | `git restore --source=HEAD~3 app.py` |
+| `git reflog` | List where `HEAD` has pointed, to recover lost commits | `git reflog` |
+| `git clean -n` | Preview untracked files that would be deleted | `git clean -n` |
+| `git clean -fd` | Delete untracked files and directories (permanent) | `git clean -fd` |
+
+### Searching History
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git grep` | Search tracked files for text | `git grep -n "TODO"` |
+| `git log -S` | Find commits that added or removed a string | `git log -S "retry_limit" --oneline` |
+| `git log -G` | Find commits whose diff matches a regular expression | `git log -G "timeout\s*=" --oneline` |
+| `git log -- path` | History of one file or folder (`--follow` across renames) | `git log --follow -- src/app.py` |
+| `git log --author` | Filter commits by author | `git log --author="Ada" --oneline` |
+| `git bisect` | Binary-search history for the commit that broke something | `git bisect start`, `git bisect bad`, `git bisect good v1.2.0` |
+
+### Tags and Releases
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git tag -a` | Create an annotated tag with a message | `git tag -a v1.2.0 -m "Release 1.2.0"` |
+| `git tag` | List tags | `git tag -l "v1.*"` |
+| `git describe` | Name the current commit relative to the latest tag | `git describe --tags` |
+| `git push origin` tag | Push one tag | `git push origin v1.2.0` |
+
+### Large Repositories
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `git lfs track` | Store large binary files outside the normal history | `git lfs track "*.psd"` |
+| `git sparse-checkout` | Check out only some folders of a huge repository | `git sparse-checkout set services/api` |
+| `git submodule update --init` | Fetch repositories embedded as submodules | `git submodule update --init --recursive` |
+| `git maintenance start` | Schedule background optimisation of the repository | `git maintenance start` |
+
+</FilterTable>
+
+## GitHub CLI Commands
+
+`gh` talks to GitHub's API with your login, so it works on pull requests, issues, Actions runs, releases and repositories without opening a browser. Run `gh auth login` once; inside a cloned repository every command targets that repository automatically (`-R owner/repo` targets another). Most list and view commands accept `--json fields` and `--jq expression` for scripting.
+
+<FilterTable placeholder="Filter gh commands, e.g. pr, checks, release, api">
+
+### Authentication and Repositories
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh auth login` | Log in and set Git to use gh for HTTPS credentials | `gh auth login --web` |
+| `gh auth status` | Show the logged-in account and token scopes | `gh auth status` |
+| `gh repo create` | Create a repository, optionally from the current folder | `gh repo create acme/tool --private --source=. --push` |
+| `gh repo clone` | Clone by `owner/name` | `gh repo clone acme/tool` |
+| `gh repo fork` | Fork a repository and add the `upstream` remote | `gh repo fork org/project --clone` |
+| `gh repo view` | Show a repository's README and details (`--web` opens it) | `gh repo view --web` |
+| `gh repo sync` | Update a fork's branch from its upstream | `gh repo sync` |
+| `gh browse` | Open the repository, a file or an issue in the browser | `gh browse src/app.py:42` |
+
+### Pull Requests
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh pr create` | Open a pull request from the current branch | `gh pr create --fill --base main --reviewer octocat` |
+| `gh pr create --draft` | Open a draft pull request | `gh pr create --draft --title "WIP: search" --body "Early feedback"` |
+| `gh pr list` | List open pull requests (filter by author, label, state) | `gh pr list --author @me --state open` |
+| `gh pr status` | Your pull requests and the ones waiting for your review | `gh pr status` |
+| `gh pr view` | Show a pull request with its description and checks (`--comments` for discussion) | `gh pr view 128 --comments` |
+| `gh pr checkout` | Check out someone's pull request locally | `gh pr checkout 128` |
+| `gh pr diff` | Show the pull request's diff | `gh pr diff 128 --name-only` |
+| `gh pr checks` | Show CI check results (`--watch` waits until they finish) | `gh pr checks --watch` |
+| `gh pr review` | Approve, comment or request changes | `gh pr review 128 --approve --body "LGTM"` |
+| `gh pr comment` | Add a comment | `gh pr comment 128 --body "Rebased on main"` |
+| `gh pr edit` | Change title, labels, reviewers, base branch | `gh pr edit 128 --add-label bug --add-reviewer ana` |
+| `gh pr ready` | Mark a draft as ready for review | `gh pr ready 128` |
+| `gh pr merge` | Merge (`--squash`, `--rebase` or `--merge`; `--auto` merges when checks pass) | `gh pr merge 128 --squash --delete-branch --auto` |
+| `gh pr close` / `reopen` | Close or reopen | `gh pr close 128 --comment "Superseded by #131"` |
+
+### Issues
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh issue create` | Open an issue | `gh issue create --title "Crash on empty input" --label bug --assignee @me` |
+| `gh issue list` | List issues with filters or a search query | `gh issue list --label bug --search "sort:updated-desc"` |
+| `gh issue view` | Show an issue and its comments | `gh issue view 42 --comments` |
+| `gh issue comment` | Comment on an issue | `gh issue comment 42 --body "Fixed in #128"` |
+| `gh issue close` | Close an issue, optionally with a reason | `gh issue close 42 --reason completed` |
+| `gh issue develop` | Create a branch linked to an issue | `gh issue develop 42 --checkout` |
+| `gh search issues` | Search issues across GitHub | `gh search issues "memory leak" --repo acme/tool --state open` |
+
+### Actions (CI)
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh run list` | Recent workflow runs and their status | `gh run list --branch main --limit 10` |
+| `gh run watch` | Follow a run live until it finishes | `gh run watch` |
+| `gh run view` | Show a run's jobs; `--log-failed` prints only failing steps | `gh run view 123456 --log-failed` |
+| `gh run rerun` | Re-run a run (`--failed` only the failed jobs) | `gh run rerun 123456 --failed` |
+| `gh workflow run` | Trigger a workflow with `workflow_dispatch` | `gh workflow run deploy.yml -f env=staging` |
+| `gh workflow list` | List workflows and whether they are enabled | `gh workflow list` |
+| `gh secret set` | Set an Actions secret from stdin or a file | `gh secret set NPM_TOKEN < token.txt` |
+| `gh variable set` | Set an Actions configuration variable | `gh variable set REGION --body eu-west-1` |
+| `gh cache list` | List Actions caches (and `gh cache delete`) | `gh cache list` |
+
+### Releases, Gists and More
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh release create` | Create a release from a tag, with generated notes and files | `gh release create v1.2.0 dist/*.tar.gz --generate-notes` |
+| `gh release list` / `view` | List releases or show one | `gh release view v1.2.0` |
+| `gh release download` | Download release assets | `gh release download v1.2.0 -p "*.tar.gz"` |
+| `gh gist create` | Share a file as a gist | `gh gist create notes.md --public` |
+| `gh search repos` | Search repositories | `gh search repos "vector database" --language rust --sort stars` |
+| `gh search code` | Search code across GitHub | `gh search code "TODO(security)" --owner acme` |
+| `gh codespace create` | Start a cloud development environment | `gh codespace create -R acme/tool` |
+| `gh extension install` | Add community commands | `gh extension install dlvhdr/gh-dash` |
+| `gh alias set` | Define a shortcut | `gh alias set mine 'pr list --author @me'` |
+
+### Scripting with the API
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `gh api` | Call any REST endpoint with your credentials | `gh api repos/{owner}/{repo}/branches --jq '.[].name'` |
+| `gh api --paginate` | Follow pagination automatically | `gh api --paginate repos/{owner}/{repo}/issues --jq '.[].title'` |
+| `gh api -f` / `-F` | Send fields (string / typed) with POST or PATCH | `gh api repos/{owner}/{repo}/labels -f name=triage -f color=fbca04` |
+| `gh api graphql` | Run a GraphQL query | `gh api graphql -f query='{ viewer { login } }'` |
+| `--json` + `--jq` | Structured output from built-in commands | `gh pr list --json number,title,author --jq '.[] \| "\(.number) \(.title)"'` |
+
+</FilterTable>
+
+`{owner}` and `{repo}` in `gh api` paths are filled in from the current repository. `--jq` takes a jq expression and needs no separate jq installation.
+
+## Everyday Workflow
+
+The branch-and-pull-request cycle, from an up-to-date `main` to a merged change, with Git doing the local work and `gh` the GitHub side:
+
+```bash
+git switch main && git pull                      # start from the latest main
+git switch -c fix/empty-input                    # one branch per change
+# … edit files …
+git add -p                                       # review and stage hunk by hunk
+git commit -m "fix: handle empty input in parser"
+git push -u origin fix/empty-input               # publish the branch, set upstream
+gh pr create --fill --reviewer ana               # title and body from the commits
+gh pr checks --watch                             # wait for CI
+# … reviewer asks for a change …
+git commit -am "test: cover the empty case"
+git push                                         # the pull request updates itself
+gh pr merge --squash --delete-branch             # merge as one commit, delete the branch
+git switch main && git pull && git branch -d fix/empty-input
+```
+
+Keep each branch to one logical change, small enough to review in one sitting ([Code Review](../../software-engineering/code-review/)). Squash-merging gives `main` one commit per pull request; merge commits keep every branch commit; rebase-merging replays them linearly. Teams pick one and set it in the repository settings.
+
+**Keeping a branch up to date with `main`.** On your own branch, rebase so history stays linear, then force-push safely:
+
+```bash
+git fetch origin
+git rebase origin/main               # replay your commits on the latest main
+# conflict? edit the files, then:
+git add <resolved-files> && git rebase --continue
+git push --force-with-lease          # refuses if someone else pushed in the meantime
+```
+
+On a branch others also push to, merge instead (`git merge origin/main`), because rebasing rewrites commits they already have.
+
+**Resolving a conflict.** Git marks the conflicting region in each file:
+
+```text
+<<<<<<< HEAD (yours, or the branch being rebased onto)
+timeout = 30
+=======
+timeout = 60
+>>>>>>> fix/slow-network (theirs, or the commit being replayed)
+```
+
+Edit the file to the correct final content, remove the markers, `git add` it, and continue the merge or rebase. `git diff` during a conflict shows only the unresolved parts; `git checkout --ours` or `--theirs` takes one side wholesale.
+
+**Working on a fork.** `gh repo fork org/project --clone` creates the fork, clones it and adds `upstream`. Sync with `gh repo sync` (on GitHub) or `git fetch upstream && git rebase upstream/main` (locally), push branches to your fork, and `gh pr create` opens the pull request against the original.
+
+## Editing History
+
+Before a branch is shared, rewriting its commits makes the history easier to review. **Interactive rebase** opens a list of commits as a todo file:
+
+```text
+pick a1b2c3d add search endpoint
+fixup 9f8e7d6 fix typo in search
+reword 4c5d6e7 add tests              # change this commit's message
+drop 0a1b2c3 debug logging            # remove this commit entirely
+```
+
+Reorder lines to reorder commits; `squash` merges a commit into the previous one and combines the messages, `fixup` does the same but drops its message, and `edit` stops so you can amend. The `--fixup` plus `--autosquash` pair automates the common case: commit a fix with `git commit --fixup <commit>` and the next `git rebase -i --autosquash main` places and squashes it for you. If a rebase goes wrong, `git rebase --abort` returns to the starting point, and after it finishes, the reflog still holds the old commits.
+
+## Finding the Bad Commit
+
+`git bisect` binary-searches history: mark one commit bad and one good, test the middle, repeat. With 1000 commits between them it needs about 10 steps, and it can run a test script by itself:
+
+```bash
+git bisect start
+git bisect bad                    # the current commit is broken
+git bisect good v1.4.0            # this release worked
+git bisect run uv run pytest tests/test_parser.py   # exit code 0 = good, non-zero = bad
+git bisect reset                  # back to where you started
+```
+
+## Recovering Lost Work
+
+The **reflog** records every position `HEAD` has had, including commits no branch points to any more, for about 90 days. This script creates a throwaway repository, loses two commits with `reset --hard`, and gets them back:
+
+```python
+import os
+import subprocess
+import tempfile
+
+ENV = {**os.environ, "GIT_AUTHOR_NAME": "Ada", "GIT_AUTHOR_EMAIL": "ada@example.com",
+       "GIT_COMMITTER_NAME": "Ada", "GIT_COMMITTER_EMAIL": "ada@example.com",
+       "GIT_AUTHOR_DATE": "2026-01-01T12:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T12:00:00Z",
+       "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}   # ignore personal config: same hashes everywhere
+
+def git(*args):
+    return subprocess.run(["git", *args], cwd=repo, env=ENV, capture_output=True, text=True, check=True).stdout.strip()
+
+with tempfile.TemporaryDirectory() as repo:
+    git("init", "-q", "-b", "main")
+    for msg in ["add parser", "add tests", "fix edge case"]:
+        with open(os.path.join(repo, "log.txt"), "a", newline="\n") as f:   # LF on every OS
+            f.write(msg + "\n")
+        git("add", "log.txt")
+        git("commit", "-q", "-m", msg)
+    print(git("log", "--oneline"))
+    git("reset", "-q", "--hard", "HEAD~2")              # oops: two commits gone from the branch
+    print("after reset:", git("log", "--oneline"))
+    print(git("reflog", "-4", "--format=%h %gs"))       # but HEAD's history remembers them
+    git("reset", "-q", "--hard", "HEAD@{1}")            # back to where HEAD was before the reset
+    print("recovered:", git("log", "--oneline", "-1"))
+# 89b3217 fix edge case
+# 13d9d0e add tests
+# cc0c8e6 add parser
+# after reset: cc0c8e6 add parser
+# cc0c8e6 reset: moving to HEAD~2
+# 89b3217 commit: fix edge case
+# 13d9d0e commit: add tests
+# cc0c8e6 commit (initial): add parser
+# recovered: 89b3217 fix edge case
+```
+
+In words: after the reset the branch shows only "add parser", but the reflog's newest entry records the reset and the entries below it still name the lost commits. `HEAD@{1}` means "where `HEAD` was one move ago", so resetting to it restores "fix edge case" with the same hash, 89b3217, because a commit is identified by its content, parents, author, dates and message, all fixed here. What the reflog cannot recover is work that was never committed: changes discarded by `git restore` or `git reset --hard` before any commit are gone.
+
+Other common rescues:
+
+- **Committed to the wrong branch**: `git branch fix-branch` (keep the commit), `git reset --hard HEAD~1` (remove it here), `git switch fix-branch`.
+- **Pushed a bad commit to a shared branch**: do not rewrite it; `git revert <commit>` adds a commit that undoes it.
+- **Committed a secret**: rotate the secret first (it is compromised once pushed), then remove it from history with `git filter-repo` and force-push; deleting it in a new commit leaves it in history.
+- **Messed-up rebase**: `git reflog`, find the entry before `rebase (start)`, `git reset --hard <that entry>`.
+
+<Callout type="pitfall">
+`git reset --hard`, `git restore`, `git clean -fd` and `git checkout -- <file>` discard uncommitted changes with no undo, because the reflog only knows about commits. Run `git status` and `git diff` first, and `git stash -u` instead if you are not sure. On shared branches, never rewrite pushed history (`rebase`, `--amend`, `reset` followed by a force-push) without agreement: teammates' copies diverge, and `--force` (unlike `--force-with-lease`) silently deletes commits others pushed.
+</Callout>
+
+## Hygiene
+
+- **Commit messages**: a short imperative subject ("fix: handle empty input"), a blank line, then why the change was made. Conventions such as Conventional Commits let tools generate changelogs.
+- **`.gitignore`**: keep build output, dependencies, local environments and secrets (`.env`) out of the repository from the start; `git rm --cached` stops tracking a file that was committed by mistake.
+- **Signed commits**: `git config --global commit.gpgsign true` with a GPG or SSH key shows "Verified" on GitHub.
+- **Protected branches**: require pull requests, reviews and passing checks before anything reaches `main` (repository settings or `gh api` with the branch-protection endpoints).
+- **Hooks**: scripts in `.git/hooks` (or managed with pre-commit or lefthook) run linters and tests before commits and pushes.
+
+Most commands follow one shape: `git <command> [options] [arguments]`, and `gh <noun> <verb> [flags]`. When a command is unfamiliar, `git <command> --help` and `gh <command> --help` give every option.

@@ -283,6 +283,7 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
     act: number[] = []; // indices of visible notes
     anchor = new Map<string, [number, number]>();
     col = new Map<string, string>();
+    rgb = new Map<string, [number, number, number]>(); // area colours as numbers, for the glows
     ui: Record<string, string> = {};
     canvas!: HTMLCanvasElement;
     ctx!: CanvasRenderingContext2D;
@@ -320,6 +321,12 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
       };
       this.data.areas.forEach((a, i) => {
         this.col.set(a.id, tok(`--ga-${a.id}`));
+        // painting the token on a 1px canvas makes the browser hand back plain rgb, whatever syntax the token used
+        const px = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+        px.fillStyle = tok(`--ga-${a.id}`);
+        px.fillRect(0, 0, 1, 1);
+        const [r, g, b] = px.getImageData(0, 0, 1, 1).data;
+        this.rgb.set(a.id, [r, g, b]);
         const ang = (i / this.data.areas.length) * Math.PI * 2 - Math.PI / 2;
         this.anchor.set(a.id, [Math.cos(ang) * ANCHOR_RING, Math.sin(ang) * ANCHOR_RING]);
       });
@@ -366,7 +373,7 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
       const orphans = this.checked('[data-orphans]');
       const nodes = this.data.nodes;
       // appendix pages (glossary, cheat sheets) link to everything and are left out
-      const base = nodes.map((node) => areaOn.has(node.area) && node.sectionTitle !== 'Appendix');
+      const base = nodes.map((node) => areaOn.has(node.area) && !node.sectionTitle.startsWith('Appendix'));
       // an orphan has no link to or from a written note: written notes with no links at all,
       // and unwritten notes that no written note links to or from
       const connected = new Set<number>();
@@ -608,6 +615,7 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
       const { W, H, ui, cam } = this;
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       ctx.clearRect(0, 0, W, H);
+      this.backdrop();
       const focus = this.hover >= 0 ? this.hover : this.selected;
       const near = new Set<number>();
       if (focus >= 0) {
@@ -689,6 +697,42 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
         ctx.fillText(label, tx, py);
       }
       this.stat(focus);
+    }
+    // depth behind the graph: a dot grid that moves with the camera, and a faint glow in each area's colour
+    backdrop() {
+      const { ctx, W, H, cam, ui } = this;
+      let step = 32 * cam.k;
+      while (step < 14) step *= 2; // thin the grid out when zoomed far out
+      ctx.fillStyle = ui.edge;
+      const ox = (((W / 2 - cam.x * cam.k) % step) + step) % step;
+      const oy = (((H / 2 - cam.y * cam.k) % step) + step) % step;
+      for (let gx = ox; gx < W; gx += step) for (let gy = oy; gy < H; gy += step) ctx.fillRect(gx - 0.8, gy - 0.8, 1.6, 1.6);
+
+      const by = new Map<string, number[]>();
+      for (const i of this.act) {
+        const a = this.data.nodes[i].area;
+        by.set(a, [...(by.get(a) ?? []), i]);
+      }
+      by.forEach((list, area) => {
+        if (list.length < 3) return;
+        let cx = 0;
+        let cy = 0;
+        for (const i of list) {
+          cx += this.x[i];
+          cy += this.y[i];
+        }
+        cx /= list.length;
+        cy /= list.length;
+        let ms = 0;
+        for (const i of list) ms += (this.x[i] - cx) ** 2 + (this.y[i] - cy) ** 2;
+        const r = (Math.sqrt(ms / list.length) * 1.8 + 30) * cam.k;
+        const [cr, cg, cb] = this.rgb.get(area)!;
+        const grad = ctx.createRadialGradient(this.sx(cx), this.sy(cy), 0, this.sx(cx), this.sy(cy), r);
+        grad.addColorStop(0, `rgba(${cr},${cg},${cb},0.1)`);
+        grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(this.sx(cx) - r, this.sy(cy) - r, r * 2, r * 2);
+      });
     }
     stat(focus: number) {
       const el = this.querySelector('[data-stat]')!;
