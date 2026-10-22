@@ -1,0 +1,863 @@
+---
+import Base from '../layouts/Base.astro';
+import { areas } from '../data/areas';
+import { buildGraph } from '../lib/graph';
+
+const g = await buildGraph();
+const written = g.nodes.filter((n) => n.written).length;
+if (g.broken.length) console.warn(`[graph] ${g.broken.length} broken note links:\n  ${g.broken.join('\n  ')}`);
+console.log(`[graph] ${g.nodes.length} notes (${written} written), ${g.edges.length} links`);
+const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g.nodes, edges: g.edges };
+---
+
+<Base title="Note Graph" description="Every note as a dot and every link between notes as a line." active="graph">
+  <main class="graph-page">
+    <header class="gp-head">
+      <h1>Note Graph</h1>
+      <p class="gp-lead">
+        Each dot is a note, coloured by area and sized by how many links it has. Hover a dot to see its neighbours, click it
+        to inspect, drag to rearrange.
+      </p>
+    </header>
+
+    <note-graph>
+      <div class="gp-ctl">
+        <div class="gp-row">
+          {
+            areas.map((a) => (
+              <>
+                <input type="checkbox" hidden checked data-area={a.id} />
+                <button type="button" class="btn gp-area" data-toggle aria-pressed="true" style={`--c: var(--ga-${a.id})`}>
+                  <i class="sw" />
+                  {a.title}
+                </button>
+              </>
+            ))
+          }
+        </div>
+        <div class="gp-row">
+          <input type="search" class="input gp-search" placeholder="Find a note…" aria-label="Find a note" data-q />
+          <input type="checkbox" hidden data-orphans />
+          <button type="button" class="btn" data-toggle aria-pressed="false">Orphan notes</button>
+          <button type="button" class="btn" data-fit>Fit</button>
+          <button type="button" class="btn" data-play aria-pressed="false">Animate</button>
+        </div>
+      </div>
+
+      <div class="gp-stage" data-stage>
+        <canvas data-canvas aria-label="Graph of notes and the links between them"></canvas>
+        <aside class="gp-panel" data-panel hidden></aside>
+      </div>
+      <p class="gp-stat" data-stat aria-live="polite"></p>
+      <script type="application/json" data-graph set:html={JSON.stringify(data)} />
+    </note-graph>
+  </main>
+</Base>
+
+<style>
+  .graph-page {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 24px 40px;
+  }
+  .gp-head h1 {
+    margin: 0 0 6px;
+  }
+  .gp-lead {
+    margin: 0 0 16px;
+    max-width: 72ch;
+    color: var(--text-muted);
+  }
+  note-graph {
+    display: block;
+    /* area colours: the same tokens the area icons and figures use */
+    --ga-math: var(--g-red);
+    --ga-infra: var(--text-muted);
+    --ga-cs: var(--g-blue);
+    --ga-ml: var(--g-yellow);
+    --ga-dl: var(--g-green);
+    --ga-applied-dl: var(--g-blue-l);
+  }
+  .gp-ctl {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .gp-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .gp-area {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .gp-area[aria-pressed='false'] {
+    opacity: 0.5;
+  }
+  .gp-area[aria-pressed='true'] {
+    border-color: var(--c);
+    color: var(--text);
+    background: color-mix(in srgb, var(--c) 14%, transparent);
+  }
+  .sw {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--c);
+  }
+  .gp-search {
+    flex: 1 1 200px;
+    max-width: 320px;
+  }
+  .gp-stage {
+    position: relative;
+    height: calc(100svh - var(--header-h) - 210px);
+    min-height: 460px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .gp-stage canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+  }
+  .gp-stat {
+    margin: 10px 0 0;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+  .gp-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 280px;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    padding: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-elev);
+  }
+  .gp-panel[hidden] {
+    display: none;
+  }
+  .gp-panel :global(.gp-close) {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 9px;
+    font-size: 1rem;
+  }
+  .gp-panel :global(h2) {
+    margin: 0 28px 4px 0;
+    font-size: 1rem;
+    line-height: 1.3;
+  }
+  .gp-panel :global(.gp-meta) {
+    margin: 0 0 10px;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-faint);
+  }
+  .gp-panel :global(.gp-adv) {
+    margin-left: 6px;
+    padding: 0 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text-muted);
+  }
+  .gp-panel :global(.gp-open) {
+    display: inline-block;
+    margin-bottom: 12px;
+    text-decoration: none;
+  }
+  .gp-panel :global(h3) {
+    margin: 12px 0 6px;
+    font: 700 0.625rem var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--c);
+  }
+  .gp-panel :global(.gp-list) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .gp-panel :global(.gp-link) {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 2px 9px;
+    font: 0.75rem/1.5 var(--font-sans);
+    cursor: pointer;
+  }
+  .gp-panel :global(.gp-link:hover) {
+    color: var(--text);
+    border-color: var(--c);
+  }
+  .gp-panel :global(.gp-none) {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--text-faint);
+  }
+  @media (max-width: 640px) {
+    .graph-page {
+      padding: 16px;
+    }
+    .gp-stage {
+      height: calc(100svh - var(--header-h) - 260px);
+      min-height: 380px;
+    }
+    .gp-panel {
+      top: auto;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      width: auto;
+      max-height: 55%;
+    }
+  }
+</style>
+
+<script>
+  interface GNode {
+    id: string;
+    title: string;
+    area: string;
+    sectionTitle: string;
+    href: string;
+    written: boolean;
+    advanced: boolean;
+    rank: number;
+  }
+  interface GData {
+    areas: { id: string; title: string }[];
+    nodes: GNode[];
+    edges: [number, number][];
+  }
+
+  // small seeded generator, so the starting layout (and so the settled one) is the same on every visit
+  function mulberry32(seed: number) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const LINK_DIST = 46;
+  const COLLIDE_GAP = 3; // minimum space between two dots' edges, in graph units
+  const COLLIDE = 0.35; // how hard overlapping dots are pushed apart
+  const CHARGE = 55; // repulsion strength between every pair of dots
+  const ANCHOR = 0.05; // pull of each dot toward its area's home point
+  const ANCHOR_RING = 190; // distance of the area home points from the centre; smaller packs areas closer
+  const PLAY_MS = 20000; // length of the build-up animation
+  const ALPHA_DECAY = 0.0228; // cooling rate: the layout settles in a few seconds
+  const ALPHA_MIN = 0.003;
+
+  class NoteGraph extends HTMLElement {
+    data!: GData;
+    n = 0;
+    x!: Float64Array;
+    y!: Float64Array;
+    vx!: Float64Array;
+    vy!: Float64Array;
+    pin!: Uint8Array;
+    vis!: Uint8Array;
+    deg!: Uint16Array;
+    rw!: Float64Array; // dot radius in graph units
+    outs: number[][] = [];
+    ins: number[][] = [];
+    act: number[] = []; // indices of visible notes
+    anchor = new Map<string, [number, number]>();
+    col = new Map<string, string>();
+    ui: Record<string, string> = {};
+    canvas!: HTMLCanvasElement;
+    ctx!: CanvasRenderingContext2D;
+    W = 0;
+    H = 0;
+    dpr = 1;
+    cam = { x: 0, y: 0, k: 1 };
+    alpha = 1;
+    raf = 0;
+    hover = -1;
+    selected = -1;
+    q = '';
+    match: Uint8Array | null = null;
+    rand = mulberry32(7);
+    playing = false;
+    limit = Infinity; // while animating: how many notes (in curriculum order) are shown so far
+    total = 0;
+    t0 = 0;
+
+    connectedCallback() {
+      this.data = JSON.parse(this.querySelector('[data-graph]')!.textContent!);
+      this.n = this.data.nodes.length;
+      const cs = getComputedStyle(this);
+      const tok = (name: string) => cs.getPropertyValue(name).trim();
+      this.ui = {
+        edge: tok('--border-strong'),
+        dim: tok('--border'),
+        out: tok('--g-blue-l'),
+        in: tok('--g-green-l'),
+        text: tok('--text'),
+        muted: tok('--text-muted'),
+        faint: tok('--text-faint'),
+        bg: tok('--bg'),
+        font: tok('--font-mono'),
+      };
+      this.data.areas.forEach((a, i) => {
+        this.col.set(a.id, tok(`--ga-${a.id}`));
+        const ang = (i / this.data.areas.length) * Math.PI * 2 - Math.PI / 2;
+        this.anchor.set(a.id, [Math.cos(ang) * ANCHOR_RING, Math.sin(ang) * ANCHOR_RING]);
+      });
+
+      const n = this.n;
+      this.x = new Float64Array(n);
+      this.y = new Float64Array(n);
+      this.vx = new Float64Array(n);
+      this.vy = new Float64Array(n);
+      this.pin = new Uint8Array(n);
+      this.vis = new Uint8Array(n);
+      this.deg = new Uint16Array(n);
+      this.rw = new Float64Array(n);
+      this.data.nodes.forEach((node, i) => {
+        const [ax, ay] = this.anchor.get(node.area)!;
+        const a = this.rand() * Math.PI * 2;
+        const r = Math.sqrt(this.rand()) * 90;
+        this.x[i] = ax + Math.cos(a) * r;
+        this.y[i] = ay + Math.sin(a) * r;
+      });
+
+      this.canvas = this.querySelector('[data-canvas]')!;
+      this.ctx = this.canvas.getContext('2d')!;
+      this.bind();
+      new ResizeObserver(() => this.resize()).observe(this.querySelector('[data-stage]')!);
+      this.applyFilter();
+      this.resize();
+      // settle most of the layout before the first frame; the rest animates unless motion is reduced
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      for (let i = 0; i < (still ? 400 : 150); i++) this.tick();
+      if (still) this.alpha = 0;
+      this.fit();
+      this.schedule();
+    }
+
+    // filters ---------------------------------------------------------------
+    checked(sel: string) {
+      return (this.querySelector(sel) as HTMLInputElement).checked;
+    }
+    applyFilter() {
+      const areaOn = new Set(
+        this.data.areas.filter((a) => (this.querySelector(`[data-area="${a.id}"]`) as HTMLInputElement).checked).map((a) => a.id),
+      );
+      const orphans = this.checked('[data-orphans]');
+      const nodes = this.data.nodes;
+      // appendix pages (glossary, cheat sheets) link to everything and are left out
+      const base = nodes.map((node) => areaOn.has(node.area) && node.sectionTitle !== 'Appendix');
+      // an orphan has no link to or from a written note: written notes with no links at all,
+      // and unwritten notes that no written note links to or from
+      const connected = new Set<number>();
+      for (const [s, t] of this.data.edges) {
+        if (!base[s] || !base[t] || !(nodes[s].written || nodes[t].written)) continue;
+        connected.add(s);
+        connected.add(t);
+      }
+      const eligible = nodes
+        .map((_, i) => i)
+        .filter((i) => base[i] && (orphans || connected.has(i)))
+        .sort((a, b) => nodes[a].rank - nodes[b].rank);
+      this.total = eligible.length;
+      const prev = this.vis.slice();
+      this.vis.fill(0);
+      this.act = [];
+      eligible.forEach((i, p) => {
+        if (p >= this.limit) return;
+        this.vis[i] = 1;
+        this.act.push(i);
+      });
+      if (this.playing) this.spawn(prev);
+      this.deg.fill(0);
+      this.outs = this.data.nodes.map(() => []);
+      this.ins = this.data.nodes.map(() => []);
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        this.outs[s].push(t);
+        this.ins[t].push(s);
+        this.deg[s]++;
+        this.deg[t]++;
+      }
+      for (let i = 0; i < this.n; i++) this.rw[i] = Math.min(3 + 1.7 * Math.sqrt(this.deg[i]), 14);
+      if (this.selected >= 0 && !this.vis[this.selected]) this.select(-1);
+      this.search(this.q);
+      this.alpha = Math.max(this.alpha, 0.4);
+      this.schedule();
+    }
+    // a note that appears during the animation starts next to the notes it links with, so it grows out of the graph
+    spawn(prev: Uint8Array) {
+      const sum = new Map<number, [number, number, number]>();
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        for (const [a, b] of [[s, t], [t, s]]) {
+          if (prev[a] || !prev[b]) continue;
+          const v = sum.get(a) ?? [0, 0, 0];
+          sum.set(a, [v[0] + this.x[b], v[1] + this.y[b], v[2] + 1]);
+        }
+      }
+      for (const i of this.act) {
+        if (prev[i]) continue;
+        const v = sum.get(i);
+        const [ax, ay] = this.anchor.get(this.data.nodes[i].area)!;
+        this.x[i] = (v ? v[0] / v[2] : ax) + (this.rand() - 0.5) * 12;
+        this.y[i] = (v ? v[1] / v[2] : ay) + (this.rand() - 0.5) * 12;
+        this.vx[i] = 0;
+        this.vy[i] = 0;
+      }
+    }
+    play() {
+      if (this.playing) return this.stopPlay();
+      this.fit();
+      this.playing = true;
+      this.limit = 0;
+      this.t0 = performance.now();
+      this.querySelector('[data-play]')!.setAttribute('aria-pressed', 'true');
+      this.querySelector('[data-play]')!.textContent = 'Stop';
+      this.applyFilter();
+    }
+    stopPlay() {
+      this.playing = false;
+      this.limit = Infinity;
+      const b = this.querySelector('[data-play]')!;
+      b.setAttribute('aria-pressed', 'false');
+      b.textContent = 'Animate';
+      this.applyFilter();
+    }
+    search(q: string) {
+      this.q = q.trim().toLowerCase();
+      this.match = null;
+      if (this.q) {
+        this.match = new Uint8Array(this.n);
+        this.data.nodes.forEach((node, i) => {
+          if (this.vis[i] && node.title.toLowerCase().includes(this.q)) this.match![i] = 1;
+        });
+      }
+      this.schedule();
+    }
+
+    // physics ---------------------------------------------------------------
+    // The same scheme as a standard force-directed layout: every pair repels, every link is a spring,
+    // every dot is pulled toward its area's home point, and a cooling factor lets it settle.
+    tick() {
+      const { x, y, vx, vy, act, alpha } = this;
+      const m = act.length;
+      for (let a = 0; a < m; a++) {
+        const i = act[a];
+        for (let b = a + 1; b < m; b++) {
+          const j = act[b];
+          let dx = x[j] - x[i];
+          let dy = y[j] - y[i];
+          let d2 = dx * dx + dy * dy;
+          if (d2 > 160000) continue;
+          if (d2 < 25) {
+            dx = (this.rand() - 0.5) * 5;
+            dy = (this.rand() - 0.5) * 5;
+            d2 = 25;
+          }
+          const w = (CHARGE * alpha) / d2;
+          vx[i] -= dx * w;
+          vy[i] -= dy * w;
+          vx[j] += dx * w;
+          vy[j] += dy * w;
+          // collision: dots never sit closer than their radii plus a gap
+          const gap = this.rw[i] + this.rw[j] + COLLIDE_GAP;
+          if (d2 < gap * gap) {
+            const push = ((gap - Math.sqrt(d2)) / Math.sqrt(d2)) * COLLIDE;
+            vx[i] -= dx * push;
+            vy[i] -= dy * push;
+            vx[j] += dx * push;
+            vy[j] += dy * push;
+          }
+        }
+      }
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        let dx = x[t] + vx[t] - x[s] - vx[s];
+        let dy = y[t] + vy[t] - y[s] - vy[s];
+        const l = Math.hypot(dx, dy) || 1e-6;
+        const k = ((l - LINK_DIST) / l) * alpha * (1 / Math.min(this.deg[s], this.deg[t]));
+        dx *= k;
+        dy *= k;
+        const bias = this.deg[s] / (this.deg[s] + this.deg[t]);
+        vx[t] -= dx * bias;
+        vy[t] -= dy * bias;
+        vx[s] += dx * (1 - bias);
+        vy[s] += dy * (1 - bias);
+      }
+      for (const i of act) {
+        const [ax, ay] = this.anchor.get(this.data.nodes[i].area)!;
+        vx[i] += (ax - x[i]) * ANCHOR * alpha;
+        vy[i] += (ay - y[i]) * ANCHOR * alpha;
+        if (this.pin[i]) {
+          vx[i] = 0;
+          vy[i] = 0;
+        } else {
+          vx[i] *= 0.6;
+          vy[i] *= 0.6;
+          x[i] += vx[i];
+          y[i] += vy[i];
+        }
+      }
+      this.alpha += (0 - this.alpha) * ALPHA_DECAY;
+    }
+    schedule() {
+      if (this.raf) return;
+      this.raf = requestAnimationFrame(() => {
+        this.raf = 0;
+        if (this.playing) {
+          const target = Math.ceil(((performance.now() - this.t0) / PLAY_MS) * this.total);
+          if (target >= this.total) this.stopPlay();
+          else if (target > this.limit) {
+            this.limit = target;
+            this.applyFilter();
+          }
+        }
+        if (this.alpha > ALPHA_MIN || this.playing) {
+          this.tick();
+          this.tick();
+          this.draw();
+          this.schedule();
+        } else {
+          this.alpha = 0;
+          this.draw();
+        }
+      });
+    }
+
+    // camera ----------------------------------------------------------------
+    resize() {
+      const r = this.canvas.getBoundingClientRect();
+      this.dpr = window.devicePixelRatio || 1;
+      this.W = r.width;
+      this.H = r.height;
+      this.canvas.width = Math.round(r.width * this.dpr);
+      this.canvas.height = Math.round(r.height * this.dpr);
+      this.draw();
+    }
+    fit() {
+      if (!this.act.length) return;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const i of this.act) {
+        x0 = Math.min(x0, this.x[i]);
+        x1 = Math.max(x1, this.x[i]);
+        y0 = Math.min(y0, this.y[i]);
+        y1 = Math.max(y1, this.y[i]);
+      }
+      const k = Math.min(this.W / (x1 - x0 + 80), this.H / (y1 - y0 + 80));
+      this.cam = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, k: Math.min(Math.max(k, 0.15), 3) };
+      this.draw();
+    }
+    sx(x: number) {
+      return (x - this.cam.x) * this.cam.k + this.W / 2;
+    }
+    sy(y: number) {
+      return (y - this.cam.y) * this.cam.k + this.H / 2;
+    }
+    radius(i: number) {
+      // zoomed out, dots shrink with the spacing so they do not pile up; zoomed in they grow more slowly
+      const k = this.cam.k;
+      return Math.max(2.2, this.rw[i] * (k < 1 ? k : Math.sqrt(k)));
+    }
+    zoomAt(px: number, py: number, factor: number) {
+      const c = this.cam;
+      const wx = c.x + (px - this.W / 2) / c.k;
+      const wy = c.y + (py - this.H / 2) / c.k;
+      c.k = Math.min(Math.max(c.k * factor, 0.12), 8);
+      c.x = wx - (px - this.W / 2) / c.k;
+      c.y = wy - (py - this.H / 2) / c.k;
+      this.draw();
+    }
+    pick(px: number, py: number) {
+      let best = -1;
+      let bestD = Infinity;
+      for (const i of this.act) {
+        const d2 = (this.sx(this.x[i]) - px) ** 2 + (this.sy(this.y[i]) - py) ** 2;
+        const r = this.radius(i) + 5;
+        if (d2 <= r * r && d2 < bestD) {
+          best = i;
+          bestD = d2;
+        }
+      }
+      return best;
+    }
+
+    // drawing ---------------------------------------------------------------
+    draw() {
+      const ctx = this.ctx;
+      const { W, H, ui, cam } = this;
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      const focus = this.hover >= 0 ? this.hover : this.selected;
+      const near = new Set<number>();
+      if (focus >= 0) {
+        near.add(focus);
+        this.outs[focus].forEach((j) => near.add(j));
+        this.ins[focus].forEach((j) => near.add(j));
+      }
+
+      // edges, batched by style
+      const base = new Path2D();
+      const dim = new Path2D();
+      const out = new Path2D();
+      const inn = new Path2D();
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        const p = focus < 0 ? base : s === focus ? out : t === focus ? inn : dim;
+        p.moveTo(this.sx(this.x[s]), this.sy(this.y[s]));
+        p.lineTo(this.sx(this.x[t]), this.sy(this.y[t]));
+      }
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = ui.edge;
+      ctx.stroke(base);
+      ctx.strokeStyle = ui.dim;
+      ctx.stroke(dim);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = ui.out;
+      ctx.stroke(out);
+      ctx.strokeStyle = ui.in;
+      ctx.stroke(inn);
+
+      // dots
+      const faded = (i: number) => (focus >= 0 ? !near.has(i) : this.match ? !this.match[i] : false);
+      for (const i of this.act) {
+        const px = this.sx(this.x[i]);
+        const py = this.sy(this.y[i]);
+        if (px < -20 || py < -20 || px > W + 20 || py > H + 20) continue;
+        const r = this.radius(i);
+        const c = this.col.get(this.data.nodes[i].area)!;
+        ctx.globalAlpha = faded(i) ? 0.15 : 1;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        if (this.data.nodes[i].written) {
+          ctx.fillStyle = c;
+          ctx.fill();
+        } else {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = c;
+          ctx.stroke();
+        }
+        if (i === focus) {
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(px, py, r + 3.5, 0, Math.PI * 2);
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = ui.text;
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      // labels: the focused dot and its neighbours, search matches, and hubs (more of them as you zoom in)
+      ctx.font = `11px ${ui.font}`;
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = ui.bg;
+      for (const i of this.act) {
+        const hub = this.deg[i] >= 14 / cam.k;
+        const shown = focus >= 0 ? near.has(i) : this.match ? !!this.match[i] : hub;
+        if (!shown) continue;
+        const px = this.sx(this.x[i]);
+        const py = this.sy(this.y[i]);
+        if (px < -20 || py < -20 || px > W + 20 || py > H + 20) continue;
+        let label = this.data.nodes[i].title;
+        if (label.length > 26) label = `${label.slice(0, 25)}…`;
+        const tx = px + this.radius(i) + 5;
+        ctx.strokeText(label, tx, py);
+        ctx.fillStyle = i === focus ? ui.text : focus >= 0 || this.match ? ui.muted : ui.faint;
+        ctx.fillText(label, tx, py);
+      }
+      this.stat(focus);
+    }
+    stat(focus: number) {
+      const el = this.querySelector('[data-stat]')!;
+      let links = 0;
+      this.outs.forEach((o) => (links += o.length));
+      el.textContent =
+        focus >= 0
+          ? `${this.data.nodes[focus].title} · links to ${this.outs[focus].length} · linked from ${this.ins[focus].length}`
+          : `${this.act.length} notes · ${links} links`;
+    }
+
+    // selection and panel -----------------------------------------------------
+    select(i: number) {
+      this.selected = i;
+      const panel = this.querySelector<HTMLElement>('[data-panel]')!;
+      panel.hidden = i < 0;
+      if (i >= 0) this.renderPanel(panel, i);
+      this.draw();
+    }
+    centerOn(i: number) {
+      this.cam = { x: this.x[i], y: this.y[i], k: Math.max(this.cam.k, 1.4) };
+      this.draw();
+    }
+    renderPanel(panel: HTMLElement, i: number) {
+      const node = this.data.nodes[i];
+      const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text) e.textContent = text;
+        return e;
+      };
+      panel.replaceChildren();
+      const close = el('button', 'btn gp-close', '×');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', () => this.select(-1));
+      const meta = el('p', 'gp-meta', `${node.sectionTitle} · ${this.data.areas.find((a) => a.id === node.area)!.title}`);
+      if (node.advanced) meta.append(el('span', 'gp-adv', 'ADV'));
+      const open = el('a', 'btn primary gp-open', 'Open note');
+      open.href = node.href;
+      panel.append(close, el('h2', '', node.title), meta, open);
+      const group = (title: string, list: number[], colour: string) => {
+        const h = el('h3', '', `${title} (${list.length})`);
+        h.style.setProperty('--c', colour);
+        panel.append(h);
+        if (!list.length) return panel.append(el('p', 'gp-none', 'None'));
+        const ul = el('ul', 'gp-list');
+        for (const j of [...list].sort((a, b) => this.data.nodes[a].title.localeCompare(this.data.nodes[b].title))) {
+          const b = el('button', 'gp-link', this.data.nodes[j].title);
+          b.type = 'button';
+          b.style.setProperty('--c', this.col.get(this.data.nodes[j].area)!);
+          b.addEventListener('click', () => {
+            this.select(j);
+            this.centerOn(j);
+          });
+          const li = el('li');
+          li.append(b);
+          ul.append(li);
+        }
+        panel.append(ul);
+      };
+      group('Links to', this.outs[i], this.ui.out);
+      group('Linked from', this.ins[i], this.ui.in);
+    }
+
+    // input -------------------------------------------------------------------
+    bind() {
+      const cv = this.canvas;
+      const pts = new Map<number, { x: number; y: number }>();
+      let down: { x: number; y: number; lx: number; ly: number; moved: boolean; node: number } | null = null;
+      let pinch = 0; // distance between the two fingers last frame
+      const pos = (e: PointerEvent) => {
+        const r = cv.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
+      };
+      cv.addEventListener('pointerdown', (e) => {
+        cv.setPointerCapture(e.pointerId);
+        const p = pos(e);
+        pts.set(e.pointerId, p);
+        if (pts.size === 2) {
+          const [a, b] = [...pts.values()];
+          pinch = Math.hypot(a.x - b.x, a.y - b.y);
+          down = null;
+          return;
+        }
+        down = { x: p.x, y: p.y, lx: p.x, ly: p.y, moved: false, node: this.pick(p.x, p.y) };
+      });
+      cv.addEventListener('pointermove', (e) => {
+        const p = pos(e);
+        if (pts.has(e.pointerId)) pts.set(e.pointerId, p);
+        if (pts.size === 2) {
+          const [a, b] = [...pts.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (pinch > 0) this.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinch);
+          pinch = d;
+          return;
+        }
+        if (down) {
+          if (!down.moved && Math.hypot(p.x - down.x, p.y - down.y) > 4) down.moved = true;
+          if (down.moved) {
+            if (down.node >= 0) {
+              const i = down.node;
+              this.pin[i] = 1;
+              this.x[i] = this.cam.x + (p.x - this.W / 2) / this.cam.k;
+              this.y[i] = this.cam.y + (p.y - this.H / 2) / this.cam.k;
+              this.alpha = Math.max(this.alpha, 0.3);
+              this.schedule();
+            } else {
+              this.cam.x -= (p.x - down.lx) / this.cam.k;
+              this.cam.y -= (p.y - down.ly) / this.cam.k;
+              this.draw();
+            }
+          }
+          down.lx = p.x;
+          down.ly = p.y;
+        } else if (e.pointerType === 'mouse' && pts.size === 0) {
+          const h = this.pick(p.x, p.y);
+          cv.style.cursor = h >= 0 ? 'pointer' : 'grab';
+          if (h !== this.hover) {
+            this.hover = h;
+            this.draw();
+          }
+        }
+      });
+      const end = (e: PointerEvent) => {
+        pts.delete(e.pointerId);
+        pinch = 0;
+        if (down) {
+          if (down.node >= 0) this.pin[down.node] = 0;
+          if (!down.moved) this.select(down.node);
+        }
+        down = null;
+      };
+      cv.addEventListener('pointerup', end);
+      cv.addEventListener('pointercancel', end);
+      cv.addEventListener('pointerleave', (e) => {
+        if (e.pointerType === 'mouse' && this.hover >= 0) {
+          this.hover = -1;
+          this.draw();
+        }
+      });
+      cv.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          const p = pos(e as unknown as PointerEvent);
+          this.zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
+        },
+        { passive: false },
+      );
+
+      this.addEventListener('change', (e) => {
+        if ((e.target as HTMLElement).matches('input[type="checkbox"]')) this.applyFilter();
+      });
+      const q = this.querySelector<HTMLInputElement>('[data-q]')!;
+      q.addEventListener('input', () => this.search(q.value));
+      q.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !this.match) return;
+        const first = this.act.find((i) => this.match![i]);
+        if (first === undefined) return;
+        this.select(first);
+        this.centerOn(first);
+      });
+      this.querySelector('[data-fit]')!.addEventListener('click', () => this.fit());
+      this.querySelector('[data-play]')!.addEventListener('click', () => this.play());
+      this.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.select(-1);
+      });
+    }
+  }
+  customElements.define('note-graph', NoteGraph);
+</script>
