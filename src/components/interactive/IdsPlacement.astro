@@ -1,0 +1,111 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="IDS on a copy, IPS in the path"
+  caption="Traffic flows from the Internet through a firewall and a switch to the servers. An IDS receives a copy of the traffic from the switch's mirror port (dashed), so it can only raise an alert: the attack packet still reaches the server. An IPS sits inline, so it can drop the attack packet, but every packet now passes through it, and if it fails or misjudges, legitimate traffic is affected too."
+>
+  <ids-placement>
+    <input type="hidden" data-mode value="ids" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="ids" aria-pressed="true">IDS</button>
+      <button type="button" class="btn" data-choice="ips" aria-pressed="false">IPS</button>
+    </span>
+    <svg class="ip-svg" data-svg viewBox="0 0 440 170" role="img" aria-label="Placement of an IDS or IPS in a network"></svg>
+    <p class="ip-stat mono" data-stat></p>
+  </ids-placement>
+</Figure>
+
+<style>
+  .ip-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .ip-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .ip-svg :global(rect.node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .ip-svg :global(rect.sec) {
+    fill: rgba(251, 188, 5, 0.18);
+    stroke: var(--g-yellow);
+  }
+  .ip-svg :global(line.wire) {
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .ip-svg :global(line.copy) {
+    stroke: var(--g-yellow);
+    stroke-width: 1.6;
+    stroke-dasharray: 5 4;
+  }
+  .ip-svg :global(line.attack) {
+    stroke: var(--g-red);
+    stroke-width: 3;
+  }
+  .ip-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .ip-svg :global(text.note) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .ip-svg :global(text.bad) {
+    fill: var(--g-red);
+    font: 700 16px var(--font-mono);
+  }
+  .ip-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class IdsPlacement extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    box(x: number, y: number, w: number, label: string, cls = 'node') {
+      return `<rect class="base" x="${x - w / 2}" y="${y - 16}" width="${w}" height="32" rx="5" /><rect class="${cls}" x="${x - w / 2}" y="${y - 16}" width="${w}" height="32" rx="5" /><text x="${x}" y="${y}">${label}</text>`;
+    }
+    draw() {
+      const ips = this.querySelector<HTMLInputElement>('[data-mode]')!.value === 'ips';
+      const Y = 60;
+      const xs = ips ? { net: 40, fw: 125, sec: 210, sw: 290, srv: 390 } : { net: 40, fw: 140, sw: 250, srv: 380, sec: 250 };
+      let s = '';
+      const chain = ips ? [xs.net, xs.fw, xs.sec, xs.sw, xs.srv] : [xs.net, xs.fw, xs.sw, xs.srv];
+      for (let k = 1; k < chain.length; k++) s += `<line class="wire" x1="${chain[k - 1]}" y1="${Y}" x2="${chain[k]}" y2="${Y}" />`;
+      // the attack packet's path: through to the server with an IDS, stopped at the IPS
+      const stop = ips ? xs.sec : xs.srv;
+      s += `<line class="attack" x1="${xs.net}" y1="${Y - 22}" x2="${stop}" y2="${Y - 22}" />`;
+      s += `<text class="note" x="${(xs.net + xs.fw) / 2}" y="${Y - 34}" style="fill: var(--g-red)">attack packet</text>`;
+      if (ips) s += `<text class="bad" x="${xs.sec + 12}" y="${Y - 22}">✕</text>`;
+      if (!ips) {
+        s += `<line class="copy" x1="${xs.sw}" y1="${Y + 16}" x2="${xs.sw}" y2="${130 - 16}" />`;
+        s += `<text class="note" x="${xs.sw + 52}" y="${(Y + 130) / 2}">mirror port copy</text>`;
+        s += this.box(xs.sw, 130, 64, 'IDS', 'sec');
+        s += `<text class="note" x="${xs.sw + 92}" y="130" style="fill: var(--g-yellow)">alert only</text>`;
+      } else {
+        s += `<text class="note" x="${xs.sec}" y="${Y + 30}" style="fill: var(--g-yellow)">inline: can drop</text>`;
+      }
+      s += this.box(xs.net, Y, 60, 'Internet') + this.box(xs.fw, Y, 70, 'firewall') + this.box(xs.sw, Y, 60, 'switch') + this.box(xs.srv, Y, 66, 'servers');
+      if (ips) s += this.box(xs.sec, Y, 54, 'IPS', 'sec');
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = ips
+        ? 'IPS · inline · attack dropped · adds latency, and a false positive or a crash blocks real traffic'
+        : 'IDS · passive copy · attack reaches the server, an alert is raised · cannot slow or break the network';
+    }
+  }
+  customElements.define('ids-placement', IdsPlacement);
+</script>

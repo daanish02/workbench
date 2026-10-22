@@ -211,7 +211,7 @@ JSON looks schema-free, so its changes feel safe, but every reader still assumes
 
 ## Retries and Idempotency
 
-A client that hears nothing back cannot tell whether the request was lost, the server crashed before doing the work, or the work was done and the reply was lost. The usual reaction is to retry, which is safe only if repeating the operation has the same effect as doing it once: **idempotency**. Reads are naturally idempotent; "charge $50" is not. The fix, as in [API Design](../api-design/), is an **idempotency key**: the client sends a unique id per logical operation, and the server stores the result under it and replays that result for repeats.
+A client that hears nothing back cannot tell whether the request was lost, the server crashed before doing the work, or the work was done and the reply was lost. The usual reaction is to retry, which is safe only if repeating the operation has the same effect as doing it once: **idempotency**. Reads are naturally idempotent; "charge \$50" is not. The fix, as in [API Design](../api-design/), is an **idempotency key**: the client sends a unique id per logical operation, and the server stores the result under it and replays that result for repeats.
 
 ```python
 import random
@@ -243,7 +243,7 @@ for use_key in (False, True):
 # idempotency key=True: attempts=4, charges=[50]
 ```
 
-In words: with the same lost replies (seed 3), the client needs 4 attempts both times. Without a key the server charges on every attempt, $200 for a $50 order; with the key it charges once and answers the three retries from its stored result.
+In words: with the same lost replies (seed 3), the client needs 4 attempts both times. Without a key the server charges on every attempt, \$200 for a \$50 order; with the key it charges once and answers the three retries from its stored result.
 
 <Callout type="practice">
 Set a **deadline** on every remote call, retry only idempotent operations (or ones with an idempotency key), and back off exponentially with random **jitter** so that many clients do not retry in lockstep and overload a recovering server. Cap the number of retries at each layer: three layers that each make up to 3 attempts turn one failing call at the bottom into 27.

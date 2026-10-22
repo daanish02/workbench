@@ -1,12 +1,12 @@
 ---
 title: "Routing"
-description: "Routing tables, and how a packet finds its way across networks it has never seen."
+description: "Routing tables, how a packet finds its way across networks it has never seen, and how ICMP reports failures."
 order: 4
 tier: core
 takeaways:
   - "A **router** forwards each packet using only its **routing table**: destination prefix → next hop. Nobody plans the whole journey."
   - "When several routes match, the **longest prefix** (most specific) wins; `0.0.0.0/0` is the default route."
-  - "At each hop the IP addresses stay the same but the **link-layer frame is rebuilt**, and the **TTL** drops by one to stop loops."
+  - "At each hop the IP addresses stay the same but the **link-layer frame is rebuilt**, and the **TTL** drops by one to stop loops. **ICMP** reports failures back: `ping` uses echo messages, `traceroute` uses time-exceeded replies."
   - "Routes come from **connected** networks, **static** configuration, or **dynamic protocols**: OSPF inside an organization, BGP between autonomous systems."
   - "The **control plane** builds routes; the **data plane** forwards packets using them."
 resources:
@@ -17,6 +17,9 @@ resources:
     note: "How autonomous systems exchange reachability and what happens when it goes wrong."
   - title: "Longest prefix match (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Longest_prefix_match"
+  - title: "Internet Control Message Protocol (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Internet_Control_Message_Protocol"
+    note: "Every ICMP message type, and how ping and traceroute use them."
 ---
 
 **Routing** lets a packet travel across networks its sender has never seen and need not understand. Each router makes one local decision: given the packet's destination IP address and its routing table, **which next hop should receive it?** Repeating that decision at each network boundary lets the Internet deliver packets across thousands of independently managed networks without any router knowing the whole map. A router rarely plans the entire journey; it picks the best next step among the routes it currently knows.
@@ -81,6 +84,47 @@ A laptop sending to a web server on another continent knows only its own address
 5. Wrap the packet in a **new** link-layer frame for the next link.
 
 The TTL stops packets circulating forever if a routing loop exists: when it reaches zero the router discards the packet and typically sends an ICMP "time exceeded" message (this is how `traceroute` discovers each hop). Throughout, the IP source and destination stay the same, while the frame's MAC addresses change at every hop (see [Link Layer](../link-layer/)). The router never needs the final server's MAC address.
+
+## ICMP Reports What Went Wrong
+
+IP itself has no way to say "that failed". **ICMP** (Internet Control Message Protocol) fills the gap: small messages carried directly in IP packets, sent by routers and hosts to report problems and answer probes. It sits at the network layer beside IP, not on top of TCP or UDP.
+
+| Message | Sent when | Used by |
+| --- | --- | --- |
+| **Echo request / echo reply** | a host asks "are you there?" and the target answers | `ping`, which times the round trip |
+| **Time exceeded** | a router drops a packet whose TTL reached zero | `traceroute` |
+| **Destination unreachable** | no route, host down, port closed, or the packet is too big and marked "don't fragment" | error reporting, Path MTU Discovery |
+| **Redirect** | a router knows a better next hop on the same subnet | hosts updating their routes |
+
+`traceroute` turns the TTL into a measuring tool. It sends probes with TTL 1, 2, 3 and so on; each probe dies one router further along, and that router's "time exceeded" reply reveals its address:
+
+```python
+path = ["192.168.1.1", "100.64.0.1", "203.0.113.9", "198.51.100.7"]   # routers on the way, then the destination
+
+def send(ttl):
+    for hop, addr in enumerate(path, start=1):
+        if addr == path[-1]:
+            return addr, "echo reply"            # the destination answers the probe itself
+        if hop == ttl:
+            return addr, "time exceeded"         # TTL hit zero here; this router reports back
+    return None
+
+for ttl in range(1, len(path) + 1):              # traceroute: raise the TTL one step per probe
+    addr, kind = send(ttl)
+    print(f"TTL {ttl}: {kind:13} from {addr}")
+# TTL 1: time exceeded from 192.168.1.1
+# TTL 2: time exceeded from 100.64.0.1
+# TTL 3: time exceeded from 203.0.113.9
+# TTL 4: echo reply    from 198.51.100.7
+```
+
+In words: the probe with TTL 1 dies at the home router, TTL 2 at the ISP's router, TTL 3 one hop further, and the probe with TTL 4 reaches the destination, which answers it directly. Windows `tracert` sends ICMP echo probes as here; Linux `traceroute` sends UDP probes by default and recognises the end by a "port unreachable" reply. Routers answer these probes from their control-plane CPU, which is why one hop can look slow while forwarding is fine ([Routers](../../../infra/networking-hardware/routers/)).
+
+<TracerouteSteps />
+
+<Callout type="pitfall">
+Blocking all ICMP at a firewall "for security" breaks **Path MTU Discovery**. A sender learns that a packet is too big for some link only from a "fragmentation needed" (destination unreachable) message. Without it, small packets work but large ones vanish silently: connections open, then hang as soon as real data flows. Filter ICMP selectively; do not drop it all.
+</Callout>
 
 ## Where Routes Come From
 

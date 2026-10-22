@@ -1,0 +1,100 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why most intrusion alerts are false"
+  caption="A day of 1,000,000 connections, some of them attacks, checked by a detector that catches 99% of attacks. The bar splits the day's alerts into real attacks (green) and false alarms on normal traffic (red). The 100 squares show what a random sample of 100 alerts looks like. Lower the false-alarm rate or raise the share of attacks and watch the green grow."
+>
+  <base-rate-alerts>
+    <div class="br-ctl">
+      <label>attacks per day <input type="range" min="0" max="300" step="1" value="100" data-a /> <b data-av></b></label>
+      <label>false-alarm rate <input type="range" min="0" max="200" step="1" value="100" data-f /> <b data-fv></b></label>
+    </div>
+    <svg class="br-svg" data-svg viewBox="0 0 440 180" role="img" aria-label="Real and false alerts"></svg>
+    <p class="br-stat mono" data-stat></p>
+  </base-rate-alerts>
+</Figure>
+
+<style>
+  .br-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .br-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .br-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .br-ctl b {
+    min-width: 4em;
+    text-align: right;
+    color: var(--text);
+  }
+  .br-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .br-svg :global(.real) {
+    fill: var(--g-green);
+  }
+  .br-svg :global(.false) {
+    fill: rgba(234, 67, 53, 0.75);
+  }
+  .br-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .br-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const EVENTS = 1_000_000, DETECT = 0.99;
+
+  class BaseRateAlerts extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      // both sliders are log scales: 1 to 1000 attacks, 0.01% to 1% false alarms
+      const attacks = Math.round(10 ** (+this.querySelector<HTMLInputElement>('[data-a]')!.value / 100));
+      const far = 10 ** (+this.querySelector<HTMLInputElement>('[data-f]')!.value / 100 - 4);
+      this.querySelector('[data-av]')!.textContent = String(attacks);
+      this.querySelector('[data-fv]')!.textContent = `${+(far * 100).toPrecision(2)}%`;
+      const real = attacks * DETECT;
+      const fake = (EVENTS - attacks) * far;
+      const precision = real / (real + fake);
+      const B0 = 10, B1 = 430;
+      const xr = B0 + precision * (B1 - B0);
+      let s = `<text x="${B0}" y="12">all alerts in a day: ${Math.round(real + fake).toLocaleString('en')}</text>`;
+      s += `<rect class="real" x="${B0}" y="20" width="${Math.max(1, xr - B0)}" height="20" /><rect class="false" x="${xr}" y="20" width="${Math.max(0, B1 - xr)}" height="20" />`;
+      s += `<text x="${B0}" y="64">a sample of 100 alerts</text>`;
+      const green = Math.round(precision * 100);
+      for (let k = 0; k < 100; k++) {
+        const col = k % 20, row = Math.floor(k / 20);
+        s += `<rect class="${k < green ? 'real' : 'false'}" x="${B0 + col * 21}" y="${72 + row * 21}" width="17" height="17" rx="3" />`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = `${real.toFixed(1)} real · ${Math.round(fake).toLocaleString('en')} false · ${(precision * 100).toFixed(1)}% of alerts are attacks`;
+    }
+  }
+  customElements.define('base-rate-alerts', BaseRateAlerts);
+</script>

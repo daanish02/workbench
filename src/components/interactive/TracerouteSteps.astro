@@ -1,0 +1,138 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="traceroute: each probe dies one hop further"
+  caption="Each step sends one probe with a larger TTL. The yellow arrow is the probe; the number on each link is its TTL as it crosses that link. Where the TTL reaches zero, that router drops the probe and sends an ICMP time-exceeded message back (green dashed), revealing its address. The last probe reaches the server, which answers itself. The table lists the hops found so far."
+>
+  <traceroute-steps>
+    <svg class="tr-svg" data-svg viewBox="0 0 440 130" role="img" aria-label="Probes with increasing TTL along a path of routers"></svg>
+    <table class="tr-tbl" data-tbl></table>
+    <p class="tr-msg" data-msg></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </traceroute-steps>
+</Figure>
+
+<style>
+  .tr-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .tr-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .tr-svg :global(rect.node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .tr-svg :global(rect.node.hit) {
+    fill: rgba(251, 188, 5, 0.22);
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .tr-svg :global(line.link) {
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .tr-svg :global(path.probe) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.4;
+  }
+  .tr-svg :global(path.reply) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+  }
+  .tr-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .tr-svg :global(text.ttl) {
+    fill: var(--g-yellow-l);
+  }
+  .tr-tbl {
+    margin: 8px auto 0;
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+  }
+  .tr-tbl :global(td) {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+  .tr-tbl :global(td.new) {
+    background: rgba(52, 168, 83, 0.18);
+    color: var(--g-green);
+  }
+  .tr-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+</style>
+
+<script>
+  const NODES = [
+    ['laptop', ''],
+    ['R1', '192.168.1.1'],
+    ['R2', '100.64.0.1'],
+    ['R3', '203.0.113.9'],
+    ['server', '198.51.100.7'],
+  ];
+  const X = (i: number) => 40 + i * 90;
+  const Y = 45;
+
+  class TracerouteSteps extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < NODES.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const ttl = this.i;
+      let s = '<defs><marker id="tr-a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--g-yellow)" /></marker><marker id="tr-a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--g-green)" /></marker></defs>';
+      for (let k = 1; k < NODES.length; k++) s += `<line class="link" x1="${X(k - 1)}" y1="${Y}" x2="${X(k)}" y2="${Y}" />`;
+      if (ttl > 0) {
+        s += `<path class="probe" d="M${X(0) + 26} ${Y - 14} L${X(ttl) - 26} ${Y - 14}" marker-end="url(#tr-a1)" />`;
+        for (let k = 1; k <= ttl; k++) s += `<text class="ttl" x="${(X(k - 1) + X(k)) / 2}" y="${Y - 26}">TTL ${ttl - k + 1}</text>`;
+        s += `<path class="reply" d="M${X(ttl) - 26} ${Y + 14} L${X(0) + 26} ${Y + 14}" marker-end="url(#tr-a2)" />`;
+        s += `<text x="${(X(0) + X(ttl)) / 2}" y="${Y + 28}" style="fill: var(--g-green)">${ttl === NODES.length - 1 ? 'echo reply' : 'ICMP time exceeded'}</text>`;
+      }
+      NODES.forEach(([n, ip], k) => {
+        s += `<rect class="base" x="${X(k) - 26}" y="${Y - 14}" width="52" height="28" rx="5" /><rect class="node${k === ttl && ttl > 0 ? ' hit' : ''}" x="${X(k) - 26}" y="${Y - 14}" width="52" height="28" rx="5" /><text x="${X(k)}" y="${Y}">${n}</text>`;
+        if (ip) s += `<text x="${X(k)}" y="${Y + 52}" style="fill: var(--text-faint); font-size: 9px">${ip}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const rows = ['<tr><td>hop</td><td>address</td></tr>'];
+      for (let k = 1; k <= ttl; k++) rows.push(`<tr><td>${k}</td><td class="${k === ttl ? 'new' : ''}">${NODES[k][1]}</td></tr>`);
+      this.querySelector('[data-tbl]')!.innerHTML = rows.join('');
+      this.querySelector('[data-msg]')!.textContent =
+        ttl === 0
+          ? 'traceroute knows only the destination, 198.51.100.7. It will send probes with TTL 1, 2, 3, … until the destination itself answers.'
+          : ttl === NODES.length - 1
+            ? `TTL ${ttl} is enough to reach the server, which replies itself. Done: the path has ${ttl - 1} routers.`
+            : `TTL ${ttl}: the TTL falls to 0 at ${NODES[ttl][0]}, which drops the probe and reports back from ${NODES[ttl][1]}.`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === NODES.length - 1;
+    }
+  }
+  customElements.define('traceroute-steps', TracerouteSteps);
+</script>

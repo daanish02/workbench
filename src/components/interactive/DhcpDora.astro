@@ -1,0 +1,153 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="DHCP: four messages to get an address"
+  caption="A laptop joins a network that already has a phone, a TV and a router running a DHCP server. Yellow arrows are this step's messages. Discover and Request are broadcasts that every device on the link receives; only the DHCP server acts on them. Once acknowledged, the laptop's address turns green, and the bar shows how much of its one-hour lease remains. Halfway through, it renews with a unicast request and keeps the same address."
+>
+  <dhcp-dora>
+    <svg class="dd-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="DHCP message exchange between a laptop and a server"></svg>
+    <p class="dd-msg" data-msg></p>
+    <p class="dd-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </dhcp-dora>
+</Figure>
+
+<style>
+  .dd-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .dd-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .dd-svg :global(rect.node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .dd-svg :global(rect.node.srv) {
+    fill: rgba(251, 188, 5, 0.16);
+    stroke: var(--g-yellow);
+  }
+  .dd-svg :global(rect.node.ok) {
+    fill: rgba(52, 168, 83, 0.2);
+    stroke: var(--g-green);
+  }
+  .dd-svg :global(line.bus) {
+    stroke: var(--border-strong);
+    stroke-width: 3;
+  }
+  .dd-svg :global(line.drop) {
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .dd-svg :global(path.msg) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.2;
+  }
+  .dd-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .dd-svg :global(text.muted) {
+    fill: var(--text-muted);
+  }
+  .dd-svg :global(text.ok) {
+    fill: var(--g-green);
+  }
+  .dd-svg :global(rect.lease-bg) {
+    fill: transparent;
+    stroke: var(--border);
+  }
+  .dd-svg :global(rect.lease) {
+    fill: var(--g-green);
+  }
+  .dd-msg {
+    min-height: 4.2em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .dd-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const NODES: Record<string, [number, string]> = { laptop: [60, 'laptop'], phone: [170, 'phone'], tv: [280, 'TV'], srv: [385, 'router (DHCP)'] };
+  const BUS = 125;
+  interface Step { msg: string; from?: string; to?: string[]; label?: string; ip: string; ok: boolean; lease: number; t: string }
+  const STEPS: Step[] = [
+    { ip: '0.0.0.0', ok: false, lease: 0, t: '0 min', msg: 'The laptop has just connected. It has no address yet, no gateway and no DNS server, so it cannot send ordinary unicast IP traffic.' },
+    { from: 'laptop', to: ['phone', 'tv', 'srv'], label: 'DISCOVER (broadcast)', ip: '0.0.0.0', ok: false, lease: 0, t: '0 min', msg: 'Discover: sent from 0.0.0.0 to the broadcast address 255.255.255.255, so every device on the link receives it. The phone and TV ignore it; the DHCP server answers.' },
+    { from: 'srv', to: ['laptop'], label: 'OFFER 192.168.1.100', ip: '0.0.0.0', ok: false, lease: 0, t: '0 min', msg: 'Offer: the server proposes 192.168.1.100/24 with gateway 192.168.1.1, a DNS server and a one-hour lease, and reserves that address for a moment.' },
+    { from: 'laptop', to: ['phone', 'tv', 'srv'], label: 'REQUEST (broadcast)', ip: '0.0.0.0', ok: false, lease: 0, t: '0 min', msg: 'Request: the laptop broadcasts that it accepts this server\'s offer. Broadcasting it tells any other DHCP server on the link that its offer was declined.' },
+    { from: 'srv', to: ['laptop'], label: 'ACK', ip: '192.168.1.100', ok: true, lease: 1, t: '0 min', msg: 'Acknowledge: the server records the lease. The laptop configures 192.168.1.100/24, its default gateway and DNS server, and can now talk to the world.' },
+    { ip: '192.168.1.100', ok: true, lease: 0.5, t: '30 min', msg: 'Thirty minutes later, half the lease has passed. The address is still valid, but the client starts renewing now so the lease never runs out while it is in use.' },
+    { from: 'laptop', to: ['srv'], label: 'REQUEST (unicast)', ip: '192.168.1.100', ok: true, lease: 0.5, t: '30 min', msg: 'Renewal: the laptop already has an address, so it asks the server directly, by unicast, to extend the lease on 192.168.1.100.' },
+    { from: 'srv', to: ['laptop'], label: 'ACK', ip: '192.168.1.100', ok: true, lease: 1, t: '30 min', msg: 'The server acknowledges and the lease runs for another hour. The laptop keeps the same address; if it left the network, the address would return to the pool after the lease expired.' },
+  ];
+
+  class DhcpDora extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < STEPS.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const st = STEPS[this.i];
+      let s = '<defs><marker id="dd-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--g-yellow)" /></marker></defs>';
+      s += `<line class="bus" x1="30" y1="${BUS}" x2="420" y2="${BUS}" /><text class="muted" x="225" y="${BUS + 14}">one link (broadcast domain)</text>`;
+      for (const [k, [x, label]] of Object.entries(NODES)) {
+        const y = k === 'srv' || k === 'laptop' ? 70 : 185;
+        s += `<line class="drop" x1="${x}" y1="${y}" x2="${x}" y2="${BUS}" />`;
+      }
+      if (st.from && st.to) {
+        const [fx] = NODES[st.from];
+        const fy = st.from === 'srv' || st.from === 'laptop' ? 70 : 185;
+        for (const t of st.to) {
+          const [tx] = NODES[t];
+          const ty = t === 'srv' || t === 'laptop' ? 70 : 185;
+          const sy = fy < BUS ? fy + 18 : fy - 18;
+          const ey = ty < BUS ? ty + 18 : ty - 18;
+          s += `<path class="msg" d="M${fx} ${sy} L${fx} ${BUS - 4} L${tx} ${BUS - 4} L${tx} ${ey}" marker-end="url(#dd-arr)" />`;
+        }
+        s += `<text x="225" y="${BUS - 16}" style="fill: var(--g-yellow)">${st.label}</text>`;
+      }
+      for (const [k, [x, label]] of Object.entries(NODES)) {
+        const y = k === 'srv' || k === 'laptop' ? 70 : 185;
+        const cls = k === 'srv' ? 'srv' : k === 'laptop' && st.ok ? 'ok' : '';
+        const w = k === 'srv' ? 96 : 70;
+        s += `<rect class="base" x="${x - w / 2}" y="${y - 18}" width="${w}" height="36" rx="6" /><rect class="node ${cls}" x="${x - w / 2}" y="${y - 18}" width="${w}" height="36" rx="6" /><text x="${x}" y="${y}">${label}</text>`;
+      }
+      const [lx] = NODES.laptop;
+      s += `<text class="${st.ok ? 'ok' : 'muted'}" x="${lx}" y="34">${st.ip}</text>`;
+      s += `<text class="muted" x="${lx + 4}" y="14" text-anchor="start" style="text-anchor: start">lease</text>`;
+      s += `<rect class="lease-bg" x="${lx + 42}" y="8" width="100" height="10" rx="2" /><rect class="lease" x="${lx + 42}" y="8" width="${st.lease * 100}" height="10" rx="2" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = st.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${STEPS.length - 1} · t = ${st.t} · laptop ${st.ip} · lease left ${Math.round(st.lease * 60)} min`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === STEPS.length - 1;
+    }
+  }
+  customElements.define('dhcp-dora', DhcpDora);
+</script>

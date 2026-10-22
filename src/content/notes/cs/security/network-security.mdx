@@ -1,14 +1,14 @@
 ---
 title: "Network Security"
-description: "Firewalls, VPNs and TLS in proper depth: how each one protects a network."
+description: "Firewalls, intrusion detection, VPNs and TLS in proper depth: how each one protects a network."
 order: 6
 tier: core
 takeaways:
-  - "A **firewall** controls which traffic is allowed: filter by address, port and protocol, track connection state, and follow **default deny**."
+  - "A **firewall** controls which traffic is allowed: filter by address, port and protocol, track connection state, and follow **default deny**. Prefer **segmentation** over a single perimeter."
   - "A **VPN** builds an encrypted tunnel across an untrusted network; it protects the path to the gateway, not the destination, and does not replace TLS."
   - "**TLS** gives confidentiality, integrity and server authentication between endpoints; it does not prove a site is honest."
   - "Firewalls, VPNs and TLS answer **different questions** (who can reach what, is the path protected, who am I talking to) and fail in different ways, which is why they are layered."
-  - "Prefer **segmentation** over a single perimeter, so one compromised host cannot reach everything."
+  - "An **IDS** alerts on suspicious activity inside allowed traffic; an **IPS** sits inline and blocks it. Because attacks are rare, even a 99%-accurate detector's alerts can be 99% false alarms."
 resources:
   - title: "Firewall (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Firewall_(computing)"
@@ -18,9 +18,12 @@ resources:
   - title: "Mozilla SSL Configuration Generator"
     url: "https://ssl-config.mozilla.org/"
     note: "Current, safe TLS settings for common servers."
+  - title: "Intrusion detection system (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Intrusion_detection_system"
+    note: "Network vs host IDS, signature vs anomaly detection, and IPS."
 ---
 
-Network security is the practice of controlling which systems can communicate, protecting information as it travels, and limiting what an attacker can reach after gaining access. Firewalls, VPNs, and TLS address different parts of this problem: firewalls control traffic, VPNs create protected network paths, and TLS protects communication between endpoints. Understanding their boundaries matters because none of these mechanisms, by itself, makes an entire network trustworthy.
+Network security is the practice of controlling which systems can communicate, protecting information as it travels, and limiting what an attacker can reach after gaining access. Firewalls, VPNs, and TLS address different parts of this problem: firewalls control traffic, VPNs create protected network paths, and TLS protects communication between endpoints. Intrusion detection and prevention systems add a fourth role: watching what allowed traffic actually does. Understanding their boundaries matters because none of these mechanisms, by itself, makes an entire network trustworthy.
 
 ## Firewalls: controlling which traffic is allowed
 
@@ -58,6 +61,35 @@ for pkt in [("internet", "web", 443), ("internet", "db", 5432), ("web", "db", 54
 ```
 
 Firewalls also have limits. They cannot reliably identify every malicious action inside an allowed connection, and permitting HTTPS does not guarantee that the content is benign. Firewalls govern reachability, not the full trustworthiness of an application or user.
+
+## Intrusion detection and prevention: watching what allowed traffic does
+
+A firewall decides which connections may exist; it does not judge what happens inside an allowed one. An **intrusion detection system (IDS)** watches traffic or host activity for signs of attack and raises alerts. An **intrusion prevention system (IPS)** does the same but sits **inline** in the traffic path, so it can drop or reset what it flags.
+
+Two placements and two detection methods combine:
+
+- A **network IDS** (NIDS) inspects packets, usually from a copy of the traffic delivered by a switch's mirror port or a passive network tap, so it cannot slow or break the network. A **host IDS** (HIDS) runs on a machine and watches its logs, file changes and process behaviour, and sees activity that encryption hides from the network.
+- **Signature-based** detection matches known attack patterns, such as a byte sequence from a known exploit or a request shape used by a known tool. It is precise for known attacks and blind to new ones. **Anomaly-based** detection learns what normal traffic looks like and flags deviations, which can catch new attacks but produces far more false alarms.
+
+<IdsPlacement />
+
+The hard part is not detection but **false alarms**. Attacks are rare compared with normal events, so even an accurate detector produces mostly false positives:
+
+```python
+events, attacks = 1_000_000, 10                  # connections per day, of which 10 are real attacks
+detection_rate, false_alarm_rate = 0.99, 0.001   # a detector that sounds excellent
+
+true_alerts = attacks * detection_rate
+false_alerts = (events - attacks) * false_alarm_rate
+print(f"alerts per day: {true_alerts + false_alerts:,.0f} ({true_alerts:.1f} real, {false_alerts:,.0f} false)")
+print(f"chance an alert is a real attack: {true_alerts / (true_alerts + false_alerts):.1%}")
+# alerts per day: 1,010 (9.9 real, 1,000 false)
+# chance an alert is a real attack: 1.0%
+```
+
+In words: a detector that catches 99% of attacks and misfires on only 0.1% of normal connections still raises 1,010 alerts a day, of which 9.9 are real: only 1.0% of alerts are attacks. This **base-rate** effect is why security teams tune rules, correlate alerts from several sources, and treat an IPS's automatic blocking with care, since every false positive it acts on blocks legitimate traffic. Encrypted traffic adds a second limit: a network IDS sees only metadata unless it terminates TLS. The hardware that does deep inspection at line rate is covered in [Routers](../../../infra/networking-hardware/routers/).
+
+<BaseRateAlerts />
 
 ## VPNs: creating a protected path across an untrusted network
 

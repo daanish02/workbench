@@ -1,14 +1,14 @@
 ---
 title: "IP Addressing"
-description: "IPv4, IPv6, CIDR notation, and subnet masks, explained."
+description: "IPv4, IPv6, CIDR notation and subnet masks, and how DHCP hands addresses to hosts."
 order: 3
 tier: core
 takeaways:
   - "An **IP address** only makes sense with its **prefix length**: the first *p* bits name the network, the rest name a host in it."
   - "**IPv4** is 32 bits (about 4.3 billion addresses); **IPv6** is 128 bits, written in hex with `::` shortening."
   - "**CIDR** `a.b.c.d/p` replaced fixed classes: a /p network holds 2^(32−p) IPv4 addresses (two reserved in ordinary subnets)."
-  - "The **network address** is IP AND mask; two hosts are on the same subnet when their network addresses are equal."
-  - "**Subnetting** borrows host bits to split a block: a /24 becomes four /26s by borrowing 2 bits."
+  - "The **network address** is IP AND mask; two hosts are on the same subnet when their network addresses are equal. **Subnetting** borrows host bits: a /24 becomes four /26s by borrowing 2 bits."
+  - "**DHCP** leases addresses from a pool in four broadcast messages (Discover, Offer, Request, Acknowledge); clients renew halfway through the lease."
 resources:
   - title: "Python ipaddress module"
     url: "https://docs.python.org/3/library/ipaddress.html"
@@ -18,6 +18,9 @@ resources:
   - title: "Classless Inter-Domain Routing (Wikipedia)"
     url: "https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing"
     note: "Prefix tables, special ranges and the history."
+  - title: "RFC 2131: Dynamic Host Configuration Protocol"
+    url: "https://www.rfc-editor.org/rfc/rfc2131"
+    note: "The DHCP standard: message formats, the lease state machine and relay agents."
 ---
 
 **IP addressing** gives network interfaces a logical identity that routers can use to move packets across interconnected networks. **Subnetting** divides address space into smaller networks, and **CIDR notation** states exactly how much of an address names the network and how much names the host. The key idea: an IP address is always interpreted together with a **prefix length**. The prefix determines which bits define the network, which addresses belong to it, and whether a destination is local or must be reached through a router.
@@ -131,3 +134,53 @@ A host compares the destination with its own address using its prefix. If the de
 A computer at `192.168.1.37/24` contacting `192.168.1.80` delivers locally; contacting `192.168.2.80`, which lies outside its /24, it hands the packet to the gateway.
 
 Routers also use prefixes in their routing tables and choose the **longest matching prefix**, the most specific route (see [Routing](../routing/)). That lets address blocks be aggregated into larger routes while still allowing more specific exceptions.
+
+## DHCP Hands Out Addresses
+
+A host needs an address, a prefix length, a default gateway and a DNS server before it can do anything on a network. Typing them in by hand does not scale, so most networks use **DHCP** (Dynamic Host Configuration Protocol, RFC 2131). A DHCP server, often the home router, owns a **pool** of addresses and lends them out. A new host does not yet have an address to send from, so the exchange starts with broadcasts, in four messages often remembered as **DORA**:
+
+1. **Discover**: the client broadcasts "I need an address" from source `0.0.0.0` to `255.255.255.255`.
+2. **Offer**: a server replies with a proposed address and the settings that go with it.
+3. **Request**: the client broadcasts that it accepts that offer (telling any other servers their offers were declined).
+4. **Acknowledge**: the server confirms, and the client configures its interface.
+
+<DhcpDora />
+
+The address is a **lease**, valid for a fixed time (often hours to a day). A client renews when half the lease has passed and usually keeps the same address; addresses of clients that leave expire and return to the pool:
+
+```python
+import ipaddress
+
+class DhcpServer:
+    def __init__(self, subnet, first, last, lease_s):
+        net = ipaddress.ip_network(subnet)
+        self.free = [ip for ip in net.hosts() if first <= int(ip) - int(net.network_address) <= last]
+        self.leases = {}                         # MAC -> (address, expiry time)
+        self.lease_s = lease_s
+
+    def request(self, mac, now):
+        for m, (ip, exp) in list(self.leases.items()):
+            if exp <= now:                       # expired leases go back to the pool
+                del self.leases[m]
+                self.free.append(ip)
+        if mac in self.leases:                   # a known client renews and keeps its address
+            ip = self.leases[mac][0]
+        else:
+            ip = self.free.pop(0)
+        self.leases[mac] = (ip, now + self.lease_s)
+        return ip
+
+dhcp = DhcpServer("192.168.1.0/24", first=100, last=101, lease_s=3600)
+print("laptop:", dhcp.request("aa:01", now=0))
+print("phone: ", dhcp.request("aa:02", now=10))
+print("laptop renews:", dhcp.request("aa:01", now=1800))
+print("tv, pool full but phone lease expired:", dhcp.request("aa:03", now=5000))
+# laptop: 192.168.1.100
+# phone:  192.168.1.101
+# laptop renews: 192.168.1.100
+# tv, pool full but phone lease expired: 192.168.1.101
+```
+
+In words: the laptop and phone take the only two addresses in the pool, .100 and .101. The laptop renews halfway through its one-hour lease and keeps .100. When the TV arrives at time 5000, the pool looks full, but the phone's lease ran out at 3610, so the TV gets the phone's old .101. A pool that is too small, or leases that are too long on a busy guest network, leave new devices with no address at all.
+
+DHCP broadcasts do not cross routers, so on networks with many subnets a router acts as a **relay agent** that forwards them to a central server. IPv6 hosts can also configure themselves without a server (**SLAAC**): the router advertises the prefix and each host picks its own interface bits. Router hardware that bundles a DHCP server is covered in [Routers](../../../infra/networking-hardware/routers/).
