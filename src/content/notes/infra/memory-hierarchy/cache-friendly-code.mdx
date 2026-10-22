@@ -1,8 +1,197 @@
 ---
 title: "Cache-Friendly Code"
-description: "Locality in practice: traversal order, data layout and false sharing, measured as cache misses."
+description: "Locality in practice, counted as cache misses in a simulated cache: traversal order, struct-of-arrays layout, loop tiling, false sharing and pointer chasing."
 order: 11
 tier: core
+takeaways:
+  - "Caches move 64-byte lines, so code is fast when it uses every byte of each line it brings in (**spatial locality**) and reuses lines while they are still cached (**temporal locality**)."
+  - "Summing a 512 × 512 row-major matrix row by row misses on 12.5% of reads in a simulated 32 KiB cache; column by column, on 100%."
+  - "Reading one field of 100,000 32-byte records touches 50,000 lines as an **array of structs** and 12,500 as a **struct of arrays**."
+  - "**Tiling** a matrix transpose into 8 × 8 blocks cuts simulated misses from 294,912 to 69,120."
+  - "**False sharing**: four threads incrementing counters packed on one line moved it 3999 times in 1000 rounds; padded to one line each, 0 times."
+resources:
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "Section 6 is a long, measured guide to cache-friendly code: layout, tiling, prefetching and multithreading."
+  - title: "Gallery of Processor Cache Effects (Ostrovsky)"
+    url: "https://igoro.com/archive/gallery-of-processor-cache-effects/"
+    note: "Seven short experiments that show cache lines, associativity and false sharing in real timings."
+  - title: "Data-Oriented Design (Fabian, 2018)"
+    url: "https://www.dataorienteddesign.com/dodbook/"
+    note: "A free book on organising programs around data layout, with struct-of-arrays and hot/cold splitting."
 ---
 
-_Placeholder. Content not written yet._
+The earlier notes in this section explained the machinery: 64-byte lines and sets ([Cache Basics](../cache-basics/)), LRU replacement, coherence between cores, DRAM rows and prefetchers. This note turns that into practice: a handful of code patterns that decide whether a program runs at cache speed or at DRAM speed. Each is shown with a small cache simulation that counts misses, because miss counts are exact and repeatable while timings depend on the machine. The ideas apply in any language; in Python itself, interpreter overhead hides most of them, but NumPy arrays and every compiled language show them in full.
+
+## Locality
+
+Every pattern below is one of two kinds of **locality**:
+
+- **spatial locality**: after using an address, use its neighbours soon. A miss brings in a whole 64-byte line, so the other 56 bytes are free if the program uses them.
+- **temporal locality**: after using an address, use it again soon, before it is evicted.
+
+A cache miss to DRAM costs about 80 ns, a hit in L1 about 1 ns ([Memory Hierarchy](../why-the-memory-hierarchy-exists/)). So the miss count, more than the instruction count, often decides the speed of code that walks over large data.
+
+## Traversal Order
+
+A 2D array is stored as one long block. In **row-major** order (C, C++, NumPy by default, Rust) each row is contiguous and the next row follows it; Fortran, MATLAB and Julia use **column-major** order. Walking the array in storage order uses every byte of each line; walking against it uses 8 bytes per line and throws the rest away:
+
+<TraversalOrderSteps />
+
+```python
+from collections import OrderedDict
+
+class Cache:
+    """Set-associative LRU cache that only counts misses: 32 KiB, 8-way, 64-byte lines."""
+    def __init__(self, size=32 * 1024, ways=8, line=64):
+        self.line, self.ways, self.nsets = line, ways, size // (ways * line)
+        self.sets = [OrderedDict() for _ in range(self.nsets)]
+        self.misses = self.accesses = 0
+    def access(self, addr):
+        self.accesses += 1
+        tag = addr // self.line
+        s = self.sets[tag % self.nsets]
+        if tag in s:
+            s.move_to_end(tag)                       # mark most recently used
+        else:
+            self.misses += 1
+            if len(s) == self.ways:
+                s.popitem(last=False)                # evict the least recently used line
+            s[tag] = True
+
+N, ELEM = 512, 8                                     # 512 x 512 matrix of 8-byte floats, row-major
+for order in ["row by row", "column by column"]:
+    c = Cache()
+    for a in range(N):
+        for b in range(N):
+            i, j = (a, b) if order == "row by row" else (b, a)
+            c.access((i * N + j) * ELEM)
+    print(f"{order:16}: {c.misses:6} misses in {c.accesses} reads ({c.misses / c.accesses:.1%})")
+# row by row      :  32768 misses in 262144 reads (12.5%)
+# column by column: 262144 misses in 262144 reads (100.0%)
+```
+
+In words: row by row, each miss brings in 8 doubles and the next 7 reads hit, so 12.5% of reads miss, 32,768 in all, one per line. Column by column, consecutive reads are 4096 bytes apart and every read touches a new line. Worse, 4096 bytes is exactly 64 lines, the number of sets in this cache, so all 512 lines of a column map to the same set, whose 8 ways are overwritten long before the next column returns to them: every one of the 262,144 reads misses. Same data, same sum, eight times the misses. The hardware prefetcher softens the column case on a real CPU, since the stride is constant ([Prefetching](../prefetching/)), but it still moves eight times as many bytes from memory.
+
+The fix is usually to swap the two loops. In NumPy, the order is visible in the array's **strides**, the bytes to step per index:
+
+```python
+import numpy as np
+
+a = np.zeros((512, 512))                             # float64, C order: rows are contiguous
+print("a.strides:", a.strides)
+print("a.T.strides:", a.T.strides, "contiguous:", a.T.flags["C_CONTIGUOUS"])
+col = a[:, 0]                                        # one column: 512 values, each 4096 bytes apart
+print("column stride:", col.strides[0], "bytes, lines touched:", len({k * col.strides[0] // 64 for k in range(512)}))
+print("copy is contiguous:", np.ascontiguousarray(a.T).flags["C_CONTIGUOUS"])
+# a.strides: (4096, 8)
+# a.T.strides: (8, 4096) contiguous: False
+# column stride: 4096 bytes, lines touched: 512
+# copy is contiguous: True
+```
+
+In words: moving one row down skips 4096 bytes and moving one column right skips 8. A transpose `a.T` copies nothing, it only swaps the strides, so it is no longer contiguous; a column `a[:, 0]` reads 512 values from 512 different lines. When a loop or a library call will scan such a view many times, `np.ascontiguousarray` pays for one copy to make every later scan sequential. Run it with `uv run --with numpy`.
+
+## Data Layout
+
+An **array of structs** (AoS) stores each record's fields together: `[x, y, z, mass, x, y, z, mass, …]`. A **struct of arrays** (SoA) stores each field in its own array: `[x, x, …]`, `[mass, mass, …]`. When a loop reads all fields of each record, AoS is fine. When it reads one field, AoS drags the others through the cache with it:
+
+```python
+n = 100_000                                          # particles, each with x, y, z, mass as 8-byte floats
+
+def lines_touched(addresses):
+    return len({a // 64 for a in addresses})         # each distinct 64-byte line is one miss on a cold cache
+
+aos = [p * 32 + 24 for p in range(n)]                # array of structs: mass sits at offset 24 of each 32-byte record
+soa = [p * 8 for p in range(n)]                      # struct of arrays: all masses packed together
+print(f"array of structs: {lines_touched(aos):6} lines read to sum the masses")
+print(f"struct of arrays: {lines_touched(soa):6} lines read to sum the masses")
+# array of structs:  50000 lines read to sum the masses
+# struct of arrays:  12500 lines read to sum the masses
+```
+
+In words: with 32-byte records, a 64-byte line holds two masses, so summing 100,000 masses reads 50,000 lines; packed together, a line holds eight, and it takes 12,500, a quarter of the memory traffic. SoA also lines up values for [SIMD](../../gpus-parallelism/simd-instructions-on-cpus/) instructions. This is why columnar databases and data-frame libraries store columns, not rows, and why game engines and physics codes use SoA for hot loops. A middle path is **hot/cold splitting**: keep the fields every loop touches in one compact struct and move the rarely used ones elsewhere.
+
+## Tiling for Reuse
+
+Some algorithms read one array along rows and another along columns, so no loop order suits both. A matrix transpose `B[j][i] = A[i][j]` is the simplest case. **Tiling** (blocking) processes the matrix in small square blocks, so that the lines of both blocks fit in cache together and are fully used before being evicted:
+
+```python
+from collections import OrderedDict
+
+class Cache:
+    """Set-associative LRU cache that only counts misses: 32 KiB, 8-way, 64-byte lines."""
+    def __init__(self, size=32 * 1024, ways=8, line=64):
+        self.line, self.ways, self.nsets = line, ways, size // (ways * line)
+        self.sets = [OrderedDict() for _ in range(self.nsets)]
+        self.misses = 0
+    def access(self, addr):
+        tag = addr // self.line
+        s = self.sets[tag % self.nsets]
+        if tag in s:
+            s.move_to_end(tag)
+        else:
+            self.misses += 1
+            if len(s) == self.ways:
+                s.popitem(last=False)
+            s[tag] = True
+
+N, ELEM = 512, 8
+A, B = 0, N * N * ELEM + 4096                        # base addresses of source and destination matrices
+
+def transpose(tile):
+    c = Cache()
+    for ii in range(0, N, tile):
+        for jj in range(0, N, tile):
+            for i in range(ii, ii + tile):
+                for j in range(jj, jj + tile):
+                    c.access(A + (i * N + j) * ELEM) # read A[i][j], along a row
+                    c.access(B + (j * N + i) * ELEM) # write B[j][i], down a column
+    return c.misses
+
+for tile in [N, 8]:
+    label = "naive" if tile == N else f"{tile}x{tile} tiles"
+    print(f"{label:10}: {transpose(tile):6} misses for {2 * N * N} accesses")
+# naive     : 294912 misses for 524288 accesses
+# 8x8 tiles :  69120 misses for 524288 accesses
+```
+
+In words: the naive transpose reads A efficiently (32,768 misses) but writes B down columns, missing on all 262,144 writes, 294,912 misses in total. With 8 × 8 tiles, one tile of B spans 8 lines that stay cached while all 8 of their columns are written, so B now misses about once per line as well: 69,120 misses, close to the minimum of 65,536 (one per line of each matrix). Fast matrix multiplication libraries use the same idea in several levels, one tile size per cache level and one for registers, which is a large part of why a library matmul runs many times faster than three nested loops ([Roofline Model](../../gpus-parallelism/roofline-model/)).
+
+## False Sharing
+
+On a multicore CPU, lines also move between cores ([Cache Coherence](../cache-coherence/)). Two threads writing different variables that share a line force the line to bounce between their caches as if they shared data:
+
+```python
+def transfers(addresses, rounds=1000):
+    # threads take turns incrementing their own counter; a line moves whenever a different core writes it
+    owner, moves = {}, 0
+    for _ in range(rounds):
+        for core, addr in enumerate(addresses):
+            line = addr // 64
+            if owner.get(line, core) != core:
+                moves += 1
+            owner[line] = core
+    return moves
+
+packed = [0, 8, 16, 24]                              # four 8-byte counters side by side: one cache line
+padded = [0, 64, 128, 192]                           # each counter on its own line
+print(f"packed counters: {transfers(packed)} line transfers")
+print(f"padded counters: {transfers(padded)} line transfers")
+# packed counters: 3999 line transfers
+# padded counters: 0 line transfers
+```
+
+In words: four per-thread counters in one 32-byte array share a line, so every increment by a different thread moves it: 3999 transfers in 4000 increments, each costing tens of nanoseconds. Padded to 64 bytes apart, each counter has its own line, which stays Modified in its owner's cache: zero transfers. In C++ the fix is `alignas(64)` (or `std::hardware_destructive_interference_size`); in Java, the `@Contended` annotation; in Go and Rust, explicit padding fields.
+
+## Pointer Chasing
+
+Linked lists, trees of individually allocated nodes and hash tables with chained buckets scatter their elements across memory. Each step loads an address from the previous node, so the CPU cannot start the next miss early and prefetchers cannot guess it: every node can cost a full DRAM latency. A contiguous array visits the same elements with one miss per 8 of them and a prefetcher running ahead. Prefer arrays and vectors, B-trees with wide nodes over binary trees, and open addressing over chaining for hash tables in hot paths ([Linked Lists](../../../cs/data-structures/linked-lists/), [Skip Lists, B-Trees](../../../cs/data-structures/skip-lists-and-b-trees/)).
+
+<Callout type="pitfall">
+Do not guess which loop is slow from the code; measure with hardware counters. `perf stat -e cache-misses,cache-references` on Linux, or Intel VTune and AMD uProf, report misses per level directly. Many layout changes that look clever do nothing because the data already fits in L2, and some hurt: padding everything to 64 bytes to prevent false sharing multiplies the memory footprint and can cause more misses than it saves. Fix the hot loops the profiler names, then measure again.
+</Callout>
+
+<Callout type="key">
+Use every byte of each line you load and reuse lines while they are cached. Traverse arrays in storage order, store fields that are scanned together contiguously (struct of arrays), tile algorithms that mix rows and columns, keep data written by different threads on different lines, and prefer contiguous structures to pointer-linked ones. Count misses with a profiler before and after each change.
+</Callout>

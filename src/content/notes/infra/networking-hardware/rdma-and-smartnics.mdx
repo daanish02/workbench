@@ -1,8 +1,148 @@
 ---
 title: "RDMA & SmartNICs"
-description: "Kernel bypass with RDMA and RoCE, and network cards that offload networking and storage work."
-order: 6
+description: "Kernel bypass with DPDK, remote memory access with RDMA over InfiniBand and RoCE, and network cards that run their own software."
+order: 8
 tier: advanced
+takeaways:
+  - "At 100 Gbit/s one core has about 328 ns per 4 KiB message, too little for the kernel's per-packet work. **Kernel bypass** (DPDK) hands NIC queues to a user-space program that polls them."
+  - "**RDMA** lets a NIC read or write another machine's memory directly: **one-sided** operations need no CPU work on the remote side, no copies and no system calls on the data path."
+  - "Memory must be **registered** first: pinned in RAM and given a key, which the NIC checks on every remote access."
+  - "RDMA runs over **InfiniBand** (a lossless fabric by design) or **RoCE v2** on Ethernet, which needs PFC and ECN to keep loss rare because NIC recovery is costly."
+  - "**SmartNICs** and **DPUs** add programmable cores or pipelines to the NIC, so virtual switching, encryption and storage protocols run on the card instead of the host CPU."
+resources:
+  - title: "Remote direct memory access (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Remote_direct_memory_access"
+    note: "RDMA concepts, transports and history, with links to the verbs API."
+  - title: "RDMA over Converged Ethernet (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/RDMA_over_Converged_Ethernet"
+    note: "RoCE v1 and v2, and the congestion-control machinery Ethernet needs to carry it."
+  - title: "AWS Nitro System (Amazon)"
+    url: "https://aws.amazon.com/ec2/nitro/"
+    note: "A production example of offloading a cloud's networking, storage and security onto dedicated cards."
 ---
 
-_Placeholder. Content not written yet._
+[Network Interface Cards](../network-interface-cards/) ended with every packet still passing through the operating system kernel: an interrupt or a poll, the protocol stack, a copy into the application's buffer. Batching and offloads make that fast enough for most servers. It is not fast enough for storage systems, high-frequency trading, or GPU clusters exchanging gradients ([Data Center Topologies](../data-center-networking-topologies/)), where microseconds matter and the network runs at hundreds of gigabits per second. This note covers the three ways out: **kernel bypass**, which moves the network stack into the application; **RDMA**, which lets NICs move data between machines' memory with no CPU involved; and **SmartNICs**, which put whole subsystems onto the card. It builds on [System Calls](../../../cs/operating-systems/system-calls/) for the cost of entering the kernel.
+
+## The Per-Message Budget
+
+The kernel path costs a system call to send, protocol processing on both sides, at least one copy between kernel and application memory on each side, and an interrupt or poll to receive. Each of these is cheap on its own; the problem is how many there are per second:
+
+```python
+for gbps in (10, 100, 400):
+    msgs = gbps * 1e9 / 8 / 4096                 # 4 KiB messages per second at line rate
+    print(f"{gbps:3} Gbit/s of 4 KiB messages: {msgs:12,.0f} per second, {1e9 / msgs:6.1f} ns each for one core")
+#  10 Gbit/s of 4 KiB messages:      305,176 per second, 3276.8 ns each for one core
+# 100 Gbit/s of 4 KiB messages:    3,051,758 per second,  327.7 ns each for one core
+# 400 Gbit/s of 4 KiB messages:   12,207,031 per second,   81.9 ns each for one core
+```
+
+In words: at 10 Gbit/s a core has 3.3 µs per 4 KiB message, plenty for the kernel stack. At 100 Gbit/s it has 328 ns, and at 400 Gbit/s 82 ns, about the time of one main-memory access. Spreading the work over many cores helps, but every core spent on networking is one not running the application, and every copy uses memory bandwidth the application also needs.
+
+## Kernel Bypass
+
+**Kernel bypass** gives an application direct control of NIC queues. With **DPDK** (Data Plane Development Kit), a user-space driver maps the NIC's registers and descriptor rings into the process, and the application:
+
+- **polls** the receive rings in a tight loop instead of waiting for interrupts,
+- processes packets in batches with its own (often minimal) protocol code,
+- keeps packet buffers in pre-allocated, huge-page memory, so no copying between kernel and user space and few TLB misses.
+
+There are no system calls and no interrupts on the data path. The costs: a polling core runs at 100% even when no traffic arrives, the application must bring its own TCP/IP stack or do without one, and the kernel's tools (firewall rules, `tcpdump`, socket statistics) no longer see that traffic. DPDK is standard in software routers, load balancers, firewalls and virtual switches. Linux also offers **AF_XDP**, a middle way that hands chosen queues to user space while the kernel keeps the rest.
+
+## RDMA: NICs Move Memory
+
+Kernel bypass still needs a CPU on each side to run the protocol. **RDMA** (remote direct memory access) moves that work into the NIC (an **RNIC**). An application posts a request such as "write these 4 KiB from my buffer into that buffer on machine B", and the two NICs carry it out: segmenting, sending, acknowledging, retransmitting, and writing directly into B's memory with DMA.
+
+The programming interface, called **verbs**, is built around queues in memory, like the descriptor rings of an ordinary NIC:
+
+- A **queue pair** (a send queue and a receive queue) represents one connection. The application posts **work requests** to it and rings a doorbell; no system call is needed after setup.
+- A **completion queue** receives an entry when a request finishes; the application polls it.
+- **One-sided** operations, **RDMA READ** and **RDMA WRITE**, access remote memory without any action by the remote CPU or application. **Two-sided** SEND/RECEIVE delivers into a buffer the receiver posted, like a message.
+
+The remote side's memory is only safe to expose because it must be **registered** first. Registration pins the pages in physical memory, so the operating system cannot move or swap them while a NIC might write them, and returns a **key** (the rkey) that the owner sends to trusted peers. The NIC checks the key and the bounds on every incoming request:
+
+```python
+import random
+
+class RNIC:
+    """A toy RDMA NIC: remote peers may touch only memory registered with a matching key."""
+    def __init__(self, memory_size):
+        self.memory = bytearray(memory_size)
+        self.regions = {}                        # rkey -> (start, length, writable)
+
+    def register(self, start, length, writable):
+        rkey = random.getrandbits(32)            # the key the owner hands to its peer (real NICs make it unpredictable)
+        self.regions[rkey] = (start, length, writable)
+        return rkey
+
+    def remote_write(self, rkey, offset, data):  # executed by the NIC; the host CPU is not involved
+        start, length, writable = self.regions.get(rkey, (0, 0, False))
+        if not writable or offset + len(data) > length:
+            return "access error"
+        self.memory[start + offset : start + offset + len(data)] = data
+        return "ok"
+
+random.seed(0)
+server = RNIC(64)
+key = server.register(start=16, length=16, writable=True)
+print(server.remote_write(key, 0, b"gradient"))
+print(server.remote_write(key, 12, b"too long"))   # would run past the region
+print(server.remote_write(key ^ 1, 0, b"x"))       # wrong key
+print(bytes(server.memory[16:24]))
+# ok
+# access error
+# access error
+# b'gradient'
+```
+
+In words: a write with the right key inside the 16-byte region succeeds and lands in memory at bytes 16–23 without any code running on the server's CPU; a write that would run past the region, or uses a wrong key, is refused by the NIC. Registration is slow (it involves the kernel and pinning pages), so applications register large buffers once and reuse them.
+
+<StackBypass />
+
+The result is latency in the low microseconds between machines and near line-rate throughput with almost no CPU use, which is why RDMA carries distributed storage (NVMe over Fabrics, see [SAN & NAS](../../storage/storage-area-networks/)), databases and GPU collective communication. GPUDirect RDMA goes one step further: the NIC reads and writes **GPU memory** directly, so gradients never pass through host RAM.
+
+## InfiniBand and RoCE
+
+RDMA needs a network that rarely loses packets, because RNICs recover from loss simply: many retransmit everything after the lost packet (**go-back-N**), and a loss detected only by timeout stalls the queue pair for much longer. The cost of the go-back-N part alone:
+
+```python
+def go_back_n_efficiency(loss, window):
+    # every lost packet costs the whole window in flight again
+    return 1 / (1 + loss * window)
+
+window = round(100e9 * 10e-6 / 8 / 4096)         # packets in flight: 100 Gbit/s, 10 us round trip, 4 KiB packets
+print("packets in flight:", window)
+for loss in (1e-6, 1e-4, 1e-2):
+    print(f"loss {loss:.0e}: goodput {go_back_n_efficiency(loss, window):.2%} of the link")
+# packets in flight: 31
+# loss 1e-06: goodput 100.00% of the link
+# loss 1e-04: goodput 99.69% of the link
+# loss 1e-02: goodput 76.34% of the link
+```
+
+In words: with 31 packets in flight (the bandwidth-delay product of a 100 Gbit/s link with a 10 µs round trip), a loss rate of one in ten thousand costs only 0.31%, but one in a hundred costs almost a quarter of the link, before counting timeouts. TCP tolerates that kind of loss; RDMA transports are designed for networks where it does not happen. Two fabrics provide such networks:
+
+- **InfiniBand** is a separate network technology with its own switches, adapters and management. Its links use **credit-based flow control**: a sender transmits only when the receiver has advertised buffer space, so switches never drop packets for lack of room. It dominates supercomputers and many AI clusters ([Interconnects](../../gpus-parallelism/interconnects/)).
+- **RoCE v2** (RDMA over Converged Ethernet) puts the InfiniBand transport inside UDP/IP packets so it runs on ordinary Ethernet switches and routes across subnets. Ethernet drops packets when buffers fill, so RoCE networks add **PFC** (priority flow control: a switch tells its neighbour to pause one traffic class when a buffer is nearly full) and **ECN**-based congestion control (DCQCN), which slows senders before buffers fill. Newer RNICs also recover from loss selectively, which relaxes the need for a lossless network.
+
+(**iWARP** runs RDMA over TCP instead and tolerates loss, but is less common.)
+
+<Callout type="pitfall">
+PFC makes Ethernet lossless by pausing upstream ports, and pauses spread. One slow receiver can make its switch pause the spine, which pauses other leaves, until traffic that never goes near the slow host is stuck behind it (**head-of-line blocking**); in the worst case, cyclic pauses **deadlock** part of the fabric. Large RoCE deployments rely on ECN to slow senders early so PFC is a rarely used last resort, and keep RDMA in its own traffic class.
+</Callout>
+
+## SmartNICs and DPUs
+
+A **SmartNIC** is a NIC with programmable processing on board: an array of Arm cores, an FPGA, or a programmable match-action pipeline (often written in the P4 language). A **DPU** (data processing unit) is the high end of the same idea: a full system-on-chip with many cores, memory and its own operating system, sitting between the host and the network. NVIDIA's BlueField-3 (2022), for example, pairs 400 Gbit/s of networking with 16 Arm cores.
+
+What runs on them is infrastructure work that would otherwise take host cores:
+
+- **Virtual switching** for VMs and containers (Open vSwitch rules compiled into the NIC's pipeline),
+- **Encryption** of all traffic (IPsec, TLS) and firewall rules, enforced below the host's operating system,
+- **Storage**: presenting remote, network-attached disks to the host as if they were local NVMe drives,
+- **Telemetry**, load balancing and RDMA congestion control.
+
+Cloud providers were the first big users. The hypervisor's networking and storage for every tenant once ran on the same CPUs sold to customers. Moving them onto a dedicated card (AWS Nitro is the best-known example) returns those cores to customers and adds isolation: the tenant's operating system, even with full control of the server's CPU, cannot reach the card that enforces its network rules. See [Hardware Virtualization](../../cpu-architecture/hardware-virtualization/) for the CPU side of the same story.
+
+<Callout type="key">
+The three steps move work progressively off the host CPU. Kernel bypass removes the kernel but keeps a polling core per queue. RDMA removes the remote CPU from the data path entirely, at the price of registered memory and a near-lossless network. SmartNICs and DPUs move entire infrastructure services onto the card, turning the NIC into a small computer of its own.
+</Callout>

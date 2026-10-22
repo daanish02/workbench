@@ -1,0 +1,133 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A packet's hardware path from laptop to ISP"
+  caption="One packet from a laptop to a server on the Internet, through a home network. The boxes are the hardware it passes; yellow is where it is now. The table shows the header fields after each step, and yellow cells are the ones that step changed. The switch changes nothing; the router builds a new frame, lowers the TTL and, because it also does NAT, rewrites the source address and port."
+>
+  <packet-path-steps>
+    <svg class="pp-svg" data-svg viewBox="0 0 440 70" role="img" aria-label="Devices on the packet's path"></svg>
+    <table class="pp-tbl" data-tbl></table>
+    <p class="pp-msg" data-msg></p>
+    <p class="pp-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </packet-path-steps>
+</Figure>
+
+<style>
+  .pp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .pp-svg :global(rect) {
+    fill: rgba(66, 133, 244, 0.14);
+    stroke: var(--g-blue);
+  }
+  .pp-svg :global(rect.here) {
+    fill: rgba(251, 188, 5, 0.22);
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .pp-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .pp-svg :global(line.done) {
+    stroke: var(--g-green);
+  }
+  .pp-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .pp-tbl {
+    margin: 10px auto 0;
+    border-collapse: collapse;
+    font: 0.75rem var(--font-mono);
+  }
+  .pp-tbl :global(td) {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+  .pp-tbl :global(td:first-child) {
+    color: var(--text-muted);
+  }
+  .pp-tbl :global(td.chg) {
+    background: rgba(251, 188, 5, 0.18);
+    color: var(--g-yellow-l);
+  }
+  .pp-tbl :global(td.gone) {
+    color: var(--text-faint);
+  }
+  .pp-msg {
+    min-height: 4.2em;
+    margin: 10px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .pp-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const DEVICES = ['laptop NIC', 'switch', 'router', 'modem', 'ISP router'];
+  const FIELDS = ['dst MAC', 'src MAC', 'src IP:port', 'dst IP', 'TTL'];
+  interface Step { at: number; v: string[]; msg: string; noFrame?: boolean }
+  const STEPS: Step[] = [
+    { at: 0, v: ['router LAN', 'laptop', '192.168.1.10:51000', '198.51.100.7', '64'], msg: 'The laptop\'s stack builds the packet. The server is off the local subnet, so the frame is addressed to the router\'s MAC (found with ARP). The NIC DMAs it from RAM and its PHY puts it on the cable.' },
+    { at: 1, v: ['router LAN', 'laptop', '192.168.1.10:51000', '198.51.100.7', '64'], msg: 'The switch ASIC looks up the destination MAC in its MAC table, finds the router\'s port, and sends the frame out of it. It reads the frame but changes nothing.' },
+    { at: 2, v: ['—', '—', '192.168.1.10:51000', '198.51.100.7', '64'], noFrame: true, msg: 'The router\'s port checks the FCS and strips the Ethernet header: MAC addresses only mean something on the link they came from. What is left is the IP packet.' },
+    { at: 2, v: ['—', '—', '192.168.1.10:51000', '198.51.100.7', '63'], noFrame: true, msg: 'Forwarding: a longest-prefix lookup for 198.51.100.7 matches only the default route, out of the WAN port to the ISP. TTL drops from 64 to 63 and the header checksum is updated.' },
+    { at: 2, v: ['ISP router', 'router WAN', '203.0.113.5:40000', '198.51.100.7', '63'], msg: 'NAT replaces the private source with the router\'s public address and a new port, and records the mapping for the reply. A new frame is built: destination the ISP router\'s MAC, source the router\'s WAN MAC, new FCS.' },
+    { at: 3, v: ['ISP router', 'router WAN', '203.0.113.5:40000', '198.51.100.7', '63'], msg: 'The modem (cable, DSL, or a fibre ONT) converts the frame to the signalling of the access line. It is a physical-layer converter here and does not change the frame.' },
+    { at: 4, v: ['—', '—', '203.0.113.5:40000', '198.51.100.7', '62'], noFrame: true, msg: 'The ISP router repeats the router\'s work in its forwarding ASIC: strip the frame, look up the destination, lower the TTL, build a new frame for the next link. Every router on the way does the same.' },
+  ];
+
+  class PacketPathSteps extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < STEPS.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const st = STEPS[this.i];
+      const prev = STEPS[Math.max(0, this.i - 1)];
+      const w = 80, gap = (440 - DEVICES.length * w) / (DEVICES.length - 1);
+      let s = '';
+      DEVICES.forEach((d, k) => {
+        const x = k * (w + gap);
+        if (k > 0) s += `<line class="${k <= st.at ? 'done' : ''}" x1="${x - gap}" y1="35" x2="${x}" y2="35" />`;
+        s += `<rect class="${k === st.at ? 'here' : ''}" x="${x + 1}" y="16" width="${w - 2}" height="38" rx="6" /><text x="${x + w / 2}" y="35">${d}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-tbl]')!.innerHTML = FIELDS.map((f, k) => {
+        const changed = this.i > 0 && st.v[k] !== prev.v[k];
+        const cls = st.v[k] === '—' ? 'gone' : changed ? 'chg' : '';
+        return `<tr><td>${f}</td><td class="${cls}">${st.v[k]}</td></tr>`;
+      }).join('');
+      this.querySelector('[data-msg]')!.textContent = st.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${STEPS.length - 1} · at ${DEVICES[st.at]} · ${st.noFrame ? 'bare IP packet' : 'Ethernet frame'}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === STEPS.length - 1;
+    }
+  }
+  customElements.define('packet-path-steps', PacketPathSteps);
+</script>

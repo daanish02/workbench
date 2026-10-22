@@ -1,8 +1,112 @@
 ---
 title: "Blocks to Files"
-description: "The hardware-facing half of file systems: how files land on physical storage."
-order: 5
+description: "The hardware-facing half of file systems: logical block addresses, sector sizes and alignment, and the chain of caches a write passes through before it is durable."
+order: 7
 tier: core
+takeaways:
+  - "A drive presents a flat array of numbered blocks, **logical block addresses (LBAs)**; the file system decides which LBAs hold which file, and the drive decides where each LBA physically lives."
+  - "Drives with 4 KiB physical sectors may still address in 512-byte units (**512e**); a partition starting at LBA 63 is **misaligned**, so each 4 KiB write straddles two physical sectors. Modern tools start at LBA 2048 (1 MiB)."
+  - "A write passes through the **page cache**, the block layer and the **drive's write cache** before reaching the media; only the media (or a cache with **power-loss protection**) survives a power cut."
+  - "**fsync** makes data durable by writing it out and flushing the drive cache; `write()` alone only reaches RAM."
+  - "Durable commits are limited by flush latency: about 120 per second on a 7200 rpm disk one at a time, which is why databases **group commits**."
+resources:
+  - title: "Ensuring data reaches disk (LWN)"
+    url: "https://lwn.net/Articles/457667/"
+    note: "What write, fsync, O_DIRECT and O_SYNC actually guarantee on Linux, layer by layer."
+  - title: "Logical block addressing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Logical_block_addressing"
+    note: "From cylinder-head-sector addresses to the flat LBA space every drive uses now."
+  - title: "Advanced Format (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Advanced_Format"
+    note: "4 KiB sectors, 512e and 4Kn drives, and the alignment problem."
 ---
 
-_Placeholder. Content not written yet._
+[File Systems](../../../cs/operating-systems/file-systems/) explains how a file system organises files: inodes, directories, allocation and journaling. That note treats the disk as an array of blocks. This note covers the other side of that interface: how the drive presents that array, why block sizes and **alignment** matter, and the chain of caches between a program's `write()` and data that would survive a power cut. The second part decides whether a database actually keeps the transactions it acknowledged. It assumes the devices from [Hard Drives](../hard-drives/) and [Flash & SSDs](../flash-and-ssds/).
+
+## Logical Block Addresses
+
+Every drive, hard disk or SSD, presents itself as a numbered array of fixed-size blocks: **logical block addresses**, LBA 0 to LBA $N - 1$. The host reads and writes whole blocks by number and never sees the physical layout. Behind that interface, a hard drive maps LBAs to tracks and sectors (and remaps bad sectors to spares), and an SSD's FTL maps them to whichever flash page holds the current copy. Old systems addressed disks by cylinder, head and sector; LBA replaced that in the 1990s because drives had stopped matching any fixed geometry.
+
+On top of the LBA space sit **partitions** (described by a GPT partition table at the start and end of the disk), and inside each partition a file system, which groups sectors into its own **blocks** (typically 4 KiB) and records which blocks belong to which file, usually as **extents**: runs of contiguous blocks, written as start and length.
+
+## Sector Sizes and Alignment
+
+For decades sectors were 512 bytes. Modern drives use 4096-byte physical sectors (**Advanced Format**), which waste less space on per-sector gaps and error-correcting codes. For compatibility, many still accept 512-byte addresses (**512e**, "512 emulation"), while **4Kn** drives expose 4 KiB sectors directly. On a 512e drive, everything works whatever the partition start, but not equally fast:
+
+```python
+LOGICAL, PHYSICAL = 512, 4096                    # a "512e" drive: 512-byte addressing, 4 KiB physical sectors
+
+def aligned(partition_start_lba):
+    return (partition_start_lba * LOGICAL) % PHYSICAL == 0
+
+for start in (63, 2048):                         # old DOS default vs the 1 MiB default of modern tools
+    print(f"partition at LBA {start:4} = byte {start * LOGICAL:>9,}: {'aligned' if aligned(start) else 'MISALIGNED'}")
+
+# a 4 KiB file-system block on a misaligned partition straddles two physical sectors
+fs_block_offset = 63 * LOGICAL
+first, last = fs_block_offset // PHYSICAL, (fs_block_offset + 4095) // PHYSICAL
+print(f"one 4 KiB write at byte {fs_block_offset} touches physical sectors {first} to {last}")
+# partition at LBA   63 = byte    32,256: MISALIGNED
+# partition at LBA 2048 = byte 1,048,576: aligned
+# one 4 KiB write at byte 32256 touches physical sectors 7 to 8
+```
+
+In words: the old DOS convention started the first partition at LBA 63, byte 32,256, which is not a multiple of 4096. Every 4 KiB file-system block then spans two physical sectors (7 and 8 here), so each write forces the drive to read both, modify parts of each, and write both back, roughly halving small-write performance. Modern partitioning tools start at LBA 2048, exactly 1 MiB, which is aligned for 4 KiB sectors, SSD pages and RAID stripes alike.
+
+## The Write Path
+
+A program that calls `write()` has not stored anything on disk. The data passes through several layers, each with its own buffer:
+
+1. the **application's buffer** in its own memory (and any buffering in its language runtime, such as C's `stdio` or Python's file objects);
+2. the operating system's **page cache** in RAM, where `write()` copies it and returns at once; the kernel writes dirty pages back seconds later;
+3. the **block layer** and driver queue, which turn pages into write commands;
+4. the drive's **write cache**, a DRAM buffer on the drive, which acknowledges writes before they reach the media;
+5. the **media**: flash cells or magnetic platters.
+
+Layers 1 to 3 are lost if the machine crashes or loses power; layer 4 is lost on power loss unless the drive has **power-loss protection (PLP)**, capacitors that hold enough charge to save the cache to flash. Enterprise SSDs have PLP; most consumer drives do not.
+
+<WritePathSteps />
+
+**fsync(fd)** is the call that pushes a file's data through every layer: it writes the dirty pages, waits for the drive to acknowledge them, and sends a **cache flush** (or uses writes marked **FUA**, force unit access) so the drive commits its cache to the media. `fdatasync` does the same for data without forcing unrelated metadata such as timestamps. **O_DIRECT** bypasses the page cache, but not the drive cache, so it still needs a flush for durability.
+
+```python
+# where a just-written block can be when the power fails, and whether it survives
+policies = {
+    "write() only, no fsync":            ["page cache"],
+    "fsync, drive cache not flushed":    ["page cache", "drive cache"],
+    "fsync with cache flush":            ["page cache", "drive cache", "media"],
+    "fsync, drive with power-loss caps": ["page cache", "drive cache (protected)"],
+}
+durable = {"media", "drive cache (protected)"}
+for name, path in policies.items():
+    print(f"{name:35} reaches {path[-1]:24} -> {'survives' if path[-1] in durable else 'LOST on power cut'}")
+# write() only, no fsync              reaches page cache               -> LOST on power cut
+# fsync, drive cache not flushed      reaches drive cache              -> LOST on power cut
+# fsync with cache flush              reaches media                    -> survives
+# fsync, drive with power-loss caps   reaches drive cache (protected)  -> survives
+```
+
+In words: data that only reached the page cache, or a drive cache without protection, is lost on a power cut; data that reached the media, or a protected drive cache, survives. Journaling file systems and databases rely on the same flushes to enforce **ordering**: the journal or write-ahead log must be durable before the data it describes ([Storage Engines](../../../cs/databases/storage-engines/)).
+
+<Callout type="pitfall">
+Some drives, RAID controllers and virtual disks acknowledge a cache flush without actually emptying a volatile cache, to look faster in benchmarks. On such hardware fsync returns, the database reports a commit, and a power cut still loses it, or worse, writes later blocks without earlier ones and corrupts the journal. Production databases need storage that honours flushes or has power-loss protection; tools such as `diskchecker.pl` test this by cutting power during writes.
+</Callout>
+
+## Durability Has a Rate Limit
+
+Each durable commit waits for at least one flush, so the flush latency caps how many commits per second one stream can make:
+
+```python
+flush_us = {"7200 rpm HDD": 8300, "SSD without power-loss protection": 1000, "SSD with power-loss protection": 30}
+for device, us in flush_us.items():                       # one durable commit waits for one flush
+    print(f"{device:34} {1e6 / us:8,.0f} commits/s one at a time, {64 * 1e6 / us:10,.0f} with 64 per flush")
+# 7200 rpm HDD                            120 commits/s one at a time,      7,711 with 64 per flush
+# SSD without power-loss protection     1,000 commits/s one at a time,     64,000 with 64 per flush
+# SSD with power-loss protection       33,333 commits/s one at a time,  2,133,333 with 64 per flush
+```
+
+In words: with assumed typical flush times, a hard drive that needs about one rotation per flush allows about 120 durable commits per second; a consumer SSD around 1,000; an SSD with power-loss protection, which can acknowledge a flush from its protected cache, tens of thousands. Databases close the gap with **group commit**: many transactions that arrive during one flush share it, so 64 commits per flush lift the hard drive to 7,711 per second. These are ceilings set by flushes alone; real systems hit other limits first.
+
+<Callout type="key">
+The drive offers a flat array of blocks; everything above it is caching. A write is durable only when it has reached the media or a power-protected cache, which takes an fsync and a flush. Alignment keeps each write inside whole physical sectors, and group commit keeps durability from limiting throughput.
+</Callout>

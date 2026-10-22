@@ -1,0 +1,95 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The latency ladder, from register to disk"
+  caption="Typical access times for one read on a 5 GHz desktop CPU (AMD Zen 4 class, 2022), drawn on a log scale: each grid line is ten times the one before. Switch to human scale to stretch one clock cycle to one second: an L1 hit is a few seconds, DRAM is minutes, an SSD read is days and a hard-drive seek is more than a year."
+>
+  <latency-ladder>
+    <input type="hidden" data-scale value="real" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="real" aria-pressed="true">Real time</button>
+      <button type="button" class="btn" data-choice="human" aria-pressed="false">If 1 cycle = 1 second</button>
+    </span>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">level</span>
+      <svg class="ll-svg" data-svg viewBox="0 0 440 250" role="img" aria-label="Access latency of each memory level on a log scale"></svg>
+      <span class="ax-x">time per access (log scale)</span>
+    </div>
+  </latency-ladder>
+</Figure>
+
+<style>
+  .ll-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .ll-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .ll-svg :global(rect.bar) {
+    stroke-width: 1.2;
+  }
+  .ll-svg :global(text.name) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+    text-anchor: end;
+  }
+  .ll-svg :global(text.val) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+</style>
+
+<script>
+  const LEVELS: [string, number, string][] = [
+    ['register', 0.2e-9, '#34a853'],
+    ['L1 cache', 0.8e-9, '#34a853'],
+    ['L2 cache', 2.8e-9, '#4285f4'],
+    ['L3 cache', 10e-9, '#4285f4'],
+    ['DRAM', 80e-9, '#fbbc05'],
+    ['NVMe SSD', 80e-6, '#ea4335'],
+    ['HDD seek', 8e-3, '#ea4335'],
+  ];
+  const CYCLE = 0.2e-9;
+  const real = (s: number) => (s >= 1e-3 ? `${+(s * 1e3).toPrecision(3)} ms` : s >= 1e-6 ? `${+(s * 1e6).toPrecision(3)} µs` : `${+(s * 1e9).toPrecision(3)} ns`);
+  const human = (s: number) => {
+    const t = s / CYCLE; // seconds at one cycle per second
+    if (t < 60) return `${+t.toPrecision(3)} s`;
+    if (t < 3600) return `${+(t / 60).toPrecision(3)} min`;
+    if (t < 86400) return `${+(t / 3600).toPrecision(3)} h`;
+    if (t < 86400 * 365) return `${+(t / 86400).toPrecision(3)} days`;
+    return `${+(t / 86400 / 365).toPrecision(3)} years`;
+  };
+
+  class LatencyLadder extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-scale]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const hum = this.querySelector<HTMLInputElement>('[data-scale]')!.value === 'human';
+      const X0 = 80, X1 = 360;
+      const X = (s: number) => X0 + ((Math.log10(s) + 10) / 8) * (X1 - X0); // 0.1 ns .. 10 ms
+      let s = '';
+      for (let e = -10; e <= -2; e++) {
+        const x = X(10 ** e);
+        s += `<line class="grid" x1="${x}" y1="8" x2="${x}" y2="226" />`;
+        if (e % 2 === 0) s += `<text class="ax-tick" x="${x}" y="240" text-anchor="middle">${hum ? human(10 ** e) : real(10 ** e)}</text>`;
+      }
+      LEVELS.forEach(([name, t, color], k) => {
+        const y = 14 + k * 31;
+        s += `<text class="name" x="${X0 - 6}" y="${y + 10}">${name}</text>`;
+        s += `<rect class="bar" x="${X0}" y="${y}" width="${Math.max(2, X(t) - X0)}" height="20" rx="3" fill="${color}" fill-opacity="0.35" stroke="${color}" />`;
+        s += `<text class="val" x="${X(t) + 6}" y="${y + 10}">${hum ? human(t) : real(t)}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+    }
+  }
+  customElements.define('latency-ladder', LatencyLadder);
+</script>

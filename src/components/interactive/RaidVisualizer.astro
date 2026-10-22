@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Fail drives and see what survives"
+  caption="Four drives, three stripes. Blue blocks are data (A1 is the first block of stripe A), yellow blocks are redundancy: mirror copies, or parity P and Q. Pick a RAID level, then fail drives. Red drives are dead; a data block survives if it, or enough of its stripe to recompute it, is on a working drive. RAID 0 loses data with one failure; RAID 1+0 survives one, and a second only if it hits the other mirror pair; RAID 5 survives one; RAID 6 survives any two."
+>
+  <raid-visualizer>
+    <input type="hidden" data-level value="5" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="0" aria-pressed="false">RAID 0</button>
+      <button type="button" class="btn" data-choice="10" aria-pressed="false">RAID 10</button>
+      <button type="button" class="btn" data-choice="5" aria-pressed="true">RAID 5</button>
+      <button type="button" class="btn" data-choice="6" aria-pressed="false">RAID 6</button>
+    </span>
+    <div class="rv-fail">
+      <span class="rv-lbl">fail:</span>
+      <input type="checkbox" hidden data-f0 /><button type="button" class="btn" data-toggle aria-pressed="false">Drive 1</button>
+      <input type="checkbox" hidden data-f1 /><button type="button" class="btn" data-toggle aria-pressed="false">Drive 2</button>
+      <input type="checkbox" hidden data-f2 /><button type="button" class="btn" data-toggle aria-pressed="false">Drive 3</button>
+      <input type="checkbox" hidden data-f3 /><button type="button" class="btn" data-toggle aria-pressed="false">Drive 4</button>
+    </div>
+    <svg class="rv-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="Blocks on four drives under a RAID level"></svg>
+    <p class="rv-stat mono" data-stat></p>
+  </raid-visualizer>
+</Figure>
+
+<style>
+  .rv-fail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .rv-lbl {
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .rv-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .rv-svg :global(rect.drive) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .rv-svg :global(rect.drive.dead) {
+    fill: rgba(234, 67, 53, 0.12);
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .rv-svg :global(rect.data) {
+    fill: rgba(66, 133, 244, 0.35);
+    stroke: var(--g-blue);
+  }
+  .rv-svg :global(rect.red) {
+    fill: rgba(251, 188, 5, 0.3);
+    stroke: var(--g-yellow);
+  }
+  .rv-svg :global(rect.gone) {
+    fill: transparent;
+    stroke: var(--g-red);
+    stroke-dasharray: 3 3;
+  }
+  .rv-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .rv-svg :global(text.muted) {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .rv-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .rv-stat :global(.ok) {
+    color: var(--g-green);
+  }
+  .rv-stat :global(.bad) {
+    color: var(--g-red);
+  }
+</style>
+
+<script>
+  // layout[stripe][drive] = block label; parity rotates across drives for RAID 5 and 6
+  const LAYOUT: Record<string, string[][]> = {
+    '0': [['A1', 'A2', 'A3', 'A4'], ['B1', 'B2', 'B3', 'B4'], ['C1', 'C2', 'C3', 'C4']],
+    '10': [['A1', 'A1′', 'A2', 'A2′'], ['B1', 'B1′', 'B2', 'B2′'], ['C1', 'C1′', 'C2', 'C2′']],
+    '5': [['A1', 'A2', 'A3', 'Ap'], ['B1', 'B2', 'Bp', 'B3'], ['C1', 'Cp', 'C2', 'C3']],
+    '6': [['A1', 'A2', 'Ap', 'Aq'], ['B1', 'Bp', 'Bq', 'B2'], ['Cp', 'Cq', 'C1', 'C2']],
+  };
+  const TOLERATES: Record<string, number> = { '0': 0, '10': 1, '5': 1, '6': 2 };
+  const isRed = (b: string) => b.endsWith('p') || b.endsWith('q') || b.endsWith('′');
+
+  class RaidVisualizer extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const level = this.querySelector<HTMLInputElement>('[data-level]')!.value;
+      const dead = [0, 1, 2, 3].map((k) => this.querySelector<HTMLInputElement>(`[data-f${k}]`)!.checked);
+      const layout = LAYOUT[level];
+      // a stripe survives if the dead drives in it are within what the level can rebuild
+      const stripeOk = layout.map((row) => {
+        const lost = row.filter((_, d) => dead[d]);
+        if (level === '0') return lost.length === 0;
+        if (level === '10') return !lost.some((b) => lost.includes(isRed(b) ? b.slice(0, -1) : b + '′'));
+        return lost.length <= TOLERATES[level];
+      });
+      const X0 = 20, DW = 95, GAP = 10;
+      let s = '';
+      for (let d = 0; d < 4; d++) {
+        const x = X0 + d * (DW + GAP);
+        s += `<text class="muted" x="${x + DW / 2}" y="12">drive ${d + 1}${dead[d] ? ' (dead)' : ''}</text>`;
+        s += `<rect class="drive${dead[d] ? ' dead' : ''}" x="${x}" y="22" width="${DW}" height="150" rx="6" />`;
+        layout.forEach((row, st) => {
+          const b = row[d];
+          const y = 34 + st * 46;
+          const cls = dead[d] ? 'gone' : isRed(b) ? 'red' : 'data';
+          s += `<rect class="${cls}" x="${x + 10}" y="${y}" width="${DW - 20}" height="34" rx="4" /><text x="${x + DW / 2}" y="${y + 17}">${b}</text>`;
+        });
+      }
+      s += `<text class="muted" x="220" y="190">stripes A, B, C across the drives</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const usable = { '0': 100, '10': 50, '5': 75, '6': 50 }[level];
+      const nDead = dead.filter(Boolean).length;
+      const allOk = stripeOk.every(Boolean);
+      const state = nDead === 0 ? '<span class="ok">healthy</span>' : allOk ? '<span class="ok">degraded: all data readable, rebuild now</span>' : `<span class="bad">data lost in stripe ${stripeOk.map((ok, i) => (ok ? '' : 'ABC'[i])).join('')}</span>`;
+      this.querySelector('[data-stat]')!.innerHTML = `RAID ${level === '10' ? '1+0' : level} · usable ${usable}% · survives any ${TOLERATES[level]} · failed ${nDead} · ${state}`;
+    }
+  }
+  customElements.define('raid-visualizer', RaidVisualizer);
+</script>

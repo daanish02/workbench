@@ -1,8 +1,194 @@
 ---
 title: "Hardware Glossary"
-description: "Short definitions of the hardware terms used across this area, from ALU to TLB."
+description: "Short, searchable definitions of the hardware terms used across this area, from ALU to TLB, each linked to the note that explains it."
 order: 1
 tier: core
+takeaways:
+  - "A glossary is for **lookup**: filter by a word or pick a group, read the one-line meaning, follow the link to the full note."
+  - "Several pairs sound alike but differ in a way that matters: **latency vs bandwidth**, **coherence vs consistency (ordering)**, **SRAM vs DRAM**, **hub vs switch**, **SAN vs NAS**."
+  - "Terms are grouped by section, in the order of the area; the **Learn more** column points to the note that explains each one."
+resources:
+  - title: "Glossary of computer hardware terms (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Glossary_of_computer_hardware_terms"
+    note: "A broader list of hardware terms, with links to full articles."
+  - title: "Algorithms for Modern Hardware (Slotin)"
+    url: "https://en.algorithmica.org/hpc/"
+    note: "A free book that uses most of these terms in practice: pipelines, caches, SIMD, memory bandwidth."
 ---
 
-_Placeholder. Content not written yet._
+Definitions here are deliberately short: one or two sentences, enough to jog your memory in the middle of another note. Each entry links to where the idea is explained in full. Type in the box to filter, for example "cache", "DRAM" or "NVMe". Software terms (process, virtual memory, TCP) are in the [CS Glossary](../../../cs/appendix-reference/glossary/); units such as GiB and FLOPS are in [Units & Magnitudes](../units-and-magnitudes/).
+
+<FilterTable placeholder="Filter terms, e.g. cache, DRAM, NVMe, warp">
+
+### Digital Logic
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **Transistor** | An electrically controlled switch; billions of them make up a chip | [Transistor Switches](../../digital-logic/transistors-as-switches/) |
+| **CMOS** | The chip technology that pairs n-type and p-type transistors so a gate draws current mainly while switching | [CMOS Gates](../../digital-logic/logic-gates-from-transistors/) |
+| **Logic gate** | A circuit computing a Boolean function such as AND, OR, NOT, NAND | [CMOS Gates](../../digital-logic/logic-gates-from-transistors/) |
+| **Combinational circuit** | A circuit whose output depends only on its current inputs, such as an adder or multiplexer | [Combinational Circuits](../../digital-logic/combinational-circuits/) |
+| **Flip-flop / latch** | A circuit that stores one bit; a flip-flop changes only on a clock edge | [Sequential Circuits](../../digital-logic/sequential-circuits/) |
+| **Register** | A small group of flip-flops holding one word inside the CPU | [Sequential Circuits](../../digital-logic/sequential-circuits/) |
+| **Clock** | The periodic signal that sets when flip-flops update; its frequency is in GHz | [Clocks & Timing](../../digital-logic/clock-signals-and-synchronous-design/) |
+| **Critical path** | The slowest path through logic between two flip-flops; it limits the clock frequency | [Clocks & Timing](../../digital-logic/clock-signals-and-synchronous-design/) |
+| **FSM** | Finite state machine: state register plus logic choosing the next state | [Hardware FSMs](../../digital-logic/finite-state-machines-in-hardware/) |
+| **TDP** | Thermal design power: the sustained heat a cooler must remove, in watts | [Power & Thermals](../../digital-logic/power-and-thermals/) |
+| **Dynamic power** | Power spent switching transistors, roughly proportional to capacitance × voltage² × frequency | [Power & Thermals](../../digital-logic/power-and-thermals/) |
+| **Process node** | A manufacturing generation, named in nanometres that no longer match any physical size | [Chip Design](../../digital-logic/vlsi-design-basics/) |
+
+### Computer Organization
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **Von Neumann architecture** | One memory holds both instructions and data, fetched over the same path | [Von Neumann Architecture](../../computer-organization/von-neumann-vs-harvard-architecture/) |
+| **Harvard architecture** | Separate memories or paths for instructions and data | [Von Neumann Architecture](../../computer-organization/von-neumann-vs-harvard-architecture/) |
+| **Machine code** | The binary encoding of instructions that the CPU executes directly | [Machine Code](../../computer-organization/machine-code/) |
+| **Bus** | Shared wires carrying addresses, data or control signals between components | [System Buses](../../computer-organization/system-buses/) |
+| **PCIe** | The point-to-point serial link connecting GPUs, SSDs and NICs to the CPU, in lanes | [System Buses](../../computer-organization/system-buses/) |
+| **Interrupt** | A hardware signal that makes the CPU pause and run a handler | [Hardware Interrupts](../../computer-organization/interrupts-at-the-hardware-level/) |
+| **DMA** | Direct memory access: a device copies data to or from memory without the CPU | [I/O Interfacing](../../computer-organization/i-o-interfacing/) |
+| **MMIO** | Memory-mapped I/O: device registers appear at memory addresses | [I/O Interfacing](../../computer-organization/i-o-interfacing/) |
+| **Firmware / UEFI** | Code stored on the board that initialises hardware and starts the boot loader | [Boot Process](../../computer-organization/boot-process/) |
+| **Microcontroller** | A small chip with CPU, memory and I/O on one die, for embedded systems | [Embedded Systems](../../computer-organization/embedded-systems-basics/) |
+
+### CPU Architecture
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **ISA** | Instruction set architecture: the instructions, registers and memory model software can rely on, such as x86-64 or ARMv8 | [Instruction Sets](../../cpu-architecture/instruction-set-architectures-isa/) |
+| **RISC / CISC** | Few simple fixed-length instructions vs many complex variable-length ones | [Instruction Sets](../../cpu-architecture/instruction-set-architectures-isa/) |
+| **ALU** | Arithmetic logic unit: the circuit that adds, compares and does bitwise operations | [CPU Components](../../cpu-architecture/cpu-components/) |
+| **Datapath** | The registers, ALU and connections that instructions flow through | [The Datapath](../../cpu-architecture/the-datapath/) |
+| **Pipeline** | Overlapping the stages (fetch, decode, execute, …) of several instructions | [Pipelining](../../cpu-architecture/pipelining/) |
+| **Hazard** | A situation where the next instruction cannot proceed yet: data, control or structural | [Pipeline Hazards](../../cpu-architecture/pipeline-hazards/) |
+| **Branch prediction** | Guessing the direction of a branch to keep the pipeline full; a wrong guess flushes work | [Branch Prediction](../../cpu-architecture/branch-prediction/) |
+| **Superscalar** | Issuing several instructions per cycle | [Out-of-Order Execution](../../cpu-architecture/out-of-order-execution-and-superscalar-processors/) |
+| **Out-of-order execution** | Running instructions as soon as their inputs are ready, then retiring them in program order | [Out-of-Order Execution](../../cpu-architecture/out-of-order-execution-and-superscalar-processors/) |
+| **IPC / CPI** | Instructions per cycle and its inverse, cycles per instruction | [CPU Performance](../../cpu-architecture/cpu-performance/) |
+| **Microcode** | Internal routines that implement complex instructions as simpler micro-operations | [Microcode](../../cpu-architecture/microcode/) |
+| **FPU** | Floating-point unit: hardware for IEEE 754 arithmetic | [Floating-Point Hardware](../../cpu-architecture/floating-point-hardware/) |
+| **Spectre / Meltdown** | Attacks that leak secrets through the cache side effects of speculative execution | [Hardware Security](../../cpu-architecture/hardware-security/) |
+| **Hypervisor** | Software that runs virtual machines, helped by CPU virtualisation extensions | [Hardware Virtualization](../../cpu-architecture/hardware-virtualization/) |
+
+### Memory Hierarchy
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **Memory hierarchy** | Layers from registers to DRAM, each larger, slower and cheaper per byte than the one above | [Memory Hierarchy](../../memory-hierarchy/why-the-memory-hierarchy-exists/) |
+| **Cache line** | The 64-byte block that caches load and store as a unit | [Cache Basics](../../memory-hierarchy/cache-basics/) |
+| **Hit / miss** | The requested data was / was not in the cache | [Cache Basics](../../memory-hierarchy/cache-basics/) |
+| **Set-associative** | Each address may go in any of a few slots (ways) of one set | [Cache Basics](../../memory-hierarchy/cache-basics/) |
+| **Compulsory / capacity / conflict miss** | First touch / working set too big / too many lines mapping to one set | [Cache Basics](../../memory-hierarchy/cache-basics/) |
+| **Write-back** | A write updates only the cache; the line goes to memory when evicted | [Cache Basics](../../memory-hierarchy/cache-basics/) |
+| **LRU** | Least recently used: evict the line untouched for longest | [Cache Replacement](../../memory-hierarchy/cache-replacement-policies/) |
+| **Coherence** | Keeping all cached copies of one address consistent across cores | [Cache Coherence](../../memory-hierarchy/cache-coherence/) |
+| **MESI** | The coherence protocol states: Modified, Exclusive, Shared, Invalid | [Cache Coherence](../../memory-hierarchy/cache-coherence/) |
+| **False sharing** | Threads writing different variables on the same line, forcing it to bounce | [Cache-Friendly Code](../../memory-hierarchy/cache-friendly-code/) |
+| **SRAM** | Static RAM: six transistors per bit, fast, used for caches | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **DRAM** | Dynamic RAM: one capacitor per bit, dense, must be refreshed; main memory | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **Row buffer** | The open DRAM row; reads from it are fast row hits | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **CAS latency (CL)** | Cycles from a column read command to data; convert to ns with CL × 2000 ÷ MT/s | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **HBM** | High bandwidth memory: stacked DRAM beside a GPU with a 1024-bit interface | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **ECC** | Extra bits that let memory correct single-bit errors and detect double-bit ones | [Main Memory](../../memory-hierarchy/main-memory/) |
+| **Memory controller** | The on-chip unit that maps addresses to DRAM and schedules commands | [Memory Controllers](../../memory-hierarchy/memory-controllers/) |
+| **Channel** | An independent data path to memory; more channels, more bandwidth | [Memory Controllers](../../memory-hierarchy/memory-controllers/) |
+| **NUMA** | Non-uniform memory access: memory attached to another socket is slower | [Memory Controllers](../../memory-hierarchy/memory-controllers/) |
+| **MMU** | Memory management unit: translates virtual addresses to physical ones | [TLBs & Paging](../../memory-hierarchy/virtual-memory-at-the-hardware-level/) |
+| **TLB** | Translation lookaside buffer: a cache of recent address translations | [TLBs & Paging](../../memory-hierarchy/virtual-memory-at-the-hardware-level/) |
+| **Page walk** | Reading the page-table levels to translate an address after a TLB miss | [TLBs & Paging](../../memory-hierarchy/virtual-memory-at-the-hardware-level/) |
+| **Huge page** | A 2 MiB or 1 GiB page; one TLB entry covers much more memory | [TLBs & Paging](../../memory-hierarchy/virtual-memory-at-the-hardware-level/) |
+| **Prefetching** | Loading lines before they are requested to hide latency | [Prefetching](../../memory-hierarchy/prefetching/) |
+| **Persistent memory** | Byte-addressable memory that keeps data without power | [Non-Volatile Memory](../../memory-hierarchy/non-volatile-memory-technologies/) |
+| **CXL** | Compute Express Link: a coherent link over PCIe wiring, used to add memory | [Non-Volatile Memory](../../memory-hierarchy/non-volatile-memory-technologies/) |
+| **Store buffer** | A per-core queue where stores wait before reaching the cache | [Memory Ordering](../../memory-hierarchy/memory-ordering/) |
+| **Fence (barrier)** | An instruction that stops memory operations from being reordered across it | [Memory Ordering](../../memory-hierarchy/memory-ordering/) |
+| **CAS** | Compare-and-swap: write only if the location still holds the expected value, atomically | [Memory Ordering](../../memory-hierarchy/memory-ordering/) |
+
+### Storage
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **HDD** | Hard disk drive: spinning platters read by a moving head | [Hard Drives](../../storage/hard-drives/) |
+| **Seek time / rotational latency** | Time to move the head to the track / to wait for the sector to come round | [Hard Drives](../../storage/hard-drives/) |
+| **SMR / CMR** | Shingled (overlapping, denser, slow rewrites) vs conventional magnetic recording | [Hard Drives](../../storage/hard-drives/) |
+| **NAND flash** | Non-volatile memory storing charge in cells, read by page and erased by block | [Flash & SSDs](../../storage/flash-and-ssds/) |
+| **SLC / MLC / TLC / QLC** | 1, 2, 3 or 4 bits per flash cell: denser but slower and less durable as bits increase | [Flash & SSDs](../../storage/flash-and-ssds/) |
+| **FTL** | Flash translation layer: SSD firmware mapping logical blocks to physical pages | [Flash & SSDs](../../storage/flash-and-ssds/) |
+| **Write amplification** | Bytes written to flash ÷ bytes written by the host | [Flash & SSDs](../../storage/flash-and-ssds/) |
+| **TRIM** | A command telling the SSD which blocks are no longer in use | [Flash & SSDs](../../storage/flash-and-ssds/) |
+| **SATA / AHCI** | The older disk interface and its single-queue command protocol | [Storage Interfaces](../../storage/storage-interfaces/) |
+| **NVMe** | The SSD protocol over PCIe with many deep queues | [Storage Interfaces](../../storage/storage-interfaces/) |
+| **IOPS** | I/O operations per second, usually quoted for small random reads or writes | [Storage Performance](../../storage/storage-performance/) |
+| **Queue depth** | The number of I/O requests outstanding at once | [Storage Performance](../../storage/storage-performance/) |
+| **Tail latency** | The slow end of the latency distribution, such as p99 | [Storage Performance](../../storage/storage-performance/) |
+| **RAID** | Combining drives for speed or redundancy: levels 0, 1, 5, 6, 10 | [RAID](../../storage/raid/) |
+| **Parity** | XOR of data blocks, enough to rebuild any one lost block | [RAID](../../storage/raid/) |
+| **Erasure coding** | Splitting data into k pieces plus m parity pieces; any k rebuild it | [RAID](../../storage/raid/) |
+| **LBA** | Logical block address: the block number a drive exposes | [Blocks to Files](../../storage/how-a-file-system-maps-to-physical-storage/) |
+| **fsync** | The call that forces a file's data to stable storage | [Blocks to Files](../../storage/how-a-file-system-maps-to-physical-storage/) |
+| **AFR** | Annualised failure rate: the fraction of drives failing per year | [Drive Failures](../../storage/drive-failures/) |
+| **URE / UBER** | Unrecoverable read error and its rate per bit read | [Drive Failures](../../storage/drive-failures/) |
+| **SAN / NAS** | Block storage over a network vs file storage over a network | [SAN & NAS](../../storage/storage-area-networks/) |
+| **NVMe-oF** | NVMe commands carried over a network fabric | [SAN & NAS](../../storage/storage-area-networks/) |
+
+### Networking Hardware
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **Fiber / copper** | Light in glass (long reach, immune to interference) vs electrical signals in wire | [Transmission Media](../../networking-hardware/physical-transmission-media/) |
+| **PAM4** | Signalling with four voltage levels, two bits per symbol | [Transmission Media](../../networking-hardware/physical-transmission-media/) |
+| **Bandwidth-delay product** | Bandwidth × round-trip time: the data in flight needed to fill a link | [Bandwidth & Latency](../../networking-hardware/bandwidth-latency-and-throughput/) |
+| **Serialization delay** | Time to put a packet's bits onto the wire: size ÷ link rate | [Bandwidth & Latency](../../networking-hardware/bandwidth-latency-and-throughput/) |
+| **NIC** | Network interface card: PHY, MAC and DMA engine between the wire and memory | [Network Interface Cards](../../networking-hardware/network-interface-cards/) |
+| **Descriptor ring** | Circular queue in memory through which the NIC and driver exchange packets | [Network Interface Cards](../../networking-hardware/network-interface-cards/) |
+| **RSS** | Receive-side scaling: hashing flows to several queues and cores | [Network Interface Cards](../../networking-hardware/network-interface-cards/) |
+| **Hub** | A layer 1 repeater sending every frame out of every port | [Hubs & Switches](../../networking-hardware/hubs-and-switches/) |
+| **Switch** | A layer 2 device forwarding frames only to the port of the destination MAC | [Hubs & Switches](../../networking-hardware/hubs-and-switches/) |
+| **Cut-through / store-and-forward** | Forwarding a frame as soon as its header arrives vs after the whole frame | [Hubs & Switches](../../networking-hardware/hubs-and-switches/) |
+| **TCAM** | Ternary memory that matches a key against all entries at once, used for routing lookups | [Routers](../../networking-hardware/routers/) |
+| **Control / data plane** | The CPU that computes routes vs the hardware that forwards packets | [Routers](../../networking-hardware/routers/) |
+| **Wi-Fi 6 / 7** | IEEE 802.11ax / 802.11be wireless standards | [Wireless Basics](../../networking-hardware/wireless-technology-basics/) |
+| **Leaf-spine** | Data center topology where every leaf switch connects to every spine switch | [Data Center Topologies](../../networking-hardware/data-center-networking-topologies/) |
+| **Oversubscription** | Ratio of downlink to uplink capacity on a switch | [Data Center Topologies](../../networking-hardware/data-center-networking-topologies/) |
+| **RDMA** | Remote direct memory access: one machine reads or writes another's memory without its CPU | [RDMA & SmartNICs](../../networking-hardware/rdma-and-smartnics/) |
+| **DPU / SmartNIC** | A NIC with its own cores that offloads networking and storage work | [RDMA & SmartNICs](../../networking-hardware/rdma-and-smartnics/) |
+
+### GPUs and Parallelism
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **SIMD** | Single instruction, multiple data: one instruction on a vector of values | [SIMD on CPUs](../../gpus-parallelism/simd-instructions-on-cpus/) |
+| **SM** | Streaming multiprocessor: a GPU core block that runs many warps | [GPU Architecture](../../gpus-parallelism/gpu-architecture/) |
+| **Warp** | 32 GPU threads executing the same instruction together (wavefront on AMD) | [GPU Architecture](../../gpus-parallelism/gpu-architecture/) |
+| **Divergence** | Threads of one warp taking different branches, so the paths run one after another | [GPU Architecture](../../gpus-parallelism/gpu-architecture/) |
+| **Kernel (GPU)** | A function launched on the GPU over a grid of thread blocks | [GPU Programming](../../gpus-parallelism/gpu-programming/) |
+| **Occupancy** | Active warps per SM relative to the maximum; more hides latency | [GPU Programming](../../gpus-parallelism/gpu-programming/) |
+| **Coalescing** | Neighbouring threads accessing neighbouring addresses, merged into few memory transactions | [GPU Programming](../../gpus-parallelism/gpu-programming/) |
+| **Arithmetic intensity** | FLOPs per byte moved from memory | [Roofline Model](../../gpus-parallelism/roofline-model/) |
+| **Memory-bound / compute-bound** | Limited by memory bandwidth vs by arithmetic throughput | [Roofline Model](../../gpus-parallelism/roofline-model/) |
+| **SMP** | Symmetric multiprocessing: several identical cores sharing memory | [Multicore CPUs](../../gpus-parallelism/multicore-cpus/) |
+| **Tensor core** | GPU unit that multiplies small matrices per instruction | [AI Accelerators](../../gpus-parallelism/tensor-cores-and-specialized-ai-hardware/) |
+| **TPU** | Google's tensor processing unit, an ASIC built around systolic arrays | [AI Accelerators](../../gpus-parallelism/tensor-cores-and-specialized-ai-hardware/) |
+| **FPGA** | A chip of reconfigurable logic blocks and wiring | [FPGAs & ASICs](../../gpus-parallelism/fpgas-and-asics/) |
+| **ASIC** | A chip designed for one application | [FPGAs & ASICs](../../gpus-parallelism/fpgas-and-asics/) |
+| **NVLink** | NVIDIA's high-bandwidth GPU-to-GPU link | [Interconnects](../../gpus-parallelism/interconnects/) |
+| **InfiniBand** | A low-latency network with RDMA built in, common in supercomputers and AI clusters | [Interconnects](../../gpus-parallelism/interconnects/) |
+| **All-reduce** | The collective that sums gradients across GPUs and gives every GPU the result | [Multi-GPU Training](../../gpus-parallelism/multi-gpu-and-distributed-training-hardware/) |
+
+### Unconventional Computing
+
+| Term | Meaning | Learn more |
+| --- | --- | --- |
+| **Analog computing** | Computing with continuous voltages or currents instead of bits | [Analog Computing](../../unconventional-computing/analog-computing/) |
+| **Compute-in-memory** | Doing arithmetic inside memory arrays to avoid moving data | [Compute-in-Memory](../../unconventional-computing/compute-in-memory/) |
+| **Spiking neuron** | A neuron model that emits discrete spikes when its potential crosses a threshold | [Neuromorphic Computing](../../unconventional-computing/neuromorphic-computing/) |
+| **Qubit** | A quantum bit: a superposition of 0 and 1 until measured | [Quantum Computing](../../unconventional-computing/quantum-computing/) |
+| **Decoherence** | Loss of a qubit's quantum state through interaction with its environment | [Quantum Hardware](../../unconventional-computing/quantum-hardware/) |
+| **Logical qubit** | An error-corrected qubit built from many physical qubits | [Quantum Hardware](../../unconventional-computing/quantum-hardware/) |
+
+</FilterTable>
+
+<Callout type="pitfall">
+Several terms mean different things in different layers. A **kernel** is the core of an operating system in CS notes but a function launched on a GPU here; a **page** is 4 KiB of virtual memory but also the read unit inside a flash chip; a **channel** is a memory channel, a PCIe lane group or a radio frequency depending on the note. Check the group before assuming the meaning.
+</Callout>

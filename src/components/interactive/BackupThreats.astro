@@ -1,0 +1,90 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which copies survive which threat"
+  caption="Choose where copies of the data are kept. Each row is a threat; a green cell means at least one chosen copy survives it, red means every copy is lost. RAID only covers a failed drive. A second device or a cloud sync still shares the original's fate for deletion, software bugs and ransomware, because those changes reach every online copy. Only an offline or immutable copy, kept offsite, survives every row: the 3-2-1-1-0 rule."
+>
+  <backup-threats>
+    <div class="bt-ctl">
+      <input type="checkbox" hidden data-raid checked /><button type="button" class="btn" data-toggle aria-pressed="true">RAID array</button>
+      <input type="checkbox" hidden data-second /><button type="button" class="btn" data-toggle aria-pressed="false">2nd device, same site</button>
+      <input type="checkbox" hidden data-sync /><button type="button" class="btn" data-toggle aria-pressed="false">Cloud sync (online)</button>
+      <input type="checkbox" hidden data-offline /><button type="button" class="btn" data-toggle aria-pressed="false">Offline / immutable, offsite</button>
+    </div>
+    <svg class="bt-svg" data-svg viewBox="0 0 440 210" role="img" aria-label="Threats against chosen backup copies"></svg>
+    <p class="bt-stat mono" data-stat></p>
+  </backup-threats>
+</Figure>
+
+<style>
+  .bt-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .bt-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 12px auto 0;
+  }
+  .bt-svg :global(rect.ok) {
+    fill: rgba(52, 168, 83, 0.3);
+    stroke: var(--g-green);
+  }
+  .bt-svg :global(rect.bad) {
+    fill: rgba(234, 67, 53, 0.25);
+    stroke: var(--g-red);
+  }
+  .bt-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .bt-svg :global(text.muted) {
+    fill: var(--text-muted);
+  }
+  .bt-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // for each threat: which kinds of copy survive it (the primary data itself is always lost)
+  const THREATS: [string, string[]][] = [
+    ['one drive fails', ['raid', 'second', 'sync', 'offline']],
+    ['whole device or server dies', ['second', 'sync', 'offline']],
+    ['file deleted by mistake', ['offline']],
+    ['bug writes corrupt data', ['offline']],
+    ['ransomware encrypts everything online', ['offline']],
+    ['fire or flood at the site', ['sync', 'offline']],
+  ];
+  const KEYS = ['raid', 'second', 'sync', 'offline'];
+
+  class BackupThreats extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const on = KEYS.filter((k) => this.querySelector<HTMLInputElement>(`[data-${k}]`)!.checked);
+      let s = '';
+      let survived = 0;
+      THREATS.forEach(([name, saves], k) => {
+        const y = 8 + k * 33;
+        const ok = on.some((c) => saves.includes(c));
+        if (ok) survived++;
+        s += `<rect class="${ok ? 'ok' : 'bad'}" x="4" y="${y}" width="432" height="27" rx="4" />`;
+        s += `<text x="14" y="${y + 13.5}">${name}</text><text class="muted" x="430" y="${y + 13.5}" text-anchor="end" style="text-anchor: end">${ok ? 'data survives' : 'data lost'}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = `${on.length} kind(s) of copy · survives ${survived} of ${THREATS.length} threats${survived === THREATS.length ? ' · covered' : ''}`;
+    }
+  }
+  customElements.define('backup-threats', BackupThreats);
+</script>

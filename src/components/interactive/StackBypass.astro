@@ -1,0 +1,124 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Three data paths for one message"
+  caption="One message travels from an application on the left host to memory on the right host. The yellow line is the data's path; blue boxes do work for this message and faded dashed boxes are skipped. The kernel path crosses into the kernel and copies the data on both hosts. Kernel bypass moves the driver and protocol stack into the application, which polls the NIC. A one-sided RDMA write is carried out by the two NICs alone: the receiving host's CPU does nothing for it."
+>
+  <stack-bypass>
+    <input type="hidden" data-mode value="kernel" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="kernel" aria-pressed="true">Kernel TCP</button>
+      <button type="button" class="btn" data-choice="bypass" aria-pressed="false">Kernel bypass</button>
+      <button type="button" class="btn" data-choice="rdma" aria-pressed="false">RDMA write</button>
+    </span>
+    <svg class="sb-svg" data-svg viewBox="0 0 440 240" role="img" aria-label="Layers on two hosts and the path a message takes"></svg>
+    <p class="sb-stat mono" data-stat></p>
+  </stack-bypass>
+</Figure>
+
+<style>
+  .sb-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .sb-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .sb-svg :global(rect.on) {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+  }
+  .sb-svg :global(rect.off) {
+    fill: transparent;
+    stroke: var(--border-strong);
+    stroke-dasharray: 4 3;
+  }
+  .sb-svg :global(rect.mem) {
+    fill: rgba(52, 168, 83, 0.22);
+    stroke: var(--g-green);
+  }
+  .sb-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .sb-svg :global(text.off) {
+    fill: var(--text-faint);
+  }
+  .sb-svg :global(text.head) {
+    fill: var(--text-muted);
+  }
+  .sb-svg :global(.path) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+    stroke-linejoin: round;
+  }
+  .sb-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const LAYERS = ['application', 'kernel stack', 'driver', 'NIC'];
+  const Y = [40, 92, 144, 196];
+  const HOSTS = [90, 290];
+  // which layers do work for the message, per mode, on [sender, receiver]
+  const MODES: Record<string, { on: boolean[][]; label: string[]; stat: string }> = {
+    kernel: {
+      on: [[true, true, true, true], [true, true, true, true]],
+      label: ['application', 'kernel stack', 'driver', 'NIC'],
+      stat: 'kernel crossings 2 · data copies 2 · interrupts on receiver · receiver CPU works per message',
+    },
+    bypass: {
+      on: [[true, false, false, true], [true, false, false, true]],
+      label: ['app + user stack', 'kernel stack', 'driver', 'NIC'],
+      stat: 'kernel crossings 0 · data copies 0–1 · receiver polls (one core always busy) · receiver CPU works per message',
+    },
+    rdma: {
+      on: [[true, false, false, true], [false, false, false, true]],
+      label: ['application', 'kernel stack', 'driver', 'NIC'],
+      stat: 'kernel crossings 0 · data copies 0 · receiver CPU does nothing; its NIC writes registered memory',
+    },
+  };
+
+  class StackBypass extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!.value;
+      const m = MODES[mode];
+      let s = `<text class="head" x="${HOSTS[0]}" y="12">sender</text><text class="head" x="${HOSTS[1]}" y="12">receiver</text>`;
+      // path: down the sender's active layers, across the wire, up to the destination
+      const pts: string[] = [];
+      const sx = HOSTS[0], rx = HOSTS[1];
+      Y.forEach((y, i) => { if (m.on[0][i]) pts.push(`${sx},${y}`); });
+      pts.push(`${sx},222`, `${rx},222`);
+      const recvLayers = Y.map((y, i) => (m.on[1][i] ? y : -1)).filter((y) => y >= 0).reverse();
+      recvLayers.forEach((y) => pts.push(`${rx},${y}`));
+      if (mode === 'rdma') pts.push(`${rx + 104},196`, `${rx + 104},40`);
+      s += `<polyline class="path" points="${pts.join(' ')}" />`;
+      HOSTS.forEach((x, h) => {
+        LAYERS.forEach((_, i) => {
+          const on = m.on[h][i];
+          s += `<rect class="base" x="${x - 62}" y="${Y[i] - 16}" width="124" height="32" rx="5" /><rect class="${on ? 'on' : 'off'}" x="${x - 62}" y="${Y[i] - 16}" width="124" height="32" rx="5" /><text class="${on ? '' : 'off'}" x="${x}" y="${Y[i]}">${m.label[i]}</text>`;
+        });
+      });
+      if (mode === 'rdma') s += `<rect class="mem" x="${rx + 80}" y="24" width="48" height="32" rx="5" /><text x="${rx + 104}" y="40">RAM</text>`;
+      s += `<text class="head" x="190" y="234">wire</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = m.stat;
+    }
+  }
+  customElements.define('stack-bypass', StackBypass);
+</script>

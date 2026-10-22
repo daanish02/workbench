@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A TCAM finds the longest matching prefix in one step"
+  caption="Each TCAM row stores a route as 32 bits where X means don't care (only the first 24 are drawn; the last 8 of every row here are X). The destination address is compared with every row at the same time. Yellow rows match; rows are stored longest prefix first, so a priority encoder picks the first match (green) as the longest. Grey rows do not match."
+>
+  <tcam-lookup>
+    <input type="hidden" data-ip value="10.1.2.7" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="10.1.2.7" aria-pressed="true">10.1.2.7</button>
+      <button type="button" class="btn" data-choice="10.1.9.9" aria-pressed="false">10.1.9.9</button>
+      <button type="button" class="btn" data-choice="10.200.0.1" aria-pressed="false">10.200.0.1</button>
+      <button type="button" class="btn" data-choice="8.8.8.8" aria-pressed="false">8.8.8.8</button>
+    </span>
+    <svg class="tc-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="TCAM rows matched against a destination address"></svg>
+    <p class="tc-stat mono" data-stat></p>
+  </tcam-lookup>
+</Figure>
+
+<style>
+  .tc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .tc-svg :global(rect.row) {
+    fill: transparent;
+    stroke: var(--border);
+  }
+  .tc-svg :global(rect.hit) {
+    fill: rgba(251, 188, 5, 0.14);
+    stroke: var(--g-yellow);
+  }
+  .tc-svg :global(rect.win) {
+    fill: rgba(52, 168, 83, 0.2);
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .tc-svg :global(text) {
+    font: 11px var(--font-mono);
+    fill: var(--text);
+    dominant-baseline: central;
+  }
+  .tc-svg :global(text.miss) {
+    fill: var(--text-faint);
+  }
+  .tc-svg :global(text.key) {
+    fill: var(--g-blue);
+  }
+  .tc-svg :global(text.head) {
+    fill: var(--text-muted);
+  }
+  .tc-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const ROUTES: [string, number, string][] = [
+    ['10.1.2.0', 24, 'port 3'],
+    ['10.1.0.0', 16, 'port 2'],
+    ['10.0.0.0', 8, 'port 1'],
+    ['0.0.0.0', 0, 'uplink'],
+  ];
+  const bits = (ip: string) => ip.split('.').map((o) => (+o).toString(2).padStart(8, '0')).join('');
+  const show = (b: string) => b.slice(0, 24).match(/.{8}/g)!.join('.');
+
+  class TcamLookup extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-ip]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const ip = this.querySelector<HTMLInputElement>('[data-ip]')!.value;
+      const key = bits(ip);
+      let s = `<text class="head" x="8" y="14">destination</text><text class="key" x="100" y="14">${show(key)}</text><text class="head" x="330" y="14">${ip}</text>`;
+      s += `<text class="head" x="8" y="44">route</text><text class="head" x="100" y="44">stored bits (X = don't care)</text><text class="head" x="370" y="44">next hop</text>`;
+      let winner = -1;
+      const hits: string[] = [];
+      ROUTES.forEach(([net, len, hop], i) => {
+        const stored = bits(net).slice(0, len) + 'X'.repeat(32 - len);
+        const hit = [...stored].every((b, k) => b === 'X' || b === key[k]);
+        if (hit) hits.push(`/${len}`);
+        if (hit && winner < 0) winner = i;
+        const y = 70 + i * 32;
+        const cls = hit ? (winner === i ? 'win' : 'hit') : 'row';
+        s += `<rect class="${cls}" x="2" y="${y - 13}" width="436" height="26" rx="4" />`;
+        const t = hit ? '' : 'miss';
+        s += `<text class="${t}" x="8" y="${y}">${net}/${len}</text><text class="${t}" x="100" y="${y}">${show(stored)}</text><text class="${t}" x="370" y="${y}">${hop}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = `${ip} · matching rows ${hits.join(', ')} · longest /${ROUTES[winner][1]} → ${ROUTES[winner][2]}`;
+    }
+  }
+  customElements.define('tcam-lookup', TcamLookup);
+</script>

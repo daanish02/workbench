@@ -1,0 +1,131 @@
+---
+title: "Storage Performance"
+description: "IOPS, throughput and latency, how block size and queue depth connect them, tail latency, and how to benchmark storage without fooling yourself."
+order: 5
+tier: core
+takeaways:
+  - "Three numbers describe storage speed: **IOPS** (operations per second), **throughput** (bytes per second) and **latency** (time per operation). Throughput = IOPS × block size."
+  - "Small blocks hit the IOPS limit, large blocks hit the bandwidth limit: an SSD doing 1M IOPS at 4 KiB delivers 3.9 GB/s, and from 16 KiB up it is capped at 7 GB/s."
+  - "**Queue depth** is how many requests are in flight. By Little's law an SSD with 64 parallel units at 80 µs gives 12,500 IOPS at depth 1 and 800,000 at depth 64; beyond that only latency grows."
+  - "Averages hide **tail latency**: a drive with a 90 µs median can have a 6 ms p99.9, and a request that waits on 100 reads sees a p99 delay 63% of the time."
+  - "Benchmark with the real block size, queue depth and read/write mix, bypass the page cache, and measure a full drive in steady state."
+resources:
+  - title: "fio documentation"
+    url: "https://fio.readthedocs.io/en/latest/fio_doc.html"
+    note: "The standard storage benchmark: every job option and how to read its output."
+  - title: "Little's law (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Little%27s_law"
+    note: "The identity linking queue depth, throughput and latency."
+  - title: "The Tail at Scale (Dean & Barroso, CACM 2013)"
+    url: "https://research.google/pubs/the-tail-at-scale/"
+    note: "Why rare slow requests dominate fan-out systems, and the techniques that hide them."
+---
+
+A drive's datasheet lists several speeds, and a benchmark run on a laptop gives yet another. They are not contradictions: storage speed is several quantities that depend on how the drive is asked, the same way [Bandwidth & Latency](../../networking-hardware/bandwidth-latency-and-throughput/) splits network speed. This note defines **IOPS**, **throughput** and **latency**, shows how **block size** and **queue depth** link them, explains why **tail latency** matters more than the average, and lists what a fair benchmark must control. It uses the devices from [Hard Drives](../hard-drives/) and [Flash & SSDs](../flash-and-ssds/) and the queues from [Storage Interfaces](../storage-interfaces/).
+
+## IOPS, Throughput, Latency
+
+- **IOPS**: input/output operations completed per second. Meaningful only with a block size and pattern: "1M random 4 KiB read IOPS".
+- **Throughput** (bandwidth): bytes per second, the figure for large sequential transfers.
+- **Latency**: the time one operation takes, from submission to completion, usually given in microseconds with percentiles.
+
+The first two are tied together by the block size:
+
+$$
+\text{throughput} = \text{IOPS} \times \text{block size}.
+
+$$
+
+In words: a device has two ceilings, how many operations it can process and how many bytes it can move, and which one binds depends on the block size:
+
+```python
+iops_limit, bw_limit_mb = 1_000_000, 7000          # an NVMe SSD: 1M random 4 KiB reads/s, 7 GB/s sequential
+
+for kib in (4, 16, 64, 256, 1024):
+    iops = min(iops_limit, bw_limit_mb * 1024 / kib)   # whichever limit is hit first
+    mb_s = iops * kib / 1024
+    print(f"{kib:5} KiB requests: {iops:>11,.0f} IOPS = {mb_s:6,.0f} MB/s  ({'IOPS-bound' if iops == iops_limit else 'bandwidth-bound'})")
+#     4 KiB requests:   1,000,000 IOPS =  3,906 MB/s  (IOPS-bound)
+#    16 KiB requests:     448,000 IOPS =  7,000 MB/s  (bandwidth-bound)
+#    64 KiB requests:     112,000 IOPS =  7,000 MB/s  (bandwidth-bound)
+#   256 KiB requests:      28,000 IOPS =  7,000 MB/s  (bandwidth-bound)
+#  1024 KiB requests:       7,000 IOPS =  7,000 MB/s  (bandwidth-bound)
+```
+
+In words: at 4 KiB the drive runs out of operations first and moves 3,906 MB/s; from 16 KiB up it runs out of bandwidth and moves 7,000 MB/s whatever the block size, while the IOPS figure falls to 7,000 at 1 MiB. A datasheet's IOPS and bandwidth figures are two ends of this curve, measured at different block sizes. A database doing 8 KiB page reads lives near the IOPS end; a video server near the bandwidth end.
+
+## Queue Depth and Little's Law
+
+A device can only work on requests it has been given. **Queue depth (QD)** is how many requests are outstanding at once. [Little's law](../../../cs/system-design/pooling/) ties the three quantities together for any stable system:
+
+$$
+\text{requests in flight} = \text{throughput} \times \text{latency}.
+
+$$
+
+In words: to get more throughput at the same latency, more requests must be in flight. An SSD reads from dozens of flash dies in parallel, but with one request outstanding only one of them works:
+
+```python
+units, service_us = 64, 80                        # SSD: 64 flash units working in parallel, 80 us per read
+
+for qd in (1, 4, 16, 64, 256):
+    busy = min(qd, units)
+    iops = busy / (service_us / 1e6)
+    latency = qd / iops * 1e6                      # Little's law: latency = requests in flight / throughput
+    print(f"QD {qd:3}: {iops:>9,.0f} IOPS, mean latency {latency:6.0f} us")
+# QD   1:    12,500 IOPS, mean latency     80 us
+# QD   4:    50,000 IOPS, mean latency     80 us
+# QD  16:   200,000 IOPS, mean latency     80 us
+# QD  64:   800,000 IOPS, mean latency     80 us
+# QD 256:   800,000 IOPS, mean latency    320 us
+```
+
+In words: in this model throughput grows linearly with queue depth, from 12,500 IOPS at QD 1 to 800,000 at QD 64, while latency stays at 80 µs, because each new request finds an idle unit. Past 64, every unit is busy: throughput stops growing and the extra requests simply wait, so at QD 256 latency is four times higher for no gain. Real drives curve more gently, but the shape is the same.
+
+<QueueDepthCurve />
+
+This explains a common surprise: a single-threaded program that reads one block, processes it and reads the next runs at QD 1 and sees a tiny fraction of the drive's rated IOPS. Getting the rest takes parallelism: several threads, asynchronous I/O (Linux `io_uring`, `libaio`), or prefetching. A hard drive is the opposite case: it has one arm, so it is saturated at QD 1, and deeper queues only let it reorder requests to shorten seeks.
+
+## Tail Latency
+
+The average latency hides the requests that matter most. Garbage collection, a flash block being erased, a hard drive retrying a weak sector, or a queue filling behind a burst all produce rare, very slow requests. Latency is therefore reported as **percentiles**: p50 (the median), p99 (1 request in 100 is slower), p99.9:
+
+```python
+import random
+import statistics
+
+random.seed(2)
+lat = [random.gauss(90, 10) for _ in range(100_000)]       # normal reads around 90 us
+for i in random.sample(range(len(lat)), 300):              # 0.3% of reads land behind garbage collection
+    lat[i] += random.uniform(2_000, 8_000)
+lat.sort()
+pct = lambda p: lat[int(p / 100 * len(lat)) - 1]          # noqa: E731
+print(f"mean {statistics.mean(lat):.0f} us, p50 {pct(50):.0f} us, p99 {pct(99):.0f} us, p99.9 {pct(99.9):.0f} us")
+
+for fanout in (1, 10, 100):
+    slow = 1 - 0.99 ** fanout                              # chance that at least one part is slower than p99
+    print(f"request waiting on {fanout:3} reads: {slow:.0%} see at least one p99 delay")
+# mean 105 us, p50 90 us, p99 115 us, p99.9 6059 us
+# request waiting on   1 reads: 1% see at least one p99 delay
+# request waiting on  10 reads: 10% see at least one p99 delay
+# request waiting on 100 reads: 63% see at least one p99 delay
+```
+
+In words: when 0.3% of reads stall behind garbage collection, the median stays at 90 µs and p99 at 115 µs, but p99.9 jumps to 6,059 µs, 67 times the median, and even the mean barely moves (105 µs). Rare slowness becomes common slowness when one request depends on many reads: a query that touches 100 drives, or 100 random pages, waits for the slowest, and 63% of such queries see at least one p99 delay. This is the storage version of "The Tail at Scale", and why storage systems hedge requests, keep drives below full load, and quote p99 or p99.9 rather than averages.
+
+## Benchmarking Without Fooling Yourself
+
+**fio** is the standard tool: a job file sets the pattern (random or sequential), read/write mix, block size, queue depth (`iodepth`) and number of jobs, and fio reports IOPS, bandwidth and latency percentiles. The numbers are only meaningful if the test resembles the real workload:
+
+- **Match the workload**: block size, random vs sequential, read/write ratio and queue depth all change the result by orders of magnitude. A 4 KiB random read at QD 1 and a 1 MiB sequential read at QD 32 on the same drive differ by more than a hundredfold.
+- **Bypass the page cache**: the operating system caches file data in RAM, so repeated reads of a small file measure memory, not the drive. Use direct I/O (`--direct=1` in fio) or a dataset much larger than RAM.
+- **Measure steady state**: an empty SSD, or one whose SLC cache is not yet full, is far faster than it will be after hours of writes ([Flash & SSDs](../flash-and-ssds/)). Precondition the drive by filling it and writing randomly first.
+- **Report percentiles**, not just averages, and the run length.
+
+<Callout type="pitfall">
+`dd if=/dev/zero of=test bs=1M count=1000` is the classic misleading benchmark: it writes zeros (which some drives and file systems compress or skip), goes through the page cache (so it measures RAM until the cache fills), uses one sequential stream at QD 1, and reports one average. It tells you almost nothing about how a database will run on the drive.
+</Callout>
+
+<Callout type="key">
+Storage speed is a curve, not a number. IOPS and throughput meet at the block size, throughput and latency meet at the queue depth through Little's law, and the slowest fraction of a percent of requests decides how a system built on many reads behaves.
+</Callout>

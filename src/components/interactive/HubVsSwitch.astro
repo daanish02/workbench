@@ -1,0 +1,101 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Two conversations at once: hub against switch"
+  caption="A sends to C while B sends to D, at the same moment. A hub repeats every signal out of every port, so both transmissions reach every host, collide, and both senders must back off and retry. A switch reads each frame's destination and sends it only out of the port where that host is, so both conversations run at full speed in parallel and the other hosts see nothing."
+>
+  <hub-vs-switch>
+    <input type="hidden" data-dev value="hub" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="hub" aria-pressed="true">Hub</button>
+      <button type="button" class="btn" data-choice="switch" aria-pressed="false">Switch</button>
+    </span>
+    <svg class="hs-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="Four hosts connected to a hub or a switch"></svg>
+    <p class="hs-stat mono" data-stat></p>
+  </hub-vs-switch>
+</Figure>
+
+<style>
+  .hs-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 8px auto 0;
+  }
+  .hs-svg :global(.base) {
+    fill: var(--bg);
+  }
+  .hs-svg :global(.host) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .hs-svg :global(.dev) {
+    fill: rgba(251, 188, 5, 0.16);
+    stroke: var(--g-yellow);
+  }
+  .hs-svg :global(.link) {
+    stroke: var(--border-strong);
+    stroke-width: 2;
+  }
+  .hs-svg :global(.ok) {
+    stroke: var(--g-green);
+    stroke-width: 3;
+  }
+  .hs-svg :global(.bad) {
+    stroke: var(--g-red);
+    stroke-width: 3;
+    stroke-dasharray: 6 4;
+  }
+  .hs-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .hs-svg :global(text.note) {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .hs-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const HOSTS: Record<string, [number, number]> = { A: [70, 50], B: [370, 50], C: [70, 180], D: [370, 180] };
+  const DEV: [number, number] = [220, 115];
+
+  class HubVsSwitch extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-dev]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const hub = this.querySelector<HTMLInputElement>('[data-dev]')!.value === 'hub';
+      let s = '';
+      for (const [h, [x, y]] of Object.entries(HOSTS)) {
+        // on a hub every link carries both signals; on a switch only the two pairs' links carry one each
+        const cls = hub ? 'bad' : 'ok';
+        s += `<line class="link ${cls}" x1="${x}" y1="${y}" x2="${DEV[0]}" y2="${DEV[1]}" />`;
+      }
+      for (const [h, [x, y]] of Object.entries(HOSTS)) {
+        s += `<rect class="base" x="${x - 26}" y="${y - 18}" width="52" height="36" rx="6" />`;
+        s += `<rect class="host" x="${x - 26}" y="${y - 18}" width="52" height="36" rx="6" /><text x="${x}" y="${y}">${h}</text>`;
+        const note = hub ? 'collision' : h === 'A' ? 'sends to C' : h === 'B' ? 'sends to D' : `from ${h === 'C' ? 'A' : 'B'}`;
+        s += `<text class="note" x="${x}" y="${y + (y < 115 ? -30 : 30)}">${note}</text>`;
+      }
+      s += `<rect class="base" x="${DEV[0] - 40}" y="${DEV[1] - 20}" width="80" height="40" rx="6" />`;
+      s += `<rect class="dev" x="${DEV[0] - 40}" y="${DEV[1] - 20}" width="80" height="40" rx="6" /><text x="${DEV[0]}" y="${DEV[1]}">${hub ? 'hub' : 'switch'}</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = hub
+        ? 'one shared medium · A and B collide · 0 frames delivered this round, both retry'
+        : 'four separate links · A→C and B→D in parallel · 2 frames delivered, each at full link speed';
+    }
+  }
+  customElements.define('hub-vs-switch', HubVsSwitch);
+</script>

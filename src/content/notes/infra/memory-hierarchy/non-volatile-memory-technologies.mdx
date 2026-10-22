@@ -1,8 +1,104 @@
 ---
 title: "Non-Volatile Memory"
-description: "Where persistent and working memory are starting to blur."
+description: "Memory technologies that keep data without power (flash, phase-change, MRAM, FeRAM, ReRAM), byte-addressable persistent memory and why it needs cache flushes and fences, and CXL memory expansion."
 order: 9
 tier: core
+takeaways:
+  - "DRAM forgets without power, flash survives but is slow and wears out. **Non-volatile memories** such as phase-change memory, MRAM, FeRAM and ReRAM aim between them: bytes addressable, data kept without power."
+  - "Intel Optane (2019–2022) put phase-change-like **3D XPoint** on DIMMs: persistent, byte-addressable, about 300 ns to read, several times DRAM. It was discontinued, but the programming model stayed."
+  - "Stores leave the CPU cache in eviction order, not program order. Without a flush and a fence, 16.6% of simulated crashes left a valid flag over old data; with `clwb` + `sfence`, none did."
+  - "**CXL** attaches extra DRAM over PCIe-style links, slower than local memory. With 3/4 of capacity on CXL, keeping the hot pages local cuts the average from 212.5 ns to 115.0 ns in a simple model."
+resources:
+  - title: "Non-volatile memory (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Non-volatile_memory"
+    note: "Overview of the technologies: flash, FeRAM, MRAM, PCM, ReRAM and others, with links to each."
+  - title: "Basic Performance Measurements of the Intel Optane DC Persistent Memory Module (Izraelevitz et al., 2019)"
+    url: "https://arxiv.org/abs/1903.05714"
+    note: "The first independent measurements of Optane DIMMs: latency, bandwidth and how they behave as memory and as storage."
+  - title: "Compute Express Link (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Compute_Express_Link"
+    note: "CXL versions, device types and how memory expansion over CXL works."
 ---
 
-_Placeholder. Content not written yet._
+The memory hierarchy has a sharp line in it. Everything from registers down to DRAM is **volatile**: it loses its contents when power goes, and is addressed byte by byte with loads and stores. Everything from flash down is **non-volatile** but accessed in blocks through a storage stack, microseconds away ([The Storage Hierarchy](../../storage/the-storage-hierarchy/)). This note covers the technologies that try to blur that line: memories that keep data without power yet sit on the memory bus, what changes for software when memory is persistent, and **CXL**, which extends memory beyond the DIMM slots. It builds on [Main Memory](../main-memory/).
+
+## Non-Volatile Memory Cells
+
+Each technology stores a bit in a different physical state. Volatile DRAM uses charge in a leaky capacitor; the others use states that last without power:
+
+| Technology | Bit stored as | Read latency (order) | Write endurance | Where used |
+|---|---|---|---|---|
+| DRAM | charge in a capacitor, leaks | ~100 ns | unlimited | main memory |
+| NAND flash | charge trapped in a transistor gate | ~50–100 µs per page | low | SSDs ([Flash & SSDs](../../storage/flash-and-ssds/)) |
+| NOR flash | charge trapped in a transistor gate | ~100 ns | low | firmware chips, code run in place |
+| Phase-change (PCM), 3D XPoint | glass (amorphous) vs crystal phase of the material | ~300 ns (Optane) | medium | Intel Optane, 2017–2022 |
+| STT-MRAM | magnetic orientation of a layer | tens of ns | very high | embedded memory in microcontrollers |
+| FeRAM | polarisation of a ferroelectric crystal | ~100 ns | very high | smart cards, meters, industrial logging |
+| ReRAM | resistance of a conducting filament | ~100 ns | medium | embedded memory, research on compute-in-memory |
+
+The latencies are rough orders of magnitude for typical parts; products vary widely. The pattern: none of them matches DRAM's combination of density, speed, cost and unlimited writes, which is why DRAM still holds main memory. MRAM and FeRAM win where small, fast, durable non-volatile storage matters more than capacity, such as replacing embedded flash on microcontrollers. ReRAM's resistance-as-state is also what [Compute-in-Memory](../../unconventional-computing/compute-in-memory/) uses to multiply.
+
+## Persistent Memory on the Bus
+
+From 2019 to 2022 Intel sold **Optane persistent memory**: DIMMs built from 3D XPoint, a phase-change-like technology, plugged into ordinary memory slots beside DRAM. They held up to 512 GB per module, cheaper per byte than DRAM, kept data through power loss, and read in about 300 ns, roughly three to four times DRAM latency. They could be used in two ways: as a large, slower main memory with DRAM as a cache in front, or as **persistent memory** mapped directly into a program's address space, so a data structure written with ordinary stores survives a reboot without any file I/O.
+
+Intel discontinued Optane in 2022: it did not sell well enough against cheaper DRAM and fast NVMe SSDs. The ideas it forced into the open remain, in the Linux DAX (direct access) interfaces, in the persistent memory programming model, and in CXL memory devices.
+
+## Persistence Needs Ordering
+
+Persistent memory brings a problem that DRAM never had. A store goes into the CPU cache first, and the cache writes lines back to memory whenever it evicts them, in whatever order suits it. On DRAM nobody can tell, because everything is lost on power failure anyway. On persistent memory, the order in which lines reach the media decides what survives a crash:
+
+<PersistOrderSteps />
+
+```python
+import random
+
+def trial(rng, fenced):
+    # Program: write the record, then set its valid flag. Both sit dirty in the CPU cache.
+    if fenced:
+        order = ["data", "flag"]                     # clwb(data); sfence; only then store the flag
+    else:
+        order = rng.sample(["data", "flag"], 2)      # the cache writes lines back in any order
+    crash_after = rng.randrange(3)                   # power fails after 0, 1 or 2 write-backs
+    persisted = set(order[:crash_after])
+    return "flag" in persisted and "data" not in persisted   # flag says valid, data is garbage
+
+rng = random.Random(7)
+for fenced in [False, True]:
+    torn = sum(trial(rng, fenced) for _ in range(100_000))
+    print(f"{'flush + fence' if fenced else 'plain stores '}: {torn:5} torn records in 100,000 crashes ({torn / 1000:.1f}%)")
+# plain stores : 16615 torn records in 100,000 crashes (16.6%)
+# flush + fence:     0 torn records in 100,000 crashes (0.0%)
+```
+
+In words: with plain stores, the flag line is written back first in half of the cases, and a crash between the two write-backs (one case in three) leaves a valid flag over an old record: 16.6% of the simulated crashes, close to the expected $\tfrac{1}{2} \cdot \tfrac{1}{3} = \tfrac{1}{6}$. With the record flushed and fenced before the flag is stored, the record is always durable first, and no crash leaves a torn record. On x86 the flush is `clwb` (write the line back, keep it cached) and the fence is `sfence` (wait for earlier flushes before later stores). This is the same discipline as `fsync` and the write-ahead log in [Blocks to Files](../../storage/how-a-file-system-maps-to-physical-storage/), at the granularity of cache lines.
+
+Where exactly data becomes safe is the **persistence domain**. With **ADR** (asynchronous DRAM refresh) the memory controller's write queue is protected by stored energy, so a line counts as persistent once it reaches the controller. Later Xeons added **eADR**, which also flushes the CPU caches on power failure, so plain stores become persistent once they are globally visible and only the fence for ordering remains.
+
+<Callout type="pitfall">
+A fence orders stores; it does not persist them. And a flush alone does not order anything relative to the next store. Persistent memory code needs both, in the right places, and the bugs only show after a crash at the wrong moment, so they survive ordinary testing. Libraries such as PMDK (from pmem.io) wrap these rules in transactions; hand-written persistence code should be the exception.
+</Callout>
+
+## CXL Memory Expansion
+
+**CXL** (Compute Express Link) is an interconnect that runs over the PCIe physical layer and adds cache-coherent memory access. A CXL **Type 3 device** is a memory expander: a card or module full of ordinary DRAM (or, in principle, persistent memory) that the CPU sees as extra memory, typically as a NUMA node with no CPUs. It lets a server hold more memory than its DIMM slots allow, and in CXL 2.0 and later, lets several hosts share a pool of memory.
+
+The cost is latency: the request travels through a CXL controller instead of straight to a DIMM, so CXL memory behaves like a far NUMA node ([Memory Controllers](../memory-controllers/)). How much that matters depends on which pages live there:
+
+```python
+local_ns, cxl_ns = 100, 250                          # assumed load latencies: local DDR5, CXL-attached DDR
+local_share = 0.25                                   # 1/4 of capacity local, 3/4 on the CXL expander
+
+blind = local_share * local_ns + (1 - local_share) * cxl_ns   # pages placed with no regard to use
+hot = 0.90 * local_ns + 0.10 * cxl_ns                # the hot 25% of pages, getting 90% of accesses, kept local
+print(f"pages placed blindly:   {blind:.1f} ns average")
+print(f"hot pages kept local:   {hot:.1f} ns average")
+# pages placed blindly:   212.5 ns average
+# hot pages kept local:   115.0 ns average
+```
+
+In words: with three quarters of the capacity on CXL and pages placed without regard to use, the average access takes 212.5 ns, more than twice local memory. If the hot quarter of the pages, which receives 90% of the accesses, is kept in local DRAM, the average drops to 115.0 ns, only 15% above all-local memory, while the machine has four times the capacity. The 250 ns figure is an assumption; measured CXL latencies vary by device and generation. Operating systems now do this **memory tiering** automatically, sampling which pages are hot and migrating them, the same idea as the hot, warm and cold tiers of storage.
+
+<Callout type="key">
+Non-volatile memories trade among density, speed, endurance and cost, and none beats DRAM for main memory yet, so they serve niches: flash for storage, MRAM and FeRAM for small embedded memories. Byte-addressable persistent memory needs explicit flushes and fences, because caches write lines back in their own order. CXL keeps DRAM but moves some of it farther away, which makes page placement a performance question.
+</Callout>

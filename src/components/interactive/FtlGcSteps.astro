@@ -1,0 +1,161 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Garbage collection inside an SSD"
+  caption="Five erase blocks of six pages each. Flash can write a page only once and can erase only whole blocks, so an overwrite puts the new data in a fresh page (blue) and leaves the old copy stale (red). When free pages run out, the controller picks the block with the fewest valid pages, copies those pages elsewhere (yellow), and erases the block. The copies are extra writes the host never asked for: write amplification = flash writes ÷ host writes."
+>
+  <ftl-gc-steps>
+    <svg class="fg-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="Flash blocks with valid, stale and free pages"></svg>
+    <p class="fg-msg" data-msg></p>
+    <p class="fg-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </ftl-gc-steps>
+</Figure>
+
+<style>
+  .fg-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .fg-svg :global(rect.blk) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .fg-svg :global(rect.blk.victim) {
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .fg-svg :global(rect.pg) {
+    stroke: var(--border);
+  }
+  .fg-svg :global(.free) {
+    fill: transparent;
+  }
+  .fg-svg :global(.valid) {
+    fill: rgba(66, 133, 244, 0.45);
+  }
+  .fg-svg :global(.stale) {
+    fill: rgba(234, 67, 53, 0.45);
+  }
+  .fg-svg :global(.moved) {
+    fill: rgba(251, 188, 5, 0.6);
+  }
+  .fg-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .fg-svg :global(text.muted) {
+    fill: var(--text-muted);
+  }
+  .fg-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .fg-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const BLOCKS = 5, PAGES = 6, LOGICAL = 18;
+  // host writes after the initial fill: overwrites of logical pages, chosen to force two collections
+  const OVERWRITES = [3, 7, 1, 12, 3, 15, 8, 0, 4, 9, 13, 2, 16, 5];
+  type Cell = { lp: number; state: 'free' | 'valid' | 'stale' | 'moved' };
+  interface Frame { grid: Cell[][]; victim: number; host: number; nand: number; msg: string }
+
+  function frames(): Frame[] {
+    const grid: Cell[][] = Array.from({ length: BLOCKS }, () => Array.from({ length: PAGES }, () => ({ lp: -1, state: 'free' as const })));
+    const where = new Map<number, [number, number]>();
+    let active = 0, slot = 0, host = 0, nand = 0;
+    const out: Frame[] = [];
+    const snap = (msg: string, victim = -1) => out.push({ grid: grid.map((b) => b.map((c) => ({ ...c }))), victim, host, nand, msg });
+    const freeBlocks = () => grid.map((b, i) => i).filter((i) => i !== active && grid[i].every((c) => c.state === 'free'));
+    const program = (lp: number, state: Cell['state']) => {
+      if (slot === PAGES) { active = freeBlocks()[0]; slot = 0; }
+      const old = where.get(lp);
+      if (old) grid[old[0]][old[1]].state = 'stale';
+      grid[active][slot] = { lp, state };
+      where.set(lp, [active, slot]);
+      slot++;
+      nand++;
+    };
+    for (let lp = 0; lp < LOGICAL; lp++) program(lp, 'valid');
+    host = 0; nand = 0;
+    snap('The host has written 18 pages, filling three blocks; two blocks are still erased. Counters start now.');
+    for (const lp of OVERWRITES) {
+      for (const b of grid) for (const c of b) if (c.state === 'moved') c.state = 'valid';
+      if (slot === PAGES && freeBlocks().length <= 1) {
+        // garbage collection: choose the block with the fewest valid pages
+        let victim = -1, best = 99;
+        grid.forEach((b, i) => {
+          if (i === active || b.every((c) => c.state === 'free')) return;
+          const v = b.filter((c) => c.state === 'valid').length;
+          if (v < best) { best = v; victim = i; }
+        });
+        snap(`Only one erased block is left. Garbage collection picks block ${victim + 1}, which has the fewest valid pages (${best}).`, victim);
+        const valid = grid[victim].filter((c) => c.state === 'valid').map((c) => c.lp);
+        for (const v of valid) program(v, 'moved');
+        grid[victim] = Array.from({ length: PAGES }, () => ({ lp: -1, state: 'free' as const }));
+        snap(`Its ${valid.length} valid page${valid.length === 1 ? '' : 's'} are copied to the active block (yellow) and block ${victim + 1} is erased. Those copies are flash writes the host never asked for.`);
+        for (const b of grid) for (const c of b) if (c.state === 'moved') c.state = 'valid';
+      }
+      program(lp, 'valid');
+      host++;
+      snap(`The host overwrites logical page ${lp}. The new data goes to the next free page; the old copy turns stale.`);
+    }
+    return out;
+  }
+
+  class FtlGcSteps extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const BW = 78, BH = 128, GAP = 10, X0 = 8, Y0 = 30;
+      let s = '';
+      f.grid.forEach((blk, b) => {
+        const x = X0 + b * (BW + GAP);
+        s += `<text class="muted" x="${x + BW / 2}" y="16">block ${b + 1}</text>`;
+        s += `<rect class="blk${f.victim === b ? ' victim' : ''}" x="${x}" y="${Y0}" width="${BW}" height="${BH}" rx="4" />`;
+        blk.forEach((c, p) => {
+          const y = Y0 + 4 + p * 20;
+          s += `<rect class="pg ${c.state}" x="${x + 4}" y="${y}" width="${BW - 8}" height="17" rx="2" />`;
+          if (c.state !== 'free') s += `<text x="${x + BW / 2}" y="${y + 9}">${c.state === 'stale' ? '×' : ''}${c.lp}</text>`;
+        });
+      });
+      const legend: [string, string][] = [['valid', 'valid'], ['stale', 'stale'], ['moved', 'copied by GC'], ['free', 'erased']];
+      legend.forEach(([cls, l], k) => (s += `<rect class="pg ${cls}" x="${20 + k * 105}" y="174" width="14" height="12" /><text class="muted" x="${40 + k * 105}" y="180" style="text-anchor: start">${l}</text>`));
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const waf = f.host ? (f.nand / f.host).toFixed(2) : '–';
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · host writes ${f.host} · flash writes ${f.nand} · write amplification ${waf}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('ftl-gc-steps', FtlGcSteps);
+</script>

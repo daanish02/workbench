@@ -1,0 +1,128 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Inside one DRAM bank: rows and the row buffer"
+  caption="A DRAM bank is a grid of rows. To read, the controller first activates a row, copying it into the row buffer (tRCD), then reads columns from the buffer (tCL). Reading another column of the open row is a fast row hit (green). A different row is a conflict: the open row must be written back and closed (tRP) before the new one is activated (red). Timings are DDR5-6000 CL30-38-38: 10.0, 12.7 and 12.7 ns."
+>
+  <dram-bank-steps>
+    <svg class="db-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="DRAM bank rows and row buffer"></svg>
+    <p class="db-msg" data-msg></p>
+    <p class="db-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </dram-bank-steps>
+</Figure>
+
+<style>
+  .db-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .db-svg :global(rect.cell) {
+    fill: rgba(66, 133, 244, 0.12);
+    stroke: var(--border);
+  }
+  .db-svg :global(rect.cell.row) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .db-svg :global(rect.buf) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .db-svg :global(rect.bcell) {
+    fill: rgba(251, 188, 5, 0.2);
+    stroke: var(--g-yellow);
+  }
+  .db-svg :global(rect.bcell.hit) {
+    fill: rgba(52, 168, 83, 0.5);
+    stroke: var(--g-green);
+  }
+  .db-svg :global(rect.bcell.miss) {
+    fill: rgba(234, 67, 53, 0.45);
+    stroke: var(--g-red);
+  }
+  .db-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .db-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .db-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const tCL = 10.0, tRCD = 12.7, tRP = 12.7;
+  const ACCESSES: [number, number][] = [[2, 1], [2, 2], [2, 3], [5, 0], [5, 1], [2, 4], [6, 6]];
+  interface Frame { open: number; col: number; kind: string; t: number; total: number; msg: string }
+
+  function frames(): Frame[] {
+    let open = -1, total = 0;
+    const out: Frame[] = [{ open, col: -1, kind: '', t: 0, total, msg: 'The bank is idle and precharged: no row is open.' }];
+    for (const [row, col] of ACCESSES) {
+      let kind: string, t: number, msg: string;
+      if (row === open) { kind = 'hit'; t = tCL; msg = `Row ${row} is already in the row buffer: read column ${col} directly. ${t.toFixed(1)} ns.`; }
+      else if (open < 0) { kind = 'empty'; t = tRCD + tCL; msg = `No row open: activate row ${row} into the buffer, then read column ${col}. ${t.toFixed(1)} ns.`; }
+      else { kind = 'conflict'; t = tRP + tRCD + tCL; msg = `Row ${open} is open but row ${row} is needed: precharge (close) row ${open}, activate row ${row}, read column ${col}. ${t.toFixed(1)} ns.`; }
+      open = row; total += t;
+      out.push({ open, col, kind, t, total, msg });
+    }
+    return out;
+  }
+
+  class DramBankSteps extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const X0 = 90, CW = 36, CH = 16;
+      let s = '<text x="10" y="14">rows</text>';
+      for (let r = 0; r < 8; r++) {
+        const y = 24 + r * (CH + 3);
+        s += `<text x="40" y="${y + CH / 2}">row ${r}</text>`;
+        for (let c = 0; c < 8; c++) s += `<rect class="cell${r === f.open ? ' row' : ''}" x="${X0 + c * (CW + 3)}" y="${y}" width="${CW}" height="${CH}" rx="2" />`;
+      }
+      const by = 194;
+      s += `<text x="10" y="${by + 10}">row buffer</text>`;
+      s += `<rect class="buf" x="${X0 - 4}" y="${by - 4}" width="${8 * (CW + 3) + 5}" height="${CH + 12}" rx="4" />`;
+      for (let c = 0; c < 8; c++) {
+        if (f.open < 0) continue;
+        const cls = c === f.col ? (f.kind === 'hit' ? 'hit' : 'miss') : '';
+        s += `<rect class="bcell ${cls}" x="${X0 + c * (CW + 3)}" y="${by + 2}" width="${CW}" height="${CH}" rx="2" />`;
+      }
+      if (f.open >= 0) s += `<text x="${X0 + 8 * (CW + 3) + 8}" y="${by + 10}">row ${f.open}</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · ${f.kind || 'idle'}${f.t ? ` ${f.t.toFixed(1)} ns` : ''} · total ${f.total.toFixed(1)} ns`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('dram-bank-steps', DramBankSteps);
+</script>

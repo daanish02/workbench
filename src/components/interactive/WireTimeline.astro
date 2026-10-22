@@ -1,0 +1,131 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Transmission delay against propagation delay"
+  caption="One frame crosses one fibre link. The top shows the wire at the moment the sender puts the last bit on it: the blue block is the part of the frame already on the wire. The bar below splits the one-hop delay into transmission (blue, frame size ÷ rate) and propagation (yellow, distance ÷ 204,000 km/s). On a short link transmission dominates at low rates; on a long link propagation dominates at any rate."
+>
+  <wire-timeline>
+    <input type="hidden" data-size value="1500" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="64" aria-pressed="false">64 B</button>
+      <button type="button" class="btn" data-choice="1500" aria-pressed="true">1500 B</button>
+      <button type="button" class="btn" data-choice="9000" aria-pressed="false">9000 B</button>
+    </span>
+    <div class="wt-ctl">
+      <label>rate <input type="range" min="700" max="1160" step="1" value="900" data-r /> <b data-rv></b></label>
+      <label>distance <input type="range" min="0" max="700" step="1" value="200" data-d /> <b data-dv></b></label>
+    </div>
+    <svg class="wt-svg" viewBox="0 0 440 150" role="img" aria-label="A frame on a wire and a bar of its delays" data-svg></svg>
+    <p class="wt-stat mono" data-stat></p>
+  </wire-timeline>
+</Figure>
+
+<style>
+  .wt-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin: 10px 0;
+  }
+  .wt-ctl label {
+    flex: 1 1 200px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .wt-ctl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .wt-ctl b {
+    min-width: 5.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .wt-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .wt-svg :global(.node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .wt-svg :global(.node.rx) {
+    fill: rgba(52, 168, 83, 0.16);
+    stroke: var(--g-green);
+  }
+  .wt-svg :global(.wire) {
+    stroke: var(--border-strong);
+    stroke-width: 6;
+  }
+  .wt-svg :global(.pkt) {
+    fill: var(--g-blue);
+  }
+  .wt-svg :global(.tx) {
+    fill: var(--g-blue);
+  }
+  .wt-svg :global(.prop) {
+    fill: var(--g-yellow);
+  }
+  .wt-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .wt-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const SPEED = 204_000_000; // m/s in fibre
+  const fmtRate = (r: number) => (r >= 1e9 ? `${+(r / 1e9).toPrecision(3)} Gb/s` : `${+(r / 1e6).toPrecision(3)} Mb/s`);
+  const fmtDist = (d: number) => (d >= 1000 ? `${+(d / 1000).toPrecision(3)} km` : `${+d.toPrecision(3)} m`);
+  const fmtTime = (t: number) =>
+    t >= 1e-3 ? `${+(t * 1e3).toPrecision(3)} ms` : t >= 1e-6 ? `${+(t * 1e6).toPrecision(3)} µs` : `${+(t * 1e9).toPrecision(3)} ns`;
+
+  class WireTimeline extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const bytes = +this.querySelector<HTMLInputElement>('[data-size]')!.value;
+      const rate = 10 ** (+this.querySelector<HTMLInputElement>('[data-r]')!.value / 100);
+      const dist = 10 ** (+this.querySelector<HTMLInputElement>('[data-d]')!.value / 100);
+      this.querySelector('[data-rv]')!.textContent = fmtRate(rate);
+      this.querySelector('[data-dv]')!.textContent = fmtDist(dist);
+      const tx = (bytes * 8) / rate;
+      const prop = dist / SPEED;
+      const onWire = Math.min(1, (SPEED * tx) / dist);
+
+      const W0 = 70, W1 = 370;
+      let s = `<rect class="node" x="10" y="20" width="56" height="34" rx="5" /><text x="38" y="41" text-anchor="middle">sender</text>`;
+      s += `<rect class="node rx" x="374" y="20" width="56" height="34" rx="5" /><text x="402" y="41" text-anchor="middle">receiver</text>`;
+      s += `<line class="wire" x1="${W0}" y1="37" x2="${W1}" y2="37" />`;
+      s += `<rect class="pkt" x="${W0}" y="31" width="${Math.max(1.5, onWire * (W1 - W0))}" height="12" rx="2" />`;
+      s += `<text x="${W0}" y="70">${onWire < 1 ? `frame fills ${(onWire * 100).toPrecision(2)}% of the wire` : 'first bit arrived before the last bit left'}</text>`;
+
+      const total = tx + prop;
+      const B0 = 10, B1 = 430;
+      const xs = B0 + (tx / total) * (B1 - B0);
+      s += `<text class="ax-title" x="${B0}" y="94">one-hop delay, linear scale</text>`;
+      s += `<rect class="tx" x="${B0}" y="100" width="${Math.max(1, xs - B0)}" height="18" />`;
+      s += `<rect class="prop" x="${xs}" y="100" width="${Math.max(1, B1 - xs)}" height="18" />`;
+      s += `<text class="ax-tick" x="${B0}" y="134">0</text><text class="ax-tick" x="${B1}" y="134" text-anchor="end">${fmtTime(total)}</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const verdict = tx > prop ? 'transmission dominates' : 'propagation dominates';
+      this.querySelector('[data-stat]')!.textContent = `transmission ${fmtTime(tx)} · propagation ${fmtTime(prop)} · ${verdict}`;
+    }
+  }
+  customElements.define('wire-timeline', WireTimeline);
+</script>

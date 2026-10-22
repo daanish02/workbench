@@ -1,0 +1,103 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One shared queue against a queue per core"
+  caption="Four CPU cores issue reads to one SSD. With AHCI (the SATA host interface) every core puts commands into one queue of 32 slots, taking a lock to do so. With NVMe each core has its own submission and completion queue pair (up to 65,535 queues of up to 65,536 commands), so cores never wait for each other. The readout applies Little's law with an 80 µs read: the most reads per second the queue slots allow."
+>
+  <ahci-vs-nvme>
+    <input type="hidden" data-mode value="ahci" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="ahci" aria-pressed="true">AHCI (SATA)</button>
+      <button type="button" class="btn" data-choice="nvme" aria-pressed="false">NVMe</button>
+    </span>
+    <svg class="an-svg" data-svg viewBox="0 0 440 220" role="img" aria-label="CPU cores, command queues and an SSD"></svg>
+    <p class="an-stat mono" data-stat></p>
+  </ahci-vs-nvme>
+</Figure>
+
+<style>
+  .an-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .an-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .an-svg :global(rect.core) {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+  }
+  .an-svg :global(rect.q) {
+    fill: rgba(251, 188, 5, 0.16);
+    stroke: var(--g-yellow);
+  }
+  .an-svg :global(rect.slot) {
+    fill: rgba(251, 188, 5, 0.5);
+  }
+  .an-svg :global(rect.ssd) {
+    fill: rgba(52, 168, 83, 0.18);
+    stroke: var(--g-green);
+  }
+  .an-svg :global(line) {
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+  }
+  .an-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .an-svg :global(text.lock) {
+    fill: var(--g-red);
+  }
+  .an-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  class AhciVsNvme extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    box(x: number, y: number, w: number, h: number, cls: string, label: string) {
+      return `<rect class="base" x="${x}" y="${y}" width="${w}" height="${h}" rx="5" /><rect class="${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="5" /><text x="${x + w / 2}" y="${y + h / 2}">${label}</text>`;
+    }
+    draw() {
+      const nvme = this.querySelector<HTMLInputElement>('[data-mode]')!.value === 'nvme';
+      let s = '';
+      const coreY = (k: number) => 20 + k * 48;
+      if (!nvme) {
+        for (let k = 0; k < 4; k++) s += `<line x1="80" y1="${coreY(k) + 16}" x2="170" y2="110" />`;
+        s += this.box(170, 85, 120, 50, 'q', '');
+        for (let k = 0; k < 8; k++) s += `<rect class="slot" x="${178 + k * 13.5}" y="104" width="10" height="12" rx="1" />`;
+        s += `<text x="230" y="76">1 queue · 32 slots</text><text class="lock" x="230" y="148">shared lock</text>`;
+        s += `<line x1="290" y1="110" x2="340" y2="110" />`;
+      } else {
+        for (let k = 0; k < 4; k++) {
+          s += `<line x1="80" y1="${coreY(k) + 16}" x2="160" y2="${coreY(k) + 16}" /><line x1="290" y1="${coreY(k) + 16}" x2="340" y2="110" />`;
+          s += this.box(160, coreY(k) + 2, 130, 28, 'q', '');
+          for (let j = 0; j < 8; j++) s += `<rect class="slot" x="${166 + j * 15}" y="${coreY(k) + 10}" width="11" height="12" rx="1" />`;
+        }
+        s += `<text x="225" y="8">queue pair per core · up to 64K slots each</text>`;
+      }
+      for (let k = 0; k < 4; k++) s += this.box(10, coreY(k), 70, 32, 'core', `core ${k}`);
+      s += this.box(340, 80, 90, 60, 'ssd', 'SSD');
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const slots = nvme ? 4 * 64 : 32;
+      this.querySelector('[data-stat]')!.textContent = nvme
+        ? `NVMe · 4 queues × 64 used · ${slots} in flight · up to ${(slots / 80e-6).toLocaleString('en')} IOPS at 80 µs · no lock`
+        : `AHCI · 1 queue · ${slots} in flight · up to ${(slots / 80e-6).toLocaleString('en')} IOPS at 80 µs · cores contend for one lock`;
+    }
+  }
+  customElements.define('ahci-vs-nvme', AhciVsNvme);
+</script>

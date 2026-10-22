@@ -1,0 +1,161 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Reordering requests to hit the open row"
+  caption="Seven queued reads to one DRAM bank, oldest on the left; the number is the row each one wants. FCFS serves them in arrival order, so almost every read replaces the open row (red, 35.4 ns). FR-FCFS first serves any request that hits the open row (green, 10.0 ns), then the oldest. Same requests, 235.1 ns against 133.5 ns."
+>
+  <mem-sched-steps>
+    <input type="hidden" data-policy value="FCFS" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="FCFS" aria-pressed="true">FCFS</button>
+      <button type="button" class="btn" data-choice="FR-FCFS" aria-pressed="false">FR-FCFS</button>
+    </span>
+    <svg class="ms-svg" data-svg viewBox="0 0 440 150" role="img" aria-label="Request queue and served order"></svg>
+    <p class="ms-msg" data-msg></p>
+    <p class="ms-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </mem-sched-steps>
+</Figure>
+
+<style>
+  .ms-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .ms-svg :global(rect.q) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .ms-svg :global(rect.q.next) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .ms-svg :global(rect.done) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 3 3;
+  }
+  .ms-svg :global(rect.hit) {
+    fill: rgba(52, 168, 83, 0.4);
+    stroke: var(--g-green);
+  }
+  .ms-svg :global(rect.empty) {
+    fill: rgba(66, 133, 244, 0.3);
+    stroke: var(--g-blue);
+  }
+  .ms-svg :global(rect.conflict) {
+    fill: rgba(234, 67, 53, 0.4);
+    stroke: var(--g-red);
+  }
+  .ms-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ms-svg :global(text.v) {
+    fill: var(--text);
+    text-anchor: middle;
+  }
+  .ms-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ms-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const COST: Record<string, number> = { hit: 10.0, empty: 22.7, conflict: 35.4 };
+  const QUEUE = [1, 2, 1, 2, 1, 3, 2];
+  interface Served { idx: number; row: number; kind: string }
+  interface Frame { served: Served[]; open: number | null; total: number; next: number; msg: string }
+
+  function pick(pending: number[], open: number | null, policy: string): number {
+    if (policy === 'FR-FCFS' && open !== null) {
+      const i = pending.findIndex((p) => QUEUE[p] === open);
+      if (i >= 0) return i;
+    }
+    return 0;
+  }
+
+  function frames(policy: string): Frame[] {
+    const pending = QUEUE.map((_, i) => i);
+    const served: Served[] = [];
+    let open: number | null = null, total = 0;
+    const out: Frame[] = [{ served: [], open, total, next: pending[pick(pending, open, policy)], msg: 'All seven reads are waiting in the controller queue. No row is open yet.' }];
+    while (pending.length) {
+      const idx = pending.splice(pick(pending, open, policy), 1)[0];
+      const row = QUEUE[idx];
+      const kind = row === open ? 'hit' : open === null ? 'empty' : 'conflict';
+      const why = policy === 'FR-FCFS' && idx !== Math.min(idx, ...pending) && kind === 'hit' ? ' It jumps older requests because it hits the open row.' : '';
+      const msg = kind === 'hit' ? `Request ${idx + 1} wants row ${row}, already open: row hit, 10.0 ns.${why}`
+        : kind === 'empty' ? `Request ${idx + 1} opens row ${row} in the idle bank: 22.7 ns.`
+        : `Request ${idx + 1} wants row ${row} but row ${open} is open: close it and open row ${row}, 35.4 ns.`;
+      open = row;
+      total += COST[kind];
+      served.push({ idx, row, kind });
+      out.push({ served: [...served], open, total, next: pending.length ? pending[pick(pending, open, policy)] : -1, msg });
+    }
+    return out;
+  }
+
+  class MemSchedSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const pol = this.querySelector<HTMLInputElement>('[data-policy]')!;
+      const reset = () => {
+        this.fr = frames(pol.value);
+        this.i = 0;
+        this.draw();
+      };
+      pol.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const X0 = 96, W = 40, G = 6, H = 26;
+      const done = new Set(f.served.map((s) => s.idx));
+      let s = '<text x="6" y="30">queue</text><text x="6" y="98">served</text>';
+      QUEUE.forEach((row, i) => {
+        const x = X0 + i * (W + G);
+        const cls = done.has(i) ? 'done' : i === f.next ? 'q next' : 'q';
+        s += `<rect class="${cls}" x="${x}" y="17" width="${W}" height="${H}" rx="4" />`;
+        if (!done.has(i)) s += `<text class="v" x="${x + W / 2}" y="30">${row}</text>`;
+        s += `<text class="v" x="${x + W / 2}" y="55" style="fill: var(--text-faint)">#${i + 1}</text>`;
+      });
+      f.served.forEach((sv, k) => {
+        const x = X0 + k * (W + G);
+        s += `<rect class="${sv.kind}" x="${x}" y="85" width="${W}" height="${H}" rx="4" />`;
+        s += `<text class="v" x="${x + W / 2}" y="98">${sv.row}</text>`;
+        s += `<text class="v" x="${x + W / 2}" y="124" style="fill: var(--text-faint)">${COST[sv.kind].toFixed(0)}</text>`;
+      });
+      s += `<text x="6" y="124">ns</text>`;
+      s += `<text x="6" y="142">open row: ${f.open ?? 'none'}</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const hits = f.served.filter((x) => x.kind === 'hit').length;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · row hits ${hits} · total ${f.total.toFixed(1)} ns`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('mem-sched-steps', MemSchedSteps);
+</script>

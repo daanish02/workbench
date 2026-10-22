@@ -1,0 +1,150 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Stores reach persistent memory in the cache's order, not the program's"
+  caption="A program writes a record, then sets its valid flag. Both stores land in the CPU cache (yellow), which writes lines back to persistent memory whenever it evicts them. With plain stores the flag can be evicted first; a power failure then leaves a valid flag over old data (red). Flushing the record and fencing before the flag store makes the record durable first, so a crash at any point leaves memory consistent (green)."
+>
+  <persist-order-steps>
+    <input type="hidden" data-mode value="plain" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="plain" aria-pressed="true">Plain stores</button>
+      <button type="button" class="btn" data-choice="fenced" aria-pressed="false">Flush + fence</button>
+    </span>
+    <svg class="po-svg" data-svg viewBox="0 0 440 150" role="img" aria-label="CPU cache and persistent memory contents"></svg>
+    <p class="po-msg" data-msg></p>
+    <p class="po-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </persist-order-steps>
+</Figure>
+
+<style>
+  .po-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .po-svg :global(rect.zone) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .po-svg :global(rect.cell) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .po-svg :global(rect.cell.dirty) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .po-svg :global(rect.cell.ok) {
+    fill: rgba(52, 168, 83, 0.4);
+    stroke: var(--g-green);
+  }
+  .po-svg :global(rect.cell.bad) {
+    fill: rgba(234, 67, 53, 0.45);
+    stroke: var(--g-red);
+  }
+  .po-svg :global(rect.cell.none) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 3 3;
+  }
+  .po-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .po-svg :global(text.c) {
+    fill: var(--text);
+    text-anchor: middle;
+  }
+  .po-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .po-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  // cache: value held in the cache ('' = not cached); mem: value in persistent memory
+  interface Frame { cache: Record<string, string>; mem: Record<string, string>; result: string; msg: string }
+
+  function frames(mode: string): Frame[] {
+    const cache: Record<string, string> = { data: '', flag: '' };
+    const mem: Record<string, string> = { data: 'old', flag: '0' };
+    const out: Frame[] = [];
+    const push = (msg: string, result = '') => out.push({ cache: { ...cache }, mem: { ...mem }, result, msg });
+    push('Persistent memory holds an old record with its valid flag clear. Nothing is cached.');
+    cache.data = 'new';
+    push('store record = new: the line is now dirty in the cache. Persistent memory still has the old record.');
+    if (mode === 'plain') {
+      cache.flag = '1';
+      push('store flag = 1: also dirty in the cache. The program thinks it is done.');
+      mem.flag = '1'; cache.flag = '';
+      push('The cache needs room and evicts the flag line first: flag = 1 is now in persistent memory, the record is not.');
+      cache.data = '';
+      push('Power fails. The cache is lost. After restart: flag says valid, record is old. Corrupt.', 'bad');
+    } else {
+      mem.data = 'new'; cache.data = '';
+      push('clwb record: write the line back to persistent memory now (on CPUs with eADR the cache itself is protected and this step is free).');
+      push('sfence: wait until the write-back is done. Only now may later stores proceed.');
+      cache.flag = '1';
+      push('store flag = 1: dirty in the cache.');
+      cache.flag = '';
+      push('Power fails before the flag is written back. After restart: flag = 0, so the new record is ignored. Consistent: the update simply did not happen.', 'ok');
+    }
+    return out;
+  }
+
+  class PersistOrderSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!;
+      const reset = () => {
+        this.fr = frames(mode.value);
+        this.i = 0;
+        this.draw();
+      };
+      mode.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      let s = '<text x="10" y="12">CPU cache (lost on power failure)</text><rect class="zone" x="6" y="22" width="428" height="44" rx="6" />';
+      s += '<text x="10" y="84">persistent memory</text><rect class="zone" x="6" y="94" width="428" height="44" rx="6" />';
+      ['data', 'flag'].forEach((k, n) => {
+        const x = 30 + n * 210;
+        const c = f.cache[k];
+        s += `<rect class="cell ${c ? 'dirty' : 'none'}" x="${x}" y="30" width="170" height="28" rx="4" />`;
+        s += `<text class="c" x="${x + 85}" y="44">${k === 'data' ? 'record' : 'flag'}${c ? ' = ' + c : ''}</text>`;
+        const cls = f.result ? f.result : 'cell';
+        s += `<rect class="cell ${f.result ? cls : ''}" x="${x}" y="102" width="170" height="28" rx="4" />`;
+        s += `<text class="c" x="${x + 85}" y="116">${k === 'data' ? 'record' : 'flag'} = ${f.mem[k]}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const verdict = f.result === 'bad' ? 'torn: valid flag, old record' : f.result === 'ok' ? 'consistent' : 'running';
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · persistent: record ${f.mem.data}, flag ${f.mem.flag} · ${verdict}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('persist-order-steps', PersistOrderSteps);
+</script>

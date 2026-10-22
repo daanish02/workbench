@@ -1,0 +1,132 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same matrix, same sum, four times the misses"
+  caption="An 8×8 matrix stored row by row; each cache line holds 4 elements (outlined, two lines per row) and the cache holds 4 lines (blue). Reading row by row, one miss (red) brings in a line and the next 3 reads hit (green): 16 misses for 64 reads. Reading column by column, each read needs a different line, and the 4-line cache has evicted it before the next column comes back to it: 64 misses."
+>
+  <traversal-order-steps>
+    <input type="hidden" data-order value="row" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="row" aria-pressed="true">Row by row</button>
+      <button type="button" class="btn" data-choice="col" aria-pressed="false">Column by column</button>
+    </span>
+    <svg class="to-svg" data-svg viewBox="0 0 300 300" role="img" aria-label="Matrix cells coloured by cache state"></svg>
+    <p class="to-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </traversal-order-steps>
+</Figure>
+
+<style>
+  .to-svg {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+    margin: 10px auto 0;
+  }
+  .to-svg :global(rect.cell) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .to-svg :global(rect.cell.cached) {
+    fill: rgba(66, 133, 244, 0.25);
+  }
+  .to-svg :global(rect.cell.hit) {
+    fill: rgba(52, 168, 83, 0.5);
+  }
+  .to-svg :global(rect.cell.miss) {
+    fill: rgba(234, 67, 53, 0.5);
+  }
+  .to-svg :global(rect.cell.cur) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .to-svg :global(rect.line) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .to-svg :global(text) {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .to-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  const N = 8, PER_LINE = 4, CAP = 4;
+  interface Frame { cur: number; result: Map<number, string>; cached: number[]; misses: number; reads: number }
+
+  function frames(order: string): Frame[] {
+    const lru: number[] = [];
+    const result = new Map<number, string>();
+    let misses = 0;
+    const out: Frame[] = [{ cur: -1, result: new Map(), cached: [], misses: 0, reads: 0 }];
+    for (let a = 0; a < N; a++) {
+      for (let b = 0; b < N; b++) {
+        const [i, j] = order === 'row' ? [a, b] : [b, a];
+        const idx = i * N + j, line = Math.floor(idx / PER_LINE);
+        const k = lru.indexOf(line);
+        if (k >= 0) { lru.splice(k, 1); result.set(idx, 'hit'); }
+        else { misses++; result.set(idx, 'miss'); if (lru.length === CAP) lru.shift(); }
+        lru.push(line);
+        out.push({ cur: idx, result: new Map(result), cached: [...lru], misses, reads: out.length });
+      }
+    }
+    return out;
+  }
+
+  class TraversalOrderSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const ord = this.querySelector<HTMLInputElement>('[data-order]')!;
+      const reset = () => {
+        this.fr = frames(ord.value);
+        this.i = 0;
+        this.draw();
+      };
+      ord.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const S = 32, X0 = 24, Y0 = 24;
+      let s = '';
+      for (let k = 0; k < N; k++) {
+        s += `<text x="${X0 + k * S + S / 2}" y="12">${k}</text><text x="10" y="${Y0 + k * S + S / 2}">${k}</text>`;
+      }
+      for (let idx = 0; idx < N * N; idx++) {
+        const i = Math.floor(idx / N), j = idx % N;
+        const line = Math.floor(idx / PER_LINE);
+        const cls = ['cell', f.cached.includes(line) ? 'cached' : '', idx === f.cur ? f.result.get(idx) : '', idx === f.cur ? 'cur' : ''].join(' ');
+        s += `<rect class="${cls}" x="${X0 + j * S + 1}" y="${Y0 + i * S + 1}" width="${S - 2}" height="${S - 2}" rx="2" />`;
+      }
+      for (let line = 0; line < (N * N) / PER_LINE; line++) {
+        const i = Math.floor((line * PER_LINE) / N), j = (line * PER_LINE) % N;
+        s += `<rect class="line" x="${X0 + j * S}" y="${Y0 + i * S}" width="${PER_LINE * S}" height="${S}" rx="3" />`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const last = f.cur >= 0 ? f.result.get(f.cur) : '';
+      this.querySelector('[data-stat]')!.textContent = `read ${f.reads}/64${last ? ` · ${last}` : ''} · misses ${f.misses} · hits ${f.reads - f.misses}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('traversal-order-steps', TraversalOrderSteps);
+</script>

@@ -1,0 +1,147 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="LRU against SRRIP when a scan passes through"
+  caption="One 4-way cache set, two replacement policies, the same accesses: A and B are hot and reused; C, D, E, F are a one-off scan. LRU treats every new line as the most valuable, so the scan pushes A and B out and they miss when they return. SRRIP keeps a 2-bit prediction per way (0 = reuse soon, 3 = not soon, shown under each line): new lines start at 2, reused lines drop to 0, and the victim is a line at 3, so the scan lines are evicted first. Green is a hit, red a miss."
+>
+  <replacement-race>
+    <svg class="rr2-svg" data-svg viewBox="0 0 440 210" role="img" aria-label="Two cache sets under LRU and SRRIP"></svg>
+    <p class="rr2-msg" data-msg></p>
+    <p class="rr2-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </replacement-race>
+</Figure>
+
+<style>
+  .rr2-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .rr2-svg :global(rect.way) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .rr2-svg :global(rect.way.hit) {
+    fill: rgba(52, 168, 83, 0.35);
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .rr2-svg :global(rect.way.miss) {
+    fill: rgba(234, 67, 53, 0.3);
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .rr2-svg :global(rect.way.hot) {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+  }
+  .rr2-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .rr2-svg :global(text.muted) {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .rr2-svg :global(text.cur) {
+    fill: var(--g-yellow);
+  }
+  .rr2-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .rr2-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const TRACE = ['A', 'B', 'A', 'B', 'C', 'D', 'E', 'F', 'A', 'B'];
+  const WAYS = 4;
+  interface State { lines: (string | null)[]; meta: number[]; w: number; hit: boolean | null; hits: number }
+
+  function run(policy: 'LRU' | 'SRRIP'): State[] {
+    const lines: (string | null)[] = Array(WAYS).fill(null);
+    let meta = Array(WAYS).fill(policy === 'LRU' ? -1 : 3); // LRU: last use time; SRRIP: prediction
+    let hits = 0;
+    const out: State[] = [{ lines: [...lines], meta: [...meta], w: -1, hit: null, hits }];
+    TRACE.forEach((x, t) => {
+      let w = lines.indexOf(x);
+      const hit = w >= 0;
+      if (hit) {
+        hits++;
+        meta[w] = policy === 'LRU' ? t : 0;
+      } else {
+        w = lines.indexOf(null);
+        if (w < 0) {
+          if (policy === 'LRU') w = meta.indexOf(Math.min(...meta));
+          else {
+            while (!meta.includes(3)) meta = meta.map((m) => m + 1);
+            w = meta.indexOf(3);
+          }
+        }
+        lines[w] = x;
+        meta[w] = policy === 'LRU' ? t : 2;
+      }
+      out.push({ lines: [...lines], meta: [...meta], w, hit, hits });
+    });
+    return out;
+  }
+  const LRU = run('LRU'), SRRIP = run('SRRIP');
+
+  class ReplacementRace extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < TRACE.length) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      let s = `<text class="muted" x="40" y="14" style="text-anchor: start">accesses</text>`;
+      TRACE.forEach((x, k) => {
+        s += `<text class="${k === this.i - 1 ? 'cur' : k < this.i ? 'muted' : ''}" x="${120 + k * 30}" y="14">${x}</text>`;
+      });
+      [['LRU', LRU], ['SRRIP', SRRIP]].forEach(([name, states], row) => {
+        const st = (states as State[])[this.i];
+        const y = 44 + row * 80;
+        s += `<text x="40" y="${y + 20}">${name}</text>`;
+        st.lines.forEach((l, w) => {
+          const isCur = w === st.w;
+          const cls = isCur ? (st.hit ? 'hit' : 'miss') : l === 'A' || l === 'B' ? 'hot' : '';
+          const x = 100 + w * 82;
+          s += `<rect class="way ${cls}" x="${x}" y="${y}" width="70" height="40" rx="4" /><text x="${x + 35}" y="${y + 20}">${l ?? ''}</text>`;
+          if (name === 'SRRIP' && l) s += `<text class="muted" x="${x + 35}" y="${y + 52}">rrpv ${st.meta[w]}</text>`;
+        });
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const x = TRACE[this.i - 1];
+      const a = LRU[this.i], b = SRRIP[this.i];
+      this.querySelector('[data-msg]')!.textContent = this.i === 0
+        ? 'Both sets start empty. A and B will be reused; C to F are touched once.'
+        : `${x}: LRU ${a.hit ? 'hit' : 'miss'}, SRRIP ${b.hit ? 'hit' : 'miss'}.` + (this.i >= 9 && !a.hit ? ' The scan evicted A and B under LRU; SRRIP kept them.' : '');
+      this.querySelector('[data-stat]')!.textContent = `access ${this.i}/${TRACE.length} · LRU hits ${a.hits} · SRRIP hits ${b.hits}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === TRACE.length;
+    }
+  }
+  customElements.define('replacement-race', ReplacementRace);
+</script>

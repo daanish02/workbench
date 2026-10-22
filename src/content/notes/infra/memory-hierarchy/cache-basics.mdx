@@ -1,8 +1,126 @@
 ---
 title: "Cache Basics"
-description: "Cache lines, hits/misses, direct-mapped vs. set-associative vs. fully-associative."
+description: "How a hardware cache finds data: cache lines, splitting an address into tag, index and offset, direct-mapped vs set-associative vs fully associative, and write policies."
 order: 2
 tier: core
+takeaways:
+  - "Caches move memory in fixed-size **cache lines**, 64 bytes on current x86 and most Arm CPUs; one miss brings in 64 neighbouring bytes."
+  - "An address splits into **tag | index | offset**: the offset picks the byte in the line, the index picks the **set**, and the tag identifies which line of memory is there. Zen 4's 32 KiB, 8-way L1 has 64 sets: 6 offset bits, 6 index bits."
+  - "**Direct-mapped** caches allow one place per line, **set-associative** caches allow a few, **fully associative** caches allow any: more ways means fewer **conflict misses** but more tags to compare."
+  - "Misses are **compulsory** (first touch), **capacity** (working set too big) or **conflict** (too many lines map to one set): two arrays 512 bytes apart miss 32 of 32 times in a direct-mapped 8-line cache and 8 of 32 in a 2-way one."
+  - "Writes go to the cache and reach memory later (**write-back**) or immediately (**write-through**); on a write miss, **write-allocate** first loads the line."
+resources:
+  - title: "CPU cache (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/CPU_cache"
+    note: "Organisation, associativity, write policies and the cache hierarchies of real processors."
+  - title: "Cache placement policies (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cache_placement_policies"
+    note: "Direct-mapped, set-associative and fully associative placement with worked address splits."
+  - title: "Gallery of Processor Cache Effects (Igor Ostrovsky)"
+    url: "http://igoro.com/archive/gallery-of-processor-cache-effects/"
+    note: "Seven short experiments that make cache lines, associativity and false sharing visible."
 ---
 
-_Placeholder. Content not written yet._
+[Memory Hierarchy](../why-the-memory-hierarchy-exists/) argued that a small fast cache can serve most memory accesses if programs have locality. This note opens the cache: how it decides whether it holds an address, where a line may be placed, why some access patterns miss even when the cache is mostly empty, and what happens on a write. Every later note in this section (replacement, coherence, prefetching, cache-friendly code) builds on these mechanics.
+
+## Cache Lines
+
+A cache does not store individual bytes. It stores **cache lines** (also called blocks): aligned chunks of memory, 64 bytes on current x86 and most Arm processors (Apple's M-series use 128 bytes). When a load misses, the whole line containing the address is fetched from the next level. That is how caches exploit spatial locality: reading `a[0]` of an array of 8-byte numbers also brings in `a[1]` to `a[7]`.
+
+Each line in the cache is stored with a **tag** (which memory line this is), a **valid** bit, and for write-back caches a **dirty** bit marking that it has been modified.
+
+## Tag, Index, Offset
+
+To look an address up quickly, the cache splits it into three fields:
+
+- the **offset**: which byte within the 64-byte line (the low 6 bits),
+- the **index**: which **set** of the cache the line must be in (the next bits),
+- the **tag**: the remaining high bits, compared against the tags stored in that set.
+
+For the L1 data cache of AMD's Zen 4 cores (2022): 32 KiB, 64-byte lines, 8 ways.
+
+```python
+SIZE, LINE, WAYS = 32 * 1024, 64, 8               # Zen 4 L1 data cache: 32 KiB, 64-byte lines, 8-way
+sets = SIZE // (LINE * WAYS)
+offset_bits = LINE.bit_length() - 1
+index_bits = sets.bit_length() - 1
+print(f"{sets} sets: {offset_bits} offset bits, {index_bits} index bits, the rest is the tag")
+
+addr = 0x7FFE_1234_5678
+offset = addr & (LINE - 1)
+index = (addr >> offset_bits) & (sets - 1)
+tag = addr >> (offset_bits + index_bits)
+print(f"address {addr:#x}: tag {tag:#x}, set {index}, byte {offset} of the line")
+# 64 sets: 6 offset bits, 6 index bits, the rest is the tag
+# address 0x7ffe12345678: tag 0x7ffe12345, set 25, byte 56 of the line
+```
+
+In words: 32 KiB divided into 64-byte lines in groups of 8 gives 64 sets. The low 6 bits of an address choose the byte within the line, the next 6 bits choose one of the 64 sets, and the tag is everything above. A lookup reads the 8 tags of set 25 in parallel, compares each with `0x7ffe12345`, and on a match returns byte 56 of that line. All of this happens in about 4 cycles.
+
+## Where a Line Can Go
+
+The number of places a line may occupy is the cache's **associativity**:
+
+- **Direct-mapped** (1-way): each line has exactly one possible slot. The fastest and simplest to build, one tag to compare.
+- **$n$-way set-associative**: the index picks a set of $n$ slots, and the line may go in any of them. Real L1 caches are 8- or 12-way, L2 and L3 8- to 16-way.
+- **Fully associative**: a line may go anywhere, so every tag must be compared. Used only for small structures such as TLBs ([TLBs & Paging](../virtual-memory-at-the-hardware-level/)).
+
+Low associativity has a weakness: addresses that share an index compete for the same slots even when the rest of the cache is empty.
+
+<CacheSimulator />
+
+## Three Kinds of Miss
+
+Misses are classified by their cause, the "three Cs":
+
+- **Compulsory** misses: the first access to a line always misses. Prefetching can hide them ([Prefetching](../prefetching/)).
+- **Capacity** misses: the program's working set is bigger than the cache, so lines are evicted before they are reused. Only a bigger cache or a smaller working set helps.
+- **Conflict** misses: too many lines map to the same set, even though the cache has room elsewhere. Higher associativity removes them.
+
+Conflict misses appear in surprising places, such as two arrays whose sizes are powers of two:
+
+```python
+def misses(trace, lines=8, ways=1, line_bytes=64):
+    sets = lines // ways
+    cache = [[] for _ in range(sets)]             # each set holds up to `ways` tags, most recent last
+    miss = 0
+    for addr in trace:
+        block = addr // line_bytes
+        s, tag = block % sets, block // sets
+        if tag in cache[s]:
+            cache[s].remove(tag)
+        else:
+            miss += 1
+            if len(cache[s]) == ways:
+                cache[s].pop(0)                    # evict the least recently used way
+        cache[s].append(tag)
+    return miss
+
+# two arrays 512 bytes apart alternate: same set in a direct-mapped 8-line cache
+a, b = 0, 512
+trace = [x for i in range(16) for x in (a + i % 4 * 64, b + i % 4 * 64)]
+for ways in (1, 2, 8):
+    print(f"{ways}-way: {misses(trace, ways=ways):2} misses out of {len(trace)} accesses")
+# 1-way: 32 misses out of 32 accesses
+# 2-way:  8 misses out of 32 accesses
+# 8-way:  8 misses out of 32 accesses
+```
+
+In words: the two arrays are exactly 8 lines apart, so in a direct-mapped cache of 8 lines each element of `a` lands in the same slot as the matching element of `b`, and alternating between them evicts every line before its reuse: 32 misses in 32 accesses, although only 8 distinct lines are used. With 2 ways both fit, and only the 8 compulsory misses remain; 8 ways cannot improve on that.
+
+<Callout type="pitfall">
+Strides that are large powers of two map many accesses to the same few sets. Walking down a column of a 4096 × 4096 matrix of floats steps 16 KiB at a time, which is a multiple of the L1's 4 KiB set span (64 sets × 64 bytes), so every access in the column falls in the same set and only 8 of them fit. Padding each row by one cache line spreads the column over all sets.
+</Callout>
+
+## Writes
+
+A store also goes through the cache, with two independent choices:
+
+- **Write-back** or **write-through**: a write-back cache updates only the cached line and marks it dirty, writing it to the next level when the line is evicted; write-through sends every write onward at once. Write-back saves bandwidth when a line is written repeatedly and is what CPU data caches use.
+- **Write-allocate** or **no-write-allocate**: on a write miss, write-allocate first fetches the line into the cache (so writing one byte reads 64 bytes); no-write-allocate sends the write straight on. Write-back caches normally allocate.
+
+A **store buffer** between the core and the L1 lets stores retire without waiting for the cache, which is part of why memory operations can appear reordered ([Memory Ordering](../memory-ordering/)).
+
+<Callout type="key">
+A cache is a small table indexed by middle address bits and checked by comparing high address bits. Its line size rewards spatial locality, its capacity bounds the working set, and its associativity decides how badly unlucky address patterns collide.
+</Callout>

@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where a hard drive's time goes"
+  caption="Top view of one platter of a 7200 rpm drive. The arm (blue) must swing to the right track (seek), then wait for the wanted sector (yellow) to rotate under the head (rotational latency), then read it (transfer). The bar below adds up the time. The next sequential block follows immediately on the same track; a random block elsewhere pays the seek and the wait again."
+>
+  <disk-seek-steps>
+    <svg class="dk-svg" data-svg viewBox="0 0 440 250" role="img" aria-label="Hard drive platter, arm and timeline"></svg>
+    <p class="dk-msg" data-msg></p>
+    <p class="dk-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </disk-seek-steps>
+</Figure>
+
+<style>
+  .dk-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .dk-svg :global(circle.track) {
+    fill: none;
+    stroke: var(--border);
+  }
+  .dk-svg :global(circle.platter) {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke: var(--border-strong);
+  }
+  .dk-svg :global(path.sector) {
+    fill: var(--g-yellow);
+  }
+  .dk-svg :global(path.sector.next) {
+    fill: var(--g-green);
+  }
+  .dk-svg :global(line.arm) {
+    stroke: var(--g-blue);
+    stroke-width: 5;
+    stroke-linecap: round;
+  }
+  .dk-svg :global(circle.head) {
+    fill: var(--g-blue);
+  }
+  .dk-svg :global(rect.seek) {
+    fill: var(--g-red);
+  }
+  .dk-svg :global(rect.rot) {
+    fill: var(--g-yellow);
+  }
+  .dk-svg :global(rect.xfer) {
+    fill: var(--g-green);
+  }
+  .dk-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+  }
+  .dk-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .dk-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const CX = 110, CY = 110, R0 = 28, R1 = 92;
+  const SEEK = 8.0, HALF = 4.17, XFER = 0.016;
+  interface Step { track: number; armTrack: number; sectorAngle: number; next: boolean; time: [number, number, number][]; msg: string }
+  // track index 0 (inner) .. 5 (outer); time entries: [seek, rotation, transfer] per request
+  const STEPS: Step[] = [
+    { track: 4, armTrack: 1, sectorAngle: 200, next: false, time: [], msg: 'A random 4 KiB read arrives for a sector on an outer track. The head sits over an inner track, and the sector is on the far side of the platter.' },
+    { track: 4, armTrack: 4, sectorAngle: 200, next: false, time: [[SEEK, 0, 0]], msg: 'Seek: the arm swings to the right track and settles. On a 7200 rpm drive this averages about 8 ms.' },
+    { track: 4, armTrack: 4, sectorAngle: 0, next: false, time: [[SEEK, HALF, 0]], msg: 'Rotational latency: the head waits for the sector to come round. On average that is half a turn: 4.17 ms at 7200 rpm.' },
+    { track: 4, armTrack: 4, sectorAngle: 0, next: false, time: [[SEEK, HALF, XFER]], msg: 'Transfer: 4 KiB passes under the head in about 0.016 ms. Almost all of the 12.2 ms went to moving parts.' },
+    { track: 4, armTrack: 4, sectorAngle: 0, next: true, time: [[SEEK, HALF, XFER], [0, 0, XFER]], msg: 'The next sequential block is the very next sector on the same track: no seek, no wait, another 0.016 ms.' },
+    { track: 1, armTrack: 4, sectorAngle: 130, next: false, time: [[SEEK, HALF, XFER], [0, 0, XFER]], msg: 'Now a random block on an inner track, partway round. The arm must move again.' },
+    { track: 1, armTrack: 1, sectorAngle: 0, next: false, time: [[SEEK, HALF, XFER], [0, 0, XFER], [SEEK, HALF, XFER]], msg: 'Seek, wait and read again: another 12.2 ms. Two random reads cost about 760 times as much time as two sequential ones.' },
+  ];
+  const tr = (k: number) => R0 + ((R1 - R0) * k) / 5;
+
+  class DiskSeekSteps extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < STEPS.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const st = STEPS[this.i];
+      let s = `<circle class="platter" cx="${CX}" cy="${CY}" r="${R1 + 8}" />`;
+      for (let k = 0; k <= 5; k++) s += `<circle class="track" cx="${CX}" cy="${CY}" r="${tr(k)}" />`;
+      // the head reads at angle 0 (pointing right); the sector sits at sectorAngle degrees from it
+      const sector = (angle: number, track: number, cls: string) => {
+        const a0 = ((angle - 9) * Math.PI) / 180, a1 = ((angle + 9) * Math.PI) / 180;
+        const r0 = tr(track) - 5, r1 = tr(track) + 5;
+        const p = (r: number, a: number) => `${CX + r * Math.cos(a)},${CY + r * Math.sin(a)}`;
+        return `<path class="sector ${cls}" d="M${p(r0, a0)} L${p(r1, a0)} A${r1} ${r1} 0 0 1 ${p(r1, a1)} L${p(r0, a1)} A${r0} ${r0} 0 0 0 ${p(r0, a0)} Z" />`;
+      };
+      s += sector(st.sectorAngle, st.track, '');
+      if (st.next) s += sector(st.sectorAngle + 20, st.track, 'next');
+      // arm pivots at the right of the platter and reaches the chosen track at angle 0
+      const px = CX + R1 + 50, py = CY + 70;
+      const hx = CX + tr(st.armTrack), hy = CY;
+      s += `<line class="arm" x1="${px}" y1="${py}" x2="${hx}" y2="${hy}" /><circle class="head" cx="${hx}" cy="${hy}" r="5" />`;
+      s += `<text x="${px - 30}" y="${py + 20}">arm</text>`;
+      // timeline: cumulative ms
+      const B0 = 260, B1 = 430, MAX = 25;
+      const X = (ms: number) => B0 + (Math.min(ms, MAX) / MAX) * (B1 - B0);
+      let t = 0;
+      s += `<text x="${B0}" y="30">time (ms, 0 to ${MAX})</text><rect x="${B0}" y="40" width="${B1 - B0}" height="18" fill="none" stroke="var(--border)" />`;
+      for (const [sk, rot, xf] of st.time) {
+        for (const [d, cls] of [[sk, 'seek'], [rot, 'rot'], [xf, 'xfer']] as [number, string][]) {
+          if (d > 0) s += `<rect class="${cls}" x="${X(t)}" y="40" width="${Math.max(1.5, X(t + d) - X(t))}" height="18" />`;
+          t += d;
+        }
+      }
+      const legend: [string, string][] = [['seek', 'seek'], ['rot', 'rotational wait'], ['xfer', 'transfer']];
+      legend.forEach(([cls, lbl], k) => (s += `<rect class="${cls}" x="${B0}" y="${80 + k * 20}" width="12" height="12" /><text x="${B0 + 18}" y="${90 + k * 20}">${lbl}</text>`));
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = st.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${STEPS.length - 1} · reads ${st.time.length} · total ${t.toFixed(3)} ms`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === STEPS.length - 1;
+    }
+  }
+  customElements.define('disk-seek-steps', DiskSeekSteps);
+</script>

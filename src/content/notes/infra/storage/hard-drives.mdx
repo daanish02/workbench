@@ -1,0 +1,106 @@
+---
+title: "Hard Drives"
+description: "How a hard disk drive stores bits on spinning platters, where its milliseconds go, and the recording tricks (SMR, HAMR) that keep capacity growing."
+order: 2
+tier: core
+takeaways:
+  - "A **hard disk drive** stores bits as magnetised regions on spinning **platters**, read and written by **heads** on an arm that flies nanometres above the surface."
+  - "A random read costs **seek** (moving the arm, about 8 ms) plus **rotational latency** (half a turn, 4.17 ms at 7200 rpm) plus a tiny **transfer**: about 82 random reads per second."
+  - "Sequential reads skip the moving parts, so they are hundreds of times faster than random 4 KiB reads (285 MB/s against 0.32 MB/s), and outer tracks stream faster than inner ones."
+  - "**SMR** overlaps tracks like roof shingles for more capacity but makes random writes slow; **HAMR** heats each spot with a laser to write on denser media."
+  - "Hard drives remain the cheapest online storage per terabyte, which is why bulk and cloud storage still run on them."
+resources:
+  - title: "Hard disk drive (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Hard_disk_drive"
+    note: "Mechanics, performance figures and the history from 1956 to today."
+  - title: "Shingled magnetic recording (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Shingled_magnetic_recording"
+    note: "How overlapping tracks trade random-write speed for density, and drive-managed vs host-managed SMR."
+  - title: "Heat-assisted magnetic recording (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Heat-assisted_magnetic_recording"
+    note: "The laser-heated recording that the newest 30 TB-class drives use."
+---
+
+The [Storage Hierarchy](../the-storage-hierarchy/) put hard drives at milliseconds per access and the lowest price per terabyte of any online storage. Both facts come from the same thing: a hard drive is a machine with moving parts. This note opens one up: the platters, heads and tracks, the three delays that make up every random access, why sequential access is so much faster, and the recording technologies (CMR, SMR, HAMR) that drive capacity. It explains why software that touches disks works so hard to read and write in long runs.
+
+## Platters, Heads, Tracks
+
+A **hard disk drive (HDD)** contains one or more **platters**: rigid discs of glass or aluminium coated with a thin magnetic film. A spindle motor spins them at a constant speed, 7200 rpm for most data-centre and desktop drives (5400 rpm in some low-power drives, 10,000 or 15,000 rpm in older performance drives). A bit is the direction of magnetisation of a tiny region of the film.
+
+Each surface has a **head** on the end of an **actuator arm**. The head flies on a cushion of air (or helium) a few nanometres above the spinning surface, writing by magnetising the film and reading by sensing its field. All arms move together, swung by a voice-coil motor. Large drives are sealed and filled with helium, whose lower drag and turbulence allow thinner platters, so up to ten fit in one 3.5-inch drive.
+
+The surface is divided into concentric **tracks**, and each track into **sectors**, the smallest unit the drive reads or writes. Modern drives use 4096-byte sectors (**Advanced Format**), often presenting 512-byte sectors to old software by emulation. Outer tracks are longer than inner ones, so with the same bit density they hold more sectors; drives group tracks into **zones** with different sectors per track.
+
+## Seek, Rotate, Transfer
+
+Reading one random block takes three steps:
+
+1. **Seek**: move the arm to the right track and let it settle. A few milliseconds, depending on distance.
+2. **Rotational latency**: wait for the wanted sector to come round under the head. On average half a revolution.
+3. **Transfer**: read the sector as it passes. Microseconds.
+
+$$
+t_{\text{random}} = t_{\text{seek}} + \frac{1}{2} \cdot \frac{60}{\text{rpm}} + t_{\text{transfer}}.
+
+$$
+
+In words: the first two terms are mechanical and dominate; the transfer of a small block is almost free. The number of random reads per second (**IOPS**, I/O operations per second) is about one over that sum:
+
+```python
+def random_read_ms(rpm, avg_seek_ms, block_kb=4, transfer_mb_s=250):
+    rotation_ms = 60_000 / rpm / 2               # on average the sector is half a turn away
+    transfer_ms = block_kb / 1024 / transfer_mb_s * 1000
+    return avg_seek_ms, rotation_ms, transfer_ms
+
+for rpm, seek in [(7200, 8.0), (15000, 3.5)]:
+    s, r, t = random_read_ms(rpm, seek)
+    total = s + r + t
+    print(f"{rpm:5} rpm: seek {s:.1f} + rotation {r:.2f} + transfer {t:.3f} = {total:.2f} ms -> {1000 / total:.0f} IOPS")
+#  7200 rpm: seek 8.0 + rotation 4.17 + transfer 0.016 = 12.18 ms -> 82 IOPS
+# 15000 rpm: seek 3.5 + rotation 2.00 + transfer 0.016 = 5.52 ms -> 181 IOPS
+```
+
+In words: with a typical 8 ms average seek, a 7200 rpm drive spends 12.18 ms per random 4 KiB read and manages about 82 of them per second; the transfer itself is 0.016 ms. A 15,000 rpm drive with a shorter seek reaches 181 IOPS, still thousands of times fewer than an SSD ([Flash & SSDs](../flash-and-ssds/)). Drives queue several requests and reorder them to shorten seeks (**native command queuing**), which helps under load but cannot remove the mechanics.
+
+<DiskSeekSteps />
+
+## Sequential Beats Random
+
+Once the head is on the right track, sectors stream past with no further waiting. Sequential throughput is set by how many bits pass under the head per second, which depends on the track's circumference:
+
+```python
+outer_mb_s = 285                                  # sequential rate on the outermost tracks (a 2020s 7200 rpm drive)
+r_outer, r_inner = 47.0, 20.0                     # data band radii in mm on a 3.5-inch platter (approximate)
+
+# same bit density everywhere, so bits per revolution grow with the circumference
+inner_mb_s = outer_mb_s * r_inner / r_outer
+print(f"outer tracks {outer_mb_s} MB/s, inner tracks {inner_mb_s:.0f} MB/s")
+
+iops = 82                                          # random 4 KiB reads per second, from the seek and rotation sum
+random_mb_s = iops * 4 / 1024
+print(f"random 4 KiB reads: {random_mb_s:.2f} MB/s, {outer_mb_s / random_mb_s:.0f}x slower than sequential")
+# outer tracks 285 MB/s, inner tracks 121 MB/s
+# random 4 KiB reads: 0.32 MB/s, 890x slower than sequential
+```
+
+In words: a drive that streams 285 MB/s on its outer tracks manages about 121 MB/s on the inner ones, because an inner track carries fewer sectors per turn. Drives fill from the outside in, so a nearly full drive is slower to stream. Random 4 KiB reads deliver only 0.32 MB/s, about 890 times less than sequential. This gap is why file systems allocate files in contiguous **extents**, why databases write logs sequentially and why LSM trees batch writes ([Storage Engines](../../../cs/databases/storage-engines/)).
+
+## CMR, SMR and HAMR
+
+Capacity grows by packing tracks closer and bits smaller, which the head physics resists. Three recording methods matter today:
+
+- **CMR** (conventional magnetic recording): tracks sit side by side with small gaps, and any sector can be rewritten in place. The default for general-purpose drives.
+- **SMR** (shingled magnetic recording): the write head is wider than the read head needs, so each new track is written partly over the previous one, like roof shingles, leaving narrow readable tracks and about 20% more capacity. The cost: rewriting one track damages the next, so tracks are grouped into **zones** that must be rewritten from the start. Random writes become a slow read-modify-write of a whole zone, which drives hide behind a cache until it fills.
+- **HAMR** (heat-assisted magnetic recording): the medium is made of a material so magnetically stable that a head cannot flip it at room temperature, which lets bits be smaller without decaying. A tiny laser heats each spot to a few hundred degrees for a nanosecond as it is written. Seagate's HAMR drives reached 30 TB and more per 3.5-inch drive in 2024–2025.
+
+<Callout type="pitfall">
+**Drive-managed SMR** drives look like ordinary drives until their write cache fills, then random writes collapse to a few MB/s. In a RAID or NAS rebuild, which rewrites a whole drive, that can stretch a rebuild from hours to days or make the array drop the drive as failed. Check whether a drive is CMR or SMR before putting it in an array; host-managed SMR, where software writes zones sequentially, avoids the problem.
+</Callout>
+
+## Why Drives Still Matter
+
+Flash has taken over everything that needs low latency, but hard drives still hold most of the world's online data: cloud object stores, backups, video, logs and data lakes. Their price per terabyte remains several times lower than flash, they last for years under constant writing, and workloads that read and write in large sequential chunks lose little to their latency. The engineering response to their weaknesses is everywhere in software: caches in front of disks, sequential write-ahead logs, large block sizes, and spreading data over many drives so their IOPS add up ([RAID](../raid/)).
+
+<Callout type="key">
+A hard drive is fast at moving data and slow at finding it. Every random access pays milliseconds of seek and rotation, while sequential access streams at hundreds of MB/s. Anything that turns random I/O into sequential I/O makes a disk-based system dramatically faster.
+</Callout>

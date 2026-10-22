@@ -1,8 +1,118 @@
 ---
 title: "Main Memory"
-description: "DRAM vs. SRAM, why caches use SRAM and main memory uses DRAM."
+description: "SRAM vs DRAM cells, how DRAM is organised into channels, banks and rows, why row hits are fast, refresh, DDR timings, and HBM for GPUs."
 order: 5
 tier: core
+takeaways:
+  - "**SRAM** keeps a bit in six transistors: fast and stable but large, so it is used for caches. **DRAM** keeps a bit as charge in one capacitor: dense and cheap, but slow and it leaks, so it must be **refreshed** every few tens of milliseconds."
+  - "DRAM is organised as channels → DIMMs → ranks → banks → **rows**. Reading activates a whole row into a **row buffer**; a second read of the same row is a fast **row hit**."
+  - "On DDR5-6000 CL30-38-38 a row hit takes 10.0 ns and a row conflict 35.4 ns, so sequential access averages 10.2 ns per line against 35.4 ns for random."
+  - "CAS latency in nanoseconds has stayed near 10 ns for years (DDR4-3200 CL16 and DDR5-6000 CL30 both give 10.0 ns); bandwidth is what grows: 48 GB/s per DDR5-6000 channel."
+  - "**HBM** stacks DRAM dies beside a GPU with a 1024-bit interface: 819.2 GB/s per HBM3 stack, terabytes per second for a GPU with several stacks."
+resources:
+  - title: "Dynamic random-access memory (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Dynamic_random-access_memory"
+    note: "Cells, arrays, refresh, timings and the history from the 1-transistor cell to DDR5."
+  - title: "High Bandwidth Memory (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/High_Bandwidth_Memory"
+    note: "Stacked DRAM with through-silicon vias, HBM generations and which accelerators use them."
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "Sections 2 and 3 explain DRAM access protocols and timings in depth."
 ---
 
-_Placeholder. Content not written yet._
+[Memory Hierarchy](../why-the-memory-hierarchy-exists/) put DRAM at about 80 ns, 400 cycles from the core, and caches at a few nanoseconds. This note explains both numbers by looking at the cells: why caches are built from **SRAM** and main memory from **DRAM**, how DRAM chips are organised into banks and rows, why the order of accesses changes their cost, what the timings on a memory module mean, and how **HBM** feeds GPUs. [Memory Controllers](../memory-controllers/) covers the part of the CPU that schedules these accesses.
+
+## SRAM and DRAM Cells
+
+- An **SRAM** cell is six transistors forming two cross-coupled inverters, a tiny latch ([Sequential Circuits](../../digital-logic/sequential-circuits/)). It holds its bit as long as power is on and can be read in well under a nanosecond, but six transistors per bit take a lot of area. Caches, register files and on-chip buffers are SRAM.
+- A **DRAM** cell is one transistor and one capacitor: the bit is the presence or absence of charge. That makes DRAM several times denser and much cheaper per bit. But reading drains the tiny capacitor (so data must be rewritten after every read), the charge leaks away, and sensing it takes time.
+
+Because the charge leaks, every DRAM row must be **refreshed** (read and rewritten) periodically, every 64 ms in the classic standard and every 32 ms in DDR5. Refresh takes a small fraction of the memory's time, and a bank busy refreshing cannot serve requests.
+
+## Channels, Banks, Rows
+
+DRAM is organised in a hierarchy that lets many accesses proceed in parallel:
+
+- a CPU has several **channels**, each an independent 64-bit data path to memory (DDR5 splits each module's channel into two 32-bit subchannels);
+- each channel connects one or more modules (**DIMMs**), each with one or more **ranks** of chips that work together;
+- each chip has many **banks** (32 in DDR5), independent arrays that can be at different stages of an access;
+- each bank is a grid of **rows** (thousands of them, each 8 KiB or so across a rank) and columns.
+
+The key mechanism is the **row buffer**. To read anything, the controller first **activates** a row: the whole row is sensed and copied into the bank's row buffer. Then it reads the wanted column from the buffer. Before activating a different row it must **precharge**, writing the open row back and closing it. So access time depends on the state of the bank:
+
+<DramBankSteps />
+
+```python
+import random
+
+tCL, tRCD, tRP = 10.0, 12.7, 12.7                  # ns for DDR5-6000 CL30-38-38
+cost = {"row hit": tCL, "row empty": tRCD + tCL, "row conflict": tRP + tRCD + tCL}
+for kind, t in cost.items():
+    print(f"{kind:12} {t:5.1f} ns")
+
+random.seed(1)
+ROW = 8192                                          # bytes per DRAM row in one bank
+
+def avg_ns(addresses):
+    open_row, total = None, 0.0
+    for a in addresses:
+        row = a // ROW
+        total += cost["row hit"] if row == open_row else cost["row conflict"] if open_row is not None else cost["row empty"]
+        open_row = row
+    return total / len(addresses)
+
+seq = [i * 64 for i in range(10_000)]               # consecutive cache lines
+rnd = [random.randrange(1 << 30) // 64 * 64 for _ in range(10_000)]
+print(f"sequential lines: {avg_ns(seq):.1f} ns average, random lines: {avg_ns(rnd):.1f} ns average")
+# row hit       10.0 ns
+# row empty     22.7 ns
+# row conflict  35.4 ns
+# sequential lines: 10.2 ns average, random lines: 35.4 ns average
+```
+
+In words: a read from the open row costs only the column access, 10.0 ns; opening a row in an idle bank costs 22.7 ns; replacing an open row costs 35.4 ns. Reading consecutive cache lines stays in one 8 KiB row for 128 lines, so the average is 10.2 ns, while random lines almost always need a different row and average 35.4 ns, three and a half times slower, in this one-bank model. Real controllers soften the random case by spreading addresses across banks and channels and keeping many requests in flight. These figures are the DRAM part only; the full load-to-use latency of about 80 ns adds the trip through the caches, the on-chip network and the memory controller.
+
+## Timings and Bandwidth
+
+Memory modules are labelled with a transfer rate and timings, such as DDR5-6000 CL30-38-38: 6000 million transfers per second, and the CAS latency (tCL), row-to-column delay (tRCD) and precharge time (tRP) in memory clock cycles. Cycles hide the real time, because the clock gets faster each generation:
+
+```python
+def ns(cycles, mt_s):
+    return cycles * 2000 / mt_s                    # the memory clock is half the transfer rate (two transfers per clock)
+
+for name, mt, cl in [("DDR4-3200 CL16", 3200, 16), ("DDR5-4800 CL40", 4800, 40), ("DDR5-6000 CL30", 6000, 30)]:
+    print(f"{name}: CAS latency {ns(cl, mt):.1f} ns, {mt * 8 / 1000:.1f} GB/s per 64-bit channel")
+# DDR4-3200 CL16: CAS latency 10.0 ns, 25.6 GB/s per 64-bit channel
+# DDR5-4800 CL40: CAS latency 16.7 ns, 38.4 GB/s per 64-bit channel
+# DDR5-6000 CL30: CAS latency 10.0 ns, 48.0 GB/s per 64-bit channel
+```
+
+In words: DDR4-3200 CL16 and DDR5-6000 CL30 have the same 10.0 ns CAS latency, despite CL30 looking twice as slow, and an entry-level DDR5-4800 CL40 is actually slower at 16.7 ns. What each generation really improves is bandwidth: 25.6 GB/s per channel for DDR4-3200, 48.0 GB/s for DDR5-6000. The capacitor physics that sets latency has barely changed in two decades.
+
+<Callout type="pitfall">
+Comparing CL numbers across memory speeds is meaningless without converting to nanoseconds: CL × 2000 ÷ transfer rate. A higher CL at a higher speed can be just as fast. And for most programs, bandwidth and the number of channels populated matter more than a few nanoseconds of CAS latency: a desktop with one memory stick instead of two has half the bandwidth.
+</Callout>
+
+## HBM and Other Variants
+
+- **LPDDR** (low-power DDR) trades some latency and upgradability for much lower power, soldered next to the processor in phones and laptops (and in Apple's M-series packages).
+- **GDDR** is graphics memory: very high transfer rates per pin on a wide bus, soldered around a GPU.
+- **HBM** (high bandwidth memory) stacks 8 to 12 DRAM dies vertically, connected by through-silicon vias, and places the stack on the same silicon interposer as the GPU or accelerator. The connection is extremely wide instead of extremely fast:
+
+```python
+ddr5_channel = 6000e6 * 64 / 8 / 1e9                # DDR5-6000, 64 data bits per channel
+hbm3_stack = 1024 * 6.4e9 / 8 / 1e9                 # HBM3: 1024-bit interface at 6.4 Gbit/s per pin
+print(f"DDR5-6000 channel: {ddr5_channel:6.1f} GB/s, desktop with 2 channels: {2 * ddr5_channel:6.1f} GB/s")
+print(f"HBM3 stack:        {hbm3_stack:6.1f} GB/s, five stacks: {5 * hbm3_stack / 1000:.2f} TB/s")
+# DDR5-6000 channel:   48.0 GB/s, desktop with 2 channels:   96.0 GB/s
+# HBM3 stack:         819.2 GB/s, five stacks: 4.10 TB/s
+```
+
+In words: a desktop with two DDR5-6000 channels has 96.0 GB/s; one HBM3 stack has 819.2 GB/s through its 1024 data pins, and five stacks reach 4.10 TB/s at full speed. NVIDIA's H100 SXM (2022) runs five HBM3 stacks somewhat slower for 3.35 TB/s. That bandwidth is why HBM sits beside every large AI accelerator, and why its capacity and price limit how large a model fits on one chip ([GPU Architecture](../../gpus-parallelism/gpu-architecture/), [Roofline Model](../../gpus-parallelism/roofline-model/)).
+
+**ECC** memory adds extra bits per word so the controller can correct single-bit errors and detect double-bit ones; servers use it because at fleet scale DRAM bit flips are routine. DDR5 also adds on-die ECC inside each chip, which protects the cells but not the path to the CPU.
+
+<Callout type="key">
+SRAM is fast because each bit is an active latch, DRAM is dense because each bit is a passive capacitor. DRAM's row buffer makes accesses to an open row cheap and row changes expensive, so access order matters even inside main memory. Latency has stayed near 10 ns per access for years; bandwidth keeps growing through faster transfers, more channels and, for accelerators, stacked HBM.
+</Callout>

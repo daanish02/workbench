@@ -1,0 +1,212 @@
+---
+title: "Routers"
+description: "Router hardware: control and data planes, TCAM lookups, line cards, gateways and modems, home routers, and security appliances."
+order: 5
+tier: core
+takeaways:
+  - "A router has a **control plane** (a CPU running routing protocols, building the routing table) and a **data plane** (an ASIC or network processor forwarding every packet from a compiled copy, the **FIB**)."
+  - "Per packet, the data plane strips the frame, does a **longest-prefix match**, lowers the TTL and builds a new frame. A **TCAM** compares an address with every stored prefix at once; storing rows longest prefix first makes the first match the longest. The global table held about 1.09 million IPv4 prefixes in October 2026."
+  - "Big routers are chassis of **line cards** (each with its own forwarding chip) joined by a **switch fabric**; layer-3 switches run routing on switch ASICs and differ mainly in table size and buffer depth."
+  - "A **gateway** is a router seen from the hosts that use it as their way out; a **modem** converts frames to the signalling of the access line (cable, DSL, fibre). A **home router** bundles router, NAT, switch, Wi-Fi access point, DHCP and DNS, firewall, and sometimes the modem."
+  - "**Firewalls**, **VPN gateways** and **IDS/IPS** are routers that keep per-flow state, encrypt, or inspect payloads; their real limits are flows, connections per second and inspection throughput, not port speed."
+resources:
+  - title: "Router (computing) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Router_(computing)"
+    note: "Control and forwarding planes, router types, and the history from minicomputers to ASICs."
+  - title: "BGP routing table analysis (bgp.potaroo.net)"
+    url: "https://bgp.potaroo.net/"
+    note: "Daily counts of the global IPv4 and IPv6 routing tables since 1994, the number every router's FIB must hold."
+  - title: "RFC 1624: Incremental Internet Checksum"
+    url: "https://www.rfc-editor.org/rfc/rfc1624"
+    note: "The one-line formula routers use to update a header checksum after changing the TTL."
+---
+
+[Routing](../../../cs/networks/routing/) explains what a router decides: match the destination against a table by **longest prefix**, send the packet to the next hop, repeat at every router until it arrives. This note is about the hardware that makes that decision hundreds of millions of times per second, and why it is split in two. A router differs from the switches in [Hubs & Switches](../hubs-and-switches/) by working one layer up: it forwards **IP packets** between networks, building a new frame for every link. The note covers the **control plane** and **data plane**, the work done per packet, the **TCAM** that does longest-prefix lookups in one step, how large routers are built, **gateways and modems**, what is inside the router at home, and the **security appliances** built on the same hardware.
+
+## Control Plane and Data Plane
+
+A router does two very different jobs at very different speeds:
+
+- The **control plane** works out *where* destinations are. A general-purpose CPU runs routing protocols (BGP between networks, OSPF or IS-IS inside one), exchanges messages with neighbouring routers, and builds the **routing table** (RIB, routing information base): every known route, with alternatives and metadata. It reacts to changes in seconds and handles thousands of messages per second.
+- The **data plane** moves packets. It forwards from the **FIB** (forwarding information base): a compact table with just one best next hop per prefix, compiled from the RIB and written into the forwarding hardware. It runs at line rate: hundreds of millions of packets per second on a large router.
+
+The control plane updates the FIB when routes change; the data plane never asks the control plane about an individual packet. This split is what [Software-Defined Networking](../../../cs/networks/sdn/) generalises by moving the control plane off the box. Packets *addressed to* the router itself (routing protocol messages, SSH, ping) are the exception: the data plane hands them up to the CPU, through a deliberately rate-limited path so a flood cannot overwhelm it.
+
+## Per-Packet Work
+
+For every packet, the data plane:
+
+1. Receives the frame, checks the FCS, and strips the Ethernet header.
+2. Checks the IP header and drops the packet if the **TTL** (time to live, a hop counter) would reach zero.
+3. Looks up the destination address in the FIB by longest-prefix match, giving an output port and next-hop address.
+4. Applies **ACLs** (access control lists: permit or deny rules on addresses and ports) and QoS marking if configured.
+5. Decrements the TTL and updates the IPv4 header checksum.
+6. Builds a new Ethernet frame: destination MAC of the next hop (from an ARP table), source MAC of the output port, new FCS. Then queues it.
+
+Step 5 has a neat trick. The IPv4 header checksum covers the whole header, but recomputing it from scratch for every packet is wasteful when only the TTL changed. Because the checksum is a ones' complement sum, it can be updated from the old and new value of the one word that changed:
+
+```python
+def checksum(words):
+    s = sum(words)
+    while s >> 16:
+        s = (s & 0xFFFF) + (s >> 16)             # ones' complement addition: fold carries back in
+    return ~s & 0xFFFF
+
+# IPv4 header as ten 16-bit words; word 4 is TTL (high byte) and protocol (low byte), word 5 the checksum
+hdr = [0x4500, 0x0054, 0x1C46, 0x4000, 0x4001, 0x0000, 0xC0A8, 0x0102, 0x5DB8, 0xD822]
+hdr[5] = checksum(hdr)
+print(f"TTL {hdr[4] >> 8}, checksum {hdr[5]:#06x}")
+
+old = hdr[4]
+hdr[4] -= 0x0100                                  # router decrements TTL by one
+# RFC 1624 incremental update: HC' = ~(~HC + ~m + m'), touching 3 words instead of 10
+s = (~hdr[5] & 0xFFFF) + (~old & 0xFFFF) + hdr[4]
+while s >> 16:
+    s = (s & 0xFFFF) + (s >> 16)
+incremental = ~s & 0xFFFF
+hdr[5] = 0
+print(f"TTL {hdr[4] >> 8}, incremental {incremental:#06x}, full recompute {checksum(hdr):#06x}")
+# TTL 64, checksum 0x26de
+# TTL 63, incremental 0x27de, full recompute 0x27de
+```
+
+In words: after the TTL drops from 64 to 63, the incremental formula gives 0x27de, exactly what recomputing all ten words gives, while reading only the old checksum and the old and new TTL word. In hardware this is a few gates in the pipeline. IPv6 dropped the header checksum altogether, leaving error detection to the link layer and the transport protocol.
+
+## TCAM: Longest Match in One Step
+
+The hard step is the lookup. A switch's MAC table needs an *exact* match; a router needs the *longest matching prefix*, and a destination can match many prefixes at once (a /24, the /16 containing it, a /8, and the default route /0).
+
+A **TCAM** (ternary content-addressable memory) does this in hardware. Each row stores a pattern of 0, 1 and **X** (don't care) bits; a prefix of length $n$ is its first $n$ bits followed by $32 - n$ X's. The search key is compared with **every row in parallel**, in one clock cycle, and a **priority encoder** returns the first matching row. If the rows are stored with longer prefixes first, the first match is the longest:
+
+```python
+import ipaddress
+
+routes = {"0.0.0.0/0": "uplink", "10.0.0.0/8": "port 1", "10.1.0.0/16": "port 2", "10.1.2.0/24": "port 3"}
+
+def tcam_row(prefix):
+    net = ipaddress.ip_network(prefix)
+    bits = format(int(net.network_address), "032b")
+    return bits[: net.prefixlen] + "X" * (32 - net.prefixlen)   # X = "don't care" bit
+
+# rows ordered longest prefix first, so the first matching row is the longest match
+tcam = sorted(((tcam_row(p), hop, p) for p, hop in routes.items()), key=lambda r: r[0].count("X"))
+
+def lookup(ip):
+    key = format(int(ipaddress.ip_address(ip)), "032b")
+    hits = [r for r in tcam if all(t in ("X", k) for t, k in zip(r[0], key))]   # hardware checks every row at once
+    return [h[2] for h in hits], hits[0][1]
+
+for ip in ("10.1.2.7", "10.1.9.9", "10.200.0.1", "8.8.8.8"):
+    matches, hop = lookup(ip)
+    print(f"{ip:11} matches {matches} -> {hop}")
+# 10.1.2.7    matches ['10.1.2.0/24', '10.1.0.0/16', '10.0.0.0/8', '0.0.0.0/0'] -> port 3
+# 10.1.9.9    matches ['10.1.0.0/16', '10.0.0.0/8', '0.0.0.0/0'] -> port 2
+# 10.200.0.1  matches ['10.0.0.0/8', '0.0.0.0/0'] -> port 1
+# 8.8.8.8     matches ['0.0.0.0/0'] -> uplink
+```
+
+In words: 10.1.2.7 matches all four rows, and because the /24 row comes first it wins and goes to port 3; 10.200.0.1 matches only the /8 and the default; 8.8.8.8 matches only the default route. The Python loop checks rows one by one, but a TCAM checks all of them at the same time, so lookup time does not depend on the number of routes.
+
+<TcamLookup />
+
+The price is hardware. Every TCAM bit has its own comparison logic, so TCAM takes far more chip area and power per bit than ordinary memory (SRAM), and every search activates every row. That matters because the table is large: the global Internet routing table held about 1,085,000 IPv4 and 259,000 IPv6 prefixes in October 2026 (bgp.potaroo.net), and a router carrying the full table needs room for all of them plus growth. Routers therefore mix techniques: TCAM for ACLs and the most specific routes, and **algorithmic** lookups (compressed tries or hash tables of prefixes by length) in SRAM or attached HBM for the bulk of the table.
+
+## Chassis, Line Cards, Fabric
+
+A large router is a **chassis**: a cabinet with slots for cards.
+
+- **Line cards** hold the ports and, importantly, their own forwarding chip with a full copy of the FIB, so each card forwards its own traffic independently.
+- A **switch fabric** connects all line cards. A packet arriving on one card and leaving on another crosses the fabric, cut into fixed-size cells and spread across several fabric chips. The fabric has more capacity than the cards need, so it does not become the bottleneck.
+- **Route processor** cards run the control plane, usually two for redundancy, so a failed CPU card does not stop forwarding.
+
+Smaller routers are fixed "pizza boxes" with one forwarding chip, often the same merchant silicon used in switches. Network-processor chips (NPUs) trade some speed for programmability: they are arrays of small cores running packet-processing code, so new protocols can be added with a software update.
+
+The line between switch and router is blurry. A **layer-3 switch** routes IP in its switching ASIC at full line rate. What separates a data-centre layer-3 switch from an Internet edge router is mainly scale and features: the router holds a full Internet table, has gigabytes of buffer for long links where the bandwidth-delay product is large ([Bandwidth & Latency](../bandwidth-latency-and-throughput/)), and supports features such as MPLS and detailed traffic shaping.
+
+## A Packet's Hardware Path
+
+Here is the whole chain from a laptop to the ISP, following the hardware rather than the protocol layers ([Network Models](../../../cs/networks/network-models/) shows the layer view). Watch which device changes which field:
+
+<PacketPathSteps />
+
+The switch forwards the frame untouched; the router is where the frame is rebuilt, the TTL falls, and, at home, NAT rewrites the source. Every router after that repeats the strip, look up, decrement, rebuild cycle.
+
+## Gateways and Modems
+
+**Gateway** is a role, not a different machine. To a host, its **default gateway** is the router on its own subnet that receives every packet bound for anywhere else ([Link Layer](../../../cs/networks/link-layer/) shows how the host addresses frames to it). The word also names devices that translate between different kinds of network or protocol: a VoIP gateway between internet telephony and the phone network, an IoT gateway between Zigbee sensors and IP. A home router is the gateway of the home network.
+
+A **modem** (modulator-demodulator) sits between the home and the ISP's access line and works at the physical layer: it turns Ethernet frames into the signalling that line needs, using the encoding ideas from [Transmission Media](../physical-transmission-media/), and back. Which kind depends on the cable reaching the building:
+
+| Access line | Modem | Typical rates |
+| :---: | :---: | :---: |
+| Cable TV coax | DOCSIS cable modem | DOCSIS 3.1: up to 10 Gbit/s down, shared by a neighbourhood |
+| Telephone copper | DSL modem | VDSL2: about 100 Mbit/s within a few hundred metres of the street cabinet |
+| Fibre to the home | ONT (optical network terminal) | GPON: 2.488 Gbit/s down shared by up to 64 homes; XGS-PON: 10 Gbit/s |
+| Mobile network | 4G/5G modem | depends on signal, spectrum and cell load |
+
+A cable modem shows the Shannon trade-off from [Transmission Media](../physical-transmission-media/) in practice: DOCSIS 3.1 uses up to 4096-QAM, symbols that carry 12 bits each, which only works on a clean, high-SNR line, and the modem falls back to fewer bits per symbol on a noisy one. Fibre lines (PON, passive optical network) are shared too: one fibre from the ISP is split passively, with glass splitters, among many homes, and each ONT only takes the time slots meant for it.
+
+## What a Home Router Contains
+
+The box sold as a "router" for homes is several devices sharing one board:
+
+- a **router**: a system-on-chip with a few ARM cores, routing between the home network and the ISP, often with a small hardware forwarding engine for speed;
+- a **switch** chip behind the LAN ports ([Hubs & Switches](../hubs-and-switches/));
+- one or more **Wi-Fi radios**, making it a wireless **access point**: a bridge between Wi-Fi and the wired LAN ([Wireless Basics](../wireless-technology-basics/));
+- **NAT** (network address translation), so every device shares the one public IPv4 address;
+- a **DHCP server**, which hands each device that joins an IP address, subnet mask, default gateway and DNS server for a limited lease, plus a **DNS forwarder** and a stateful **firewall**;
+- sometimes the **modem** too (cable or DSL); fibre usually has a separate ONT.
+
+<HomeNetwork />
+
+NAT is the piece that makes the home router keep **per-flow state**, which a plain router does not. For each outgoing flow it allocates a public port and remembers the mapping so replies can be sent back:
+
+```python
+import itertools
+
+public_ip = "203.0.113.5"
+next_port = itertools.count(40000)
+nat = {}                                          # (inside ip, inside port) -> public port
+
+def outbound(src_ip, src_port):
+    key = (src_ip, src_port)
+    if key not in nat:
+        nat[key] = next(next_port)                # new flow: allocate a public port
+    return public_ip, nat[key]
+
+def inbound(dst_port):
+    for (ip, port), pub in nat.items():
+        if pub == dst_port:
+            return ip, port
+    return None                                   # no mapping: unsolicited, dropped
+
+print(outbound("192.168.1.10", 51000))
+print(outbound("192.168.1.11", 51000))            # same inside port, different host
+print(inbound(40001))
+print(inbound(40999))
+# ('203.0.113.5', 40000)
+# ('203.0.113.5', 40001)
+# ('192.168.1.11', 51000)
+# None
+```
+
+In words: two laptops both using inside port 51000 leave as 203.0.113.5:40000 and 203.0.113.5:40001, so the reply to port 40001 goes back to 192.168.1.11. A packet to a port with no mapping (40999) has nowhere to go and is dropped, which is why NAT also acts as a crude firewall for incoming connections. The mapping table lives in the router's memory and expires idle flows; a router with too small a table or too short timeouts breaks long-lived connections.
+
+## Security Appliances
+
+NAT already makes the home router keep a table entry per flow. Dedicated **middleboxes** take that further on the same kind of hardware. What each one does, and why, is covered in [Network Security](../../../cs/security/network-security/); here the question is what it costs the box.
+
+- A **stateful firewall** checks the first packet of each connection against its rules, then records the flow in a table so later packets pass with a fast lookup. Its limits are table size (concurrent flows) and **new connections per second**, since each new flow goes through rule matching and table insertion.
+- A **VPN gateway** (or concentrator) encrypts and decrypts every packet of every tunnel (IPsec or WireGuard). Throughput is set by cryptography, so these boxes rely on AES instructions in the CPU or dedicated crypto engines, and each tunnel's handshake costs public-key operations.
+- An **IDS** (intrusion detection system) inspects traffic for signs of attack and raises alerts ([Network Security](../../../cs/security/network-security/) shows where each sits and why most alerts are false). It usually works on a copy of the traffic from a switch's mirror port or a passive optical **tap**, so it cannot slow or block anything. An **IPS** (intrusion prevention system) sits inline and drops what matches. Both do **deep packet inspection**: matching thousands of patterns against payloads, not just headers, which needs pattern-matching hardware or many cores, and cannot see inside encrypted traffic unless it terminates TLS itself.
+- **Load balancers** keep per-connection state to spread traffic over servers ([Load Balancing & CDNs](../../../cs/networks/load-balancing-and-cdns/)).
+
+Vendors often combine all of these in one **next-generation firewall** box. Its datasheet usually lists several throughput figures that fall sharply as features are switched on: plain firewalling with large packets is the highest, and threat inspection or VPN throughput can be several times lower.
+
+<Callout type="pitfall">
+A slow or missing **ping** reply from a router in the middle of a path (in `ping` or `traceroute` output) usually says nothing about forwarding. Packets addressed *to* the router go up to its control-plane CPU through a rate-limited path, while packets passing *through* stay in the forwarding ASIC. A hop showing 200 ms or `* * *` while later hops look normal is forwarding fine; only a delay that persists to the final destination is real.
+</Callout>
+
+<Callout type="key">
+A router is two machines in one: a slow, smart **control plane** that computes routes and a fast, simple **data plane** that applies them to every packet. Each packet costs a longest-prefix lookup, a TTL decrement and a new frame; what makes routers expensive is doing that at line rate against a table of over a million prefixes.
+</Callout>

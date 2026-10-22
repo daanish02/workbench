@@ -1,8 +1,139 @@
 ---
 title: "Units & Magnitudes"
-description: "Bits vs bytes, GB vs GiB, Gb/s vs GB/s, FLOPS, and the orders of magnitude that hardware numbers span."
+description: "Bits vs bytes, decimal vs binary prefixes, Gb/s vs GB/s and line encoding, MT/s and GT/s, FLOPS and precision, and the orders of magnitude hardware numbers span."
 order: 2
 tier: core
+takeaways:
+  - "A lowercase **b** is a bit, an uppercase **B** a byte: network and link speeds are quoted in bits per second, so 10 Gb/s carries at most 1.25 GB/s."
+  - "**GB** is $10^9$ bytes, **GiB** is $2^{30}$: the gap grows from 2.4% at kilo to 10.0% at tera, which is why a '1 TB' drive shows up as 931 GiB."
+  - "Serial links lose part of their raw rate to **line encoding**: PCIe 4.0 x16 is 16 GT/s per lane but 31.51 GB/s of data after 128b/130b."
+  - "A FLOPS figure means nothing without its **precision**: one fused multiply-add counts as 2 FLOPs, and a 16-core AVX2 CPU at 3 GHz peaks at 1.536 TFLOP/s in FP32 but 768 GFLOP/s in FP64."
+resources:
+  - title: "Prefixes for binary multiples (NIST)"
+    url: "https://physics.nist.gov/cuu/Units/binary.html"
+    note: "The official definitions of kibi, mebi, gibi and the rest, and why they were introduced."
+  - title: "Data-rate units (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Data-rate_units"
+    note: "Bit and byte rates, decimal and binary prefixes, and common link speeds side by side."
+  - title: "FLOPS (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/FLOPS"
+    note: "How peak FLOPS is computed, FLOPs per cycle for common cores, and the history of supercomputer performance."
 ---
 
-_Placeholder. Content not written yet._
+Hardware numbers come in units that look alike and differ by factors of 8, 1.07 or 2: bits and bytes, gigabytes and gibibytes, transfers and hertz, FP32 and FP16 FLOPS. Most mistakes in capacity planning and in reading a spec sheet are unit mistakes, not arithmetic mistakes. This page collects the conventions and the scales they cover. For latencies of common operations, see [Latency Numbers](../../../cs/appendix-reference/latency-numbers/); for applying these units to real datasheets, [Reading Spec Sheets](../spec-sheets/).
+
+## Bits and Bytes
+
+A **bit** (b) is one binary digit; a **byte** (B) is 8 bits. Storage and memory capacities are counted in bytes, while network links, serial buses and radio are rated in bits per second, because they move a stream of bits. So `Gb/s` and `GB/s` differ by a factor of 8, and dropping the case of one letter changes the answer eightfold.
+
+## Decimal and Binary Prefixes
+
+The SI prefixes are powers of 1000. Memory is built in powers of two, so for decades "kilobyte" also meant 1024 bytes. Since 1998 the IEC binary prefixes (kibi, mebi, gibi: KiB, MiB, GiB) name the powers of 1024 unambiguously, but usage is still mixed:
+
+```python
+for name, k in [("KB vs KiB", 1), ("MB vs MiB", 2), ("GB vs GiB", 3), ("TB vs TiB", 4)]:
+    print(f"{name}: binary is {1024**k / 1000**k - 1:5.1%} larger")
+print(f"a '1 TB' drive holds {1e12 / 2**40:.3f} TiB = {1e12 / 2**30:.0f} GiB")
+# KB vs KiB: binary is  2.4% larger
+# MB vs MiB: binary is  4.9% larger
+# GB vs GiB: binary is  7.4% larger
+# TB vs TiB: binary is 10.0% larger
+# a '1 TB' drive holds 0.909 TiB = 931 GiB
+```
+
+In words: the gap grows with each prefix, from 2.4% at kilo to 10.0% at tera. Drive makers use decimal units, so a 1 TB drive holds $10^{12}$ bytes, which Windows reports as "931 GB" because it divides by $2^{30}$ and labels the result GB. Nothing is missing; the two numbers use different units.
+
+<FilterTable placeholder="Filter, e.g. GiB, tera, network, RAM">
+
+### Prefixes
+
+| Prefix | Decimal (SI) | Binary (IEC) | Typical use |
+| --- | --- | --- | --- |
+| kilo / kibi | kB = $10^3$ | KiB = $2^{10}$ = 1024 | cache sizes (32 KiB L1), page size (4 KiB) |
+| mega / mebi | MB = $10^6$ | MiB = $2^{20}$ | L2 and L3 caches, huge pages (2 MiB) |
+| giga / gibi | GB = $10^9$ | GiB = $2^{30}$ | RAM (sold in GiB, labelled GB), GPU memory |
+| tera / tebi | TB = $10^{12}$ | TiB = $2^{40}$ | drives (decimal), file systems (often binary) |
+| peta / pebi | PB = $10^{15}$ | PiB = $2^{50}$ | storage clusters, datasets |
+| exa / exbi | EB = $10^{18}$ | EiB = $2^{60}$ | supercomputer FLOPS (exaFLOPS), global storage |
+
+### Who Uses Which
+
+| Quantity | Convention | Example |
+| --- | --- | --- |
+| RAM and caches | binary, usually written without the "i" | "16 GB" DIMM holds 16 GiB |
+| Drive capacity | decimal | 2 TB SSD = $2 \times 10^{12}$ bytes |
+| Network and link rates | decimal bits per second | 10 Gb/s = $10^{10}$ bits per second |
+| Memory and PCIe bandwidth | decimal bytes per second | DDR5-6000 channel: 48.0 GB/s |
+| Linux `df -h`, `free -h` | binary, printed as G | "931G" for a 1 TB drive |
+| macOS Finder | decimal since 2009 | 1 TB drive shows 1 TB |
+
+### Rates and Frequencies
+
+| Unit | Meaning | Example |
+| --- | --- | --- |
+| Hz, GHz | cycles per second of a clock | a 3.0 GHz core: one cycle every 0.333 ns |
+| MT/s | million transfers per second; DDR memory transfers twice per clock | DDR5-6000: 6000 MT/s on a 3000 MHz clock |
+| GT/s | billion transfers (symbols) per second per lane, before encoding | PCIe 4.0: 16 GT/s per lane |
+| Gb/s, Gbps | billion bits per second | 100 GbE |
+| GB/s | billion bytes per second | NVMe SSD: 7 GB/s sequential read |
+| IOPS | I/O operations per second | 1,000,000 random 4 KiB reads per second |
+| FLOP/s, FLOPS | floating-point operations per second, at a stated precision | 1 PFLOP/s FP8 |
+
+### Magnitudes
+
+| Scale | Value | Example |
+| --- | --- | --- |
+| time | 1 ps ($10^{-12}$ s) | gate switching on a modern chip is a few ps to tens of ps |
+| time | 1 ns ($10^{-9}$ s) | an L1 hit; light travels about 30 cm in vacuum |
+| time | 100 ns | a DRAM access |
+| time | 100 µs ($10^{-4}$ s) | an NVMe SSD read |
+| time | 10 ms ($10^{-2}$ s) | a hard drive seek; a long-distance network round trip |
+| size | 64 B | a cache line |
+| size | 4 KiB | a memory page, a typical SSD read unit |
+| size | 1 GiB | 268,435,456 32-bit integers |
+| power | 1 W to 10 W | a phone chip |
+| power | 100 W to 300 W | a desktop or server CPU |
+| power | 700 W to 1000 W | one AI accelerator (2024–2025 generation) |
+
+</FilterTable>
+
+## Raw Rate and Encoding
+
+Serial links send extra bits so the receiver can recover the clock and detect errors. The **line encoding** sets how many of the transmitted bits are data: SATA and PCIe 1.0–2.0 use 8b/10b (8 data bits in every 10), PCIe 3.0–5.0 use 128b/130b, and Ethernet from 10 GbE uses 64b/66b, with the raw rate raised so the data rate is the round number. PCIe 6.0 and later switch to PAM4 signalling with fixed-size packets (flits) carrying error correction.
+
+```python
+def link_gbytes(gt_s, lanes, payload, coded):
+    return gt_s * lanes * payload / coded / 8       # transfers/s x lanes x useful fraction, bits to bytes
+
+print(f"10 GbE:          {10 / 8:.2f} GB/s before packet headers")
+print(f"PCIe 3.0 x4:     {link_gbytes(8, 4, 128, 130):.2f} GB/s")
+print(f"PCIe 4.0 x16:    {link_gbytes(16, 16, 128, 130):.2f} GB/s")
+print(f"SATA III 6 Gb/s: {link_gbytes(6, 1, 8, 10):.2f} GB/s")
+print(f"copy 100 GB over 10 GbE at full rate: {100 / (10 / 8):.0f} s")
+# 10 GbE:          1.25 GB/s before packet headers
+# PCIe 3.0 x4:     3.94 GB/s
+# PCIe 4.0 x16:    31.51 GB/s
+# SATA III 6 Gb/s: 0.60 GB/s
+# copy 100 GB over 10 GbE at full rate: 80 s
+```
+
+In words: 10 GbE carries at most 1.25 GB/s, and somewhat less in practice after Ethernet, IP and TCP headers. A PCIe 3.0 x4 slot, the usual M.2 SSD link, gives 3.94 GB/s, which is why PCIe 3.0 SSDs top out around 3.5 GB/s. PCIe 4.0 x16, a GPU slot, gives 31.51 GB/s per direction. SATA III's 6 Gb/s loses 20% to 8b/10b and leaves 0.60 GB/s, the ceiling every SATA SSD hits at about 550 MB/s. Copying 100 GB over 10 GbE takes at least 80 s. [Storage Interfaces](../../storage/storage-interfaces/) and [Bandwidth & Latency](../../networking-hardware/bandwidth-latency-and-throughput/) use these numbers.
+
+## FLOPS and Precision
+
+**FLOPs** (lowercase s) counts floating-point operations; **FLOP/s** or **FLOPS** is the rate. A peak FLOPS number is cores × clock × FLOPs per core per cycle, and the last factor depends on vector width and precision. A fused multiply-add ($a \times b + c$ in one instruction) is counted as 2 FLOPs:
+
+```python
+cores, ghz, fma_lanes = 16, 3.0, 2 * 8              # 2 FMA units, each 8 x FP32 (AVX2, 256-bit)
+flops_per_cycle = fma_lanes * 2                      # one fused multiply-add counts as 2 FLOPs
+print(f"FP32 peak: {cores * ghz * flops_per_cycle:.0f} GFLOP/s = {cores * ghz * flops_per_cycle / 1000:.3f} TFLOP/s")
+print(f"FP64 peak: {cores * ghz * flops_per_cycle / 2:.0f} GFLOP/s (half the lanes per register)")
+# FP32 peak: 1536 GFLOP/s = 1.536 TFLOP/s
+# FP64 peak: 768 GFLOP/s (half the lanes per register)
+```
+
+In words: a 16-core CPU at 3.0 GHz with two 256-bit FMA units per core does 32 FP32 FLOPs per cycle per core, a peak of 1.536 TFLOP/s; in FP64 each register holds half as many values, so the peak halves to 768 GFLOP/s. GPU and accelerator datasheets list a separate peak per precision (FP64, FP32, TF32, FP16/BF16, FP8, sometimes FP4), each lower precision roughly doubling the number, and some quote figures "with sparsity" that assume half the inputs are zero, doubling again. Peak FLOPS is reached only by code that keeps every unit busy, which is what the [Roofline Model](../../gpus-parallelism/roofline-model/) checks.
+
+<Callout type="pitfall">
+Compare like with like. A "10 Gbps" link and a "10 GB/s" SSD differ by 8×; an accelerator's FP8 sparse FLOPS and another's dense FP16 FLOPS differ by 4× before any real difference in the chips; and "16 GB" means $2^{34}$ bytes on a DIMM but $1.6 \times 10^{10}$ bytes on a USB stick. Before comparing two numbers, write both in the same unit with the precision and prefix spelled out.
+</Callout>

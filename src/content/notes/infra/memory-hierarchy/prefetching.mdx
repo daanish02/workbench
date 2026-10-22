@@ -1,8 +1,123 @@
 ---
 title: "Prefetching"
-description: "Predicting future memory accesses so the data is ready before it is needed."
+description: "How hardware and software prefetchers predict future memory accesses to hide DRAM latency, which patterns they catch, how far ahead to fetch, and when prefetching hurts."
 order: 8
 tier: core
+takeaways:
+  - "A **prefetch** loads a cache line before the program asks for it, so a miss that would cost about 80 ns becomes a hit. It hides latency; it does not reduce the amount of data moved."
+  - "Hardware **stride prefetchers** watch the addresses each load instruction touches: in a simulation with a stride prefetcher, a sequential scan and a stride-8 scan each miss only 3 times in 1000 reads, a random scan 1000 times."
+  - "Prefetches are judged by **coverage** (misses removed), **accuracy** (prefetches used) and **timeliness** (arrived before needed, not so early that they were evicted)."
+  - "Software prefetching must run ahead by about latency ÷ time per iteration: 80 ns ÷ 5 ns = 16 iterations."
+  - "Pointer chasing defeats prefetchers: the next address is unknown until the current load returns."
+resources:
+  - title: "Cache prefetching (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cache_prefetching"
+    note: "Hardware and software prefetching, stream buffers, stride prefetching and the coverage/accuracy/timeliness metrics."
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "Section 6.3 covers hardware prefetching, software prefetch instructions and helper-thread prefetching with measurements."
+  - title: "Other Built-in Functions: __builtin_prefetch (GCC manual)"
+    url: "https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html"
+    note: "The portable way to issue a software prefetch from C, with its read/write and locality hints."
 ---
 
-_Placeholder. Content not written yet._
+A cache miss to DRAM costs about 80 ns, hundreds of cycles ([Memory Hierarchy](../why-the-memory-hierarchy-exists/)). Caches only help with data that has been used before; the first touch of every line still misses. **Prefetching** attacks those misses by guessing which lines the program will need next and loading them early, so that by the time the load arrives the data is already in the cache. This note covers the prefetchers built into every CPU, which access patterns they recognise, how to measure them, and when a programmer should prefetch by hand. It builds on [Cache Basics](../cache-basics/) and on the memory-level parallelism from [Memory Controllers](../memory-controllers/): a prefetch is one more miss in flight.
+
+## What Prefetching Buys
+
+A prefetch does not make memory faster or move less data. It moves the wait off the critical path: the program keeps computing while the line travels, as long as the prefetch was issued at least one memory latency before the load. It also raises the number of misses in flight, which, by Little's law, is what turns latency into bandwidth. A streaming loop that alone has a few misses outstanding at a time can reach much higher bandwidth once the prefetcher runs ahead of it.
+
+Three numbers describe a prefetcher:
+
+- **coverage**: the fraction of misses it removes;
+- **accuracy**: the fraction of prefetched lines that are actually used before they are evicted;
+- **timeliness**: whether the line arrives before the load needs it, but not so early that something else evicted it first.
+
+A prefetch that is never used is not free: it spends memory bandwidth and takes a cache slot from data that was useful (**cache pollution**).
+
+## Hardware Prefetchers
+
+Every modern CPU has several prefetchers watching the stream of accesses and misses, mostly in L1 and L2:
+
+- **Next-line** (adjacent-line) prefetchers fetch line $n+1$ when line $n$ misses, or the other half of a 128-byte pair.
+- **Stream** prefetchers detect a run of misses moving up or down through memory and fetch several lines ahead along it, going further ahead as the stream proves stable.
+- **Stride** prefetchers keep a small table indexed by the address of the load instruction. For each load they remember the last address and the last stride; when the same stride repeats, they fetch ahead along it. Indexing by instruction is what lets them follow `a[i]` and `b[i]` in the same loop as two separate patterns.
+
+<PrefetchStrideSteps />
+
+A simple stride prefetcher in Python, with one table entry for the whole program and a degree of 4 (it fetches the next four lines along the stride):
+
+```python
+import random
+
+def run(lines, degree=4):
+    prefetched, issued, last, stride, misses = set(), 0, None, None, 0
+    for line in lines:
+        if line in prefetched:
+            prefetched.discard(line)                 # covered: the data arrived early
+        else:
+            misses += 1
+        if last is not None:
+            new = line - last
+            if new == stride and new != 0:          # same stride twice in a row: confident
+                for k in range(1, degree + 1):
+                    if line + k * stride not in prefetched:
+                        prefetched.add(line + k * stride)
+                        issued += 1
+            stride = new
+        last = line
+    return misses, issued, issued - len(prefetched)
+
+random.seed(4)
+patterns = {
+    "sequential": list(range(1000)),
+    "stride 8": list(range(0, 8000, 8)),
+    "a[i] + b[i]": [x for i in range(500) for x in (i, 100_000 + i)],
+    "random": [random.randrange(1_000_000) for _ in range(1000)],
+}
+for name, lines in patterns.items():
+    misses, issued, used = run(lines)
+    print(f"{name:11} misses {misses:4} of 1000, prefetches issued {issued:4}, used {used:4}")
+# sequential  misses    3 of 1000, prefetches issued 1001, used  997
+# stride 8    misses    3 of 1000, prefetches issued 1001, used  997
+# a[i] + b[i] misses 1000 of 1000, prefetches issued    0, used    0
+# random      misses 1000 of 1000, prefetches issued    0, used    0
+```
+
+In words: a sequential scan and a stride-8 scan each miss 3 times while the prefetcher learns, then every read is covered: 997 of 1001 prefetches are used, and the 4 unused ones run past the end of the data. Two arrays read alternately, `a[i] + b[i]`, defeat this single-entry prefetcher, because the stride flips between +100,000 and −99,999 and never repeats; a real prefetcher with one entry per load instruction sees two clean stride-1 streams. Random reads get no prefetches at all, which is the right outcome: guessing would only waste bandwidth. The simulation ignores timing, so "covered" assumes each prefetch arrived in time.
+
+Hardware prefetchers have limits. They work on physical addresses, and the next virtual page may be anywhere in physical memory, so most of them stop at a 4 KiB page boundary and must relearn the stream on the next page ([TLBs & Paging](../virtual-memory-at-the-hardware-level/)). They have a small number of table entries, so a loop touching dozens of arrays at once can exceed them. And they back off when memory bandwidth is already saturated.
+
+## Software Prefetching
+
+When the hardware cannot see the pattern, the program can say it: x86 has `prefetcht0` and related instructions, ARM has `prfm`, and C compilers expose them as `__builtin_prefetch(addr)`. The typical case is an indirect access such as `data[index[i]]`: the index array is sequential and prefetched by hardware, but the addresses into `data` look random. Since `index[i + d]` is already known, the loop can prefetch `data[index[i + d]]` now and use it $d$ iterations later.
+
+The **prefetch distance** $d$ must cover the memory latency:
+
+```python
+import math
+
+latency_ns, per_iter_ns = 80, 5                      # miss latency; work per loop iteration
+distance = math.ceil(latency_ns / per_iter_ns)       # iterations ahead the prefetch must be issued
+print(f"prefetch distance: {distance} iterations")
+for elem in [4, 8, 64]:                              # bytes per element
+    print(f"{elem:2}-byte elements: {distance * elem:4} bytes ahead = {math.ceil(distance * elem / 64)} cache lines")
+# prefetch distance: 16 iterations
+#  4-byte elements:   64 bytes ahead = 1 cache lines
+#  8-byte elements:  128 bytes ahead = 2 cache lines
+# 64-byte elements: 1024 bytes ahead = 16 cache lines
+```
+
+In words: if each iteration does 5 ns of work and a miss takes 80 ns, the prefetch has to be issued 16 iterations ahead. For a loop over 4-byte elements that is only one cache line ahead, but for 64-byte records it is 16 lines ahead. Too short a distance and the load still waits; too long and the line may be evicted before use, and the loop's last $d$ iterations prefetch past the end of the data. The right distance depends on the machine, so it is tuned by measuring.
+
+<Callout type="pitfall">
+Prefetching cannot help pointer chasing. In a linked list or a tree, the address of the next node is stored in the current node, so it is unknown until the current load returns: one miss at a time, at full DRAM latency, whatever the prefetcher does. Adding software prefetches to such code mostly adds instructions. The fix is a different data layout, such as an array instead of a list or a B-tree with wide nodes instead of a binary tree ([Cache-Friendly Code](../cache-friendly-code/)). Also measure before and after: on regular loops the hardware prefetcher is usually already doing the job, and extra software prefetches can make them slower.
+</Callout>
+
+## Beyond Caches
+
+The same idea appears at every level where a slow tier sits under a fast one. Operating systems read ahead in files when they detect sequential reads, so the next blocks are already in the page cache ([I/O Management](../../../cs/operating-systems/io-management/)). Disks and SSDs read ahead into their own buffers. GPUs hide memory latency differently: instead of guessing addresses, they keep many threads ready and switch to another one while a load is outstanding ([GPU Architecture](../../gpus-parallelism/gpu-architecture/)).
+
+<Callout type="key">
+Prefetching turns predictable misses into hits by fetching lines before they are asked for. Hardware prefetchers catch sequential and strided patterns per load instruction, within a page; random and pointer-chasing accesses defeat them. Software prefetches help indirect accesses, issued about latency ÷ work per iteration ahead. Unused prefetches cost bandwidth and cache space, so accuracy matters as much as coverage.
+</Callout>

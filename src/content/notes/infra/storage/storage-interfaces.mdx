@@ -1,8 +1,125 @@
 ---
 title: "Storage Interfaces"
-description: "SATA, NVMe — conceptually, what changed and why NVMe is faster."
-order: 3
+description: "How drives connect to computers: SATA and AHCI, SAS, and NVMe on PCIe, why NVMe's queues matter, and the physical form factors."
+order: 4
 tier: core
+takeaways:
+  - "**SATA** was designed for hard drives: one 6 Gbit/s lane caps it at 0.60 GB/s, and its **AHCI** host interface has one queue of 32 commands."
+  - "**SAS** is the enterprise relative of SATA: faster (up to 2.40 GB/s for SAS-4), dual-ported for failover, and able to connect many drives through expanders."
+  - "**NVMe** talks to flash directly over **PCIe**: an x4 link gives 7.88 GB/s on PCIe 4.0 and 15.75 GB/s on PCIe 5.0, with up to 65,535 queues, one per core, and no shared lock."
+  - "By Little's law, 32 commands in flight at 80 µs each cap AHCI at 400,000 IOPS; fast SSDs need over a hundred requests in flight, which only NVMe's queues allow."
+  - "Form factors are separate from protocols: M.2 and U.2 can carry SATA or NVMe; data centres are moving to EDSFF (E1.S, E3.S)."
+resources:
+  - title: "NVM Express (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/NVM_Express"
+    note: "History, queue design, comparison with AHCI, and NVMe over Fabrics."
+  - title: "NVMe specifications (NVM Express)"
+    url: "https://nvmexpress.org/specifications/"
+    note: "The base, command-set and transport specifications from the standards body."
+  - title: "EDSFF (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Enterprise_and_Data_Center_Standard_Form_Factor"
+    note: "The ruler-shaped and E1/E3 form factors replacing 2.5-inch drives in servers."
 ---
 
-_Placeholder. Content not written yet._
+[Flash & SSDs](../flash-and-ssds/) showed that an SSD can read a block in tens of microseconds and has dozens of flash chips working in parallel. None of that helps if the connection to the computer is slow or can only carry a few requests at once. For years SSDs were plugged into interfaces designed for [Hard Drives](../hard-drives/), and those interfaces became the bottleneck. This note covers the three interfaces in use, **SATA**, **SAS** and **NVMe**, what limits each (link speed and, more importantly, queues), and the physical form factors that carry them. It builds on PCIe from [Network Interface Cards](../../networking-hardware/network-interface-cards/) and [System Buses](../../computer-organization/system-buses/).
+
+## Two Layers: Link and Protocol
+
+An interface has two parts that are easy to confuse:
+
+- the **link**: the electrical connection and its signalling rate (a SATA cable, a SAS cable, PCIe lanes),
+- the **protocol**: the commands the host and the drive exchange, and how requests are queued (AHCI for SATA, SCSI for SAS, NVMe for PCIe).
+
+The link sets the bandwidth ceiling; the protocol sets how many requests can be in flight and how much CPU work each one costs. For hard drives only the first mattered. For flash the second matters as much.
+
+## Link Ceilings
+
+Each link signals at a raw rate, loses some of it to line coding (as in [Transmission Media](../../networking-hardware/physical-transmission-media/)), and may use several lanes:
+
+```python
+links = [  # interface, line rate in Gbit/s per lane, encoding efficiency, lanes
+    ("SATA III", 6, 8 / 10, 1),
+    ("SAS-3", 12, 8 / 10, 1),
+    ("SAS-4", 22.5, 128 / 150, 1),
+    ("NVMe on PCIe 3.0 x4", 8, 128 / 130, 4),
+    ("NVMe on PCIe 4.0 x4", 16, 128 / 130, 4),
+    ("NVMe on PCIe 5.0 x4", 32, 128 / 130, 4),
+]
+for name, gbps, eff, lanes in links:
+    print(f"{name:20} {gbps * eff * lanes / 8:6.2f} GB/s ceiling")
+# SATA III               0.60 GB/s ceiling
+# SAS-3                  1.20 GB/s ceiling
+# SAS-4                  2.40 GB/s ceiling
+# NVMe on PCIe 3.0 x4    3.94 GB/s ceiling
+# NVMe on PCIe 4.0 x4    7.88 GB/s ceiling
+# NVMe on PCIe 5.0 x4   15.75 GB/s ceiling
+```
+
+In words: SATA III's 6 Gbit/s loses a fifth to 8b/10b coding, leaving 0.60 GB/s, which a hard drive (about 0.28 GB/s) never fills but any modern SSD does. SAS doubles and redoubles that. An NVMe drive on four PCIe lanes gets 3.94, 7.88 or 15.75 GB/s depending on the PCIe generation, more than 25 times SATA on PCIe 5.0, and drives are built to use most of it.
+
+## SATA and AHCI
+
+**SATA** (Serial ATA, 2003) replaced the parallel ribbon cables of older PCs with a thin serial link, and is still the cheapest way to attach a drive. The host side speaks **AHCI** (Advanced Host Controller Interface), designed around a hard drive's habits:
+
+- **one** command queue per drive, holding up to **32** commands (native command queuing let the drive reorder them to shorten seeks),
+- several uncached register reads per command, each a slow round trip over the bus,
+- one interrupt path, so every core that issues I/O contends for the same queue and lock.
+
+For a drive that manages 82 random reads per second, none of this matters. For an SSD that can serve hundreds of thousands, it does.
+
+## SAS
+
+**SAS** (Serial Attached SCSI) is the data-centre counterpart: the same physical style of connector (a SAS controller also accepts SATA drives), the SCSI command set, and enterprise features. Each SAS drive has **two ports**, so two controllers can reach it and one can fail without losing access. **Expanders** act like switches, letting one controller reach hundreds of drives in external enclosures, which is how large disk arrays are built. SAS remains common for hard drives in servers and storage arrays; for flash it is being displaced by NVMe.
+
+## NVMe: Queues Built for Flash
+
+**NVMe** (NVM Express, 2011) was designed for flash from scratch and runs directly on PCIe, with no separate controller between the CPU and the drive. Its key idea is the same as the descriptor rings of a network card: **queues in host memory**.
+
+- Each **submission queue** is a ring of commands that the host fills; a **completion queue** is a ring the drive fills with results.
+- A drive supports up to 65,535 I/O queue pairs with up to 65,536 commands each. The operating system typically gives **each CPU core its own pair**, so cores never share a lock.
+- Submitting a command is a memory write plus one **doorbell** register write; the drive fetches commands with DMA. Completions arrive by MSI-X interrupt on the issuing core, or by polling.
+
+<AhciVsNvme />
+
+Queues matter because of [Little's law](../../../cs/system-design/pooling/): to sustain a throughput of $X$ requests per second when each takes $L$ seconds, $X \cdot L$ requests must be in flight at once.
+
+```python
+latency_us = 80                                   # one random read inside a fast NVMe SSD
+
+def max_iops(queue_slots):
+    # Little's law: requests in flight = throughput x latency, so throughput <= slots / latency
+    return queue_slots / (latency_us / 1e6)
+
+print(f"AHCI, 1 queue x 32 commands:      {max_iops(32):>12,.0f} IOPS at most")
+print(f"NVMe, 8 queues x 64 commands:     {max_iops(8 * 64):>12,.0f} IOPS at most")
+need = 1_500_000 * latency_us / 1e6
+print(f"in flight needed for 1.5M IOPS:   {need:>12,.0f} requests")
+# AHCI, 1 queue x 32 commands:           400,000 IOPS at most
+# NVMe, 8 queues x 64 commands:        6,400,000 IOPS at most
+# in flight needed for 1.5M IOPS:            120 requests
+```
+
+In words: with reads taking 80 µs, AHCI's 32 slots can never deliver more than 400,000 IOPS, however fast the flash behind them. A modern data-centre NVMe SSD rated at 1.5 million random reads per second needs 120 requests in flight to reach it, which a handful of NVMe queues provide easily. The same reasoning explains why benchmarks report IOPS "at queue depth 32" or higher: at queue depth 1, a drive with 80 µs latency does at most 12,500 IOPS. [Storage Performance](../storage-performance/) develops this further.
+
+NVMe's command set also runs over networks (**NVMe over Fabrics**, on RDMA or TCP), so a remote flash drive can look almost like a local one; see [SAN & NAS](../storage-area-networks/) and [RDMA & SmartNICs](../../networking-hardware/rdma-and-smartnics/).
+
+<Callout type="pitfall">
+"M.2" does not mean NVMe. M.2 is a connector and card shape, and an M.2 slot or drive may be SATA, NVMe, or both, with different keying notches. A SATA M.2 SSD is limited to 0.60 GB/s like any other SATA drive. Check the protocol, and for NVMe the PCIe generation and lane count, on both the drive and the slot.
+</Callout>
+
+## Form Factors
+
+The physical shape of a drive is separate from its protocol:
+
+| Form factor | Shape | Protocols | Where |
+| :---: | :---: | :---: | :---: |
+| 3.5-inch | the classic desktop drive | SATA, SAS | hard drives in servers and NAS |
+| 2.5-inch / U.2 / U.3 | laptop-drive size, hot-swappable in servers | SATA, SAS, NVMe (U.2/U.3) | server SSDs |
+| M.2 (e.g. 2280: 22 × 80 mm) | a bare stick on the motherboard | SATA or NVMe | laptops, desktops, server boot drives |
+| EDSFF E1.S, E3.S | rulers and slim cartridges designed for airflow and density | NVMe | new data-centre servers |
+
+EDSFF exists because the 2.5-inch shape was inherited from laptop hard drives: flash does not need it, servers can fit more and cool better with thinner, longer drives, and the connector carries more PCIe lanes and power for future drives.
+
+<Callout type="key">
+SATA and SAS are interfaces built for spinning disks; NVMe is built for flash. The bigger difference is not link speed but queues: NVMe gives every core its own deep queue with a cheap doorbell, which is what lets an SSD's internal parallelism turn into millions of IOPS.
+</Callout>

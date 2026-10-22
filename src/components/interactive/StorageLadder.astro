@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Every tier trades latency for cost per terabyte"
+  caption="Each dot is a storage tier, placed by its typical random-read latency (log scale) and approximate 2025 price per terabyte (log scale). Pick a tier to see its numbers and how long it takes to read 10 TB sequentially. Going down the ladder, each step is far slower to reach the first byte and far cheaper per byte; sequential speed does not fall in the same order, which is why tape still archives well."
+>
+  <storage-ladder>
+    <input type="hidden" data-tier value="3" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="0" aria-pressed="false">DRAM</button>
+      <button type="button" class="btn" data-choice="1" aria-pressed="false">NVMe</button>
+      <button type="button" class="btn" data-choice="2" aria-pressed="false">SATA SSD</button>
+      <button type="button" class="btn" data-choice="3" aria-pressed="true">HDD</button>
+      <button type="button" class="btn" data-choice="4" aria-pressed="false">Tape</button>
+    </span>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">price ($ per TB, log scale)</span>
+      <svg class="sl-svg" data-svg viewBox="0 0 440 220" role="img" aria-label="Storage tiers by latency and price"></svg>
+      <span class="ax-x">random-read latency (log scale)</span>
+    </div>
+    <p class="sl-stat mono" data-stat></p>
+  </storage-ladder>
+</Figure>
+
+<style>
+  .sl-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .sl-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .sl-svg :global(.trend) {
+    fill: none;
+    stroke: rgba(66, 133, 244, 0.35);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+  }
+  .sl-svg :global(circle) {
+    fill: rgba(66, 133, 244, 0.3);
+    stroke: var(--g-blue);
+    stroke-width: 1.6;
+  }
+  .sl-svg :global(circle.on) {
+    fill: rgba(251, 188, 5, 0.4);
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .sl-svg :global(text.lbl) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-width: 4px;
+  }
+  .sl-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // name, latency s, sequential GB/s, $ per TB (approximate 2025 street prices)
+  const TIERS: [string, number, number, number][] = [
+    ['DRAM', 100e-9, 50, 3000],
+    ['NVMe SSD', 80e-6, 14, 60],
+    ['SATA SSD', 150e-6, 0.55, 50],
+    ['HDD', 8e-3, 0.28, 15],
+    ['LTO-9 tape', 60, 0.4, 5],
+  ];
+  const p3 = (v: number) => +v.toPrecision(3);
+  const fmtT = (s: number) => (s >= 1 ? `${p3(s)} s` : s >= 1e-3 ? `${p3(s * 1e3)} ms` : s >= 1e-6 ? `${p3(s * 1e6)} µs` : `${p3(s * 1e9)} ns`);
+
+  class StorageLadder extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-tier]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const sel = +this.querySelector<HTMLInputElement>('[data-tier]')!.value;
+      const X0 = 40, X1 = 425, Y0 = 12, Y1 = 192;
+      const X = (s: number) => X0 + ((Math.log10(s) + 8) / 10) * (X1 - X0); // 10 ns .. 100 s
+      const Y = (p: number) => Y1 - (Math.log10(p) / 4) * (Y1 - Y0); // $1 .. $10,000
+      let s = '';
+      [[1e-8, '10 ns'], [1e-6, '1 µs'], [1e-4, '100 µs'], [1e-2, '10 ms'], [1, '1 s'], [100, '100 s']].forEach(([v, l], k, arr) => {
+        const x = X(v as number);
+        const anchor = k === 0 ? 'start' : k === arr.length - 1 ? 'end' : 'middle';
+        s += `<line class="grid" x1="${x}" y1="${Y0}" x2="${x}" y2="${Y1}" /><text class="ax-tick" x="${x}" y="${Y1 + 14}" text-anchor="${anchor}">${l}</text>`;
+      });
+      [1, 10, 100, 1000, 10000].forEach((p) => {
+        s += `<line class="grid" x1="${X0}" y1="${Y(p)}" x2="${X1}" y2="${Y(p)}" /><text class="ax-tick" x="${X0 - 4}" y="${Y(p) + 4}" text-anchor="end">${p >= 1000 ? `${p / 1000}k` : p}</text>`;
+      });
+      s += `<polyline class="trend" points="${TIERS.map((t) => `${X(t[1])},${Y(t[3])}`).join(' ')}" />`;
+      TIERS.forEach(([name, lat, , price], k) => {
+        const x = X(lat), y = Y(price);
+        s += `<circle class="${k === sel ? 'on' : ''}" cx="${x}" cy="${y}" r="${k === sel ? 8 : 6}" />`;
+        // label offsets per tier so close neighbours (NVMe, SATA SSD) do not collide
+        const [dx, dy, anchor] = ([[10, -10, 'start'], [-10, 18, 'end'], [10, -12, 'start'], [10, -10, 'start'], [-10, -10, 'end']] as const)[k];
+        s += `<text class="lbl" x="${x + dx}" y="${y + dy}" text-anchor="${anchor}">${name}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const [name, lat, gbps, price] = TIERS[sel];
+      const hours = 10000 / gbps / 3600;
+      this.querySelector('[data-stat]')!.textContent = `${name} · latency ${fmtT(lat)} · $${price}/TB · read 10 TB in ${hours < 1 ? `${(hours * 60).toFixed(0)} min` : `${hours.toFixed(1)} h`}`;
+    }
+  }
+  customElements.define('storage-ladder', StorageLadder);
+</script>

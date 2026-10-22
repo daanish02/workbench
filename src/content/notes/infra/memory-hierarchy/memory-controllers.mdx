@@ -1,8 +1,128 @@
 ---
 title: "Memory Controllers"
-description: "How the CPU actually talks to RAM, through the memory controller."
+description: "How the memory controller turns cache misses into DRAM commands: address mapping across channels and banks, request scheduling, refresh, memory-level parallelism and NUMA."
 order: 6
 tier: core
+takeaways:
+  - "The **memory controller** sits on the CPU die. It receives cache-line misses and turns them into DRAM commands (activate, read, write, precharge, refresh) while obeying dozens of timing rules."
+  - "**Address mapping** splits each physical address into channel, bank, row and column bits. Alternating channels every line spreads sequential traffic; XOR-ing row bits into the bank number stops power-of-two strides from piling onto one bank."
+  - "Controllers reorder requests. **FR-FCFS** serves requests that hit the open row first: the same seven reads take 133.5 ns instead of 235.1 ns in arrival order."
+  - "Bandwidth needs many misses in flight (Little's law): at 80 ns, 16 outstanding misses give 12.8 GB/s, and filling 96 GB/s needs 120, more than one core can issue."
+  - "With several sockets each has its own controllers: memory attached to another socket is **remote** (NUMA) and slower to reach."
+resources:
+  - title: "Memory controller (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Memory_controller"
+    note: "History from the northbridge to integrated controllers, and the controller's jobs."
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "Sections 2.2 and 5 cover DRAM commands, controller timing and NUMA from a programmer's view."
+  - title: "Stall-Time Fair Memory Access Scheduling (Mutlu and Moscibroda, MICRO 2007)"
+    url: "https://users.ece.cmu.edu/~omutlu/pub/stfm_micro07.pdf"
+    note: "Explains FR-FCFS clearly, then shows how it lets one thread starve another on a multicore."
 ---
 
-_Placeholder. Content not written yet._
+[Main Memory](../main-memory/) showed that DRAM is a set of banks whose cost depends on which row is open. Something has to decide which bank each address lives in, which request goes next and when to refresh. That is the **memory controller**, and its choices change how fast the same program runs. This note follows a cache miss from the last-level cache to DRAM: how the address is split, how requests are scheduled, why bandwidth needs many requests in flight, and what changes with several sockets. The virtual-to-physical translation that happens before all this is in [TLBs & Paging](../virtual-memory-at-the-hardware-level/).
+
+## Where the Controller Sits
+
+Until the mid-2000s the controller lived in a separate chip on the motherboard, the **northbridge**, and every miss crossed the front-side bus to reach it. AMD moved it onto the CPU die with the Athlon 64 (2003) and Intel with Nehalem (2008). Today every CPU and GPU has **integrated memory controllers**, one or more per chip, each driving one or more channels.
+
+A miss in the last-level cache becomes a request in the controller's **queue**: a physical address, read or write, and an ID so the data can be routed back. The controller then has three jobs:
+
+- **map** the address onto the DRAM organisation (channel, rank, bank, row, column);
+- **schedule** requests by issuing DRAM commands (activate, read, write, precharge) in an order that respects every timing rule (tRCD, tRP, tCL and dozens more);
+- **maintain** the memory: refresh every row in time, and with ECC, correct errors and scrub memory in the background.
+
+## Address Mapping
+
+The controller decides which bits of a physical address pick the channel, the bank, the row and the column. A good mapping sends neighbouring lines to different channels, so sequential reads use all of them at once, and spreads unrelated accesses over many banks. Here is a toy mapping for 2 channels and 32 banks, with 8 KiB rows:
+
+```python
+def split(addr, xor=False):
+    channel = (addr >> 6) & 1                       # bit 6: alternate channels every cache line
+    bank = (addr >> 14) & 31                        # bits 14-18: one of 32 banks
+    row = addr >> 19
+    if xor:
+        bank ^= row & 31                            # fold low row bits into the bank number
+    return channel, bank, row
+
+print("consecutive lines:", [split(a)[:2] for a in range(0, 4 * 64, 64)])
+stride = [i * (1 << 19) for i in range(6)]          # 512 KiB apart, e.g. one column of a big matrix
+print("512 KiB stride, plain:", [split(a)[1] for a in stride])
+print("512 KiB stride, XOR:  ", [split(a, xor=True)[1] for a in stride])
+# consecutive lines: [(0, 0), (1, 0), (0, 0), (1, 0)]
+# 512 KiB stride, plain: [0, 0, 0, 0, 0, 0]
+# 512 KiB stride, XOR:   [0, 1, 2, 3, 4, 5]
+```
+
+In words: consecutive 64-byte lines alternate between channel 0 and channel 1, so a sequential scan uses both. But addresses 512 KiB apart differ only in their row bits, so with the plain mapping all six land in bank 0, each in a different row: every access is a row conflict in one bank while 31 banks sit idle. XOR-ing the low row bits into the bank number sends the same six addresses to banks 0 to 5. Real controllers use such hash functions, with the exact bits undocumented and different per CPU, precisely so that power-of-two strides, common in matrices and hash tables, do not collapse onto one bank.
+
+## Scheduling Requests
+
+DRAM does not have to serve requests in the order they arrived. The simplest policy, **FCFS** (first come, first served), takes the oldest request each time. The policy most controllers build on is **FR-FCFS** (first ready, first come, first served): among queued requests, serve one that hits the currently open row first, and only then the oldest. Since a row hit costs 10.0 ns against 35.4 ns for a row conflict ([Main Memory](../main-memory/)), grouping hits pays off:
+
+<MemSchedSteps />
+
+```python
+HIT, EMPTY, CONFLICT = 10.0, 22.7, 35.4             # ns, DDR5-6000 CL30-38-38 (from Main Memory)
+queue = [1, 2, 1, 2, 1, 3, 2]                       # row wanted by each queued request, oldest first
+
+def run(queue, policy):
+    pending, open_row, total, order = list(queue), None, 0.0, []
+    while pending:
+        i = 0
+        if policy == "FR-FCFS" and open_row in pending:
+            i = pending.index(open_row)              # oldest request that hits the open row
+        row = pending.pop(i)
+        total += HIT if row == open_row else EMPTY if open_row is None else CONFLICT
+        open_row = row
+        order.append(row)
+    return order, total
+
+for policy in ["FCFS", "FR-FCFS"]:
+    order, total = run(queue, policy)
+    print(f"{policy:8} order {order}  total {total:.1f} ns")
+# FCFS     order [1, 2, 1, 2, 1, 3, 2]  total 235.1 ns
+# FR-FCFS  order [1, 1, 1, 2, 2, 2, 3]  total 133.5 ns
+```
+
+In words: in arrival order the requests alternate between rows, so after opening row 1 every one of the other six is a row conflict, 235.1 ns in total. FR-FCFS reorders them into three runs, one per row, and needs only two row changes: 133.5 ns, 43% less, for exactly the same requests. This one-bank model leaves out the other big win: while one bank is busy activating a row, the controller issues commands to other banks and channels, so their latencies overlap.
+
+Real controllers add more rules on top:
+
+- **Writes are buffered.** Reads stall the core, writes do not, so writes wait in a buffer and are drained in batches, because switching the data bus between reading and writing costs extra cycles.
+- **Page policy.** An **open-page** controller leaves a row open after an access, betting on another hit; a **closed-page** controller precharges at once, betting on a different row next. Many controllers adapt between the two.
+- **Refresh** is scheduled around traffic where the rules allow, postponing it a little when the queue is busy.
+
+<Callout type="pitfall">
+FR-FCFS is unfair. A thread that streams through memory hits the open row constantly, so its requests keep jumping the queue, while a thread with random accesses waits. On a multicore chip one memory-heavy program can slow its neighbours far more than it slows itself. Controllers cap how long a request may wait, and research schedulers add fairness, but a "noisy neighbour" on a shared server is often exactly this.
+</Callout>
+
+## Bandwidth Needs Parallelism
+
+A single miss takes about 80 ns from load to data. If a core waited for each miss before issuing the next, it would move one 64-byte line per 80 ns. **Little's law** from queueing theory says the average number of requests in flight equals throughput times latency, so throughput is requests in flight divided by latency. This **memory-level parallelism** is what turns latency into bandwidth:
+
+```python
+line, latency_ns = 64, 80                            # bytes per miss, load-to-use latency
+for outstanding in [1, 10, 16, 48]:
+    print(f"{outstanding:2} misses in flight: {outstanding * line / latency_ns:5.1f} GB/s")
+need = 96 * latency_ns / line                        # Little's law: in flight = rate x latency
+print(f"to fill 96 GB/s at 80 ns: {need:.0f} misses in flight")
+#  1 misses in flight:   0.8 GB/s
+# 10 misses in flight:   8.0 GB/s
+# 16 misses in flight:  12.8 GB/s
+# 48 misses in flight:  38.4 GB/s
+# to fill 96 GB/s at 80 ns: 120 misses in flight
+```
+
+In words: one miss at a time gives only 0.8 GB/s. Each core has a fixed number of slots for outstanding L1 misses (fill buffers, on the order of 10 to 20 in recent x86 cores), so 16 misses in flight cap it near 12.8 GB/s. Filling the 96 GB/s of a two-channel DDR5-6000 desktop needs 120 misses in flight, which takes several cores, or hardware [prefetching](../prefetching/) issuing misses ahead of the program. A loop that follows a linked list has only one miss in flight, because each address comes from the previous load, which is why pointer chasing runs at memory latency, not memory bandwidth.
+
+## NUMA: Several Controllers
+
+A server with two or more CPU sockets has memory controllers in each, and each socket's DIMMs are attached to its own controllers. A core can still read memory attached to the other socket, but the request travels over the socket-to-socket link (Intel UPI, AMD Infinity Fabric), so it takes noticeably longer and that link's bandwidth is shared. This is **NUMA** (non-uniform memory access): every address is reachable, but some are farther away. Large single chips with several dies show the same effect on a smaller scale.
+
+Operating systems handle it by allocating a page on the node of the core that first touches it, and by trying to keep threads on the node where their memory is. A program that initialises a big array on one thread and then processes it on all cores of both sockets puts every page on one node, so half the cores read remote memory. `numactl --hardware` on Linux lists the nodes and the relative distance between them. [Multicore CPUs](../../gpus-parallelism/multicore-cpus/) covers the coherence traffic that also crosses this link.
+
+<Callout type="key">
+The memory controller turns cache misses into DRAM commands. It maps addresses so that sequential and strided traffic spread across channels and banks, reorders requests to hit open rows, and hides refresh. Peak bandwidth is only reachable with many misses in flight, which is why pointer-chasing code sees memory latency and streaming code sees memory bandwidth. With several sockets, where a page lives decides how far every access to it travels.
+</Callout>

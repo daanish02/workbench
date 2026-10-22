@@ -1,8 +1,141 @@
 ---
 title: "Cache Replacement"
-description: "LRU and related replacement policies, at the hardware level."
+description: "Which line a full cache set evicts: LRU and why hardware approximates it, tree-PLRU, random, scan-resistant RRIP, and inclusive vs exclusive cache levels."
 order: 3
 tier: core
+takeaways:
+  - "When a set is full, the **replacement policy** picks the victim. The ideal (Belady's **OPT**) evicts the line used furthest in the future, which needs knowledge of the future."
+  - "**LRU** is the classic approximation, but exact LRU needs many state bits per set (16 for 8 ways, 45 for 16), so hardware uses **tree-PLRU** (7 and 15 bits) or similar."
+  - "LRU fails on **scans**: data touched once pushes out data that will be reused. In this note's trace LRU hits 88.9%, while **SRRIP**, which predicts new lines will not be reused soon, hits 92.1%, the best possible."
+  - "Random replacement is cheap and surprisingly close to LRU for large associativity."
+  - "Levels can be **inclusive** (L3 holds a copy of everything in L1/L2), **exclusive** (each line lives in one level), or neither; the choice trades capacity against coherence cost."
+resources:
+  - title: "Cache replacement policies (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cache_replacement_policies"
+    note: "OPT, LRU, PLRU, RRIP, LFU and adaptive policies with examples."
+  - title: "Pseudo-LRU (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Pseudo-LRU"
+    note: "How tree-based and bit-based PLRU approximate LRU with a few bits per set."
 ---
 
-_Placeholder. Content not written yet._
+[Cache Basics](../cache-basics/) showed where a line may be placed. When every way of its set is already full, one line must go. Which one is the **replacement policy**, and it decides whether the data a program reuses stays in the cache. This is the same question [Page Replacement](../../../cs/operating-systems/page-replacement/) answers for pages in RAM, one layer lower, with two extra constraints: the decision must be made in a cycle or two, and the bookkeeping must fit in a few bits per set. The note covers the optimal policy, LRU and its hardware approximations, scan-resistant policies, and how cache levels share lines.
+
+## The Ideal: OPT
+
+**Belady's optimal policy (OPT)** evicts the line whose next use is furthest in the future. It provably minimises misses but needs to know the future, so it serves only as a yardstick in simulations. Practical policies guess the future from the past.
+
+## LRU and Its Approximations
+
+**Least recently used (LRU)** evicts the line untouched for longest, betting on temporal locality: what was used recently will be used again. It works well for most code, but exact LRU must remember the complete order of the ways, which costs bits and logic on every access:
+
+```python
+import math
+
+for ways in (4, 8, 16):
+    lru_bits = math.ceil(math.log2(math.factorial(ways)))   # enough bits to name every ordering of the ways
+    plru_bits = ways - 1                                       # one bit per node of a binary tree
+    print(f"{ways:2}-way set: true LRU needs {lru_bits:2} bits, tree-PLRU {plru_bits:2} bits, SRRIP {2 * ways:2} bits")
+#  4-way set: true LRU needs  5 bits, tree-PLRU  3 bits, SRRIP  8 bits
+#  8-way set: true LRU needs 16 bits, tree-PLRU  7 bits, SRRIP 16 bits
+# 16-way set: true LRU needs 45 bits, tree-PLRU 15 bits, SRRIP 32 bits
+```
+
+In words: tracking the exact order of 16 ways takes at least 45 bits per set, updated on every hit, across thousands of sets. **Tree-PLRU** (pseudo-LRU) arranges the ways as leaves of a binary tree with one bit per internal node; each bit points toward the half that was used less recently. A hit flips the bits on its path to point away from it; the victim is found by following the bits down. It needs only 15 bits for 16 ways and usually picks a line close to the true LRU one. **Random** replacement needs no state at all and, for 8 or more ways, misses only slightly more than LRU.
+
+## Scans Break LRU
+
+LRU assumes that every newly loaded line is the most valuable. A **scan**, such as streaming through a large array once, a database table scan, or a memory copy, violates that: each line is used once, yet LRU keeps it and evicts the hot data that will be reused. Modern last-level caches use **RRIP** (re-reference interval prediction), introduced by Intel researchers in 2010. Each way keeps a 2-bit prediction of how soon it will be reused (0 = soon, 3 = not soon). New lines are inserted with a prediction of 2, a hit resets the line to 0, and the victim is a line at 3; if none is at 3, all lines age by one until one reaches it. A one-off line therefore has to prove itself by being reused before it can displace a hot line.
+
+<ReplacementRace />
+
+A longer simulation with an 8-way set, a hot working set of 4 lines, and an 8-line scan every 100 accesses:
+
+```python
+import random
+
+def hit_rate(trace, ways, policy, seed=0):
+    rng = random.Random(seed)
+    slot = [None] * ways                          # which line each way holds
+    stamp = [0] * ways                            # last use (LRU) or insertion time (FIFO)
+    rrpv = [3] * ways                             # SRRIP: 2-bit re-reference prediction, 3 = "not soon"
+    tree = [0] * (ways - 1)                       # tree-PLRU bits, each points toward the colder half
+    hits = 0
+
+    def plru_touch(w):
+        node, lo, hi = 0, 0, ways
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            go_right = w >= mid
+            tree[node] = 0 if go_right else 1     # point away from the half just used
+            node, lo, hi = (2 * node + 2, mid, hi) if go_right else (2 * node + 1, lo, mid)
+
+    def plru_victim():
+        node, lo, hi = 0, 0, ways
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            node, lo, hi = (2 * node + 2, mid, hi) if tree[node] else (2 * node + 1, lo, mid)
+        return lo
+
+    for t, x in enumerate(trace):
+        if x in slot:
+            w = slot.index(x)
+            hits += 1
+            rrpv[w] = 0                           # reused: predict "soon" again
+        else:
+            if None in slot:
+                w = slot.index(None)
+            elif policy in ("LRU", "FIFO"):
+                w = stamp.index(min(stamp))
+            elif policy == "random":
+                w = rng.randrange(ways)
+            elif policy == "tree-PLRU":
+                w = plru_victim()
+            else:                                 # SRRIP: age all lines until one is predicted "not soon"
+                while 3 not in rrpv:
+                    rrpv = [r + 1 for r in rrpv]
+                w = rrpv.index(3)
+            slot[w], stamp[w], rrpv[w] = x, t, 2  # new lines start as "probably not reused soon"
+        if policy == "LRU":
+            stamp[w] = t
+        if policy == "tree-PLRU":
+            plru_touch(w)
+    return hits / len(trace)
+
+random.seed(3)
+hot = [f"h{i}" for i in range(4)]
+trace = []
+for r in range(40):                               # a hot working set, interrupted now and then by a one-off scan
+    trace += random.choices(hot, k=20)
+    if r % 5 == 4:
+        trace += [f"s{r}_{k}" for k in range(8)]
+print("accesses:", len(trace))
+for policy in ("LRU", "tree-PLRU", "FIFO", "random", "SRRIP"):
+    print(f"{policy:9} hit rate {hit_rate(trace, 8, policy):.1%}")
+best = (len(trace) - 40 // 5 * 8 - len(hot)) / len(trace)   # every hot access hits after its first touch
+print(f"best possible: {best:.1%}")
+# accesses: 864
+# LRU       hit rate 88.9%
+# tree-PLRU hit rate 89.1%
+# FIFO      hit rate 88.9%
+# random    hit rate 89.0%
+# SRRIP     hit rate 92.1%
+# best possible: 92.1%
+```
+
+In words: every 8-line scan fills the whole 8-way set, so LRU, tree-PLRU and FIFO throw out all four hot lines each time and miss on their return, ending near 89%. SRRIP evicts the scan lines first and keeps the hot set, reaching 92.1%, exactly the best possible here (every miss is a first touch or a scan line). Real CPUs go further and switch between insertion policies by watching which one misses less in a few sample sets (**set dueling**).
+
+<Callout type="pitfall">
+A working set slightly larger than the cache is LRU's worst case. Looping over 9 lines in an 8-way set, LRU always evicts exactly the line needed next and misses on every access, while random replacement keeps some lines by luck and hits part of the time. Performance can fall off a cliff when data grows just past a cache size, which is why benchmarks sweep data sizes rather than testing one.
+</Callout>
+
+## How Levels Share Lines
+
+A line fetched from DRAM may be placed in L1, L2 and L3 at once, and levels differ in how they handle that:
+
+- **Inclusive**: the L3 holds a copy of every line in the L1s and L2s above it. When another core asks whether anyone has a line, checking the L3 is enough, which simplifies coherence ([Cache Coherence](../cache-coherence/)). The cost: duplicated capacity, and evicting a line from L3 must also remove it from the L1s and L2s (**back-invalidation**).
+- **Exclusive**: a line lives in only one level; lines evicted from L2 move into L3 (a **victim cache**). Total capacity is the sum of the levels.
+- **Non-inclusive** (NINE, "non-inclusive non-exclusive"): neither rule is enforced. Recent Intel server chips use a non-inclusive L3 with a separate snoop filter, and AMD's Zen L3 acts largely as a victim cache for the L2s.
+
+<Callout type="key">
+Replacement is a bet on reuse made in a cycle with a few bits. LRU-style policies bet that recent means valuable and lose to scans; RRIP-style policies make new lines earn their place. Exact LRU is too expensive in hardware, so real caches approximate it, and the inclusion policy decides how much of the total capacity is unique.
+</Callout>

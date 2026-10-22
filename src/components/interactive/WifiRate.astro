@@ -1,0 +1,130 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Wi-Fi rate steps down with distance"
+  caption="A two-stream Wi-Fi 6 client at distance d from an access point, in each band with a typical channel width (2.4 GHz at 40 MHz, 5 GHz at 80 MHz, 6 GHz at 160 MHz). Signal strength follows an indoor model: free-space loss for the first metre, then 30 dB per tenfold distance, with 20 dBm transmit power. The client picks the fastest MCS (QAM size and coding rate) whose approximate SNR threshold it meets. Wider channels and higher bands are fastest close up; 2.4 GHz holds a usable rate furthest."
+>
+  <wifi-rate>
+    <label class="wr-lbl">distance <input type="range" min="1" max="60" step="1" value="10" data-d /> <b data-dv>10 m</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">PHY rate (Mbit/s)</span>
+      <svg class="wr-svg" data-svg viewBox="0 0 440 220" role="img" aria-label="Wi-Fi PHY rate against distance for three bands"></svg>
+      <span class="ax-x">distance from access point (m)</span>
+    </div>
+    <p class="wr-stat mono" data-stat></p>
+  </wifi-rate>
+</Figure>
+
+<style>
+  .wr-lbl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .wr-lbl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .wr-lbl b {
+    min-width: 3.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .wr-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .wr-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .wr-svg :global(.curve) {
+    fill: none;
+    stroke-width: 2.2;
+  }
+  .wr-svg :global(.cursor) {
+    stroke: var(--text-muted);
+    stroke-dasharray: 4 3;
+  }
+  .wr-svg :global(.lbl) {
+    font: 11px var(--font-mono);
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-width: 4px;
+  }
+  .wr-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Wi-Fi 6 MCS 0-11: bits per subcarrier, coding rate, approximate minimum SNR in dB
+  const MCS: [number, number, number][] = [
+    [1, 1 / 2, 5], [2, 1 / 2, 8], [2, 3 / 4, 11], [4, 1 / 2, 14], [4, 3 / 4, 18], [6, 2 / 3, 22],
+    [6, 3 / 4, 24], [6, 5 / 6, 26], [8, 3 / 4, 30], [8, 5 / 6, 32], [10, 3 / 4, 35], [10, 5 / 6, 37],
+  ];
+  const BANDS = [
+    { name: '2.4 GHz', ghz: 2.4, mhz: 40, sub: 468, color: '#34a853' },
+    { name: '5 GHz', ghz: 5.5, mhz: 80, sub: 980, color: '#4285f4' },
+    { name: '6 GHz', ghz: 6.5, mhz: 160, sub: 1960, color: '#fbbc05' },
+  ];
+  const STREAMS = 2, TX_DBM = 20, NOISE_FIG = 7, SYMBOL_US = 13.6;
+
+  function at(b: (typeof BANDS)[number], d: number) {
+    const loss = 20 * Math.log10(b.ghz * 1e9) - 147.55 + 30 * Math.log10(d);
+    const noise = -174 + 10 * Math.log10(b.mhz * 1e6) + NOISE_FIG;
+    const snr = TX_DBM - loss - noise;
+    let best = -1;
+    MCS.forEach(([, , need], i) => { if (snr >= need) best = i; });
+    const rate = best < 0 ? 0 : (STREAMS * b.sub * MCS[best][0] * MCS[best][1]) / SYMBOL_US;
+    return { snr, best, rate };
+  }
+
+  class WifiRate extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-d]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const d = +this.querySelector<HTMLInputElement>('[data-d]')!.value;
+      this.querySelector('[data-dv]')!.textContent = `${d} m`;
+      const X0 = 44, X1 = 430, Y0 = 12, Y1 = 192, MAXD = 60, MAXR = 2500;
+      const X = (v: number) => X0 + ((v - 1) / (MAXD - 1)) * (X1 - X0);
+      const Y = (r: number) => Y1 - (r / MAXR) * (Y1 - Y0);
+      let s = '';
+      for (const v of [1, 20, 40, 60]) s += `<line class="grid" x1="${X(v)}" y1="${Y0}" x2="${X(v)}" y2="${Y1}" /><text class="ax-tick" x="${X(v)}" y="${Y1 + 14}" text-anchor="middle">${v}</text>`;
+      for (const r of [0, 1000, 2000]) s += `<line class="grid" x1="${X0}" y1="${Y(r)}" x2="${X1}" y2="${Y(r)}" /><text class="ax-tick" x="${X0 - 4}" y="${Y(r) + 4}" text-anchor="end">${r}</text>`;
+      for (const b of BANDS) {
+        const pts: string[] = [];
+        let prev = -1;
+        for (let i = 0; i <= 590; i++) {
+          const dd = 1 + i / 10;
+          const r = at(b, dd).rate;
+          if (prev >= 0 && r !== prev) pts.push(`${X(dd).toFixed(1)},${Y(prev).toFixed(1)}`);
+          pts.push(`${X(dd).toFixed(1)},${Y(r).toFixed(1)}`);
+          prev = r;
+        }
+        s += `<polyline class="curve" stroke="${b.color}" points="${pts.join(' ')}" />`;
+      }
+      s += `<text class="lbl" fill="#fbbc05" x="${X(4)}" y="${Y(2400) - 6}">6 GHz, 160 MHz</text>`;
+      s += `<text class="lbl" fill="#4285f4" x="${X(9)}" y="${Y(1200) - 8}">5 GHz, 80 MHz</text>`;
+      s += `<text class="lbl" fill="#34a853" x="${X(30)}" y="${Y(560)}">2.4 GHz, 40 MHz</text>`;
+      s += `<line class="cursor" x1="${X(d)}" y1="${Y0}" x2="${X(d)}" y2="${Y1}" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = BANDS.map((b) => {
+        const r = at(b, d);
+        return `${b.name}: SNR ${r.snr.toFixed(0)} dB, ${r.best < 0 ? 'no link' : `MCS ${r.best}, ${r.rate.toFixed(0)} Mbit/s`}`;
+      }).join(' · ');
+    }
+  }
+  customElements.define('wifi-rate', WifiRate);
+</script>

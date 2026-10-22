@@ -1,0 +1,158 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Translating an address: TLB first, page walk on a miss"
+  caption="An x86-64 virtual address splits into four 9-bit table indices and a 12-bit offset. On a TLB miss the hardware walks four tables, one memory read each, starting from the CR3 register, then caches the result in the TLB. A second access to the same page hits the TLB (green). An access to a page whose last entry is marked not present ends the walk in a page fault (red), and the OS takes over."
+>
+  <page-walk-steps>
+    <svg class="pw-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="Virtual address, TLB and four-level page table walk"></svg>
+    <p class="pw-msg" data-msg></p>
+    <p class="pw-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </page-walk-steps>
+</Figure>
+
+<style>
+  .pw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .pw-svg :global(rect.box) {
+    fill: rgba(66, 133, 244, 0.12);
+    stroke: var(--border);
+  }
+  .pw-svg :global(rect.box.cur) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .pw-svg :global(rect.box.ok) {
+    fill: rgba(52, 168, 83, 0.35);
+    stroke: var(--g-green);
+  }
+  .pw-svg :global(rect.box.bad) {
+    fill: rgba(234, 67, 53, 0.4);
+    stroke: var(--g-red);
+  }
+  .pw-svg :global(rect.box.done) {
+    fill: rgba(66, 133, 244, 0.3);
+    stroke: var(--g-blue);
+  }
+  .pw-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+  }
+  .pw-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .pw-svg :global(text.c) {
+    fill: var(--text);
+    text-anchor: middle;
+  }
+  .pw-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .pw-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const LEVELS = ['PML4', 'PDPT', 'PD', 'PT'];
+  interface Frame { va: number; tlb: string[]; lvl: number; walked: number; state: string; reads: number; total: number; msg: string }
+
+  function idx(va: number) {
+    return [39, 30, 21, 12].map((s) => Math.floor(va / 2 ** s) % 512);
+  }
+  const hex = (n: number) => '0x' + n.toString(16).toUpperCase();
+
+  function frames(): Frame[] {
+    const A = 0x7F3A1C2D5E78, B = 0x7F3A1C2D5100, C = 0x7F3A1C2D6010;
+    const pa = (va: number) => hex(Math.floor(va / 4096));
+    const out: Frame[] = [];
+    let total = 0;
+    const tlb: string[] = [];
+    const push = (va: number, lvl: number, walked: number, state: string, reads: number, msg: string) =>
+      out.push({ va, tlb: [...tlb], lvl, walked, state, reads, total, msg });
+    push(A, -1, 0, '', 0, `The program loads from virtual address ${hex(A)}. The TLB is empty.`);
+    push(A, -1, 0, 'miss', 0, `TLB lookup for page ${pa(A)}: miss. The page walker starts at the PML4 table, whose physical address is in the CR3 register.`);
+    for (let l = 0; l < 4; l++) {
+      total++;
+      const i = idx(A)[l];
+      push(A, l, l + 1, 'walk', l + 1, l < 3 ? `Read entry ${i} of the ${LEVELS[l]} table: one memory access. It holds the physical address of the next table.` : `Read entry ${i} of the PT table: present, it gives physical frame 0x1A2B3.`);
+    }
+    tlb.push(`${pa(A)} → 0x1A2B3`);
+    total++;
+    push(A, 4, 4, 'filled', 5, 'The translation goes into the TLB, then the data itself is read: frame 0x1A2B3 + offset 0xE78. Five memory accesses for one load.');
+    total++;
+    push(B, 4, 0, 'hit', 1, `Next load, ${hex(B)}: same page, so the TLB hits and the data read goes straight out. One memory access.`);
+    push(C, -1, 0, 'miss', 0, `Load from ${hex(C)}: the next page, ${pa(C)}. Not in the TLB: walk again.`);
+    for (let l = 0; l < 4; l++) {
+      total++;
+      const i = idx(C)[l];
+      push(C, l, l + 1, l < 3 ? 'walk' : 'fault', l + 1, l < 3 ? `Read entry ${i} of the ${LEVELS[l]} table (a page-walk cache could skip these upper levels, since they match the last walk).` : `Entry ${i} of the PT table has its present bit clear: the page is not in RAM. The CPU raises a page fault and the OS takes over.`);
+    }
+    return out;
+  }
+
+  class PageWalkSteps extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const ix = idx(f.va);
+      let s = `<text x="6" y="10">virtual address ${hex(f.va)}</text>`;
+      const fields = [...LEVELS.map((n, k) => `${n} ${ix[k]}`), `off ${hex(f.va % 4096).slice(2)}`];
+      fields.forEach((t, k) => {
+        const x = 6 + k * 86;
+        const cls = k === f.lvl && f.state !== 'filled' && f.state !== 'hit' ? 'box cur' : 'box';
+        s += `<rect class="${cls}" x="${x}" y="22" width="80" height="24" rx="3" /><text class="c" x="${x + 40}" y="34">${t}</text>`;
+      });
+      const tc = f.state === 'hit' ? 'box ok' : f.state === 'miss' ? 'box bad' : 'box';
+      s += `<text x="6" y="66">TLB</text><rect class="${tc}" x="6" y="76" width="166" height="44" rx="4" />`;
+      s += `<text x="14" y="98">${f.tlb.length ? 'page ' + f.tlb[0] : '(empty)'}</text>`;
+      s += `<text x="190" y="98">CR3 → PML4 table</text>`;
+      const Y = 150;
+      ['PML4', 'PDPT', 'PD', 'PT', 'page'].forEach((n, k) => {
+        const x = 6 + k * 86;
+        let cls = 'box';
+        if (k < f.walked) cls = f.state === 'fault' && k === 3 ? 'box bad' : k === f.lvl && f.state === 'walk' ? 'box cur' : 'box done';
+        if (k === 4 && (f.state === 'filled' || f.state === 'hit')) cls = 'box ok';
+        s += `<rect class="${cls}" x="${x}" y="${Y}" width="80" height="40" rx="4" /><text class="c" x="${x + 40}" y="${Y + 20}">${n}</text>`;
+        if (k < 4) s += `<line x1="${x + 80}" y1="${Y + 20}" x2="${x + 86}" y2="${Y + 20}" />`;
+      });
+      s += `<text x="6" y="${Y + 60}">page tables in DRAM (one read per level)</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const st = f.state === 'fault' ? 'page fault' : f.state || 'start';
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · ${st} · memory reads this load ${f.reads} · total ${f.total}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('page-walk-steps', PageWalkSteps);
+</script>

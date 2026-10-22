@@ -1,8 +1,136 @@
 ---
 title: "Data Center Topologies"
-description: "Spine-leaf and similar topologies, and how they scale to thousands of servers."
-order: 5
+description: "How thousands of servers are wired together: three-tier networks, leaf-spine and fat trees, oversubscription, ECMP, and AI clusters."
+order: 7
 tier: core
+takeaways:
+  - "Old **three-tier** networks (access, aggregation, core) were built for traffic to and from the Internet and relied on spanning tree, which blocks redundant links."
+  - "**Leaf-spine** (a two-tier **Clos** network) connects every leaf switch to every spine, so any two racks are three switch hops apart over many equal paths. With 64-port switches it reaches 2,048 servers; a three-tier **fat tree** reaches 65,536."
+  - "**Oversubscription** is downlink capacity over uplink capacity at a leaf: 48 × 25G down and 8 × 100G up is 1.5 : 1. AI training fabrics are built at 1 : 1."
+  - "**ECMP** spreads flows over equal paths by hashing, which balances many small flows well but lets big flows collide: 8 big flows on 8 paths average only 66% of a link each."
+  - "Losing one of 4 spines removes 25% of capacity but no connectivity, which is why the design scales out with many identical, cheap switches."
+resources:
+  - title: "A Scalable, Commodity Data Center Network Architecture (Al-Fares et al., SIGCOMM 2008)"
+    url: "http://ccr.sigcomm.org/online/files/p63-alfares.pdf"
+    note: "The paper that brought fat trees built from commodity switches into data centres."
+  - title: "Introducing data center fabric (Engineering at Meta, 2014)"
+    url: "https://engineering.fb.com/2014/11/14/production-engineering/introducing-data-center-fabric-the-next-generation-facebook-data-center-network/"
+    note: "A production leaf-spine fabric explained by the people who built it, with pods, planes and failure handling."
+  - title: "Clos network (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Clos_network"
+    note: "The 1950s telephone-switching theory behind leaf-spine."
 ---
 
-_Placeholder. Content not written yet._
+A data centre holds tens of thousands of servers, and most of their traffic goes from server to server: a web request fans out to dozens of services, a database replicates, a training job exchanges gradients. Connecting them all through one giant switch is impossible, since no chip has enough ports, so the network is built from many [switches](../hubs-and-switches/) arranged in a **topology**. The topology decides how many hops any two servers are apart, how much bandwidth is really available between racks, and what happens when a switch dies. This note covers the old **three-tier** design, **leaf-spine** and **fat-tree** networks, **oversubscription**, **ECMP** load spreading, and how AI clusters push the design further.
+
+## Three-Tier and Its Limits
+
+The classic enterprise design has three layers: **access** switches at the top of each rack, **aggregation** switches joining groups of racks, and **core** routers joining everything and connecting to the Internet. It fit an era when most traffic was **north-south**: between users outside and servers inside.
+
+Two problems appear when traffic turns **east-west** (server to server):
+
+- Traffic between racks climbs as high as the core and back down, through more hops, and the upper layers become bottlenecks.
+- Redundant links between layers form loops, so [spanning tree](../hubs-and-switches/) blocks half of them. Capacity is paid for and left idle until a failure.
+
+## Leaf-Spine Networks
+
+**Leaf-spine** removes the tree. There are two layers:
+
+- **Leaf** switches, usually one at the top of each rack, connect servers.
+- **Spine** switches connect only leaves. Every leaf has one link to **every** spine.
+
+Any two servers on different leaves are exactly three switch hops apart: leaf, spine, leaf. There is one path through each spine, all the same length, so the network can use all of them at once. Instead of spanning tree, the switches run IP routing (often BGP) between them, which allows equal-cost paths without loops. This arrangement is a **Clos network**, named after Charles Clos, who described it in 1953 for telephone exchanges: many small switches arranged to behave like one large one.
+
+<LeafSpine />
+
+How big can it get? Each spine needs one port per leaf, and each leaf splits its ports between servers and spines:
+
+```python
+def leaf_spine_servers(k):
+    leaves = k                                   # each spine has k ports, one per leaf
+    return leaves * k // 2                       # each leaf: half its ports down to servers, half up to spines
+
+def fat_tree_servers(k):
+    return k ** 3 // 4                           # three tiers of k-port switches (Al-Fares et al., 2008)
+
+for k in (32, 64, 128):
+    print(f"{k:3}-port switches: leaf-spine {leaf_spine_servers(k):6,} servers, 3-tier fat tree {fat_tree_servers(k):9,}")
+#  32-port switches: leaf-spine    512 servers, 3-tier fat tree     8,192
+#  64-port switches: leaf-spine  2,048 servers, 3-tier fat tree    65,536
+# 128-port switches: leaf-spine  8,192 servers, 3-tier fat tree   524,288
+```
+
+In words: with 64-port switches and full bandwidth everywhere, two tiers connect $64 \times 32 = 2{,}048$ servers. Adding a third tier of switches, a **fat tree** in which each group of leaves and spines forms a **pod** and pods are joined by a top layer, multiplies that by $k/2$: 65,536 servers from the same 64-port switch. Large operators build exactly this, from many identical commodity switches rather than a few huge chassis.
+
+## Oversubscription
+
+Full bandwidth everywhere is expensive. A leaf's **oversubscription ratio** compares the capacity facing servers with the capacity facing the spines:
+
+$$
+\text{oversubscription} = \frac{\text{downlink ports} \times \text{downlink rate}}{\text{uplink ports} \times \text{uplink rate}}.
+
+$$
+
+In words: at 1 : 1 every server can send to any other rack at full speed simultaneously; at 3 : 1 they can only all do so at a third of their speed. Ordinary workloads rarely have every server sending off-rack at once, so a moderate ratio saves a lot of switches and optics.
+
+```python
+def oversubscription(down_ports, down_gbps, up_ports, up_gbps):
+    return (down_ports * down_gbps) / (up_ports * up_gbps)
+
+print(f"48 x 25G down, 8 x 100G up:  {oversubscription(48, 25, 8, 100):.1f} : 1")
+print(f"48 x 25G down, 6 x 100G up:  {oversubscription(48, 25, 6, 100):.1f} : 1")
+print(f"32 x 400G down, 32 x 400G up: {oversubscription(32, 400, 32, 400):.1f} : 1")
+# 48 x 25G down, 8 x 100G up:  1.5 : 1
+# 48 x 25G down, 6 x 100G up:  2.0 : 1
+# 32 x 400G down, 32 x 400G up: 1.0 : 1
+```
+
+In words: a common leaf with 48 server ports at 25 Gbit/s and 8 uplinks at 100 Gbit/s is 1.5 : 1; dropping to 6 uplinks makes it 2 : 1. A switch split evenly, 32 ports down and 32 up at 400 Gbit/s, is **non-blocking** at 1 : 1, which is what GPU training clusters use.
+
+## ECMP Spreads Flows
+
+With four spines there are four equal-cost paths between two leaves, and the leaf must choose one for each packet. Sending packets of one TCP connection down different paths would reorder them, so switches use **ECMP** (equal-cost multi-path): hash the flow's 5-tuple and use the hash to pick a path, the same idea as RSS in [Network Interface Cards](../network-interface-cards/). Every packet of a flow follows one path; different flows spread out.
+
+That works well for many small flows and badly for a few large ones, because a hash does not look at load:
+
+```python
+import random
+from collections import Counter
+
+random.seed(1)
+paths, flows, trials = 8, 8, 10_000
+total = 0.0
+for _ in range(trials):
+    load = Counter(random.randrange(paths) for _ in range(flows))   # ECMP hash: effectively random per flow
+    total += len(load) / flows                   # flows on one path split it, so the mean share is busy paths / flows
+print(f"8 big flows hashed onto 8 equal paths: average flow gets {total / trials:.0%} of a link")
+one = Counter(random.randrange(paths) for _ in range(flows))
+print("one example, flows per path:", [one[p] for p in range(paths)])
+# 8 big flows hashed onto 8 equal paths: average flow gets 66% of a link
+# one example, flows per path: [1, 1, 1, 1, 0, 1, 2, 1]
+```
+
+In words: 8 large flows on 8 paths could each have a path to itself, but hashing lands two on the same path most of the time, as in the example where one path carries 2 flows and another none. On average each flow gets 66% of a link. Fixes include **flowlet** switching (re-hashing a flow at pauses, when reordering is safe), adaptive routing that looks at queue lengths, and **packet spraying** with NICs that tolerate reordering, all of which AI fabrics use.
+
+<Callout type="pitfall">
+A 1 : 1 non-blocking fabric does not guarantee full speed for every traffic pattern. Its capacity exists on aggregate, spread over many paths; ECMP collisions, several senders converging on one receiver (incast, see [Hubs & Switches](../hubs-and-switches/)), or one failed link can still leave some flows at a fraction of line rate while other links sit idle.
+</Callout>
+
+## Failure and Scale-Out
+
+In a leaf-spine fabric no single spine is special. If one of four spines fails, every leaf still reaches every other leaf through the other three, at 75% of the capacity; routing simply stops hashing onto the dead paths within a second or so. A failed leaf takes down only its rack, which is why services spread replicas across racks ([Fault Tolerance](../../../cs/distributed-systems/fault-tolerance/)). Growing the network means adding more of the same switch: more spines for bandwidth, more leaves or pods for servers. This **scale-out** with identical, replaceable parts replaced **scale-up** with ever larger chassis.
+
+## Networks for AI Clusters
+
+GPU training makes the fabric part of the computer. Thousands of GPUs exchange gradients in synchronised steps, every step waits for the slowest transfer, and the traffic is a few huge, simultaneous flows: the worst case for ECMP. AI clusters therefore use:
+
+- **Two networks**: a **scale-up** domain inside a server or rack (NVLink and NVSwitch, terabytes per second between a handful to a few dozen GPUs) and a **scale-out** network between them, InfiniBand or Ethernet with RDMA ([Interconnects](../../gpus-parallelism/interconnects/)).
+- **Non-blocking** 1 : 1 fat trees, often with one NIC per GPU.
+- **Rail-optimised** wiring: GPU number $i$ in every server connects to the same leaf switch ("rail" $i$), so the most frequent transfers, between matching GPUs in different servers, cross only one switch.
+- Lossless or congestion-controlled transport, because a dropped packet stalls the whole step ([RDMA & SmartNICs](../rdma-and-smartnics/)).
+
+How the training algorithms use this hardware is covered in [Multi-GPU Training](../../gpus-parallelism/multi-gpu-and-distributed-training-hardware/).
+
+<Callout type="key">
+Leaf-spine trades a few big switches for many small identical ones wired so every rack is equally close to every other. The result has many equal paths, predictable hop counts, and graceful failure, at the price of spreading load across paths by hashing, which works for many flows and needs help for a few big ones.
+</Callout>

@@ -1,8 +1,113 @@
 ---
 title: "TLBs & Paging"
-description: "TLBs, page table walks — the hardware support beneath cs:os:virtual-memory."
+description: "The hardware under virtual memory: how the MMU splits an address, walks a four-level page table, caches translations in the TLB, uses huge pages, and raises a page fault when a page is not in RAM."
 order: 7
 tier: advanced
+takeaways:
+  - "On x86-64 with 4 KiB pages, a 48-bit virtual address is four 9-bit indices (one per page-table level) and a 12-bit page offset."
+  - "A **TLB miss** costs a **page walk**: four dependent memory reads before the real one. The **TLB** caches recent translations so most loads skip it."
+  - "**TLB reach** is entries × page size: 2048 entries cover only 8 MiB with 4 KiB pages but 4 GiB with 2 MiB **huge pages**."
+  - "A page-table entry with its present bit clear makes the CPU raise a **page fault**; the OS then fetches the page. At a fault rate of 1 in 10,000, swap on SSD costs 1.1× DRAM per access, swap on HDD 9.0×."
+  - "Changing a mapping on one core means flushing stale TLB entries on every core that may hold it: a **TLB shootdown**, done with inter-processor interrupts."
+resources:
+  - title: "Translation lookaside buffer (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Translation_lookaside_buffer"
+    note: "TLB organisation, miss handling in hardware and software, ASIDs and flushing."
+  - title: "Transparent Hugepage Support (Linux kernel docs)"
+    url: "https://www.kernel.org/doc/html/latest/admin-guide/mm/transhuge.html"
+    note: "How Linux builds huge pages automatically, the settings, and the compaction costs behind the pitfall."
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "Section 4 measures TLB effects and explains why huge pages help."
 ---
 
-_Placeholder. Content not written yet._
+[Virtual Memory](../../../cs/operating-systems/virtual-memory/) explained the idea from the operating system's side: every process sees its own address space, page tables map it onto physical frames, and pages can live on disk until needed. That mapping happens on every single load and store, billions of times a second, so it has to be done in hardware. This note covers the hardware: the **MMU** (memory management unit) that splits an address and walks the page tables, the **TLB** that caches translations, huge pages, what the CPU does when a page is not in RAM, and how translations stay consistent across cores. It builds on [Cache Basics](../cache-basics/), because the TLB is a cache for translations.
+
+## Splitting an Address
+
+A **page** is the unit of mapping, 4 KiB by default. The low 12 bits of an address ($2^{12} = 4096$) pick a byte inside the page and pass through translation unchanged. The rest is the **virtual page number**, which must be translated to a physical frame number.
+
+A flat table with one entry per virtual page of a 48-bit address space would need $2^{36}$ entries per process, so x86-64 uses a **radix tree** of four levels named PML4, PDPT, PD and PT. Each table is one 4 KiB page holding 512 entries of 8 bytes, so each level consumes 9 bits of the address:
+
+```python
+va = 0x7F3A1C2D5E78                                  # a user-space virtual address on x86-64
+offset = va & 0xFFF                                  # low 12 bits: byte within the 4 KiB page
+idx = [(va >> shift) & 0x1FF for shift in (39, 30, 21, 12)]   # four 9-bit table indices
+for name, i in zip(["PML4", "PDPT", "PD", "PT"], idx):
+    print(f"{name:4} index {i:3}  (entry at byte {i * 8:4} of its 4 KiB table)")
+print(f"page offset {offset:#05x}")
+# PML4 index 254  (entry at byte 2032 of its 4 KiB table)
+# PDPT index 232  (entry at byte 1856 of its 4 KiB table)
+# PD   index 225  (entry at byte 1800 of its 4 KiB table)
+# PT   index 213  (entry at byte 1704 of its 4 KiB table)
+# page offset 0xe78
+```
+
+In words: the address breaks into four indices, 254, 232, 225 and 213, and an offset of 0xe78. $4 \times 9 + 12 = 48$ bits. Only the tables that are actually used exist, so a small process needs a handful of 4 KiB tables rather than a gigantic array. CPUs with **5-level paging** add a fifth index for 57-bit addresses, needed only by machines with more than 128 TiB of address space.
+
+Each entry holds the physical frame number of the next table (or, at the last level, of the data page) plus flag bits: **present**, writable, user-accessible, no-execute, and the **accessed** and **dirty** bits that the hardware sets on use and that the OS reads to choose pages to evict ([Page Replacement](../../../cs/operating-systems/page-replacement/)).
+
+## The Page Walk
+
+When a translation is needed and not cached, the **page walker**, a small hardware state machine in the MMU, starts from the **CR3** register, which holds the physical address of the current process's PML4 table. It reads the PML4 entry, which gives the PDPT table's address, then the PDPT entry, then PD, then PT, and finally gets the frame number. That is four memory reads, each depending on the one before, before the load itself can go out. Switching process means loading a different CR3.
+
+<PageWalkSteps />
+
+The walker's reads go through the ordinary data caches, so a recently used page table is usually in L1 or L2 and a walk costs tens of cycles, not four DRAM trips. CPUs also keep **page-walk caches** for the upper levels: neighbouring pages share their PML4, PDPT and often PD entries, so most walks only need the last level. Under virtualisation it gets worse: the guest's page tables are themselves in guest-physical memory that needs translating, and a full two-dimensional walk can take up to 24 reads ([Hardware Virtualization](../../cpu-architecture/hardware-virtualization/)).
+
+## The TLB
+
+The **TLB** (translation lookaside buffer) caches recent translations, virtual page number to frame number plus the permission bits. It is checked on every memory access in parallel with the L1 cache lookup, so a TLB hit adds no time. Like the caches, it comes in levels: a small, fast L1 TLB per core for data and one for instructions, and a larger shared L2 TLB behind them.
+
+The number that matters is **TLB reach**: how much memory the TLB can map at once.
+
+```python
+def size(b):
+    return f"{b / 2**30:g} GiB" if b >= 2**30 else f"{b / 2**20:g} MiB"
+
+for tlb, n in [("L1 dTLB", 64), ("L2 TLB", 2048)]:   # typical entry counts in a recent x86 core
+    print(f"{tlb:7} {n:4} entries: reach {size(n * 4096):>8} with 4 KiB pages, {size(n * 2**21):>7} with 2 MiB pages")
+n4k, n2m = 16 * 2**30 // 4096, 16 * 2**30 // 2**21  # pages needed to map a 16 GiB table
+print(f"16 GiB hash table: {n4k:,} pages of 4 KiB, {n2m:,} pages of 2 MiB")
+# L1 dTLB   64 entries: reach 0.25 MiB with 4 KiB pages, 128 MiB with 2 MiB pages
+# L2 TLB  2048 entries: reach    8 MiB with 4 KiB pages,   4 GiB with 2 MiB pages
+# 16 GiB hash table: 4,194,304 pages of 4 KiB, 8,192 pages of 2 MiB
+```
+
+In words: with 4 KiB pages the L1 TLB covers only 0.25 MiB and the L2 TLB 8 MiB, less than a typical L3 cache. A program touching a 16 GiB hash table at random spans 4,194,304 pages, so nearly every lookup misses the TLB and pays a walk on top of its cache miss. With **huge pages** of 2 MiB (one level fewer in the walk: the PD entry points straight at a 2 MiB frame), the same TLB covers 4 GiB, and the table needs only 8,192 entries. x86-64 also has 1 GiB pages. Linux offers huge pages explicitly (hugetlbfs) or automatically through **transparent huge pages**; databases and JVMs commonly enable them for large heaps.
+
+<Callout type="pitfall">
+Fitting in cache is not enough: a working set can fit in a 32 MiB L3 and still miss the TLB on most accesses, because 32 MiB of 4 KiB pages is 8,192 translations against 2,048 L2 TLB entries. Random access over a large array often loses more to page walks than expected, and huge pages fix it without touching the code. The reverse also bites: transparent huge pages can cause latency spikes when the kernel compacts memory to build them, which is why some databases recommend turning them off.
+</Callout>
+
+## Page Not in RAM
+
+If the walk reaches an entry whose **present** bit is clear, the hardware cannot finish. It raises a **page fault**, an exception: the CPU stops the instruction, records the faulting address (in register CR2 on x86) and an error code saying whether it was a read or a write and from user or kernel mode, and jumps to the OS handler. The handler decides what the address means. The page may be swapped out, in a file not yet read, a copy-on-write page, or not mapped at all, which becomes a segmentation fault ([Virtual Memory](../../../cs/operating-systems/virtual-memory/) covers these cases). After fixing the entry the OS returns, and the CPU re-executes the instruction, which now succeeds. A **minor** fault (the page is already in RAM, for example in the page cache) costs around a microsecond; a **major** fault reads the device.
+
+How much swapping costs depends on how often it happens and on the device, with latencies from [The Storage Hierarchy](../../storage/the-storage-hierarchy/):
+
+```python
+dram, ssd, hdd = 100e-9, 80e-6, 8e-3                 # seconds per access (from The Storage Hierarchy)
+for p in [1e-6, 1e-4, 1e-2]:                         # fraction of accesses that hit a swapped-out page
+    for name, dev in [("SSD", ssd), ("HDD", hdd)]:
+        eat = (1 - p) * dram + p * (dram + dev)      # every fault still ends with the DRAM access
+        print(f"fault rate {p:.0e}, swap on {name}: {eat * 1e9:9.1f} ns per access ({eat / dram:6.1f}x DRAM)")
+# fault rate 1e-06, swap on SSD:     100.1 ns per access (   1.0x DRAM)
+# fault rate 1e-06, swap on HDD:     108.0 ns per access (   1.1x DRAM)
+# fault rate 1e-04, swap on SSD:     108.0 ns per access (   1.1x DRAM)
+# fault rate 1e-04, swap on HDD:     900.0 ns per access (   9.0x DRAM)
+# fault rate 1e-02, swap on SSD:     900.0 ns per access (   9.0x DRAM)
+# fault rate 1e-02, swap on HDD:   80100.0 ns per access ( 801.0x DRAM)
+```
+
+In words: one fault per million accesses is invisible on either device. At one per 10,000, swap on an SSD costs 1.1× DRAM per access but swap on a hard drive costs 9.0×, because an 8 ms seek is 80,000 DRAM accesses. At one per 100, even the SSD is 9.0× slower and the hard drive 801×: the machine is **thrashing**, spending its time moving pages instead of computing. This model also ignores the OS's own time per fault, which adds a few microseconds. SSDs made modest swapping tolerable; they did not make memory pressure free.
+
+## Keeping TLBs Consistent
+
+The TLB is a cache of the page tables, but unlike data caches it is not kept coherent by hardware ([Cache Coherence](../cache-coherence/)). When the OS changes or removes a mapping, it must invalidate the stale entry itself, with an instruction such as `invlpg` on x86. On a multicore machine any core running a thread of the same process may hold the old translation, so the OS sends an **inter-processor interrupt** to each of them and waits until they have flushed it. This **TLB shootdown** costs microseconds and is one reason why `munmap` and `mprotect` in a heavily threaded program are slow.
+
+Switching processes changes CR3, which used to flush the whole TLB. Modern CPUs tag entries with an address-space ID (**PCID** on x86, ASID on ARM), so entries from several processes can coexist and a switch back finds its translations still cached ([Context Switching](../../../cs/operating-systems/context-switching/)).
+
+<Callout type="key">
+Every memory access is translated: the TLB answers most in no extra time, and a miss costs a four-level page walk through the caches. TLB reach (entries × page size) is small with 4 KiB pages, which is why huge pages help large, randomly accessed data. A not-present entry turns into a page fault that the OS resolves, at a cost set by the swap device. The OS, not the hardware, keeps TLBs consistent, with shootdowns across cores.
+</Callout>

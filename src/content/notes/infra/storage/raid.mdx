@@ -1,8 +1,126 @@
 ---
 title: "RAID"
-description: "Redundancy and performance tradeoffs across RAID levels."
-order: 4
+description: "Combining drives for speed and redundancy: striping, mirroring, XOR parity, RAID levels and their write penalty, rebuilds, and erasure coding at scale."
+order: 6
 tier: core
+takeaways:
+  - "**RAID** combines several drives into one volume: **striping** (RAID 0) spreads blocks for speed, **mirroring** (RAID 1) keeps copies, and **parity** (RAID 5, 6) stores just enough extra to rebuild lost drives."
+  - "RAID 5 parity is the **XOR** of a stripe's data blocks: XOR the survivors and the missing block reappears. RAID 6 adds a second, independent parity and survives any two failures."
+  - "Parity costs write performance: one small random write is 4 I/Os on RAID 5 and 6 on RAID 6, against 2 on RAID 10."
+  - "Rebuilds are slow and risky: a 20 TB drive takes at least 27.8 hours to rebuild at 200 MB/s, during which the array is exposed."
+  - "At data-centre scale, **erasure coding** generalises parity: RS(10,4) survives any 4 lost pieces while storing 1.40× the data, against 3× for triple replication. RAID protects against drive failure only; it is not a backup."
+resources:
+  - title: "Standard RAID levels (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Standard_RAID_levels"
+    note: "Each level with diagrams, capacity, performance and failure tolerance."
+  - title: "Erasure code (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Erasure_code"
+    note: "Reed-Solomon and other codes used by distributed storage, with the maths behind any-k-of-n recovery."
+  - title: "The mathematics of RAID-6 (H. Peter Anvin)"
+    url: "https://www.kernel.org/pub/linux/kernel/people/hpa/raid6.pdf"
+    note: "How Linux computes the second parity with Galois-field arithmetic, from the author of the kernel code."
 ---
 
-_Placeholder. Content not written yet._
+A single drive is a single point of failure, and a single drive's speed is a ceiling. [Hard Drives](../hard-drives/) fail at a few percent per year, and one random read takes milliseconds. **RAID** (redundant array of independent disks) addresses both by combining several drives into one logical volume: spreading data across them for speed, and storing extra information so the volume survives when one dies. This note covers **striping**, **mirroring** and **parity**, the standard RAID levels and their costs (capacity, write penalty, rebuild time), how RAID is implemented, and how large systems replace it with **erasure coding**. The parity idea is the simplest case of the codes in [Error Correction](../../../math/information-theory/error-correction/).
+
+## Striping and Mirroring
+
+**Striping** (RAID 0) splits data into fixed-size chunks and places consecutive chunks on different drives. A large read or write uses all drives at once, and random I/O spreads across them, so throughput and IOPS add up. There is no redundancy: losing any drive loses the volume, so RAID 0 is less reliable than one drive.
+
+**Mirroring** (RAID 1) writes every block to two (or more) drives. Either copy can serve a read, so reads can be faster; writes go to both. Half the capacity is spent on copies.
+
+**RAID 10** (1+0) stripes across mirrored pairs: the speed of striping with the redundancy of mirroring. It survives one failure always, and more if the failures hit different pairs.
+
+## Parity with XOR
+
+Mirroring spends half the space. **Parity** spends one drive's worth. In **RAID 5**, each stripe of $n - 1$ data blocks gets one parity block, the bitwise **XOR** of the data blocks. XOR has the property that any one value can be recovered by XOR-ing all the others:
+
+$$
+P = D_1 \oplus D_2 \oplus D_3 \oplus D_4 \quad \Rightarrow \quad D_3 = D_1 \oplus D_2 \oplus D_4 \oplus P.
+
+$$
+
+In words: because $x \oplus x = 0$, XOR-ing the parity with the surviving blocks cancels them out and leaves exactly the missing block:
+
+```python
+from functools import reduce
+
+data = [b"RAID", b"is n", b"ot a", b"bkup"]               # one stripe: four data blocks on four drives
+xor = lambda a, b: bytes(x ^ y for x, y in zip(a, b))     # noqa: E731
+parity = reduce(xor, data)                                # stored on a fifth drive
+print("parity block:", parity.hex())
+
+lost = 2                                                  # the drive holding block 2 dies
+survivors = [blk for i, blk in enumerate(data) if i != lost] + [parity]
+rebuilt = reduce(xor, survivors)                          # XOR of everything else gives the missing block
+print("rebuilt block:", rebuilt, rebuilt == data[lost])
+# parity block: 362d3c3b
+# rebuilt block: b'ot a' True
+```
+
+In words: the parity of the four blocks is 0x362d3c3b; when the drive holding `ot a` dies, XOR-ing the other three blocks with the parity gives back `ot a` exactly. RAID 5 rotates the parity block across the drives from stripe to stripe so no single drive does all the parity writes.
+
+**RAID 6** adds a second parity block, Q, computed with a different code (Reed-Solomon arithmetic over a finite field rather than plain XOR), so the two parities are independent equations. Two unknowns can be solved from two equations: RAID 6 survives any two drive failures.
+
+<RaidVisualizer />
+
+## Capacity and Write Penalty
+
+Each level trades capacity, fault tolerance and write cost differently:
+
+```python
+n, size_tb = 8, 20                                        # eight 20 TB drives
+levels = [  # level, usable drives, drive failures always survived, I/Os for one small random write
+    ("RAID 0", n, 0, 1),
+    ("RAID 10", n // 2, 1, 2),
+    ("RAID 5", n - 1, 1, 4),
+    ("RAID 6", n - 2, 2, 6),
+]
+for name, usable, survives, ios in levels:
+    print(f"{name:7} usable {usable * size_tb:3} TB ({usable / n:4.0%})  survives {survives} failure(s)  small write = {ios} I/Os")
+# RAID 0  usable 160 TB (100%)  survives 0 failure(s)  small write = 1 I/Os
+# RAID 10 usable  80 TB ( 50%)  survives 1 failure(s)  small write = 2 I/Os
+# RAID 5  usable 140 TB ( 88%)  survives 1 failure(s)  small write = 4 I/Os
+# RAID 6  usable 120 TB ( 75%)  survives 2 failure(s)  small write = 6 I/Os
+```
+
+In words: with eight 20 TB drives, RAID 5 keeps 140 TB usable and RAID 6 120 TB, against 80 TB for RAID 10. The price is the **write penalty**: changing one block in a RAID 5 stripe means reading the old block and old parity, then writing the new block and new parity, 4 I/Os instead of 1; RAID 6 has two parities to update, 6 I/Os. Random-write-heavy workloads such as databases therefore often prefer RAID 10, while large sequential workloads (backups, media) favour RAID 6, where full-stripe writes compute parity without any reads.
+
+<Callout type="pitfall">
+The **write hole**: if power fails after the data block is written but before the parity is, the stripe's parity is silently wrong, and a later rebuild will reconstruct garbage. Hardware RAID controllers protect against this with a battery- or capacitor-backed write cache; software RAID uses a journal or copy-on-write (as ZFS does). A RAID 5 or 6 array without one of these can corrupt data after a crash.
+</Callout>
+
+## Rebuilds Are the Risky Part
+
+When a drive fails, the array runs **degraded**: every read of a lost block is reconstructed from the others, and one more failure (two for RAID 6) loses data. A replacement drive is rebuilt by reading every other drive in full:
+
+```python
+size_tb, rebuild_mb_s = 20, 200                           # a 20 TB drive rebuilt at a steady 200 MB/s
+hours = size_tb * 1e6 / rebuild_mb_s / 3600
+print(f"rebuilding one 20 TB drive takes at least {hours:.1f} hours")
+
+schemes = {"3-way replication": (1, 2), "RAID 6 / RS(6,2)": (6, 2), "RS(10,4)": (10, 4), "RS(17,3)": (17, 3)}
+for name, (k, m) in schemes.items():                      # k data pieces, m parity pieces
+    print(f"{name:18} stores {(k + m) / k:.2f}x the data, survives any {m} lost pieces")
+# rebuilding one 20 TB drive takes at least 27.8 hours
+# 3-way replication  stores 3.00x the data, survives any 2 lost pieces
+# RAID 6 / RS(6,2)   stores 1.33x the data, survives any 2 lost pieces
+# RS(10,4)           stores 1.40x the data, survives any 4 lost pieces
+# RS(17,3)           stores 1.18x the data, survives any 3 lost pieces
+```
+
+In words: even at a sustained 200 MB/s with no other load, a 20 TB drive takes 27.8 hours to rebuild; with the array still serving users it can take days. Throughout, the surviving drives (often bought together, the same age, under extra load) are working hardest. That window is why large drives are almost always put in RAID 6 rather than RAID 5, and [Drive Failures](../drive-failures/) quantifies the risk of hitting an unreadable sector during a rebuild.
+
+## Erasure Coding at Scale
+
+RAID works within one server. Distributed storage systems spread data across many servers and racks, and generalise parity to **erasure coding**: split each object into $k$ data pieces, compute $m$ parity pieces with a Reed-Solomon code, and place the $k + m$ pieces on different machines. Any $k$ of the $k + m$ pieces reconstruct the object. The second half of the output above compares the overheads: 3-way replication stores 3.00× the data to survive 2 losses, while RS(10,4) stores only 1.40× and survives 4. Cloud object stores and HDFS use codes like these for cold and warm data, and keep replication for hot data, because reading from a single replica is cheaper than gathering $k$ pieces, and rebuilding a lost piece requires reading $k$ others across the network.
+
+## How RAID Is Implemented
+
+- **Hardware RAID**: a controller card with its own processor and battery-backed cache presents the array to the operating system as one disk. Simple to use, but the on-disk format is tied to the controller vendor.
+- **Software RAID**: the operating system does the work (Linux `md`, Windows Storage Spaces). Modern CPUs compute parity with little effort, and the array can move between machines.
+- **File-system RAID**: ZFS and Btrfs combine RAID with the file system, so they know which blocks are in use (rebuilding only those), checksum every block to detect silent corruption, and avoid the write hole by never overwriting in place.
+
+<Callout type="key">
+RAID buys speed by striping and survival by redundancy: copies (RAID 1, 10) or parity (RAID 5, 6). Parity saves capacity but costs write I/Os and long, risky rebuilds; erasure coding extends the same idea across machines. None of it protects against deletion, corruption written by software, ransomware or fire: RAID is availability, not backup.
+</Callout>

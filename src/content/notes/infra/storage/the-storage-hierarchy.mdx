@@ -1,8 +1,109 @@
 ---
 title: "Storage Hierarchy"
-description: "From registers down to disk, continuing the ladder from Memory Hierarchy."
+description: "The tiers below main memory, from NVMe flash to tape and cloud archives, and how cost, latency and durability trade against each other."
 order: 1
 tier: core
+takeaways:
+  - "**Storage** keeps data when the power is off, unlike DRAM. Its tiers run from NVMe SSDs through SATA SSDs and hard drives to tape and cloud archives."
+  - "Down the ladder, latency rises by orders of magnitude while price per terabyte falls: an NVMe SSD reads about 100× sooner than a hard drive for about 4× the price per TB (2025 prices)."
+  - "**Sequential** throughput does not follow latency: tape takes a minute to reach the first byte but then streams at 400 MB/s, faster than a hard drive."
+  - "**Tiering** keeps hot data on fast media and everything on cheap media: 500 TB with 5% hot costs 30% of all-flash."
+  - "Cloud object storage prices tiers per GB-month: 1 PB for a year costs \\$276,000 in S3 Standard and \\$11,880 in Glacier Deep Archive, which takes up to 12 hours to retrieve."
+resources:
+  - title: "Amazon S3 pricing (AWS)"
+    url: "https://aws.amazon.com/s3/pricing/"
+    note: "The storage classes from hot to deep archive, with prices and retrieval times side by side."
+  - title: "What is LTO technology? (LTO Program)"
+    url: "https://www.lto.org/technology/what-is-lto-technology/"
+    note: "Tape generations, capacities and the roadmap for the medium that still holds most archival data."
+  - title: "Hard drive cost per gigabyte (Backblaze)"
+    url: "https://www.backblaze.com/blog/hard-drive-cost-per-gigabyte/"
+    note: "Decades of drive prices from a company that buys hundreds of thousands of them."
 ---
 
-_Placeholder. Content not written yet._
+[Memory Hierarchy](../../memory-hierarchy/why-the-memory-hierarchy-exists/) followed data from registers through caches to DRAM: each level larger, slower and cheaper than the one above. DRAM forgets everything when the power goes, so below it the ladder continues with **storage**, devices that keep data without power. The same trade repeats, stretched over a far wider range: from tens of microseconds to minutes, and from tens of dollars per terabyte to a few. This note lays out the tiers, compares their latency, throughput and cost, and shows why real systems spread data across several of them. Each tier gets its own note: [Hard Drives](../hard-drives/), [Flash & SSDs](../flash-and-ssds/), and how they connect in [Storage Interfaces](../storage-interfaces/).
+
+## The Tiers Below Memory
+
+- **NVMe SSDs**: flash memory on the PCIe bus. Tens of microseconds to read a random block, several GB/s sequential.
+- **SATA SSDs**: the same kind of flash behind an older interface designed for hard drives, capped near 0.55 GB/s.
+- **Hard disk drives (HDDs)**: magnetic platters spinning at 7200 rpm, with a mechanical arm. Milliseconds per random access, but the cheapest online storage per terabyte.
+- **Tape**: magnetic tape cartridges in a robotic library. A cartridge must be loaded and wound to the right place, which takes about a minute, but each one holds 18 TB (LTO-9) and costs a few dollars per terabyte.
+- **Cloud archive tiers**: the provider's own mix of disk and tape, sold per GB-month with retrieval delays from milliseconds to hours.
+
+Non-volatile memory that sits on the memory bus, between DRAM and flash, is covered in [Non-Volatile Memory](../../memory-hierarchy/non-volatile-memory-technologies/).
+
+## Latency, Throughput and Price
+
+Three numbers describe a tier: how long until the first byte of a random read arrives (**latency**), how fast it streams once going (**sequential throughput**), and what a terabyte costs:
+
+```python
+tiers = [  # name, typical random-read latency in seconds, sequential GB/s, approximate 2025 price in $ per TB
+    ("DRAM (DDR5)", 100e-9, 50, 3000),
+    ("NVMe SSD (PCIe 5.0)", 80e-6, 14, 60),
+    ("SATA SSD", 150e-6, 0.55, 50),
+    ("HDD (7200 rpm)", 8e-3, 0.28, 15),
+    ("LTO-9 tape", 60, 0.4, 5),
+]
+for name, lat, gbps, usd_tb in tiers:
+    read_10tb_h = 10_000 / gbps / 3600
+    print(f"{name:20} latency {lat:9.1e} s  ${usd_tb:5}/TB  read 10 TB in {read_10tb_h:6.2f} h")
+fast, slow = tiers[1], tiers[3]
+print(f"NVMe vs HDD: {slow[1] / fast[1]:.0f}x lower latency for {fast[3] / slow[3]:.0f}x the price per TB")
+# DRAM (DDR5)          latency   1.0e-07 s  $ 3000/TB  read 10 TB in   0.06 h
+# NVMe SSD (PCIe 5.0)  latency   8.0e-05 s  $   60/TB  read 10 TB in   0.20 h
+# SATA SSD             latency   1.5e-04 s  $   50/TB  read 10 TB in   5.05 h
+# HDD (7200 rpm)       latency   8.0e-03 s  $   15/TB  read 10 TB in   9.92 h
+# LTO-9 tape           latency   6.0e+01 s  $    5/TB  read 10 TB in   6.94 h
+# NVMe vs HDD: 100x lower latency for 4x the price per TB
+```
+
+In words: latency spans nine orders of magnitude, from 100 ns for DRAM to a minute for tape, while price per terabyte spans less than three. An NVMe SSD answers a random read 100 times sooner than a hard drive for about 4 times the price per terabyte. Throughput tells a different story: tape needs a minute to start but then reads 10 TB in 6.94 hours, faster than a hard drive's 9.92, because it streams at 400 MB/s once the right spot is under the head. The prices are approximate 2025 street prices and move every year; the ratios between tiers change much more slowly.
+
+<StorageLadder />
+
+These numbers are what [Latency Numbers](../../../cs/appendix-reference/latency-numbers/) summarises for system design: a disk seek costs as much time as tens of thousands of memory accesses, which is why databases and file systems work so hard to avoid random disk reads ([Storage Engines](../../../cs/databases/storage-engines/)).
+
+## Tiering: Hot, Warm, Cold
+
+Most data is rarely read. Logs, backups, old photos and finished experiments are written once and read seldom or never, while a small fraction (the **hot** set) gets most of the traffic. **Tiering** puts each piece of data on the cheapest tier that is fast enough for how often it is used:
+
+```python
+total_tb, hot_fraction = 500, 0.05             # 500 TB, of which 5% is read often
+nvme, hdd = 60, 15                             # $ per TB, approximate 2025 prices
+
+all_flash = total_tb * nvme
+tiered = total_tb * hot_fraction * nvme + total_tb * hdd   # hot copy on flash, everything on disk
+print(f"all NVMe: ${all_flash:,.0f}")
+print(f"tiered:   ${tiered:,.0f}  ({tiered / all_flash:.0%} of all-flash)")
+# all NVMe: $30,000
+# tiered:   $9,000  (30% of all-flash)
+```
+
+In words: keeping all 500 TB on NVMe costs \$30,000 in drives; keeping everything on hard drives plus a flash copy of the hot 5% costs \$9,000, 30% as much, and most reads still hit flash. The same idea appears at every scale: a database's buffer pool caches hot pages in RAM, a storage array caches on SSD in front of hard drives, and cloud providers move objects between classes by age.
+
+Cloud object storage makes the tiers explicit as **storage classes**, priced per GB-month:
+
+```python
+# AWS S3 list prices, us-east-1, $ per GB-month for the first tier of storage
+classes = {"S3 Standard": 0.023, "S3 Glacier Instant Retrieval": 0.004, "S3 Glacier Deep Archive": 0.00099}
+for name, per_gb in classes.items():
+    print(f"{name:29} 1 PB for a year: ${per_gb * 1_000_000 * 12:>9,.0f}")
+# S3 Standard                   1 PB for a year: $  276,000
+# S3 Glacier Instant Retrieval  1 PB for a year: $   48,000
+# S3 Glacier Deep Archive       1 PB for a year: $   11,880
+```
+
+In words: a petabyte for a year costs \$276,000 in the standard class and \$11,880 in Deep Archive, 23 times less, at list prices before volume discounts. The price of the cheap class is time and retrieval fees: Deep Archive restores take up to 12 hours (or 48 for the cheapest bulk option). [Storage Models](../../../cs/cloud/storage-models/) covers object storage as an interface.
+
+<Callout type="pitfall">
+Cold tiers are cheap to keep data in and expensive to get it out of. Archive classes charge per GB retrieved, add hours of delay, and often charge for early deletion. A plan that "restores from Glacier if something breaks" should be tested and costed before it is needed: restoring 100 TB in a hurry can take days and cost more than a year of storage.
+</Callout>
+
+## Durability Is a Separate Axis
+
+Speed and price are not the whole choice. Tiers also differ in how they fail and how long they last on a shelf: tape is rated to hold data for decades unpowered, hard drives fail at a few percent per year, and flash slowly loses charge if left unpowered for long periods. No single device is durable enough on its own, so every tier relies on redundancy: [RAID](../raid/) and erasure coding inside a system, copies in several places across systems. [Drive Failures](../drive-failures/) puts numbers on how often devices fail and what that means for keeping data safe.
+
+<Callout type="key">
+The storage hierarchy repeats the memory hierarchy's bargain over a far wider range: each step down is orders of magnitude slower to reach and several times cheaper to fill. Systems use all of it at once, keeping a small hot set on fast media and the long tail on slow, cheap media.
+</Callout>

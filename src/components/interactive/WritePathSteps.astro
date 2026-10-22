@@ -1,0 +1,130 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where a write is when the power fails"
+  caption="One block written by an application and made durable with fsync. Yellow marks where the newest copy of the data is at each step. Red layers lose their contents on a power cut, green layers keep them. Turn on power-loss protection and the drive's own cache becomes safe, because capacitors give it time to save the cache to flash; the write is then durable one step earlier."
+>
+  <write-path-steps>
+    <input type="checkbox" hidden data-plp />
+    <button type="button" class="btn" data-toggle aria-pressed="false">Power-loss protection</button>
+    <svg class="wp-svg" data-svg viewBox="0 0 440 250" role="img" aria-label="Layers a write passes through, from application to storage media"></svg>
+    <p class="wp-msg" data-msg></p>
+    <p class="wp-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </write-path-steps>
+</Figure>
+
+<style>
+  .wp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .wp-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .wp-svg :global(rect.vol) {
+    fill: rgba(234, 67, 53, 0.1);
+    stroke: var(--g-red);
+  }
+  .wp-svg :global(rect.safe) {
+    fill: rgba(52, 168, 83, 0.12);
+    stroke: var(--g-green);
+  }
+  .wp-svg :global(rect.here) {
+    fill: rgba(251, 188, 5, 0.3);
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .wp-svg :global(line) {
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+  }
+  .wp-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .wp-svg :global(text.side) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .wp-msg {
+    min-height: 4.2em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .wp-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+  .wp-stat :global(.ok) {
+    color: var(--g-green);
+  }
+  .wp-stat :global(.bad) {
+    color: var(--g-red);
+  }
+</style>
+
+<script>
+  const LAYERS = [
+    ['application buffer', 'process memory'],
+    ['page cache', 'kernel RAM'],
+    ['block layer / driver queue', 'kernel RAM'],
+    ['drive write cache', 'DRAM on the drive'],
+    ['media', 'flash cells or platters'],
+  ];
+  const STEPS = [
+    { at: 0, msg: 'The application fills a buffer in its own memory. Nothing has been handed to the operating system yet.' },
+    { at: 1, msg: 'write() returns as soon as the data is copied into the page cache. The application may think it is saved; it is only in RAM and will be written back seconds later.' },
+    { at: 2, msg: 'fsync() starts: the kernel sends the dirty pages to the drive as write commands.' },
+    { at: 3, msg: 'The drive acknowledges the writes once they are in its own DRAM cache, which is faster than writing the media.' },
+    { at: 4, msg: 'fsync() also sends a cache flush (or writes with FUA, force unit access). The drive moves the data to the media and only then does fsync() return.' },
+  ];
+
+  class WritePathSteps extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < STEPS.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.querySelector('[data-plp]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const plp = this.querySelector<HTMLInputElement>('[data-plp]')!.checked;
+      const st = STEPS[this.i];
+      const safeLayer = (k: number) => k === 4 || (plp && k === 3);
+      let s = '';
+      LAYERS.forEach(([name, where], k) => {
+        const y = 12 + k * 46;
+        if (k > 0) s += `<line x1="150" y1="${y - 14}" x2="150" y2="${y}" />`;
+        const cls = k === st.at ? 'here' : safeLayer(k) ? 'safe' : 'vol';
+        s += `<rect class="base" x="40" y="${y}" width="220" height="32" rx="5" /><rect class="${cls}" x="40" y="${y}" width="220" height="32" rx="5" />`;
+        s += `<text x="52" y="${y + 16}">${name}</text><text class="side" x="272" y="${y + 10}">${where}</text>`;
+        s += `<text class="side" x="272" y="${y + 24}" style="fill: ${safeLayer(k) ? 'var(--g-green)' : 'var(--g-red)'}">${safeLayer(k) ? 'survives power loss' : 'lost on power loss'}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const plpNote = plp && st.at === 3 ? ' With power-loss protection, this is already durable, so the flush can return immediately.' : '';
+      this.querySelector('[data-msg]')!.textContent = st.msg + plpNote;
+      const safe = safeLayer(st.at);
+      this.querySelector('[data-stat]')!.innerHTML = `step ${this.i}/${STEPS.length - 1} · data in ${LAYERS[st.at][0]} · power cut now: ${safe ? '<span class="ok">survives</span>' : '<span class="bad">lost</span>'}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === STEPS.length - 1;
+    }
+  }
+  customElements.define('write-path-steps', WritePathSteps);
+</script>

@@ -1,8 +1,131 @@
 ---
 title: "Wireless Basics"
-description: "WiFi standards at a conceptual level, why newer standards are faster."
-order: 4
+description: "How Wi-Fi works: bands and channels, access points and repeaters, sharing the air, and why each new standard is faster."
+order: 6
 tier: core
+takeaways:
+  - "Wi-Fi uses the **2.4, 5 and 6 GHz** bands. Higher frequencies lose more signal (6.5 GHz loses 8.7 dB more than 2.4 GHz in free space, and more through walls) but have far more room for wide channels."
+  - "An **access point** is a bridge between the radio and the wired LAN. All clients of one AP share one half-duplex channel, like a hub, and take turns with **CSMA/CA**."
+  - "Each standard multiplies four factors: **channel width**, **bits per symbol** (QAM), **coding rate** and **spatial streams** (MIMO). Peak rates went from 0.60 Gbit/s (Wi-Fi 4) to 46.12 Gbit/s (Wi-Fi 7)."
+  - "The rate a client gets falls in steps with distance as SNR drops and it moves to a slower **MCS**; peak rates need a strong signal close to the AP."
+  - "Airtime is shared, so one slow client slows everyone: with clients at 1000 and 50 Mbit/s sending equal data, each gets 47.6 Mbit/s."
+resources:
+  - title: "IEEE 802.11 (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/IEEE_802.11"
+    note: "Every amendment from 802.11b to 802.11be, with bands, widths and rates."
+  - title: "MCS Index table (mcsindex.com)"
+    url: "https://mcsindex.com/"
+    note: "Data rates for every MCS, width, guard interval and stream count, with typical SNR needs."
+  - title: "Hidden node problem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Hidden_node_problem"
+    note: "Why wireless cannot detect collisions like wired Ethernet, and how RTS/CTS helps."
 ---
 
-_Placeholder. Content not written yet._
+[Transmission Media](../physical-transmission-media/) showed that radio is a **shared** medium whose loss grows with distance and frequency. Wi-Fi is the engineering that turns that medium into something that feels like an Ethernet cable. This note covers the bands and channels Wi-Fi uses, what an **access point** and a **repeater** do, how devices take turns on the air, why every generation of Wi-Fi is faster, and why the speed printed on the box is not the speed you get. It treats Wi-Fi at the level of what limits it, not its frame formats.
+
+## Bands and Channels
+
+Wi-Fi uses unlicensed radio bands: anyone may transmit in them within power limits, which is why they are crowded.
+
+- **2.4 GHz**: about 80 MHz wide. Only three 20 MHz channels do not overlap (1, 6 and 11 in most regions), and microwave ovens, Bluetooth and neighbours all share it. It travels furthest and through walls best.
+- **5 GHz**: several hundred MHz in pieces, enough for many 80 MHz channels or a few 160 MHz ones.
+- **6 GHz**: opened for Wi-Fi 6E and Wi-Fi 7, up to 1200 MHz in the US (5.925–7.125 GHz), room for three 320 MHz channels, and used only by newer devices.
+
+Higher frequencies cost signal. Free-space loss grows with frequency as well as distance, and walls absorb more at higher frequencies:
+
+```python
+import math
+
+def fspl_db(distance_m, freq_ghz):
+    # free-space path loss: grows 20 dB per tenfold distance and per tenfold frequency
+    return 20 * math.log10(distance_m) + 20 * math.log10(freq_ghz * 1e9) - 147.55
+
+for f in (2.4, 5.5, 6.5):
+    print(f"{f} GHz at 10 m: {fspl_db(10, f):.1f} dB free-space loss")
+print(f"6.5 GHz loses {fspl_db(10, 6.5) - fspl_db(10, 2.4):.1f} dB more than 2.4 GHz at any distance")
+# 2.4 GHz at 10 m: 60.1 dB free-space loss
+# 5.5 GHz at 10 m: 67.3 dB free-space loss
+# 6.5 GHz at 10 m: 68.7 dB free-space loss
+# 6.5 GHz loses 8.7 dB more than 2.4 GHz at any distance
+```
+
+In words: at the same distance, the 6 GHz band arrives 8.7 dB weaker than 2.4 GHz, about a seventh of the power, before any wall is counted. The trade is width: 6 GHz has room for channels eight times wider, and width is what carries data.
+
+## Access Points and Repeaters
+
+An **access point (AP)** connects wireless devices to a wired network. It is a layer-2 **bridge**, like those in [Hubs & Switches](../hubs-and-switches/): frames from Wi-Fi clients are passed onto the Ethernet LAN and back, and to the rest of the network wireless clients look like any other hosts. An AP advertises a network name (**SSID**) in periodic beacon frames; a client **associates** with one AP, authenticates (WPA2 or WPA3), and from then on sends through it. The home router's Wi-Fi is an AP built into the same box ([Routers](../routers/)).
+
+All clients of one AP on one channel share that channel, and only one radio can transmit on it at a time, so an AP behaves like a **hub**: one half-duplex medium shared by everyone. Larger installations use many APs on different channels, often with a **controller** that assigns channels and power and helps clients **roam** between APs as they move.
+
+A **wireless repeater** (range extender) is the radio version of the repeater from [Hubs & Switches](../hubs-and-switches/), with a catch: with a single radio it must receive a frame and then retransmit it on the same channel, so every frame uses the air twice and throughput through it is at most half. **Mesh** systems avoid that by giving each node a separate radio, or a wired link, for the connection between nodes (the **backhaul**).
+
+## Sharing the Air
+
+Wired Ethernet hubs detected collisions while transmitting. A radio cannot: its own transmission is millions of times stronger than anything it could hear at the same moment. Wi-Fi therefore uses **CSMA/CA** (carrier sense multiple access with collision *avoidance*):
+
+1. Listen; if the channel is busy, wait until it is free.
+2. Wait a random back-off time, so stations that were waiting do not all start at once.
+3. Transmit, and expect an **acknowledgement** frame from the receiver. No ACK means the frame was lost (probably a collision) and is retried with a longer random back-off.
+
+A **hidden node** breaks step 1: two laptops on opposite sides of an AP may both hear the AP but not each other, so both sense a free channel and collide at the AP. A short **RTS/CTS** (request to send, clear to send) exchange lets the AP announce who has the channel. Wi-Fi 6 adds **OFDMA**, which splits one channel into smaller resource units so the AP can serve several clients in the same transmission instead of strictly one after another.
+
+Because clients take turns, the channel is shared in **time**, and time spent on a slow client is time nobody else uses:
+
+```python
+def equal_share_mbps(rates):
+    # each client sends the same number of bytes in turn, so time per round is the sum of 1/rate
+    return 1 / sum(1 / r for r in rates)
+
+print(f"two fast clients (1000, 1000): {equal_share_mbps([1000, 1000]):6.1f} Mbit/s each")
+print(f"one slow client  (1000, 50):   {equal_share_mbps([1000, 50]):6.1f} Mbit/s each")
+# two fast clients (1000, 1000):  500.0 Mbit/s each
+# one slow client  (1000, 50):     47.6 Mbit/s each
+```
+
+In words: two clients at 1000 Mbit/s each get 500 Mbit/s. Replace one with a distant client at 50 Mbit/s, and if both send the same amount of data, the fast client also drops to 47.6 Mbit/s, because most of the airtime goes to the slow one. This **rate anomaly** is why APs use airtime fairness scheduling and why one old or distant device can slow a whole network.
+
+## Why Newer Standards Are Faster
+
+Wi-Fi sends data on **OFDM**: the channel is divided into many narrow **subcarriers**, each carrying QAM symbols in parallel. Its peak rate is the product of four factors:
+
+$$
+\text{rate} = \text{streams} \times \text{data subcarriers} \times \text{bits per symbol} \times \text{coding rate} \div \text{symbol time}.
+
+$$
+
+In words: more spatial streams, a wider channel (more subcarriers), denser QAM (more bits per symbol), and less error-correction overhead (a higher coding rate) each multiply the rate. **Spatial streams** come from **MIMO** (multiple-input multiple-output): with several antennas on each side, the radios send different data from each antenna on the same frequency and use signal processing to separate them at the receiver. Each generation pushed several factors:
+
+```python
+# peak PHY rate = streams x data subcarriers x bits per symbol x coding rate / OFDM symbol time
+standards = [  # name, year, channel MHz, data subcarriers, bits per symbol (QAM), symbol time us, max streams
+    ("Wi-Fi 4 (802.11n)", 2009, 40, 108, 6, 3.6, 4),
+    ("Wi-Fi 5 (802.11ac)", 2013, 160, 468, 8, 3.6, 8),
+    ("Wi-Fi 6 (802.11ax)", 2019, 160, 1960, 10, 13.6, 8),
+    ("Wi-Fi 7 (802.11be)", 2024, 320, 3920, 12, 13.6, 16),
+]
+for name, year, mhz, subcarriers, bits, sym_us, streams in standards:
+    per_stream = subcarriers * bits * 5 / 6 / sym_us          # Mbit/s, best coding rate 5/6
+    print(f"{name:19} {year}  {mhz:3} MHz  {2 ** bits:4}-QAM  {per_stream:6.1f} Mbit/s per stream  x{streams:2} = {per_stream * streams / 1000:5.2f} Gbit/s")
+# Wi-Fi 4 (802.11n)   2009   40 MHz    64-QAM   150.0 Mbit/s per stream  x 4 =  0.60 Gbit/s
+# Wi-Fi 5 (802.11ac)  2013  160 MHz   256-QAM   866.7 Mbit/s per stream  x 8 =  6.93 Gbit/s
+# Wi-Fi 6 (802.11ax)  2019  160 MHz  1024-QAM  1201.0 Mbit/s per stream  x 8 =  9.61 Gbit/s
+# Wi-Fi 7 (802.11be)  2024  320 MHz  4096-QAM  2882.4 Mbit/s per stream  x16 = 46.12 Gbit/s
+```
+
+In words: the formula reproduces the headline rates of each standard: 0.60, 6.93, 9.61 and 46.12 Gbit/s. Wi-Fi 5 widened channels to 160 MHz and went to 256-QAM; Wi-Fi 6 kept 160 MHz but packed four times as many subcarriers into it with longer symbols, and went to 1024-QAM; Wi-Fi 7 doubled the width to 320 MHz (only in the 6 GHz band) and went to 4096-QAM. Wi-Fi 7 also adds **multi-link operation**, using two bands at once. Phones and laptops usually have 2 streams, not 8 or 16, so a Wi-Fi 6 laptop peaks at 2 × 1201 = 2402 Mbit/s.
+
+## Rate Falls With Distance
+
+Those peaks need the densest QAM, and [Transmission Media](../physical-transmission-media/) showed that denser constellations need a cleaner signal. Wi-Fi defines a ladder of **MCS** (modulation and coding scheme) levels, from BPSK with heavy error correction up to 1024-QAM or 4096-QAM with little, and each link continuously picks the fastest MCS its current SNR supports. As a client moves away, SNR falls and the rate drops a step at a time:
+
+<WifiRate />
+
+Wider channels also collect more noise (noise power grows with bandwidth, 3 dB per doubling), so a 160 MHz channel needs a stronger signal than a 40 MHz one for the same MCS. Close to the AP, 6 GHz with a wide channel is fastest; at the edge of coverage, 2.4 GHz with a narrow channel is the only link left. Client devices switch bands as conditions change if the AP offers the same network on all of them.
+
+<Callout type="pitfall">
+Router boxes advertise numbers like "AX6000" or "BE19000". These add the peak PHY rates of every band at full stream count, and no single client gets them. A phone with 2 streams on one band, a few rooms away, sharing the channel with other devices, typically sees a few hundred Mbit/s of real TCP throughput, after the MCS step-down and roughly a third lost to protocol overhead and contention.
+</Callout>
+
+<Callout type="key">
+Wi-Fi speed comes from the same three levers as wired links (more bandwidth, more bits per symbol, more parallel streams), applied to a medium that is shared and fades with distance. The rate any one client sees depends on its distance (MCS), its stream count, and how much airtime the other clients use.
+</Callout>

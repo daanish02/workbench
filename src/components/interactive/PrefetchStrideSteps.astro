@@ -1,0 +1,146 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A stride prefetcher learns a pattern, then runs ahead"
+  caption="Each cell is a cache line; a program reads 12 of them. The prefetcher remembers the last line and the last stride. When the same stride appears twice in a row it fetches the next two lines along that stride (blue). A read that finds its line already fetched is covered (green); otherwise it is a miss (red). Regular strides miss three times and then are covered; random reads always miss."
+>
+  <prefetch-stride-steps>
+    <input type="hidden" data-pattern value="s1" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="s1" aria-pressed="true">Stride 1</button>
+      <button type="button" class="btn" data-choice="s3" aria-pressed="false">Stride 3</button>
+      <button type="button" class="btn" data-choice="rnd" aria-pressed="false">Random</button>
+    </span>
+    <svg class="pf-svg" data-svg viewBox="0 0 440 96" role="img" aria-label="Cache lines read and prefetched"></svg>
+    <p class="pf-msg" data-msg></p>
+    <p class="pf-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </prefetch-stride-steps>
+</Figure>
+
+<style>
+  .pf-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .pf-svg :global(rect) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .pf-svg :global(rect.pre) {
+    fill: rgba(66, 133, 244, 0.35);
+    stroke: var(--g-blue);
+  }
+  .pf-svg :global(rect.hit) {
+    fill: rgba(52, 168, 83, 0.45);
+    stroke: var(--g-green);
+  }
+  .pf-svg :global(rect.miss) {
+    fill: rgba(234, 67, 53, 0.45);
+    stroke: var(--g-red);
+  }
+  .pf-svg :global(rect.cur) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .pf-svg :global(text) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .pf-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .pf-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const PATTERNS: Record<string, number[]> = {
+    s1: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    s3: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33],
+    rnd: [17, 4, 39, 22, 8, 31, 2, 45, 13, 27, 36, 10],
+  };
+  const DEGREE = 2;
+  interface Frame { state: Map<number, string>; cur: number; stride: number | null; misses: number; covered: number; msg: string }
+
+  function frames(lines: number[]): Frame[] {
+    const state = new Map<number, string>();
+    const pre = new Set<number>();
+    let last: number | null = null, stride: number | null = null, misses = 0, covered = 0;
+    const out: Frame[] = [{ state: new Map(), cur: -1, stride, misses, covered, msg: 'Nothing read yet. The prefetcher has no history.' }];
+    for (const line of lines) {
+      let msg: string;
+      if (pre.has(line)) { pre.delete(line); covered++; state.set(line, 'hit'); msg = `Line ${line} was prefetched: covered, no wait.`; }
+      else { misses++; state.set(line, 'miss'); msg = `Line ${line} is not in the cache: miss, wait for DRAM.`; }
+      if (last !== null) {
+        const s = line - last;
+        if (s === stride && s !== 0) {
+          const got: number[] = [];
+          for (let k = 1; k <= DEGREE; k++) {
+            const t = line + k * s;
+            if (!pre.has(t) && !state.has(t)) { pre.add(t); state.set(t, 'pre'); got.push(t); }
+          }
+          msg += ` Stride ${s} seen twice: prefetch line${got.length > 1 ? 's' : ''} ${got.join(' and ')}.`;
+        } else {
+          msg += ` Stride ${s}${stride === null ? '' : `, last was ${stride}`}: no confidence yet.`;
+        }
+        stride = s;
+      }
+      last = line;
+      out.push({ state: new Map(state), cur: line, stride, misses, covered, msg });
+    }
+    return out;
+  }
+
+  class PrefetchStrideSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    connectedCallback() {
+      const pat = this.querySelector<HTMLInputElement>('[data-pattern]')!;
+      const reset = () => {
+        this.fr = frames(PATTERNS[pat.value]);
+        this.i = 0;
+        this.draw();
+      };
+      pat.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      const W = 17, G = 1.2;
+      let s = '';
+      for (let n = 0; n < 48; n++) {
+        const x = 2 + (n % 24) * (W + G), y = 6 + Math.floor(n / 24) * 46;
+        const cls = [f.state.get(n) ?? '', n === f.cur ? 'cur' : ''].join(' ').trim();
+        s += `<rect class="${cls}" x="${x}" y="${y}" width="${W}" height="${W}" rx="2" />`;
+        s += `<text x="${x + W / 2}" y="${y + W + 9}">${n}</text>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `read ${this.i}/${this.fr.length - 1} · stride ${f.stride ?? '–'} · misses ${f.misses} · covered ${f.covered}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('prefetch-stride-steps', PrefetchStrideSteps);
+</script>

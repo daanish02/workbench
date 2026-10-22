@@ -1,0 +1,121 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same bits and noise, two encodings"
+  caption="The same 64 random bits are sent as 64 NRZ symbols (top) and as 32 PAM4 symbols (bottom), with the same peak-to-peak swing and the same noise added. Each dot is one received symbol; dashed lines are the receiver's decision thresholds. Red dots land on the wrong side of a threshold and turn into bit errors. Raise the noise: PAM4 starts failing well before NRZ."
+>
+  <pam-eye>
+    <label class="pe-lbl">noise σ <input type="range" min="0" max="60" step="1" value="12" data-n /> <b data-nv>0.12</b></label>
+    <svg class="pe-svg" viewBox="0 0 440 300" role="img" aria-label="Received NRZ and PAM4 symbols with noise and decision thresholds" data-svg></svg>
+    <p class="pe-stat mono" data-stat></p>
+  </pam-eye>
+</Figure>
+
+<style>
+  .pe-lbl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .pe-lbl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .pe-lbl b {
+    min-width: 3em;
+    text-align: right;
+    color: var(--text);
+  }
+  .pe-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .pe-svg :global(.lvl) {
+    stroke: var(--border);
+  }
+  .pe-svg :global(.thr) {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 5 4;
+    opacity: 0.8;
+  }
+  .pe-svg :global(.ok) {
+    fill: var(--g-blue);
+  }
+  .pe-svg :global(.err) {
+    fill: var(--g-red);
+  }
+  .pe-svg :global(.trace) {
+    fill: none;
+    stroke: rgba(66, 133, 244, 0.35);
+    stroke-width: 1.2;
+  }
+  .pe-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // deterministic bits and unit-variance noise, so the slider only scales the same noise
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) + 0.5) / 2147483648;
+  const BITS = Array.from({ length: 64 }, () => (rnd() < 0.5 ? 0 : 1));
+  const NOISE = Array.from({ length: 64 }, () => Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI * rnd()));
+  const GRAY: Record<string, number> = { '00': -1, '01': -1 / 3, '11': 1 / 3, '10': 1 };
+  const NRZ = BITS.map((b) => (b ? 1 : -1));
+  const PAM4 = Array.from({ length: 32 }, (_, i) => GRAY[`${BITS[2 * i]}${BITS[2 * i + 1]}`]);
+  const nearest = (v: number, levels: number[]) => levels.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
+  const bitsOf = (lvl: number) => Object.keys(GRAY).find((k) => GRAY[k] === lvl)!;
+
+  class PamEye extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    panel(top: number, title: string, sent: number[], levels: number[], sigma: number, noiseOffset: number) {
+      const X0 = 40, X1 = 430, H = 100;
+      const Y = (v: number) => top + H / 2 - (v * H) / 2.6;
+      const w = (X1 - X0) / sent.length;
+      let s = `<text class="ax-title" x="${X0}" y="${top - 6}">${title}</text>`;
+      for (const l of levels) s += `<line class="lvl" x1="${X0}" y1="${Y(l)}" x2="${X1}" y2="${Y(l)}" />`;
+      for (let i = 0; i < levels.length - 1; i++) {
+        const t = (levels[i] + levels[i + 1]) / 2;
+        s += `<line class="thr" x1="${X0}" y1="${Y(t)}" x2="${X1}" y2="${Y(t)}" />`;
+      }
+      for (const l of [levels[0], levels[levels.length - 1]]) s += `<text class="ax-tick" x="${X0 - 4}" y="${Y(l) + 4}" text-anchor="end">${l > 0 ? '+1' : '−1'}</text>`;
+      let errors = 0;
+      let path = '';
+      let dots = '';
+      sent.forEach((v, i) => {
+        const r = v + sigma * NOISE[(i + noiseOffset) % NOISE.length];
+        const got = nearest(r, levels);
+        let wrong = 0;
+        if (levels.length === 2) wrong = got !== v ? 1 : 0;
+        else [...bitsOf(got)].forEach((b, k) => (wrong += b !== bitsOf(v)[k] ? 1 : 0));
+        errors += wrong;
+        const x = X0 + w * (i + 0.5);
+        path += `${i ? 'L' : 'M'}${(x - w / 2).toFixed(1)},${Y(r).toFixed(1)} L${(x + w / 2).toFixed(1)},${Y(r).toFixed(1)} `;
+        dots += `<circle class="${wrong ? 'err' : 'ok'}" cx="${x.toFixed(1)}" cy="${Y(r).toFixed(1)}" r="${wrong ? 3.6 : 2.6}" />`;
+      });
+      return { svg: s + `<path class="trace" d="${path}" />` + dots, errors };
+    }
+    draw() {
+      const sigma = +this.querySelector<HTMLInputElement>('[data-n]')!.value / 100;
+      this.querySelector('[data-nv]')!.textContent = sigma.toFixed(2);
+      const a = this.panel(25, 'NRZ: 1 bit per symbol, received level', NRZ, [-1, 1], sigma, 0);
+      const b = this.panel(175, 'PAM4: 2 bits per symbol, received level', PAM4, [-1, -1 / 3, 1 / 3, 1], sigma, 17);
+      this.querySelector('[data-svg]')!.innerHTML = a.svg + b.svg + `<text class="ax-title" x="235" y="295" text-anchor="middle">symbol (time)</text>`;
+      this.querySelector('[data-stat]')!.textContent = `σ = ${sigma.toFixed(2)} · NRZ ${a.errors}/64 bit errors · PAM4 ${b.errors}/64 bit errors`;
+    }
+  }
+  customElements.define('pam-eye', PamEye);
+</script>

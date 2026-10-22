@@ -1,8 +1,203 @@
 ---
 title: "Transmission Media"
-description: "Copper, fiber optics, wireless — tradeoffs in speed, distance, interference."
+description: "Copper, fibre and radio: how each carries bits, how far, how fast, and how bits become symbols on the wire."
 order: 1
 tier: core
+takeaways:
+  - "Every medium **attenuates**: loss in **decibels** grows linearly with length on a cable, so Cat6a copper loses about 45 dB in 100 m while single-mode fibre loses about 2 dB in 10 km."
+  - "**Twisted pair** cancels interference by sending each signal as a difference between two wires; Ethernet over it stops at 100 m. **Fibre** is immune to electrical interference and reaches kilometres (single-mode) or a few hundred metres (multimode)."
+  - "Signals travel at about two thirds of $c$ in both copper and fibre (about 5 µs per km). Fibre wins on **bandwidth and reach**, not on propagation speed; radio through air is about 1.5× faster."
+  - "The **baud rate** counts symbols per second; **NRZ** sends 1 bit per symbol and **PAM4** sends 2, at the cost of a 9.54 dB smaller eye."
+  - "**Shannon's limit** $C = B \\log_2(1 + \\text{SNR})$ caps any channel: more bits need more bandwidth or a cleaner signal."
+resources:
+  - title: "Optical fiber (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Optical_fiber"
+    note: "Total internal reflection, single-mode vs multimode, dispersion and attenuation windows."
+  - title: "Basic Fiber Optic Technology (The Fiber Optic Association)"
+    url: "https://www.thefoa.org/tech/ref/basic/fiber.html"
+    note: "An installer's view of fibre types, wavelengths and loss budgets."
+  - title: "Pulse-amplitude modulation (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Pulse-amplitude_modulation"
+    note: "NRZ, PAM4 and where each is used in Ethernet and memory buses."
 ---
 
-_Placeholder. Content not written yet._
+[Link Layer](../../../cs/networks/link-layer/) treats the physical layer as a black box that "turns bits into signals". This note opens the box. Every network link is a **transmission medium**: a pair of copper wires, a strand of glass, or a band of radio spectrum. Each one weakens the signal with distance, picks up noise, and allows only so many changes per second, and those three facts decide how fast and how far a link can go. The note covers loss in decibels, copper, fibre and radio, the speed signals really travel at, and how bits are encoded as **symbols** (NRZ and PAM4) up to the limit set by Shannon's formula.
+
+## Signals Weaken With Distance
+
+A transmitter puts power into the medium; the receiver gets less. The drop is **attenuation**, and engineers measure it in **decibels (dB)**, a logarithmic unit: a loss of $L$ dB leaves the fraction
+
+$$
+\frac{P_{\text{out}}}{P_{\text{in}}} = 10^{-L/10}
+
+$$
+
+of the power. In words: 3 dB halves the power, 10 dB leaves a tenth, 20 dB a hundredth. Decibels are used because losses along a path multiply, and in decibels they simply add.
+
+On a cable the loss per unit length is roughly constant at a fixed frequency, so total loss in dB grows **linearly** with length. That loss depends strongly on the medium:
+
+```python
+def power_left(loss_db):
+    return 10 ** (-loss_db / 10)               # decibels are logarithmic: every 10 dB is another factor of 10
+
+links = [                                       # (medium, loss in dB per km at its operating frequency, length in km)
+    ("Cat6a copper at 500 MHz", 453.0, 0.1),
+    ("OM3 multimode at 850 nm", 3.0, 0.3),
+    ("single-mode at 1550 nm", 0.2, 10),
+    ("single-mode at 1550 nm", 0.2, 80),
+]
+for medium, per_km, km in links:
+    loss = per_km * km
+    print(f"{medium:24} {km * 1000:>6.0f} m  loss {loss:5.1f} dB  power left {power_left(loss):.1e}")
+print("copper loses", round(453.0 / 0.2), "times more dB per metre than single-mode fibre")
+# Cat6a copper at 500 MHz     100 m  loss  45.3 dB  power left 3.0e-05
+# OM3 multimode at 850 nm     300 m  loss   0.9 dB  power left 8.1e-01
+# single-mode at 1550 nm    10000 m  loss   2.0 dB  power left 6.3e-01
+# single-mode at 1550 nm    80000 m  loss  16.0 dB  power left 2.5e-02
+# copper loses 2265 times more dB per metre than single-mode fibre
+```
+
+In words: after 100 m of Cat6a only 3 parts in 100,000 of the power arrive (45.3 dB is the category's maximum insertion loss at 500 MHz), while single-mode fibre still delivers 63% after 10 km and 2.5% after 80 km. That is why long-haul fibre needs an optical amplifier only every 80 km or so, while copper Ethernet stops at 100 m.
+
+Loss is only half the story. The receiver also sees **noise**: thermal noise in its own electronics, **crosstalk** from neighbouring wire pairs, and outside **interference** from motors and radios. What matters is the **signal-to-noise ratio (SNR)** at the receiver, and the medium sets how fast it falls.
+
+## Copper: Twisted Pair and Coax
+
+**Twisted-pair** cable (the familiar Ethernet cable, connector RJ45) carries each signal on two wires twisted around each other. The transmitter drives them with opposite voltages, a scheme called **differential signalling**, and the receiver reads only the *difference*. Interference hits both wires almost equally, so it cancels in the difference; the twist keeps the two wires equally exposed along the run. An Ethernet cable holds four such pairs.
+
+Cable **categories** specify how high a frequency the cable carries with bounded loss and crosstalk:
+
+| Category | Rated to | Typical Ethernet use | Reach |
+| :---: | :---: | :---: | :---: |
+| Cat5e | 100 MHz | 1 Gbit/s (1000BASE-T) | 100 m |
+| Cat6 | 250 MHz | 10 Gbit/s | 55 m |
+| Cat6a | 500 MHz | 10 Gbit/s (10GBASE-T) | 100 m |
+| Cat8 | 2000 MHz | 25 or 40 Gbit/s | 30 m |
+
+Higher rates need higher frequencies, and loss per metre rises with frequency, so the fastest copper reaches the shortest distance. 1000BASE-T uses all four pairs at once, in both directions, each pair carrying 125 million symbols per second.
+
+**Coaxial cable** puts one conductor inside a cylindrical shield. It carries cable TV and cable internet (DOCSIS), and in data centres a flat shielded form called **twinax** makes **direct-attach copper (DAC)** cables: a few metres long, cheap, and with almost no power spent on signal conversion. They connect servers to the switch at the top of the same rack.
+
+## Fibre: Light in Glass
+
+An optical fibre is a glass **core** inside a **cladding** of slightly lower refractive index. Light hitting the boundary at a shallow angle reflects back completely (**total internal reflection**), so it is guided along the core even around gentle bends. The transmitter is a laser or LED that switches on and off billions of times per second; the receiver is a photodiode.
+
+- **Multimode fibre** has a wide 50 µm core and uses cheap 850 nm lasers. Light takes many paths (modes) of slightly different length, so a sharp pulse arrives smeared out. This **modal dispersion**, not loss, limits reach: 10 Gbit/s Ethernet (10GBASE-SR) reaches 300 m on OM3 fibre and 400 m on OM4.
+- **Single-mode fibre** has a 9 µm core, so narrow that only one path fits. It uses 1310 nm or 1550 nm lasers, where glass is most transparent, and reaches 10 km (10GBASE-LR), 40 km, or thousands of kilometres with amplifiers.
+
+Glass carries no current, so fibre is immune to electrical interference, does not leak signals that can be tapped by induction, and does not connect the electrical grounds of two buildings. The modules that convert between electrical and optical signals are pluggable **transceivers** (SFP, QSFP and their faster variants), so one switch port can take copper, multimode or single-mode by swapping a module.
+
+## Radio: A Shared Medium
+
+Wireless links send electromagnetic waves through air. Two things make radio different from cable:
+
+- **Loss grows with the square of distance**, not exponentially: a wave spreads its power over a sphere, so in free space doubling the distance costs 6 dB and ten times the distance costs 20 dB. Walls, rain and bodies add more.
+- **The medium is shared.** Every transmitter in range on the same frequency interferes with every other, so devices must take turns, and the spectrum itself is regulated and scarce.
+
+[Wireless Basics](../wireless-technology-basics/) covers how Wi-Fi works within these limits.
+
+The figure puts the three media side by side. Slide the distance and compare the loss of each, and which 10 Gbit/s links still work.
+
+<MediaReach />
+
+## How Fast Signals Travel
+
+A common belief is that fibre is fast because it uses light. Light in glass is slowed by the **refractive index** $n$: it travels at $c/n$. Electrical signals in copper are slowed too, by a cable's **velocity of propagation**:
+
+```python
+C = 299_792.458                                 # speed of light in vacuum, km/s
+
+speeds = {                                      # fraction of c the signal travels at
+    "radio through air": 1 / 1.0003,            # refractive index of air is about 1.0003
+    "Cat6 copper (NVP 0.65)": 0.65,             # nominal velocity of propagation from cable datasheets
+    "single-mode fibre (n = 1.468)": 1 / 1.468,
+}
+for medium, f in speeds.items():
+    print(f"{medium:30} {1e6 / (C * f):.2f} us per km")
+
+route_km = 1200                                 # a long-haul route, e.g. between two cities
+fibre_ms = route_km / (C / 1.468) * 1000
+radio_ms = route_km / (C / 1.0003) * 1000
+print(f"{route_km} km one way: fibre {fibre_ms:.2f} ms, microwave {radio_ms:.2f} ms")
+# radio through air              3.34 us per km
+# Cat6 copper (NVP 0.65)         5.13 us per km
+# single-mode fibre (n = 1.468)  4.90 us per km
+# 1200 km one way: fibre 5.88 ms, microwave 4.00 ms
+```
+
+In words: copper and fibre are within 5% of each other, about 5 µs per km. Radio through air is the fastest, which is why high-frequency traders built chains of microwave towers between exchanges: on a 1200 km route, a straight radio path saves about 1.9 ms one way over fibre along the same line. [Bandwidth & Latency](../bandwidth-latency-and-throughput/) turns these speeds into end-to-end delays.
+
+<Callout type="pitfall">
+"Fibre is faster" is true for **bandwidth and reach**, not for propagation. A bit crosses 100 m of copper and 100 m of fibre in about the same 0.5 µs. Upgrading a short copper link to fibre lowers latency only if it removes something else in the path, such as a slower encoding or an extra conversion step.
+</Callout>
+
+## Bits Become Symbols
+
+The transmitter does not send bits directly. It sends **symbols**: one of a few voltage (or light) levels, held for a fixed time. The **baud rate** is symbols per second, and the bit rate is the baud rate times the bits per symbol.
+
+- **NRZ** (non-return-to-zero) uses two levels: one bit per symbol.
+- **PAM4** (4-level pulse-amplitude modulation) uses four levels: two bits per symbol, so the same baud rate carries twice the bits.
+
+The price is noise margin. With the same maximum voltage swing, PAM4 has three gaps between levels instead of one, so each gap (the "eye" a receiver must decide inside) is a third as tall:
+
+```python
+import math
+
+bits = [1, 0, 1, 1, 0, 0, 1, 0]
+nrz = [2 * b - 1 for b in bits]                                   # one bit per symbol, two levels
+gray = {(0, 0): -3, (0, 1): -1, (1, 1): 1, (1, 0): 3}              # Gray code: neighbouring levels differ by one bit
+pam4 = [gray[(bits[i], bits[i + 1])] for i in range(0, len(bits), 2)]
+print("NRZ symbols: ", nrz)
+print("PAM4 symbols:", pam4)
+
+# same peak-to-peak swing, but PAM4 splits it into 3 gaps instead of 1
+print(f"PAM4 eye is 1/3 as tall: {20 * math.log10(3):.2f} dB less margin")
+
+# line coding and error correction add bits on top of the data rate
+print("10GBASE-R line rate:", 10 * 66 / 64, "Gbaud (64b/66b)")
+print("100G lane after 256b/257b and RS(544,514):", 100 * 257 / 256 * 544 / 514, "Gbit/s")
+print("53.125 Gbaud PAM4 carries:", 53.125 * 2, "Gbit/s")
+# NRZ symbols:  [1, -1, 1, 1, -1, -1, 1, -1]
+# PAM4 symbols: [3, 1, -3, 3]
+# PAM4 eye is 1/3 as tall: 9.54 dB less margin
+# 10GBASE-R line rate: 10.3125 Gbaud (64b/66b)
+# 100G lane after 256b/257b and RS(544,514): 106.25 Gbit/s
+# 53.125 Gbaud PAM4 carries: 106.25 Gbit/s
+```
+
+In words: eight bits take eight NRZ symbols but only four PAM4 symbols, and the PAM4 receiver gives up 9.54 dB of noise margin for it. Real links also send extra bits. **Line coding** such as 64b/66b adds 2 bits of framing per 64, so 10 Gbit/s Ethernet signals at 10.3125 Gbaud. A modern 100 Gbit/s lane adds a forward error-correcting code (Reed-Solomon, see [Error Correction](../../../math/information-theory/error-correction/)) to win back the lost margin, which brings it to exactly 106.25 Gbit/s: 53.125 Gbaud of PAM4.
+
+Play with the noise and watch which encoding fails first:
+
+<PamEye />
+
+## Shannon's Limit
+
+Why not use 16 or 256 levels? Each extra level shrinks the gaps further, and eventually noise flips symbols faster than any code can fix. Claude Shannon proved a hard ceiling: a channel of bandwidth $B$ hertz with signal-to-noise ratio $\text{SNR}$ can carry at most
+
+$$
+C = B \log_{2}(1 + \text{SNR}) \ \text{bits per second}.
+
+$$
+
+In words: capacity grows linearly with bandwidth but only logarithmically with signal quality. Doubling the frequency range doubles the ceiling; at high SNR, doubling the power adds only about one bit per second per hertz.
+
+```python
+import math
+
+def capacity_gbps(bandwidth_hz, snr_db):
+    snr = 10 ** (snr_db / 10)
+    return bandwidth_hz * math.log2(1 + snr) / 1e9   # Shannon-Hartley limit
+
+for snr_db in (10, 20, 30):
+    print(f"400 MHz channel at {snr_db} dB SNR: {capacity_gbps(400e6, snr_db):.2f} Gbit/s max")
+# 400 MHz channel at 10 dB SNR: 1.38 Gbit/s max
+# 400 MHz channel at 20 dB SNR: 2.66 Gbit/s max
+# 400 MHz channel at 30 dB SNR: 3.99 Gbit/s max
+```
+
+In words: a 400 MHz channel (one pair of a 10GBASE-T link signals at 800 Mbaud, which needs about 400 MHz) can carry at most 3.99 Gbit/s even at a clean 30 dB SNR. 10GBASE-T asks 2.5 Gbit/s of each of its four pairs, so it already runs at a large fraction of the limit, which is why it needs Cat6a cable and heavy signal processing.
+
+<Callout type="key">
+Every jump in Ethernet speed comes from one of three levers: **more bandwidth** (higher frequency, better cable or fibre), **more bits per symbol** (NRZ to PAM4), or **more lanes in parallel** (400 Gbit/s Ethernet runs four 100 Gbit/s lanes or eight 50 Gbit/s lanes). Shannon's formula says the first two cannot go on forever on a given medium.
+</Callout>

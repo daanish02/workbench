@@ -1,0 +1,155 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="MESI states of one cache line across three cores"
+  caption="Each column is one core's private cache, holding one shared line in one of four states: Modified (only copy, changed), Exclusive (only copy, clean), Shared (clean, others may have it), Invalid (no usable copy). Each step is one read or write by one core; the yellow arrow is the core acting, and the message says what had to cross the interconnect. A write by one core always leaves every other copy Invalid."
+>
+  <mesi-steps>
+    <svg class="me-svg" data-svg viewBox="0 0 440 190" role="img" aria-label="Three cores and the MESI state of their copies of one line"></svg>
+    <p class="me-msg" data-msg></p>
+    <p class="me-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </mesi-steps>
+</Figure>
+
+<style>
+  .me-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 6px auto 0;
+  }
+  .me-svg :global(rect.core) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .me-svg :global(rect.core.act) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .me-svg :global(rect.M) {
+    fill: rgba(234, 67, 53, 0.35);
+    stroke: var(--g-red);
+  }
+  .me-svg :global(rect.E) {
+    fill: rgba(52, 168, 83, 0.35);
+    stroke: var(--g-green);
+  }
+  .me-svg :global(rect.S) {
+    fill: rgba(66, 133, 244, 0.35);
+    stroke: var(--g-blue);
+  }
+  .me-svg :global(rect.I) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 4 3;
+  }
+  .me-svg :global(rect.bus) {
+    fill: rgba(251, 188, 5, 0.1);
+    stroke: var(--border-strong);
+  }
+  .me-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .me-svg :global(text.big) {
+    font: 700 20px var(--font-mono);
+  }
+  .me-svg :global(text.muted) {
+    fill: var(--text-muted);
+    font-size: 11px;
+  }
+  .me-svg :global(text.op) {
+    fill: var(--g-yellow);
+  }
+  .me-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .me-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const OPS: [number, 'read' | 'write'][] = [[0, 'read'], [0, 'write'], [1, 'read'], [2, 'read'], [1, 'write'], [0, 'read'], [2, 'write']];
+  const NAMES: Record<string, string> = { M: 'Modified', E: 'Exclusive', S: 'Shared', I: 'Invalid' };
+  interface Frame { state: string[]; core: number; op: string; msg: string; traffic: number }
+
+  function frames(): Frame[] {
+    const state = ['I', 'I', 'I'];
+    let traffic = 0;
+    const out: Frame[] = [{ state: [...state], core: -1, op: '', msg: 'No core has the line cached; it is only in memory.', traffic }];
+    for (const [core, op] of OPS) {
+      const holders = [0, 1, 2].filter((c) => c !== core && state[c] !== 'I');
+      const dirty = holders.filter((c) => state[c] === 'M');
+      let msg: string;
+      if (op === 'read') {
+        if (state[core] !== 'I') msg = 'Read hit: no traffic.';
+        else {
+          traffic++;
+          msg = `Read miss. ${dirty.length ? `Core ${dirty[0]} has it Modified, so it supplies the data and drops to Shared. ` : ''}${holders.length ? `Now shared by cores ${[...holders, core].sort().join(', ')}.` : 'Nobody else has it, so it arrives Exclusive.'}`;
+          holders.forEach((c) => (state[c] = 'S'));
+          state[core] = holders.length ? 'S' : 'E';
+        }
+      } else {
+        if (state[core] === 'M') msg = 'Write hit on a Modified line: no traffic.';
+        else if (state[core] === 'E') msg = 'Write hit on an Exclusive line: it becomes Modified silently, because no other copy exists.';
+        else {
+          traffic++;
+          msg = holders.length ? `Write to a ${state[core] === 'S' ? 'Shared' : 'missing'} line: invalidate the copies in cores ${holders.join(', ')} first, then write.` : 'Write miss: fetch the line for ownership, then write.';
+          [0, 1, 2].forEach((c) => c !== core && (state[c] = 'I'));
+        }
+        state[core] = 'M';
+      }
+      out.push({ state: [...state], core, op, msg, traffic });
+    }
+    return out;
+  }
+
+  class MesiSteps extends HTMLElement {
+    fr = frames();
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      let s = '';
+      for (let c = 0; c < 3; c++) {
+        const x = 30 + c * 135;
+        s += `<rect class="core${c === f.core ? ' act' : ''}" x="${x}" y="22" width="110" height="108" rx="6" />`;
+        s += `<text class="muted" x="${x + 55}" y="12">core ${c} cache</text>`;
+        s += `<rect class="${f.state[c]}" x="${x + 15}" y="38" width="80" height="52" rx="5" /><text class="big" x="${x + 55}" y="58">${f.state[c]}</text><text class="muted" x="${x + 55}" y="80">${NAMES[f.state[c]]}</text>`;
+        if (c === f.core) s += `<text class="op" x="${x + 55}" y="114">${f.op}</text>`;
+        s += `<line x1="${x + 55}" y1="130" x2="${x + 55}" y2="148" stroke="var(--text-muted)" />`;
+      }
+      s += `<rect class="bus" x="30" y="148" width="380" height="26" rx="5" /><text class="muted" x="220" y="161">interconnect to shared L3 and memory</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · states ${f.state.join(' ')} · interconnect transactions ${f.traffic}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('mesi-steps', MesiSteps);
+</script>

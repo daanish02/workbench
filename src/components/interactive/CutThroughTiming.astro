@@ -1,0 +1,124 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Store-and-forward against cut-through, three switches"
+  caption="One frame travels from a host through three switches to another host over four 10 Gbit/s links. Each row is one link and each bar is the time the frame occupies it. A store-and-forward switch starts sending only after the whole frame has arrived and its FCS checks out; a cut-through switch starts once it has read the 14-byte header. Both add an assumed 300 ns lookup per switch. The yellow line marks the moment the last bit reaches the receiver."
+>
+  <cut-through-timing>
+    <div class="ct-ctl">
+      <input type="hidden" data-mode value="saf" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="saf" aria-pressed="true">Store-and-forward</button>
+        <button type="button" class="btn" data-choice="ct" aria-pressed="false">Cut-through</button>
+      </span>
+      <input type="hidden" data-size value="1500" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="64" aria-pressed="false">64 B</button>
+        <button type="button" class="btn" data-choice="1500" aria-pressed="true">1500 B</button>
+        <button type="button" class="btn" data-choice="9000" aria-pressed="false">9000 B</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">link</span>
+      <svg class="ct-svg" data-svg viewBox="0 0 440 190" role="img" aria-label="Timing of one frame over four links"></svg>
+      <span class="ax-x">time (µs)</span>
+    </div>
+    <p class="ct-stat mono" data-stat></p>
+  </cut-through-timing>
+</Figure>
+
+<style>
+  .ct-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .ct-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ct-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .ct-svg :global(.bar) {
+    fill: rgba(66, 133, 244, 0.35);
+    stroke: var(--g-blue);
+  }
+  .ct-svg :global(.wait) {
+    fill: rgba(234, 67, 53, 0.18);
+    stroke: var(--g-red);
+    stroke-dasharray: 3 3;
+  }
+  .ct-svg :global(.end) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .ct-svg :global(text.row) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ct-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const RATE = 10e3; // bits per µs at 10 Gbit/s
+  const LOOKUP = 0.3; // µs per switch
+  const ROWS = ['host → S1', 'S1 → S2', 'S2 → S3', 'S3 → host'];
+
+  function schedule(bytes: number, mode: string) {
+    const tx = (bytes * 8) / RATE;
+    const head = (14 * 8) / RATE;
+    const bars: { start: number; end: number; waitFrom: number }[] = [];
+    let start = 0;
+    for (let i = 0; i < ROWS.length; i++) {
+      bars.push({ start, end: start + tx, waitFrom: i === 0 ? start : bars[i - 1].start });
+      start = mode === 'saf' ? start + tx + LOOKUP : start + head + LOOKUP;
+    }
+    return bars;
+  }
+
+  class CutThroughTiming extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!.value;
+      const bytes = +this.querySelector<HTMLInputElement>('[data-size]')!.value;
+      const bars = schedule(bytes, mode);
+      const other = schedule(bytes, mode === 'saf' ? 'ct' : 'saf');
+      const total = bars[bars.length - 1].end;
+      const scaleMax = Math.max(total, other[other.length - 1].end);
+      const X0 = 78, X1 = 430;
+      const X = (t: number) => X0 + (t / scaleMax) * (X1 - X0);
+      let s = '';
+      for (const frac of [0, 0.5, 1]) {
+        const x = X(frac * scaleMax);
+        s += `<line class="grid" x1="${x}" y1="8" x2="${x}" y2="168" /><text class="ax-tick" x="${x}" y="182" text-anchor="${frac === 0 ? 'start' : frac === 1 ? 'end' : 'middle'}">${(frac * scaleMax).toFixed(2)}</text>`;
+      }
+      bars.forEach((b, i) => {
+        const y = 14 + i * 40;
+        s += `<text class="row" x="2" y="${y + 12}">${ROWS[i]}</text>`;
+        if (mode === 'saf' && i > 0) s += `<rect class="wait" x="${X(b.waitFrom)}" y="${y + 4}" width="${Math.max(0, X(b.start) - X(b.waitFrom))}" height="16" />`;
+        s += `<rect class="bar" x="${X(b.start)}" y="${y}" width="${Math.max(1, X(b.end) - X(b.start))}" height="24" rx="2" />`;
+      });
+      s += `<line class="end" x1="${X(total)}" y1="6" x2="${X(total)}" y2="170" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const saf = mode === 'saf' ? total : other[other.length - 1].end;
+      const ct = mode === 'ct' ? total : other[other.length - 1].end;
+      this.querySelector('[data-stat]')!.textContent = `${bytes} B · store-and-forward ${saf.toFixed(2)} µs · cut-through ${ct.toFixed(2)} µs · ${(saf / ct).toFixed(1)}× slower`;
+    }
+  }
+  customElements.define('cut-through-timing', CutThroughTiming);
+</script>

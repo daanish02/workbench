@@ -1,0 +1,127 @@
+---
+title: "Drive Failures"
+description: "How often drives fail in real fleets, unreadable sectors and silent corruption, why big RAID 5 rebuilds are risky, and why RAID is not a backup: the 3-2-1-1-0 rule."
+order: 8
+tier: advanced
+takeaways:
+  - "Drives fail at a steady rate: Backblaze's fleet averaged a 1.36% **annualized failure rate** in 2025, about 11 drive failures a day across 300,000 drives."
+  - "Besides whole-drive failures, drives return **unrecoverable read errors**. At the consumer spec of 1 per $10^{14}$ bits, reading 140 TB to rebuild a RAID 5 array has almost no chance of finishing cleanly."
+  - "**Silent corruption** returns wrong data with no error; only end-to-end **checksums** detect it, and **scrubbing** finds it before a second copy is needed."
+  - "RAID survives drive failure only. Deletion, bugs, ransomware and fire reach every online copy, so backups follow **3-2-1-1-0**: 3 copies, 2 media, 1 offsite, 1 offline or immutable, 0 errors in restore tests."
+  - "Set backups by **RPO** (how much recent data you can lose) and **RTO** (how long recovery may take), and test restores, not just backups."
+resources:
+  - title: "Hard drive test data and Drive Stats (Backblaze)"
+    url: "https://www.backblaze.com/cloud-storage/resources/hard-drive-test-data"
+    note: "Quarterly failure rates by drive model from a fleet of hundreds of thousands, with the raw data."
+  - title: "Failure Trends in a Large Disk Drive Population (Pinheiro et al., FAST 2007)"
+    url: "https://research.google/pubs/failure-trends-in-a-large-disk-drive-population/"
+    note: "Google's study of over 100,000 drives: what predicts failure and how often SMART does not."
+  - title: "Data scrubbing (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Data_scrubbing"
+    note: "Periodic read-and-verify passes in RAID controllers and file systems such as ZFS and Btrfs."
+---
+
+[RAID](../raid/) showed how to survive a drive failure. This note asks how often drives actually fail, and in what ways, using real fleet statistics. Whole-drive failure is only one mode: drives also fail to read individual sectors, and occasionally return wrong data without any error at all. Each mode needs a different defence, and some threats (a mistaken delete, ransomware, a fire) are not drive failures at all. The note covers **failure rates**, **unrecoverable read errors** and why large RAID 5 rebuilds are risky, **silent corruption** with checksums and scrubbing, SMART monitoring, and ends with backups: the **3-2-1-1-0** rule and recovery objectives.
+
+## How Often Drives Fail
+
+The most useful public data comes from Backblaze, a backup company that publishes failure statistics for its fleet. Failure rates are reported as an **annualized failure rate (AFR)**: failures divided by drive-years of operation.
+
+```python
+drive_days, failures = 115_638_676, 4_317         # Backblaze Drive Stats, full year 2025
+afr = failures / (drive_days / 365)               # failures per drive-year
+print(f"annualized failure rate: {afr:.2%}")
+for fleet in (12, 1_000, 300_000):
+    print(f"{fleet:>7,} drives: about {fleet * afr:8,.1f} failures a year ({fleet * afr / 365:.2f} a day)")
+# annualized failure rate: 1.36%
+#      12 drives: about      0.2 failures a year (0.00 a day)
+#   1,000 drives: about     13.6 failures a year (0.04 a day)
+# 300,000 drives: about  4,087.8 failures a year (11.20 a day)
+```
+
+In words: across 115.6 million drive-days in 2025, 4,317 drives failed, an AFR of 1.36%. A home NAS with 12 drives sees a failure every few years; a company with 1,000 drives replaces about 14 a year; a fleet of 300,000 replaces about 11 every day, so at scale failure is routine and replacement is a scheduled job. Rates vary several-fold between drive models and rise with age, and failures cluster in time: drives bought together, from one batch, running in one enclosure, tend to fail together.
+
+## Unreadable Sectors
+
+A drive can be healthy and still fail to read one sector: the error-correcting code cannot recover it, and the read returns an error. Datasheets quote the **unrecoverable read error rate (URE)**, often 1 per $10^{14}$ bits for consumer drives and 1 per $10^{15}$ for enterprise drives. That matters during a RAID 5 rebuild, which must read every surviving drive in full and has no redundancy left to fix a bad sector:
+
+```python
+import math
+
+read_tb = 7 * 20                                  # RAID 5 rebuild of eight 20 TB drives reads the other seven
+bits = read_tb * 1e12 * 8
+for spec, rate in [("consumer, 1 per 1e14 bits", 1e-14), ("enterprise, 1 per 1e15 bits", 1e-15)]:
+    clean = math.exp(-bits * rate)               # chance of reading everything without one unreadable sector
+    print(f"{spec}: {clean:.4%} chance the rebuild reads all {read_tb} TB cleanly")
+
+afr, days, others = 0.0136, 2, 7                  # a second drive failing during a 2-day rebuild
+p_second = 1 - (1 - afr * days / 365) ** others
+print(f"second whole-drive failure during the rebuild: {p_second:.3%}")
+# consumer, 1 per 1e14 bits: 0.0014% chance the rebuild reads all 140 TB cleanly
+# enterprise, 1 per 1e15 bits: 32.6280% chance the rebuild reads all 140 TB cleanly
+# second whole-drive failure during the rebuild: 0.052%
+```
+
+In words: if drives really failed one read in $10^{14}$ bits, reading 140 TB would almost certainly hit an unreadable sector (0.0014% chance of a clean pass); at the enterprise figure the chance of a clean rebuild is still only 32.6%. A second whole-drive failure during a two-day rebuild is far less likely, 0.052%, assuming independence. The datasheet URE is a guaranteed upper bound and real drives usually do much better, but the conclusion is why large arrays use RAID 6 or erasure coding: a second parity can repair the unreadable sector that RAID 5 cannot. A good RAID implementation also loses only the affected stripe, not the whole array.
+
+## Silent Corruption
+
+Worse than an error is wrong data with no error. Firmware bugs, misdirected writes (data written to the wrong sector), bit flips in RAM or on a cable, and flash cells that drift can all return a block that reads fine but is not what was written. RAID alone cannot tell which copy is right: a mirror with two different blocks gives no hint which one is correct.
+
+The defence is **end-to-end checksums**: the file system (ZFS, Btrfs) or application stores a checksum of each block separately from the block, verifies it on every read, and on a mismatch reads the redundant copy and repairs the bad one. **Scrubbing** reads every block periodically (often monthly) to find latent errors while redundancy still exists, instead of discovering them during a rebuild.
+
+**SMART** (self-monitoring, analysis and reporting technology) counters such as reallocated sectors and pending sectors give some warning: drives with rising counts are much more likely to fail. They are not reliable alone: in Google's 2007 study of over 100,000 drives, more than half of the failed drives showed no warning in the strongest SMART signals.
+
+## RAID Is Not a Backup
+
+RAID, replication and snapshots on the same system protect **availability**: the service keeps running when hardware fails. They do not protect the **data** against most of the ways it is actually lost, because every redundant copy faithfully receives the same change:
+
+- a user or script **deletes** or overwrites files: the deletion is mirrored instantly;
+- a **software bug** writes corrupt data: the corruption is replicated;
+- **ransomware** encrypts everything the compromised account can reach, including network shares and synced cloud folders;
+- a **fire, flood or theft** takes every copy in the building.
+
+A **backup** is a separate copy that these events cannot reach at the same time. The widely used rule, extended from the original 3-2-1:
+
+- **3** copies of the data (the original plus two backups),
+- on **2** different kinds of media or systems,
+- **1** copy offsite,
+- **1** copy offline, air-gapped or **immutable** (write-once storage that even an administrator cannot delete before a set date),
+- **0** errors when restores are tested.
+
+<BackupThreats />
+
+The same reasoning in numbers, with illustrative yearly probabilities:
+
+```python
+p_device = 0.02                                   # chance per year that one copy is lost to its own device or mistake
+p_site = 0.001                                    # chance per year of losing a whole site (fire, flood, theft)
+p_ransom = 0.01                                   # chance per year that ransomware encrypts everything it can reach
+
+def loss(copies_same_site, offsite, offline):
+    independent = p_device ** (copies_same_site + offsite + offline)
+    site = p_site if offsite + offline == 0 else 0           # one disaster takes every copy at that site
+    ransom = p_ransom if offline == 0 else 0                 # online copies are all reachable by the attacker
+    return 1 - (1 - independent) * (1 - site) * (1 - ransom)
+
+for label, args in [("3 copies, one site, all online", (3, 0, 0)), ("2 on site + 1 offsite, online", (2, 1, 0)), ("2 on site + 1 offsite + 1 offline", (2, 1, 1))]:
+    print(f"{label:34} chance of losing everything in a year: {loss(*args):.1e}")
+# 3 copies, one site, all online     chance of losing everything in a year: 1.1e-02
+# 2 on site + 1 offsite, online      chance of losing everything in a year: 1.0e-02
+# 2 on site + 1 offsite + 1 offline  chance of losing everything in a year: 1.6e-07
+```
+
+In words: three copies that fail independently would almost never all be lost (0.02 cubed is 8 in a million), but with all of them online at one site, the shared threats dominate and the yearly risk is 1.1%. Moving one copy offsite removes the fire risk but barely helps (1.0%), because ransomware still reaches it. Adding one offline copy removes the shared threats, and the risk falls to $1.6 \times 10^{-7}$. The exact probabilities are made up; the lesson is not: **correlated** failures, not independent ones, decide whether data survives.
+
+Two numbers set a backup plan:
+
+- **RPO** (recovery point objective): how much recent data you can afford to lose, which sets how often backups run. Nightly backups mean an RPO of up to 24 hours.
+- **RTO** (recovery time objective): how long restoring may take. Restoring 100 TB from tape or a cold cloud tier can take days ([Storage Hierarchy](../the-storage-hierarchy/)).
+
+<Callout type="pitfall">
+A backup that has never been restored is a hope, not a backup. Backup jobs that report success can still produce unreadable archives, miss new directories, depend on a decryption key stored only on the lost system, or take far longer to restore than the RTO allows. The final "0" in 3-2-1-1-0 means regular, timed test restores.
+</Callout>
+
+<Callout type="key">
+Drives fail steadily (about 1.4% a year), sectors go unreadable, and occasionally data goes silently wrong. Redundancy with checksums and scrubbing handles hardware; only independent copies, including one offline and one offsite, handle the people, software and disasters that every online copy shares.
+</Callout>

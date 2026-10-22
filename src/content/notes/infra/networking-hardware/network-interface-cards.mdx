@@ -1,8 +1,181 @@
 ---
-title: "NICs & Switches"
-description: "What each networking device does, physically, and how they differ."
-order: 2
+title: "Network Interface Cards"
+description: "How a NIC turns signals into frames in memory: PHY and MAC, descriptor rings and DMA, interrupt coalescing, offloads and multiple queues."
+order: 3
 tier: core
+takeaways:
+  - "A **NIC** has a **PHY** (signals on the medium), a **MAC** (frames, FCS, address filtering), and a **DMA engine** on PCIe that moves frames to and from host memory without the CPU copying them."
+  - "The driver and NIC share **descriptor rings** in RAM: the driver posts empty buffers, the NIC fills them and marks them done. A full ring means the NIC **drops** frames before any software sees them."
+  - "One interrupt per packet cannot keep up (10 Gbit/s of 64 B frames is 14.88 million per second). **Interrupt coalescing** and **NAPI** polling batch the work, trading a few microseconds of latency for far less CPU."
+  - "**Offloads** move per-packet work into hardware: checksums, **TSO** (one 64 KiB send becomes 46 segments on the NIC), and receive coalescing."
+  - "**RSS** hashes each flow's addresses and ports to one of many queues, each served by its own core; one flow always lands on one queue, so a single big flow cannot use more than one core."
+resources:
+  - title: "Monitoring and Tuning the Linux Networking Stack: Receiving Data (packagecloud)"
+    url: "https://packagecloud.io/blog/monitoring-tuning-linux-networking-stack-receiving-data/"
+    note: "A long walk from the NIC's DMA to the socket, with the driver code, counters and tuning knobs at each step."
+  - title: "Scaling in the Linux Networking Stack (kernel docs)"
+    url: "https://docs.kernel.org/networking/scaling.html"
+    note: "RSS, RPS, RFS and XPS: how packets are spread across queues and cores."
+  - title: "NAPI (kernel docs)"
+    url: "https://docs.kernel.org/networking/napi.html"
+    note: "The interrupt-then-poll model every modern Linux NIC driver uses."
 ---
 
-_Placeholder. Content not written yet._
+A **network interface card (NIC)** is where a network meets a computer. On one side it speaks the medium from [Transmission Media](../physical-transmission-media/): voltages on copper or light in fibre. On the other side it speaks the computer's I/O bus and memory. Its job is to move frames between the two fast enough that the link, not the host, sets the speed, and to do it without asking the CPU for help on every frame. This note follows a frame through a NIC: the PHY and MAC, the PCIe link, the **descriptor rings** it shares with the driver, **interrupt coalescing**, **offloads**, and **multiple queues**. It assumes the frame format from [Link Layer](../../../cs/networks/link-layer/) and the ideas of interrupts and DMA from [I/O Management](../../../cs/operating-systems/io-management/).
+
+## What Is on a NIC
+
+A NIC may be a plug-in card, a chip on the motherboard, or a block inside a system-on-chip, but it has the same parts:
+
+- **PHY** (physical layer chip): encodes and decodes symbols on the medium (NRZ, PAM4, line coding), recovers the clock from the incoming signal, and negotiates the link speed. Its **SerDes** (serializer/deserializer) converts between the wide parallel data used inside the chip and the single fast serial stream on each lane. On fibre or DAC ports the optical part sits in the pluggable transceiver.
+- **MAC** (media access controller): assembles and checks frames: adds the preamble and FCS on transmit, checks the FCS on receive, and discards frames not addressed to this interface's MAC address (unless the NIC is in **promiscuous mode**, as packet capture tools request).
+- **DMA engine and host interface**: reads and writes host memory directly over **PCIe**, so frame bytes never pass through the CPU's registers.
+- **Queues, buffers and firmware**: a small amount of on-chip memory to absorb bursts, the logic for offloads, and firmware running on a small embedded processor.
+
+The PCIe slot must be at least as fast as the network port, or the slot becomes the bottleneck:
+
+```python
+GENS = {3: 8, 4: 16, 5: 32}                      # PCIe generation -> gigatransfers per second per lane
+
+def pcie_gbps(gen, lanes):
+    return GENS[gen] * 128 / 130 * lanes         # 128b/130b encoding since PCIe 3.0; one direction
+
+for nic_gbps, gen, lanes in [(100, 3, 16), (200, 3, 16), (200, 4, 16), (400, 4, 16), (400, 5, 16)]:
+    slot = pcie_gbps(gen, lanes)
+    verdict = "fits" if slot >= nic_gbps else "bottleneck"
+    print(f"{nic_gbps}G NIC in PCIe {gen}.0 x{lanes}: slot {slot:5.1f} Gbit/s -> {verdict}")
+# 100G NIC in PCIe 3.0 x16: slot 126.0 Gbit/s -> fits
+# 200G NIC in PCIe 3.0 x16: slot 126.0 Gbit/s -> bottleneck
+# 200G NIC in PCIe 4.0 x16: slot 252.1 Gbit/s -> fits
+# 400G NIC in PCIe 4.0 x16: slot 252.1 Gbit/s -> bottleneck
+# 400G NIC in PCIe 5.0 x16: slot 504.1 Gbit/s -> fits
+```
+
+In words: each PCIe generation doubles the per-lane rate, and network ports have kept pace with it: 100 Gbit/s fits a PCIe 3.0 x16 slot (126.0 Gbit/s), 200 Gbit/s needs PCIe 4.0, and 400 Gbit/s needs PCIe 5.0. These are raw figures; PCIe packet headers and the descriptor traffic described below take another few percent to tens of percent, so the margin matters. [System Buses](../../computer-organization/system-buses/) covers PCIe itself.
+
+## Descriptor Rings
+
+The NIC and the driver communicate through memory, not through a function call. For each direction the driver allocates a **descriptor ring**: an array in RAM, used in a circle, where each **descriptor** holds the address and length of a packet buffer plus a few status bits. Receiving works like this:
+
+1. **Post.** The driver allocates empty buffers, writes their addresses into descriptors, and tells the NIC how far the ring is filled by writing a NIC register mapped into memory (a **doorbell**).
+2. **DMA.** A frame arrives. The MAC checks it, then the DMA engine writes it into the next posted buffer and writes the frame length and status (FCS good, checksum good, which VLAN) into the descriptor.
+3. **Signal.** The NIC raises an interrupt, or the driver finds the descriptor marked done the next time it looks.
+4. **Process and refill.** The driver hands the buffer to the kernel's network stack, puts a fresh empty buffer in that slot, and rings the doorbell again.
+
+Transmit is the mirror image: the driver fills descriptors pointing at outgoing frames and rings the doorbell; the NIC DMAs them out, sends them, and marks the descriptors complete so the driver can free the buffers.
+
+The ring decouples the two sides: the NIC can receive a burst while the CPU is busy, as long as there are posted buffers. When the ring has no empty buffer left, the NIC has nowhere to put the next frame and **drops** it. Step through a burst:
+
+<RxRingSteps />
+
+How big the ring needs to be depends on how bursty the traffic is compared with how fast the driver drains it:
+
+```python
+def run_ring(arrivals, ring_size, budget):
+    """Frames arrive per tick; the driver can take `budget` frames per tick from the ring."""
+    waiting = dropped = 0
+    for n in arrivals:
+        space = ring_size - waiting
+        accepted = min(n, space)                 # the NIC needs a free descriptor for every frame
+        dropped += n - accepted
+        waiting += accepted
+        waiting -= min(waiting, budget)          # driver processes, then refills those descriptors
+    return dropped
+
+burst = [2, 2, 12, 12, 2, 2, 2, 2]               # a burst of 24 frames in two ticks
+for size in (8, 16, 32):
+    print(f"ring of {size:2} descriptors: {run_ring(burst, size, budget=4):2} frames dropped of {sum(burst)}")
+# ring of  8 descriptors: 12 frames dropped of 36
+# ring of 16 descriptors:  4 frames dropped of 36
+# ring of 32 descriptors:  0 frames dropped of 36
+```
+
+In words: the driver keeps up with the average rate (4.5 frames per tick against a budget of 4 is close), but the 24-frame burst overflows a ring of 8 and loses 12 frames, a third of the traffic. A ring of 32 absorbs the burst completely. Real rings hold hundreds to a few thousand descriptors, and the size is a tuning knob (`ethtool -G` on Linux). Bigger rings absorb bigger bursts but use more memory and can let a queue, and its latency, grow.
+
+<Callout type="pitfall">
+Frames dropped because the ring was full never reach the kernel, so they do not show up in application logs, socket statistics or most monitoring. They appear only in the NIC's own counters (`rx_missed_errors`, `rx_no_buffer_count` or similar in `ethtool -S`). "The network is losing packets" is sometimes a host that cannot drain its NIC during bursts.
+</Callout>
+
+## Fewer Interrupts, Bigger Batches
+
+The simple design raises one interrupt per frame. At high rates that is hopeless:
+
+```python
+pps = 1e9 / ((8 + 64 + 12) * 8) * 10             # minimum-size frames at 10 Gbit/s
+print(f"10 Gbit/s of 64 B frames: {pps:,.0f} frames per second")
+
+cost_us = 1.0                                     # assumed CPU cost of one interrupt, a round number
+for frames_per_irq in (1, 16, 64):
+    irqs = pps / frames_per_irq
+    cpu = irqs * cost_us / 1e6                    # CPU-seconds per second spent on interrupt entry alone
+    wait_us = (frames_per_irq - 1) / pps * 1e6    # the first frame of a batch waits for the last
+    print(f"{frames_per_irq:2} frames per interrupt: {irqs:12,.0f} irq/s, {cpu:5.2f} cores busy, first frame waits {wait_us:.2f} us")
+# 10 Gbit/s of 64 B frames: 14,880,952 frames per second
+#  1 frames per interrupt:   14,880,952 irq/s, 14.88 cores busy, first frame waits 0.00 us
+# 16 frames per interrupt:      930,060 irq/s,  0.93 cores busy, first frame waits 1.01 us
+# 64 frames per interrupt:      232,515 irq/s,  0.23 cores busy, first frame waits 4.23 us
+```
+
+In words: a 10 Gbit/s link can deliver 14.88 million minimum-size frames per second. If each interrupt cost even 1 µs of CPU time, one interrupt per frame would need almost 15 cores just to enter and leave interrupt handlers. Batching 64 frames per interrupt cuts that to 0.23 of a core, and the price is latency: the first frame of a batch waits 4.23 µs for the rest at full rate.
+
+Two mechanisms do the batching:
+
+- **Interrupt coalescing** in the NIC: raise an interrupt only after $N$ frames or $T$ microseconds, whichever comes first (`ethtool -C`, settings such as `rx-frames` and `rx-usecs`). The timer bounds the extra latency when traffic is light. Many NICs adapt $N$ and $T$ to the current rate automatically.
+- **NAPI** in the Linux driver: the first interrupt switches the queue to **polling**. The driver masks that queue's interrupt and processes up to a **budget** of frames per poll (64 by default), polling again while frames keep coming. Only when the ring is empty does it re-enable the interrupt. Under load, interrupts almost disappear; when idle, the first frame still gets a prompt interrupt.
+
+The interrupt itself is an electrical or PCIe message (MSI-X, one per queue) delivered to a chosen core; [Hardware Interrupts](../../computer-organization/interrupts-at-the-hardware-level/) covers that mechanism.
+
+## Offloads
+
+Some per-packet work is simple, repetitive and easy to put in hardware, so NICs take it over from the CPU:
+
+- **Checksum offload**: the NIC computes the IP, TCP and UDP checksums on transmit and verifies them on receive, setting a "checksum good" bit in the descriptor.
+- **TCP segmentation offload (TSO)**: the kernel hands the NIC one large chunk and a header template, and the NIC cuts it into wire-size segments, writing each segment's headers, sequence numbers and checksums.
+- **Receive coalescing (LRO in hardware, GRO in software)**: consecutive segments of one TCP flow are merged into one large buffer before the stack sees them, so the stack processes one big packet instead of dozens of small ones.
+- **VLAN tag insertion and stripping**, timestamping for clock synchronisation (PTP), and encryption (TLS or IPsec offload) on some NICs.
+
+```python
+import math
+
+mss = 1448                                        # TCP payload per segment with timestamps on a 1500 B MTU
+headers = 14 + 20 + 32                            # Ethernet + IPv4 + TCP with the timestamp option
+write = 64 * 1024                                 # one large send handed to the NIC
+segments = math.ceil(write / mss)
+print(f"TSO: one 64 KiB send becomes {segments} segments on the wire")
+print(f"headers the NIC builds instead of the CPU: {segments} x {headers} B = {segments * headers} B")
+# TSO: one 64 KiB send becomes 46 segments on the wire
+# headers the NIC builds instead of the CPU: 46 x 66 B = 3036 B
+```
+
+In words: with TSO the network stack runs once per 64 KiB instead of 46 times, and the NIC writes the 46 headers itself. The bytes saved are small; the win is 45 fewer trips through the protocol code per send.
+
+## Many Queues for Many Cores
+
+One ring served by one core caps a host at what one core can process. Modern NICs have many **queue pairs** (one receive and one transmit ring each), often one per core, each with its own interrupt. On receive, the NIC must decide which queue each frame goes to, and it must keep all frames of one connection on the same queue, or they would be processed in parallel and could be delivered out of order.
+
+**Receive-side scaling (RSS)** does this by hashing the flow's **5-tuple** (source and destination address, source and destination port, protocol) and using the hash to pick a queue:
+
+```python
+import zlib
+from collections import Counter
+
+def queue_for(flow, n_queues):
+    # real NICs use a keyed Toeplitz hash; any hash of the 5-tuple shows the idea
+    return zlib.crc32(repr(flow).encode()) % n_queues
+
+flows = [("10.0.0.2", 40000 + i, "10.0.0.9", 443, "tcp") for i in range(1000)]
+load = Counter(queue_for(f, 4) for f in flows)
+print("flows per queue:", [load[q] for q in range(4)])
+one = flows[7]
+print("same flow, same queue every time:", {queue_for(one, 4) for _ in range(5)})
+# flows per queue: [250, 250, 250, 250]
+# same flow, same queue every time: {1}
+```
+
+In words: 1000 connections spread evenly, 250 per queue, while each connection always maps to the same queue, which keeps its packets in order and its state warm in one core's cache. Real NICs hash into an **indirection table** that the operating system can edit to move load between cores, and some can steer a flow to the core where its application runs.
+
+<Callout type="key">
+RSS spreads **flows**, not packets. Many small connections (a web server) scale across all cores. One huge connection (a single backup stream) stays on one queue and one core, however many the NIC has, so its speed is capped by what one core can process. Multiple parallel streams are the usual fix.
+</Callout>
+
+All of this still runs every packet through the kernel. When even that is too slow, the next step is to let applications or the NIC itself take over the data path, covered in [RDMA & SmartNICs](../rdma-and-smartnics/).

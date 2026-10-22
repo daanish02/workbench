@@ -1,0 +1,132 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Leaf-spine: every leaf one hop from every spine"
+  caption="Six leaf switches (top-of-rack, bottom row) each connect to all four spine switches (top row); servers hang off the leaves. Traffic between servers on different leaves takes leaf → spine → leaf, and there is one equal-cost path through each spine (yellow). Fail a spine: its links turn red, the remaining paths still connect every pair, and only a quarter of the leaf-to-leaf capacity is lost."
+>
+  <leaf-spine>
+    <div class="ls-ctl">
+      <input type="hidden" data-dst value="far" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="same" aria-pressed="false">Same rack</button>
+        <button type="button" class="btn" data-choice="far" aria-pressed="true">Other rack</button>
+      </span>
+      <input type="checkbox" hidden data-fail />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Fail spine 2</button>
+    </div>
+    <svg class="ls-svg" data-svg viewBox="0 0 440 230" role="img" aria-label="Leaf-spine network with equal-cost paths"></svg>
+    <p class="ls-stat mono" data-stat></p>
+  </leaf-spine>
+</Figure>
+
+<style>
+  .ls-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 8px;
+  }
+  .ls-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .ls-svg :global(line) {
+    stroke: var(--border-strong);
+    stroke-width: 1.2;
+  }
+  .ls-svg :global(line.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .ls-svg :global(line.dead) {
+    stroke: var(--g-red);
+    stroke-dasharray: 4 3;
+    opacity: 0.7;
+  }
+  .ls-svg :global(rect.base) {
+    fill: var(--bg);
+  }
+  .ls-svg :global(rect.sw) {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+  }
+  .ls-svg :global(rect.sw.spine) {
+    fill: rgba(66, 133, 244, 0.28);
+  }
+  .ls-svg :global(rect.sw.down) {
+    fill: rgba(234, 67, 53, 0.22);
+    stroke: var(--g-red);
+  }
+  .ls-svg :global(rect.srv) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .ls-svg :global(rect.srv.end) {
+    fill: rgba(52, 168, 83, 0.3);
+    stroke: var(--g-green);
+  }
+  .ls-svg :global(text) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .ls-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const SPINES = 4, LEAVES = 6;
+  const sx = (i: number) => 70 + i * 100;
+  const lx = (i: number) => 40 + i * 72;
+  const SY = 30, LY = 150, VY = 205;
+
+  class LeafSpine extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const far = this.querySelector<HTMLInputElement>('[data-dst]')!.value === 'far';
+      const fail = this.querySelector<HTMLInputElement>('[data-fail]')!.checked;
+      const src = 0, dst = far ? 4 : 0;
+      const alive = (s: number) => !(fail && s === 1);
+      let s = '';
+      for (let sp = 0; sp < SPINES; sp++) {
+        for (let l = 0; l < LEAVES; l++) {
+          const on = far && alive(sp) && (l === src || l === dst);
+          const cls = !alive(sp) ? 'dead' : on ? 'on' : '';
+          s += `<line class="${cls}" x1="${sx(sp)}" y1="${SY + 14}" x2="${lx(l)}" y2="${LY - 12}" />`;
+        }
+      }
+      for (let l = 0; l < LEAVES; l++) {
+        for (let k = 0; k < 2; k++) {
+          const x = lx(l) - 12 + k * 24;
+          const isEnd = (l === src && k === 0) || (l === dst && k === (far ? 0 : 1));
+          s += `<line class="${isEnd ? 'on' : ''}" x1="${lx(l)}" y1="${LY + 12}" x2="${x}" y2="${VY - 9}" />`;
+          s += `<rect class="base" x="${x - 9}" y="${VY - 9}" width="18" height="18" rx="3" /><rect class="srv${isEnd ? ' end' : ''}" x="${x - 9}" y="${VY - 9}" width="18" height="18" rx="3" />`;
+        }
+      }
+      for (let sp = 0; sp < SPINES; sp++) {
+        s += `<rect class="base" x="${sx(sp) - 30}" y="${SY - 14}" width="60" height="28" rx="5" /><rect class="sw spine${alive(sp) ? '' : ' down'}" x="${sx(sp) - 30}" y="${SY - 14}" width="60" height="28" rx="5" /><text x="${sx(sp)}" y="${SY}">spine ${sp + 1}</text>`;
+      }
+      for (let l = 0; l < LEAVES; l++) {
+        s += `<rect class="base" x="${lx(l) - 26}" y="${LY - 12}" width="52" height="24" rx="5" /><rect class="sw" x="${lx(l) - 26}" y="${LY - 12}" width="52" height="24" rx="5" /><text x="${lx(l)}" y="${LY}">leaf ${l + 1}</text>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const live = SPINES - (fail ? 1 : 0);
+      this.querySelector('[data-stat]')!.textContent = far
+        ? `leaf 1 → leaf 5 · 3 switch hops · ${live} equal-cost paths · leaf-to-leaf capacity ${Math.round((live / SPINES) * 100)}%`
+        : `same leaf · 1 switch hop · traffic never reaches the spines`;
+    }
+  }
+  customElements.define('leaf-spine', LeafSpine);
+</script>

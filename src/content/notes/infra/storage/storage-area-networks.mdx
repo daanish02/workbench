@@ -1,8 +1,113 @@
 ---
 title: "SAN & NAS"
-description: "Storage as a shared network resource, and how SANs provide it."
-order: 6
+description: "Storage as a shared network resource: direct-attached vs NAS vs SAN, the protocols (NFS, SMB, iSCSI, Fibre Channel, NVMe-oF), storage arrays, and scale-out distributed storage."
+order: 9
 tier: core
+takeaways:
+  - "**DAS** puts drives inside one server; a **NAS** serves **files** over the network (NFS, SMB); a **SAN** serves **blocks**, so each server runs its own file system on a remote volume."
+  - "Block protocols carry SCSI or NVMe commands over a network: **Fibre Channel** (a dedicated lossless fabric), **iSCSI** (over TCP/IP), and **NVMe over Fabrics** (RDMA or TCP), which adds the least latency."
+  - "Networks are the new bottleneck: two NVMe SSDs fill a 100 Gbit/s link, against 45 hard drives."
+  - "**Storage arrays** add dual controllers, caches, multipathing, snapshots and thin provisioning on top of RAID."
+  - "**Scale-out** systems (Ceph, cloud block and object stores) spread data over many commodity servers by hashing, so adding a sixth node moves only about a sixth of the data."
+resources:
+  - title: "Storage area network (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Storage_area_network"
+    note: "SAN architecture, Fibre Channel and IP SANs, zoning and LUN masking."
+  - title: "Network-attached storage (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Network-attached_storage"
+    note: "NAS appliances, protocols and how they differ from SANs."
+  - title: "Ceph architecture (Ceph docs)"
+    url: "https://docs.ceph.com/en/latest/architecture/"
+    note: "A production scale-out system serving block, file and object storage from the same cluster, with CRUSH placement."
 ---
 
-_Placeholder. Content not written yet._
+So far every drive in this section has been attached to one computer. Data centres rarely work that way: a virtual machine moves between hosts and its disk must follow, a database fails over to a standby that needs the same data, and spare capacity stranded in one server cannot help another. The answer is to put storage on a network. This note compares **direct-attached storage**, **NAS** and **SAN**, the protocols each uses, what a storage array adds, and how large systems scale out across many servers. [Storage Models](../../../cs/cloud/storage-models/) covers block, file and object storage as interfaces; this note covers the hardware and protocols underneath, building on [Storage Interfaces](../storage-interfaces/) and [Data Center Topologies](../../networking-hardware/data-center-networking-topologies/).
+
+## DAS, NAS, SAN
+
+The three options differ in where the **file system** runs, which decides what travels over the network:
+
+- **Direct-attached storage (DAS)**: drives inside or cabled directly to one server. Fastest and simplest, but capacity is stranded: it serves only that server.
+- **Network-attached storage (NAS)**: a storage box runs the file system and serves **files** over an ordinary network. Many clients can open the same files at once; the NAS handles locking and permissions.
+- **Storage area network (SAN)**: a storage array serves **blocks**. Each server sees a remote volume (a **LUN**, logical unit) as if it were a local disk and runs its own file system on it. Two servers writing the same volume with ordinary file systems would corrupt it, so a volume is used by one server at a time unless a cluster file system coordinates them.
+
+<SanNasPaths />
+
+## File Protocols: NFS and SMB
+
+A NAS speaks file-level protocols: **NFS** (Network File System), the norm on Linux and Unix, and **SMB** (Server Message Block), the norm on Windows and also widely used by macOS. Requests are operations such as open, read a range of a file, write, rename, lock. Because the server owns the file system, it can serve many clients consistently, take snapshots of whole directory trees and enforce permissions in one place. The cost is extra work per operation on the server and more round trips for metadata-heavy workloads (many small files).
+
+## Block Protocols: FC, iSCSI, NVMe-oF
+
+A SAN carries the same block commands a local drive receives, wrapped in a network protocol:
+
+- **Fibre Channel (FC)**: a separate network technology built for storage, with its own switches and host bus adapters, credit-based flow control so frames are never dropped, and speeds of 32 and 64 Gbit/s per port. Reliable and predictable, but a second network to buy and run.
+- **iSCSI**: SCSI commands inside TCP/IP, over ordinary Ethernet. Cheaper and routable, at the cost of TCP processing and more latency.
+- **NVMe over Fabrics (NVMe-oF)**: the NVMe command set and its many queues carried over RDMA (RoCE, InfiniBand), TCP or Fibre Channel. It keeps the queue design from [Storage Interfaces](../storage-interfaces/) end to end and adds the least overhead ([RDMA & SmartNICs](../../networking-hardware/rdma-and-smartnics/)).
+
+The network adds latency on top of the device. With assumed typical costs:
+
+```python
+# assumed typical costs in microseconds for one 4 KiB random read
+paths = {
+    "local NVMe":             {"device": 80},
+    "NVMe over RDMA":         {"device": 80, "network round trip": 10, "protocol stack": 5},
+    "NVMe over TCP":          {"device": 80, "network round trip": 10, "protocol stack": 25},
+    "iSCSI":                  {"device": 80, "network round trip": 10, "protocol stack": 60},
+}
+for name, parts in paths.items():
+    print(f"{name:16} {sum(parts.values()):4} us  " + " + ".join(f"{k} {v}" for k, v in parts.items()))
+# local NVMe         80 us  device 80
+# NVMe over RDMA     95 us  device 80 + network round trip 10 + protocol stack 5
+# NVMe over TCP     115 us  device 80 + network round trip 10 + protocol stack 25
+# iSCSI             150 us  device 80 + network round trip 10 + protocol stack 60
+```
+
+In words: with these assumptions, NVMe over RDMA adds only 15 µs to an 80 µs flash read, NVMe over TCP 35 µs, and iSCSI 70 µs, almost doubling it. For hard drives, whose reads take milliseconds, any of these overheads is negligible; for flash, the protocol matters, which is why NVMe-oF replaced iSCSI for fast storage. Bandwidth matters just as much:
+
+```python
+link_gb_s = 100 / 8                              # one 100 Gbit/s port, in GB/s
+for drive, gb_s in [("7200 rpm HDD", 0.28), ("SATA SSD", 0.55), ("NVMe SSD (PCIe 4.0)", 7.0)]:
+    print(f"{drive:20} {link_gb_s / gb_s:5.1f} drives fill a 100 Gbit/s link")
+# 7200 rpm HDD          44.6 drives fill a 100 Gbit/s link
+# SATA SSD              22.7 drives fill a 100 Gbit/s link
+# NVMe SSD (PCIe 4.0)    1.8 drives fill a 100 Gbit/s link
+```
+
+In words: a 100 Gbit/s port carries what 44.6 hard drives can stream but only 1.8 NVMe SSDs. A storage server with 24 NVMe drives can produce far more than its network ports can send, so flash-based storage needs multiple fast ports and non-blocking fabrics.
+
+## Storage Arrays
+
+A SAN or enterprise NAS is usually a **storage array**: a chassis of drives with two **controllers** (each able to take over if the other fails), large mirrored caches with battery or flash backup, and software for RAID or erasure coding, **snapshots** (instant point-in-time copies made by copy-on-write), **thin provisioning** (volumes that consume space only as data is written), replication to another site, and deduplication and compression. Servers reach it over two independent paths through two switches, and **multipathing** software uses both and survives the loss of either.
+
+<Callout type="pitfall">
+**Thin provisioning** lets an array promise more capacity than it has, which is efficient until every volume grows at once. If the pool fills, writes fail for every volume on it at the same moment, which file systems and databases often treat as a crash. Thinly provisioned pools need monitoring and alerts long before they are full, and TRIM/UNMAP from hosts to return freed space.
+</Callout>
+
+## Scale-Out Storage
+
+The alternative to a big array is many ordinary servers, each with its own drives, running software that makes them look like one storage system: **scale-out** or **software-defined storage**. Ceph, HDFS and the block and object services of cloud providers work this way. Data is split into objects or chunks, replicated or erasure-coded ([RAID](../raid/)) across servers in different racks, and located by computing a hash rather than looking it up in a central table. A good placement function moves little data when servers are added:
+
+```python
+import hashlib
+
+def owner(obj, nodes):
+    # rendezvous hashing: every node scores the object; the highest score stores it
+    return max(nodes, key=lambda n: hashlib.sha256(f"{n}:{obj}".encode()).digest())
+
+objects = [f"obj-{i}" for i in range(10_000)]
+before = {o: owner(o, ["n1", "n2", "n3", "n4", "n5"]) for o in objects}
+after = {o: owner(o, ["n1", "n2", "n3", "n4", "n5", "n6"]) for o in objects}
+counts = {n: list(after.values()).count(n) for n in sorted(set(after.values()))}
+moved = sum(before[o] != after[o] for o in objects)
+print("objects per node after adding n6:", counts)
+print(f"objects that moved: {moved} ({moved / len(objects):.1%}), all of them to n6: {all(after[o] == 'n6' for o in objects if before[o] != after[o])}")
+# objects per node after adding n6: {'n1': 1712, 'n2': 1703, 'n3': 1635, 'n4': 1642, 'n5': 1591, 'n6': 1717}
+# objects that moved: 1717 (17.2%), all of them to n6: True
+```
+
+In words: with **rendezvous hashing**, 10,000 objects spread roughly evenly over six nodes (1,591 to 1,717 each), and adding the sixth node moved 17.2% of them, close to the ideal one sixth, all onto the new node; nothing shuffled between the old ones. Ceph's CRUSH algorithm works on the same principle, adding awareness of racks and failure domains so that replicas never share a rack. The same idea underlies consistent hashing in distributed databases and caches. **Hyperconverged** systems go one step further and run this storage software on the same servers that run the virtual machines.
+
+<Callout type="key">
+Networked storage separates where data lives from where it is used. A NAS shares files and keeps the file system central; a SAN shares blocks and leaves the file system to each server; scale-out systems spread both across many machines by hashing. As drives got faster, the network and protocol became the part to engineer: NVMe-oF and fast fabrics exist because flash outran iSCSI and 10 Gbit/s links.
+</Callout>

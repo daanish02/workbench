@@ -1,8 +1,161 @@
 ---
-title: "HDD vs SSD"
-description: "How hard drives and SSDs physically store and retrieve data."
-order: 2
+title: "Flash & SSDs"
+description: "How NAND flash stores bits, why it writes pages but erases blocks, and how an SSD's controller hides that with an FTL, garbage collection and wear levelling."
+order: 3
 tier: core
+takeaways:
+  - "A **NAND flash** cell stores bits as trapped charge; **SLC, MLC, TLC, QLC** store 1 to 4 bits per cell by distinguishing 2 to 16 charge levels, trading endurance and speed for density."
+  - "Flash reads and writes **pages** (kilobytes) but erases only whole **blocks** (megabytes), and a page cannot be rewritten until its block is erased."
+  - "The controller's **FTL** writes every update to a fresh page and remaps it; **garbage collection** later copies valid pages out of a block and erases it. Those copies are **write amplification**: 1.26 at 50% full, 19.08 at 95% in this note's simulation."
+  - "Cells wear out after a limited number of program/erase cycles; **wear levelling** spreads writes, and endurance is rated in TB written or drive writes per day."
+  - "**TRIM** tells the drive which pages are deleted, and spare space (**over-provisioning**) keeps garbage collection cheap; a full SSD writes slowly."
+resources:
+  - title: "Flash memory (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Flash_memory"
+    note: "Floating-gate and charge-trap cells, NAND vs NOR, 3D NAND and endurance."
+  - title: "Write amplification (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Write_amplification"
+    note: "Every factor that raises or lowers it: over-provisioning, TRIM, sequential writes, compression."
+  - title: "Trim (computing) (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Trim_(computing)"
+    note: "How the operating system tells an SSD which data it no longer needs."
 ---
 
-_Placeholder. Content not written yet._
+[Hard Drives](../hard-drives/) spend milliseconds moving an arm. A **solid-state drive (SSD)** has no moving parts: it stores data in **NAND flash** chips and reads any block in tens of microseconds. That makes random reads about a hundred times faster, but flash has rules hard drives do not: it cannot overwrite data in place, it erases only in large blocks, and each cell survives a limited number of erasures. An SSD is therefore a small computer, with a controller running firmware that hides those rules behind the simple "read or write a block" interface. This note covers the flash cell, pages and blocks, the **flash translation layer**, **garbage collection** and **write amplification**, wear and endurance, and **TRIM**.
+
+## The Flash Cell
+
+A flash cell is a transistor with an extra layer that can hold electric charge: a floating gate or, in most modern chips, a charge-trap layer. Programming pushes electrons into that layer with a high voltage; the trapped charge shifts the voltage at which the transistor turns on, and reading measures that threshold. The charge stays for years without power. Erasing pulls the electrons back out.
+
+A cell can store more than one bit by distinguishing several charge levels:
+
+```python
+cells = {"SLC": 1, "MLC": 2, "TLC": 3, "QLC": 4}  # bits stored per flash cell
+for name, bits in cells.items():
+    levels = 2 ** bits
+    print(f"{name}: {bits} bit(s) per cell, {levels:2} charge levels, gap between levels {1 / (levels - 1):.0%} of the window")
+# SLC: 1 bit(s) per cell,  2 charge levels, gap between levels 100% of the window
+# MLC: 2 bit(s) per cell,  4 charge levels, gap between levels 33% of the window
+# TLC: 3 bit(s) per cell,  8 charge levels, gap between levels 14% of the window
+# QLC: 4 bit(s) per cell, 16 charge levels, gap between levels 7% of the window
+```
+
+In words: each extra bit doubles the number of levels the same voltage window must hold, so the gap between neighbouring levels shrinks from the whole window (SLC) to 7% of it (QLC). The same trade as PAM4 in [Transmission Media](../../networking-hardware/physical-transmission-media/): more bits per cell, less margin against noise and charge leakage. Denser cells are cheaper per bit but slower to program (the controller must place charge more precisely), need stronger error correction, and wear out sooner. Most consumer and data-centre SSDs today use TLC; QLC targets cheap, read-mostly capacity. Chips stack cells vertically in **3D NAND**, with more than 200 layers in current generations.
+
+## Pages and Blocks
+
+Flash is organised in a hierarchy with an awkward asymmetry:
+
+- A **page** (typically 16 KiB) is the unit of reading and programming.
+- A **block** (hundreds of pages, several megabytes) is the unit of erasing.
+- A page can be programmed only once after its block is erased. Changing one byte of a page means writing the new version somewhere else.
+
+Reading a page takes tens of microseconds, programming hundreds of microseconds, and erasing a block a few milliseconds. A drive gets its speed by working on many flash chips (and planes within chips) in parallel; a small SSD with few chips is slower than a large one of the same model.
+
+## The Flash Translation Layer
+
+The operating system expects a disk: an array of numbered blocks (**logical block addresses**, LBAs) that can be overwritten in place. The SSD controller's **flash translation layer (FTL)** keeps up that illusion. It maintains a mapping from each logical block to the physical page holding its current data, usually in DRAM on the drive (about 1 GB of DRAM per TB of flash for a page-level map). On a write it:
+
+1. programs the new data into the next free page of an already-erased block,
+2. updates the mapping to point at the new page,
+3. marks the old page **stale**.
+
+Writes are therefore always appended, a log-structured design like the LSM trees in [Storage Engines](../../../cs/databases/storage-engines/). Stale pages pile up, and eventually free pages run out.
+
+## Garbage Collection
+
+To get erased blocks back, the controller runs **garbage collection**: it picks a block (ideally one that is mostly stale), copies its remaining valid pages to free pages elsewhere, and erases it. The copies are extra flash writes on top of what the host asked for. The ratio is the **write amplification factor**:
+
+$$
+\text{WAF} = \frac{\text{bytes written to flash}}{\text{bytes written by the host}}.
+
+$$
+
+In words: a WAF of 2 means every gigabyte the host writes costs two gigabytes of flash writes, halving both write speed and lifetime. Step through it on a tiny drive:
+
+<FtlGcSteps />
+
+How much copying garbage collection needs depends on how full the drive is: when most pages hold live data, every block the collector picks still contains many valid pages to move. A simulation of random overwrites on a drive with 64-page blocks:
+
+```python
+import random
+
+def write_amplification(capacity_pages, pages_per_block, fill, writes, seed=0):
+    """Random overwrites on a page-mapped SSD with greedy garbage collection."""
+    rng = random.Random(seed)
+    blocks = capacity_pages // pages_per_block
+    logical = int(capacity_pages * fill)                 # pages the host thinks it has stored
+    where = {}                                           # logical page -> (block, slot)
+    valid = [set() for _ in range(blocks)]
+    free_blocks = list(range(blocks))
+    active, slot = free_blocks.pop(), 0
+    nand_writes = 0
+
+    def program(lp):
+        nonlocal active, slot, nand_writes
+        if slot == pages_per_block:                      # active block full: take a fresh erased block
+            active, slot = free_blocks.pop(), 0
+        if lp in where:
+            valid[where[lp][0]].discard(lp)              # old copy becomes stale, not erased
+        where[lp] = (active, slot)
+        valid[active].add(lp)
+        slot += 1
+        nand_writes += 1
+
+    for lp in range(logical):
+        program(lp)
+    host_writes = 0
+    for _ in range(writes):
+        while len(free_blocks) < 2:                      # garbage collection: erase the emptiest block
+            victim = min((b for b in range(blocks) if b != active and b not in free_blocks), key=lambda b: len(valid[b]))
+            for lp in list(valid[victim]):               # copy its still-valid pages elsewhere first
+                program(lp)
+            valid[victim].clear()
+            free_blocks.insert(0, victim)
+        program(rng.randrange(logical))
+        host_writes += 1
+    return (nand_writes - logical) / host_writes
+
+for fill in (0.50, 0.75, 0.90, 0.95):
+    print(f"drive {fill:.0%} full: write amplification {write_amplification(4096, 64, fill, 40_000):.2f}")
+# drive 50% full: write amplification 1.26
+# drive 75% full: write amplification 2.35
+# drive 90% full: write amplification 6.61
+# drive 95% full: write amplification 19.08
+```
+
+In words: with live data on half the flash, each host write costs 1.26 flash writes; at 75% it costs 2.35, at 90% 6.61, and at 95% 19.08. Random writes to a nearly full SSD are the worst case. That is why every SSD keeps some flash hidden from the host as spare area (**over-provisioning**, about 7% on consumer drives and 20–30% on write-heavy enterprise drives), and why the same drive model is often sold in a smaller "high endurance" capacity. Sequential writes, which overwrite whole blocks at once, leave no valid pages behind and keep WAF near 1.
+
+<Callout type="pitfall">
+SSD benchmarks on a new, empty drive measure the best case. Once the drive is full and garbage collection runs constantly, sustained random-write speed can drop to a fraction of the box figure, and latency spikes appear when a write has to wait for a block to be erased. Test SSDs in the **steady state**, after filling them and writing randomly for a while.
+</Callout>
+
+## TRIM and the SLC Cache
+
+When a file is deleted, the file system marks its blocks free in its own records, but the SSD does not know: to the FTL those pages are still valid data that garbage collection must keep copying. **TRIM** (called UNMAP in SCSI and Deallocate in NVMe) is a command by which the operating system tells the drive which logical blocks no longer hold data, so their pages become stale at once. Regular TRIM keeps write amplification close to what the live data alone requires.
+
+Many TLC and QLC drives also use part of their empty flash as a fast **SLC cache**: incoming writes are programmed one bit per cell, which is quicker, and folded into dense cells later when the drive is idle. Writes are fast until the cache is full, then fall to the native TLC or QLC speed. The cache shrinks as the drive fills, one more reason a nearly full SSD writes slowly.
+
+## Wear and Endurance
+
+Each program/erase cycle damages the cell's insulating layer slightly, so cells survive a limited number of cycles: on the order of 100,000 for SLC, a few thousand for TLC and around a thousand for QLC (exact figures vary by manufacturer and generation). The controller's **wear levelling** spreads erasures evenly across all blocks, including moving rarely changed data so its blocks share the wear, and **error-correcting codes** (LDPC) fix the growing number of bit errors in older cells. Manufacturers rate endurance in **terabytes written (TBW)** or **drive writes per day (DWPD)**:
+
+```python
+capacity_tb, pe_cycles, waf = 4, 1000, 2.0       # a 4 TB TLC drive rated for about 1000 program/erase cycles
+tbw = capacity_tb * pe_cycles / waf              # host terabytes it can absorb before wearing out
+print(f"endurance: {tbw:,.0f} TB written")
+for daily_tb in (0.1, 1, 4):
+    print(f"{daily_tb:>4} TB/day -> {tbw / daily_tb / 365:6.1f} years")
+print(f"drive writes per day over 5 years: {tbw / capacity_tb / (5 * 365):.2f}")
+# endurance: 2,000 TB written
+#  0.1 TB/day ->   54.8 years
+#    1 TB/day ->    5.5 years
+#    4 TB/day ->    1.4 years
+# drive writes per day over 5 years: 0.27
+```
+
+In words: a 4 TB drive whose cells survive 1000 cycles, at a write amplification of 2, can absorb about 2,000 TB of host writes. A desktop writing 0.1 TB a day would take 54.8 years to wear it out; a database writing the drive's full capacity every day would wear it out in 1.4 years. Over a 5-year warranty that is 0.27 drive writes per day, a typical rating for read-intensive drives. Lowering write amplification directly extends the drive's life.
+
+<Callout type="key">
+An SSD is flash plus a controller that pretends flash can be overwritten. Every write goes to a fresh page, garbage collection reclaims space by copying, and that copying (write amplification) is what makes SSDs slow down when full and wear out under heavy random writes. Free space, TRIM and sequential writes keep it low.
+</Callout>

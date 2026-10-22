@@ -1,0 +1,135 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Queue depth: more in flight, until the device is full"
+  caption="A simple model of random 4 KiB reads. The SSD has 64 flash units working in parallel at 80 µs per read; the hard drive has one arm at 12.2 ms per read (ignoring the modest gain from reordering). Throughput (top) grows with queue depth until every unit is busy, then flattens; after that, extra requests only wait, so latency (bottom) climbs, as Little's law requires. The hard drive is saturated at queue depth 1."
+>
+  <queue-depth-curve>
+    <div class="qd-ctl">
+      <input type="hidden" data-dev value="ssd" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="ssd" aria-pressed="true">NVMe SSD</button>
+        <button type="button" class="btn" data-choice="hdd" aria-pressed="false">Hard drive</button>
+      </span>
+      <label class="qd-lbl">queue depth <input type="range" min="0" max="800" step="1" value="400" data-q /> <b data-qv></b></label>
+    </div>
+    <svg class="qd-svg" data-svg viewBox="0 0 440 292" role="img" aria-label="Throughput and latency against queue depth"></svg>
+    <p class="qd-stat mono" data-stat></p>
+  </queue-depth-curve>
+</Figure>
+
+<style>
+  .qd-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .qd-lbl {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .qd-lbl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .qd-lbl b {
+    min-width: 2.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .qd-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .qd-svg :global(.grid) {
+    stroke: var(--border);
+  }
+  .qd-svg :global(.iops) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2.2;
+  }
+  .qd-svg :global(.lat) {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 2.2;
+  }
+  .qd-svg :global(.cursor) {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 3;
+  }
+  .qd-svg :global(circle) {
+    fill: var(--g-yellow);
+  }
+  .qd-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const DEV = { ssd: { units: 64, us: 80 }, hdd: { units: 1, us: 12200 } };
+  const model = (d: { units: number; us: number }, qd: number) => {
+    const iops = Math.min(qd, d.units) / (d.us / 1e6);
+    return { iops, lat: (qd / iops) * 1e6 };
+  };
+  const fmt = (v: number) => (v >= 1e6 ? `${+(v / 1e6).toPrecision(3)}M` : v >= 1e3 ? `${+(v / 1e3).toPrecision(3)}k` : `${+v.toPrecision(3)}`);
+  const fmtUs = (us: number) => (us >= 1000 ? `${+(us / 1000).toPrecision(3)} ms` : `${+us.toPrecision(3)} µs`);
+
+  class QueueDepthCurve extends HTMLElement {
+    connectedCallback() {
+      this.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => this.draw()));
+      this.draw();
+    }
+    draw() {
+      const d = DEV[this.querySelector<HTMLInputElement>('[data-dev]')!.value as 'ssd' | 'hdd'];
+      const qd = Math.round(2 ** (+this.querySelector<HTMLInputElement>('[data-q]')!.value / 100));
+      this.querySelector('[data-qv]')!.textContent = String(qd);
+      const X0 = 50, X1 = 425;
+      const X = (q: number) => X0 + (Math.log2(q) / 8) * (X1 - X0); // QD 1 .. 256
+      const maxI = model(d, 256).iops, maxL = model(d, 256).lat;
+      const panels = [
+        { top: 22, key: 'iops' as const, max: maxI, title: 'throughput (IOPS)', fmt },
+        { top: 162, key: 'lat' as const, max: maxL, title: 'mean latency', fmt: fmtUs },
+      ];
+      let s = '';
+      for (const p of panels) {
+        const H = 90;
+        const Y = (v: number) => p.top + H - (v / p.max) * H;
+        s += `<text class="ax-title" x="${X0}" y="${p.top - 8}">${p.title}</text>`;
+        s += `<line class="grid" x1="${X0}" y1="${p.top + H}" x2="${X1}" y2="${p.top + H}" /><line class="grid" x1="${X0}" y1="${p.top}" x2="${X1}" y2="${p.top}" />`;
+        s += `<text class="ax-tick" x="${X0 - 4}" y="${p.top + 4}" text-anchor="end">${p.fmt(p.max)}</text><text class="ax-tick" x="${X0 - 4}" y="${p.top + H + 4}" text-anchor="end">0</text>`;
+        const pts: string[] = [];
+        for (let k = 0; k <= 200; k++) {
+          const q = 2 ** ((k / 200) * 8);
+          pts.push(`${X(q).toFixed(1)},${Y(model(d, q)[p.key]).toFixed(1)}`);
+        }
+        s += `<polyline class="${p.key}" points="${pts.join(' ')}" />`;
+        s += `<circle cx="${X(qd)}" cy="${Y(model(d, qd)[p.key])}" r="4" />`;
+      }
+      [1, 4, 16, 64, 256].forEach((q, k, arr) => {
+        const anchor = k === arr.length - 1 ? 'end' : 'middle';
+        s += `<text class="ax-tick" x="${X(q)}" y="266" text-anchor="${anchor}">${q}</text>`;
+      });
+      s += `<text class="ax-title" x="${(X0 + X1) / 2}" y="284" text-anchor="middle">queue depth (requests in flight, log scale)</text>`;
+      s += `<line class="cursor" x1="${X(qd)}" y1="14" x2="${X(qd)}" y2="252" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      const m = model(d, qd);
+      this.querySelector('[data-stat]')!.textContent = `QD ${qd} · ${fmt(m.iops)} IOPS · latency ${fmtUs(m.lat)} · ${qd >= d.units ? 'saturated: more depth only adds waiting' : `${d.units - qd} parallel units idle`}`;
+    }
+  }
+  customElements.define('queue-depth-curve', QueueDepthCurve);
+</script>

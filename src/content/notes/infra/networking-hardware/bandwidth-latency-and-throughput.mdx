@@ -1,8 +1,183 @@
 ---
 title: "Bandwidth & Latency"
-description: "The physical constraints behind the numbers quoted in cs:computer-networks."
-order: 3
+description: "Where network delay comes from, why it varies (jitter), why throughput falls short of the link rate, and the bandwidth-delay product."
+order: 2
 tier: core
+takeaways:
+  - "**Bandwidth** is the most bits per second a link can carry, **throughput** is what you actually get, **latency** is how long one packet takes to arrive, and **jitter** is how much that latency varies."
+  - "Each hop adds four delays: **processing**, **queueing**, **transmission** (frame size ÷ rate) and **propagation** (distance ÷ signal speed, about 5 µs per km)."
+  - "A faster link shrinks only the transmission delay. Across 1000 km, propagation is 4.9 ms at any rate."
+  - "The **bandwidth-delay product** (rate × round-trip time) is how much data must be in flight to keep a link busy: 100 MB for 10 Gbit/s at 80 ms."
+  - "Queueing is the only delay that changes from packet to packet, so it causes **jitter**, and it explodes near full load: at 99% utilization an M/M/1 queue waits 99 service times on average. In repeated RTT samples (ping), the **minimum** is the fixed part and the spread above it is queueing."
+resources:
+  - title: "Network delay (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Network_delay"
+    note: "The four delay components with formulas and examples."
+  - title: "Bandwidth-delay product (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Bandwidth-delay_product"
+    note: "Why long fat networks need large TCP windows, with worked numbers."
+  - title: "Bufferbloat projects (bufferbloat.net)"
+    url: "https://www.bufferbloat.net/projects/"
+    note: "How oversized buffers turn queueing into seconds of lag, and the queue disciplines that fix it."
 ---
 
-_Placeholder. Content not written yet._
+[Latency Numbers](../../../cs/appendix-reference/latency-numbers/) lists what a round trip across a data centre or an ocean costs. This note explains where those numbers come from. Network speed is really two different quantities: how **many** bits per second a link carries, and how **long** each bit takes to arrive. They are set by different physics, upgrading one does nothing for the other, and confusing them is behind many slow systems. The note defines bandwidth, throughput, latency and jitter, splits latency into its four parts, explains why throughput falls short of the link rate, introduces the **bandwidth-delay product**, and shows how queueing makes delay vary. It uses the signal speeds from [Transmission Media](../physical-transmission-media/).
+
+## Four Quantities, Not One
+
+- **Bandwidth** (or **link rate**): the most bits per second a link can carry, set by its medium and encoding. A "10G" port signals 10 Gbit/s of data.
+- **Throughput**: the bits per second actually delivered, over some interval. Always at most the bandwidth, and usually less.
+- **Latency**: the time from sending to receiving, for one bit or one packet. **Round-trip time (RTT)** is the latency there and back, which is what a request-response pays; the `ping` command measures it.
+- **Jitter**: how much latency varies from one packet to the next. Two paths with the same average latency can have very different jitter.
+
+Network rates are quoted in **bits** per second; file sizes and disk speeds in **bytes**. 1 Gbit/s is 125 MB/s before any overhead.
+
+## Four Delays Per Hop
+
+A packet crossing one link from a switch or host to the next pays four delays:
+
+$$
+d_{\text{hop}} = d_{\text{proc}} + d_{\text{queue}} + \frac{L}{R} + \frac{D}{s}.
+
+$$
+
+In words: **processing** $d_{\text{proc}}$ is the time a device spends reading the header and choosing an output (nanoseconds to microseconds in hardware). **Queueing** $d_{\text{queue}}$ is the wait behind other packets for the output port. **Transmission** $L/R$ is the time to push all $L$ bits of the packet onto a link of rate $R$. **Propagation** $D/s$ is the time for one bit to travel distance $D$ at signal speed $s$, about 204,000 km/s in fibre.
+
+Transmission and propagation are easy to confuse. Transmission is how long the packet takes to *leave*; propagation is how long its first bit takes to *arrive*. They depend on completely different things:
+
+```python
+FIBRE_KM_PER_S = 204_000                        # light in glass, about c / 1.468
+
+def hop_delay_us(frame_bytes, rate_bps, distance_km):
+    transmission = frame_bytes * 8 / rate_bps * 1e6     # time to push every bit onto the wire
+    propagation = distance_km / FIBRE_KM_PER_S * 1e6    # time for one bit to cross the wire
+    return transmission, propagation
+
+for rate, label in [(1e9, "1 Gbit/s"), (100e9, "100 Gbit/s")]:
+    for km, where in [(0.1, "100 m in a rack row"), (1000, "1000 km between cities")]:
+        t, p = hop_delay_us(1500, rate, km)
+        print(f"1500 B at {label:10} over {where:22}: transmission {t:8.2f} us, propagation {p:8.2f} us")
+# 1500 B at 1 Gbit/s   over 100 m in a rack row   : transmission    12.00 us, propagation     0.49 us
+# 1500 B at 1 Gbit/s   over 1000 km between cities: transmission    12.00 us, propagation  4901.96 us
+# 1500 B at 100 Gbit/s over 100 m in a rack row   : transmission     0.12 us, propagation     0.49 us
+# 1500 B at 100 Gbit/s over 1000 km between cities: transmission     0.12 us, propagation  4901.96 us
+```
+
+In words: inside a building at 1 Gbit/s, the 12 µs transmission dwarfs the 0.49 µs propagation, so a faster link really does cut latency. Across 1000 km, propagation is 4.9 ms whether the link runs at 1 or 100 Gbit/s. A 100× faster link saves 11.88 µs out of 4914 µs there, a quarter of a percent.
+
+Try it for other frame sizes, rates and distances:
+
+<WireTimeline />
+
+On a path through several devices, transmission is paid again at every hop that stores the whole frame before sending it on, while propagation adds up only with total distance. [Hubs & Switches](../hubs-and-switches/) shows how **cut-through** switches avoid paying the full transmission delay at each hop.
+
+<Callout type="pitfall">
+"Upgrade the bandwidth" does not fix a latency problem across a long distance. A round trip from London to San Francisco takes about 140 ms, and the great-circle distance alone costs about 85 ms in fibre; no link speed changes that part. The fixes are physical (shorter routes, servers closer to users, see [Load Balancing & CDNs](../../../cs/networks/load-balancing-and-cdns/)) or fewer round trips per request.
+</Callout>
+
+## Throughput Falls Short
+
+Even an idle, perfect link does not deliver its full rate to an application. Every Ethernet frame carries an 8-byte **preamble** (a pattern the receiver locks onto), a 14-byte header, a 4-byte FCS, and is followed by a 12-byte **inter-frame gap** of silence. Inside, IP and TCP headers take another 40 bytes:
+
+```python
+PREAMBLE, HEADER, FCS, GAP = 8, 14, 4, 12        # bytes Ethernet spends per frame besides the payload
+IP_TCP = 40                                      # IPv4 and TCP headers without options
+
+def goodput_fraction(payload):
+    on_wire = PREAMBLE + HEADER + payload + FCS + GAP
+    return (payload - IP_TCP) / on_wire
+
+print(f"1500 B payload: {goodput_fraction(1500):.1%} of line rate is application data")
+print(f"9000 B jumbo:   {goodput_fraction(9000):.1%}")
+
+min_frame_on_wire = PREAMBLE + 64 + GAP          # 64 B is the smallest legal frame, header and FCS included
+print(f"max frames per second at 1 Gbit/s: {1e9 / (min_frame_on_wire * 8):,.0f}")
+print(f"1 Gbit/s = {1e9 / 8 / 1e6:.0f} MB/s before any overhead")
+# 1500 B payload: 94.9% of line rate is application data
+# 9000 B jumbo:   99.1%
+# max frames per second at 1 Gbit/s: 1,488,095
+# 1 Gbit/s = 125 MB/s before any overhead
+```
+
+In words: with standard 1500-byte frames, at most 94.9% of a link carries application bytes; **jumbo frames** of 9000 bytes raise that to 99.1%, which is why storage and data-centre networks often enable them. Small packets are the hard case for hardware: a 1 Gbit/s port full of minimum-size frames carries 1,488,095 frames per second, and a switch or NIC must make a decision for each one. Device datasheets quote this **packets per second** rate alongside bandwidth.
+
+Throughput also falls short because of the protocols on top: a TCP sender may not have enough data in flight, as the next section shows, and losses make it slow down.
+
+## The Bandwidth-Delay Product
+
+A link is a pipe with a volume. Between sending a bit and getting its acknowledgement back, a sender can push $R \times \text{RTT}$ bits; that is the **bandwidth-delay product (BDP)**:
+
+$$
+\text{BDP} = R \times \text{RTT}.
+
+$$
+
+In words: the BDP is how much data must be "in flight", sent but not yet acknowledged, to keep the link busy the whole time. A TCP sender may only have one **window** of unacknowledged data outstanding (see [TCP vs UDP](../../../cs/networks/tcp-vs-udp/)), so its throughput is at most one window per round trip:
+
+```python
+def bdp_bytes(rate_bps, rtt_s):
+    return rate_bps * rtt_s / 8                  # bits that fit "in the pipe" during one round trip
+
+rate, rtt = 10e9, 0.080                          # 10 Gbit/s across an ocean, 80 ms round trip
+print(f"bandwidth-delay product: {bdp_bytes(rate, rtt) / 1e6:.0f} MB")
+
+for window in (64 * 1024, 4 * 1024**2, 100 * 1000**2):
+    throughput = min(rate, window * 8 / rtt)     # at most one window per round trip
+    print(f"window {window:>11,} B -> {throughput / 1e6:8.1f} Mbit/s")
+# bandwidth-delay product: 100 MB
+# window      65,536 B ->      6.6 Mbit/s
+# window   4,194,304 B ->    419.4 Mbit/s
+# window 100,000,000 B ->  10000.0 Mbit/s
+```
+
+In words: a 10 Gbit/s link with an 80 ms round trip holds 100 MB in flight. With the original 64 KiB TCP window limit, one connection gets 6.6 Mbit/s out of 10,000, no matter how fast the link; a 4 MiB window gets 419.4 Mbit/s; only a window the size of the BDP fills the link. This is why TCP added **window scaling** and why operating systems tune socket buffers for long, fast paths.
+
+## Queueing Is the Variable Part
+
+Processing, transmission and propagation are fixed for a given path. **Queueing** is not: it depends on how busy the output link is. If packets arrive at random at a rate close to what the link can send, a queue builds, and the average wait grows sharply. A simple model, the **M/M/1 queue** (random arrivals, random service times, one server), gives a mean wait of $\rho / (1 - \rho)$ service times at utilization $\rho$:
+
+```python
+service_us = 12                                  # one 1500 B frame on a 1 Gbit/s port
+
+for load in (0.5, 0.8, 0.9, 0.95, 0.99):
+    wait = service_us * load / (1 - load)        # mean wait in an M/M/1 queue before service starts
+    print(f"load {load:.0%}: mean queueing delay {wait:7.1f} us")
+# load 50%: mean queueing delay    12.0 us
+# load 80%: mean queueing delay    48.0 us
+# load 90%: mean queueing delay   108.0 us
+# load 95%: mean queueing delay   228.0 us
+# load 99%: mean queueing delay  1188.0 us
+```
+
+In words: at 50% load a frame waits one frame time (12 µs) on average; at 99% it waits 99 frame times, 1.19 ms, a hundred times more for twice the load. Real traffic is burstier than this model, which makes it worse. [Systems Thinking](../../../cs/system-design/systems-thinking/) shows the same curve for servers.
+
+Queueing is also the only part of the delay that changes from packet to packet, so it is the main cause of **jitter**. Measuring it takes many samples of the same path, for example repeated RTT probes. A common jitter estimate, the idea behind the one in RFC 3550 (the RTP standard for voice and video), is the average change between consecutive delays:
+
+```python
+import random
+import statistics
+
+random.seed(4)
+base_ms = 21.4                                   # propagation + transmission + processing: the same for every probe
+rtts = [base_ms + random.expovariate(1 / 1.5) for _ in range(20)]   # plus a random queueing wait
+rtts[12] += 30                                   # one probe stuck behind a burst
+
+print("rtt ms:", " ".join(f"{r:.1f}" for r in rtts))
+print(f"min {min(rtts):.1f}, median {statistics.median(rtts):.1f}, max {max(rtts):.1f} ms")
+# jitter as the mean change between consecutive probes (the idea behind RFC 3550's estimate)
+jitter = statistics.mean(abs(b - a) for a, b in zip(rtts, rtts[1:]))
+print(f"jitter {jitter:.1f} ms, median wait above min {statistics.median(rtts) - min(rtts):.1f} ms")
+# rtt ms: 21.8 21.6 22.2 21.7 21.5 22.2 25.2 23.8 23.6 21.8 22.6 21.9 51.7 21.6 21.8 25.3 24.0 23.9 23.8 21.7
+# min 21.5, median 22.2, max 51.7 ms
+# jitter 4.1 ms, median wait above min 0.7 ms
+```
+
+In words: the **minimum** RTT (21.5 ms) is the best estimate of the fixed part, since that probe met almost no queue. The **median** (22.2 ms) is what a typical packet sees, only 0.7 ms more. One probe stuck behind a burst took 51.7 ms, and that single spike pushes the jitter to 4.1 ms. The same reading works on the output of `ping`, which sends one probe per second and prints each RTT: minimum for the path's distance, median for normal load, spread and maximum for queueing.
+
+Jitter matters most for real-time traffic. A voice or video call plays audio at a steady pace, so it holds incoming packets in a **playout buffer** a little longer than the typical jitter; a packet later than the buffer allows is as good as lost. Bulk transfers barely notice jitter, only the average.
+
+Device buffers set a cap on queueing: a full buffer drops packets, which is how TCP learns to slow down. Very large buffers in home routers, a problem called **bufferbloat**, let queues grow to hundreds of milliseconds before anything is dropped.
+
+<Callout type="key">
+Latency on a path = fixed part (propagation over the total distance, plus transmission and processing at each hop) + variable part (queueing at each busy link). Bandwidth upgrades shrink transmission and, by lowering utilization, queueing. Only distance shrinks propagation.
+</Callout>

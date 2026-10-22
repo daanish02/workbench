@@ -1,0 +1,141 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Loss against distance for copper, fibre and radio"
+  caption="Each curve is signal loss in dB over distance (log scale). A wired curve is solid up to the reach of its 10 Gbit/s Ethernet standard and faded beyond it. Multimode fibre stops at 300 m with under 1 dB of loss: dispersion, not loss, sets its limit. Radio follows free-space loss at 5 GHz, with no walls."
+>
+  <media-reach>
+    <label class="mr-lbl">distance <input type="range" min="0" max="500" step="1" value="200" data-d /> <b data-dv>100 m</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">loss (dB)</span>
+      <svg class="mr-svg" viewBox="0 0 440 230" role="img" aria-label="Signal loss against distance for four media" data-svg></svg>
+      <span class="ax-x">distance (log scale)</span>
+    </div>
+    <p class="mr-stat mono" data-stat></p>
+    <p class="mr-stat mono" data-verdict></p>
+  </media-reach>
+</Figure>
+
+<style>
+  .mr-lbl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font: 0.8125rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .mr-lbl input {
+    flex: 1;
+    min-width: 0;
+  }
+  .mr-lbl b {
+    min-width: 4.5em;
+    text-align: right;
+    color: var(--text);
+  }
+  .mr-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .mr-svg :global(.grid) {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+  .mr-svg :global(.curve) {
+    fill: none;
+    stroke-width: 2.2;
+  }
+  .mr-svg :global(.faded) {
+    opacity: 0.25;
+  }
+  .mr-svg :global(.cursor) {
+    stroke: var(--text-muted);
+    stroke-dasharray: 4 3;
+  }
+  .mr-svg :global(.lbl) {
+    font: 11px var(--font-mono);
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-width: 4px;
+  }
+  .mr-stat {
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .mr-stat :global(.ok) {
+    color: var(--g-green);
+  }
+  .mr-stat :global(.bad) {
+    color: var(--g-red);
+  }
+</style>
+
+<script>
+  // loss in dB at distance d metres; reach in metres for the 10 Gbit/s standard (0 = no fixed reach)
+  const MEDIA = [
+    { name: 'Cat6a', color: '#ea4335', reach: 100, std: '10GBASE-T', loss: (d: number) => 0.453 * d },
+    { name: 'OM3', color: '#4285f4', reach: 300, std: '10GBASE-SR', loss: (d: number) => 0.003 * d },
+    { name: 'single-mode', color: '#34a853', reach: 10000, std: '10GBASE-LR', loss: (d: number) => 0.0002 * d },
+    { name: 'radio 5 GHz', color: '#fbbc05', reach: 0, std: '', loss: (d: number) => 20 * Math.log10(d) + 46.42 },
+  ];
+  const X0 = 40, X1 = 415, Y0 = 15, Y1 = 205, MAXDB = 100;
+  const X = (d: number) => X0 + (Math.log10(d) / 5) * (X1 - X0);
+  const Y = (db: number) => Y1 - (Math.min(db, MAXDB) / MAXDB) * (Y1 - Y0);
+  const fmt = (d: number) => (d >= 1000 ? `${+(d / 1000).toPrecision(3)} km` : `${+d.toPrecision(3)} m`);
+
+  class MediaReach extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-d]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const d = 10 ** (+this.querySelector<HTMLInputElement>('[data-d]')!.value / 100);
+      this.querySelector('[data-dv]')!.textContent = fmt(d);
+      let s = '';
+      for (let e = 0; e <= 5; e++) {
+        const x = X(10 ** e);
+        s += `<line class="grid" x1="${x}" y1="${Y0}" x2="${x}" y2="${Y1}" /><text class="ax-tick" x="${x}" y="${Y1 + 14}" text-anchor="middle">${fmt(10 ** e)}</text>`;
+      }
+      for (const db of [0, 50, 100]) {
+        s += `<line class="grid" x1="${X0}" y1="${Y(db)}" x2="${X1}" y2="${Y(db)}" /><text class="ax-tick" x="${X0 - 4}" y="${Y(db) + 4}" text-anchor="end">${db}</text>`;
+      }
+      for (const m of MEDIA) {
+        const inside: string[] = [];
+        const beyond: string[] = [];
+        for (let i = 0; i <= 250; i++) {
+          const dd = 10 ** ((i / 250) * 5);
+          if (m.loss(dd) > MAXDB) break;
+          const pt = `${X(dd).toFixed(1)},${Y(m.loss(dd)).toFixed(1)}`;
+          if (!m.reach || dd <= m.reach) inside.push(pt);
+          else {
+            if (!beyond.length && inside.length) beyond.push(inside[inside.length - 1]);
+            beyond.push(pt);
+          }
+        }
+        const dash = m.reach ? '' : ' stroke-dasharray="6 4"';
+        if (inside.length) s += `<polyline class="curve" stroke="${m.color}"${dash} points="${inside.join(' ')}" />`;
+        if (beyond.length) s += `<polyline class="curve faded" stroke="${m.color}" points="${beyond.join(' ')}" />`;
+      }
+      // labels placed where each curve is easy to read
+      s += `<text class="lbl" fill="#ea4335" x="${X(8)}" y="${Y(12)}">Cat6a</text>`;
+      s += `<text class="lbl" fill="#4285f4" x="${X(2000)}" y="${Y(14)}">OM3</text>`;
+      s += `<text class="lbl" fill="#34a853" x="${X(9000)}" y="${Y(4) - 4}">single-mode</text>`;
+      s += `<text class="lbl" fill="#fbbc05" x="${X(1.3)}" y="${Y(58)}">radio 5 GHz</text>`;
+      s += `<line class="cursor" x1="${X(d)}" y1="${Y0}" x2="${X(d)}" y2="${Y1}" />`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+
+      this.querySelector('[data-stat]')!.textContent = MEDIA.map((m) => `${m.name} ${m.loss(d).toFixed(m.loss(d) < 1 ? 2 : 1)} dB`).join(' · ');
+      this.querySelector('[data-verdict]')!.innerHTML = MEDIA.filter((m) => m.reach)
+        .map((m) => `<span class="${d <= m.reach ? 'ok' : 'bad'}">${m.std} ${d <= m.reach ? 'works' : `too far (max ${fmt(m.reach)})`}</span>`)
+        .join(' · ');
+    }
+  }
+  customElements.define('media-reach', MediaReach);
+</script>

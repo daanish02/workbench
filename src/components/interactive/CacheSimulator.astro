@@ -1,0 +1,151 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same accesses, three cache organisations"
+  caption="An 8-line cache with 64-byte lines receives the same 16 accesses: two arrays, A at address 0 and B at address 512, read alternately. Each row is a set and each column a way; the address's line number modulo the number of sets picks the row. In the direct-mapped cache A and B map to the same sets and keep evicting each other (red); with 2 or 4 ways both fit, and after the first touches every access hits (green)."
+>
+  <cache-simulator>
+    <input type="hidden" data-ways value="1" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="1" aria-pressed="true">Direct-mapped</button>
+      <button type="button" class="btn" data-choice="2" aria-pressed="false">2-way</button>
+      <button type="button" class="btn" data-choice="4" aria-pressed="false">4-way</button>
+    </span>
+    <svg class="cs-svg" data-svg viewBox="0 0 440 232" role="img" aria-label="Cache sets and ways with the current access"></svg>
+    <p class="cs-msg" data-msg></p>
+    <p class="cs-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </cache-simulator>
+</Figure>
+
+<style>
+  .cs-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .cs-svg :global(rect.cell) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .cs-svg :global(rect.cell.hit) {
+    fill: rgba(52, 168, 83, 0.35);
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .cs-svg :global(rect.cell.miss) {
+    fill: rgba(234, 67, 53, 0.3);
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .cs-svg :global(rect.cell.full) {
+    fill: rgba(66, 133, 244, 0.18);
+    stroke: var(--g-blue);
+  }
+  .cs-svg :global(text) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cs-svg :global(text.muted) {
+    fill: var(--text-muted);
+  }
+  .cs-svg :global(text.cur) {
+    fill: var(--g-yellow);
+  }
+  .cs-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cs-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const LINES = 8, LINE = 64;
+  // A[i] at 64*i, B[i] at 512 + 64*i, read alternately: A0 B0 A1 B1 ... then the same again
+  const TRACE: [string, number][] = [];
+  for (let r = 0; r < 2; r++) for (let i = 0; i < 4; i++) TRACE.push([`A${i}`, i * LINE], [`B${i}`, 512 + i * LINE]);
+
+  interface Frame { sets: string[][]; set: number; way: number; hit: boolean | null; label: string; addr: number; hits: number; misses: number; evicted: string }
+
+  function frames(ways: number): Frame[] {
+    const nsets = LINES / ways;
+    const sets: string[][] = Array.from({ length: nsets }, () => []);
+    let hits = 0, misses = 0;
+    const out: Frame[] = [{ sets: sets.map((s) => [...s]), set: -1, way: -1, hit: null, label: '', addr: 0, hits, misses, evicted: '' }];
+    for (const [label, addr] of TRACE) {
+      const block = addr / LINE, set = block % nsets;
+      const row = sets[set];
+      let evicted = '';
+      const idx = row.indexOf(label);
+      const hit = idx >= 0;
+      if (hit) { row.splice(idx, 1); hits++; } else { misses++; if (row.length === ways) evicted = row.shift()!; }
+      row.push(label); // most recently used at the end
+      out.push({ sets: sets.map((s) => [...s]), set, way: row.length - 1, hit, label, addr, hits, misses, evicted });
+    }
+    return out;
+  }
+
+  class CacheSimulator extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < TRACE.length) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.querySelector('[data-ways]')!.addEventListener('input', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const ways = +this.querySelector<HTMLInputElement>('[data-ways]')!.value;
+      const f = frames(ways)[this.i];
+      const nsets = LINES / ways;
+      // the access sequence gets its own row; the grid of sets is centred below it
+      const CW = 70, CH = Math.min(22, 196 / nsets - 4);
+      const X0 = (440 - (ways * (CW + 4) - 4)) / 2 + 24;
+      let s = `<text class="muted" x="8" y="12" style="text-anchor: start">accesses</text>`;
+      TRACE.forEach(([label], k) => {
+        const done = k < this.i;
+        s += `<text class="${k === this.i - 1 ? 'cur' : done ? 'muted' : ''}" x="${84 + k * 22}" y="12" style="font-size: 10px">${label}</text>`;
+      });
+      for (let st = 0; st < nsets; st++) {
+        const y = 30 + st * (CH + 4);
+        s += `<text class="muted" x="${X0 - 26}" y="${y + CH / 2}">set ${st}</text>`;
+        for (let w = 0; w < ways; w++) {
+          const label = f.sets[st][w] ?? '';
+          const isCur = st === f.set && w === f.way;
+          const cls = isCur ? (f.hit ? 'hit' : 'miss') : label ? 'full' : '';
+          s += `<rect class="cell ${cls}" x="${X0 + w * (CW + 4)}" y="${y}" width="${CW}" height="${CH}" rx="3" /><text x="${X0 + w * (CW + 4) + CW / 2}" y="${y + CH / 2}">${label}</text>`;
+        }
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.hit === null
+        ? `Empty cache: ${nsets} set${nsets > 1 ? 's' : ''} of ${ways} way${ways > 1 ? 's' : ''}. Each access goes to set (address ÷ 64) mod ${nsets}.`
+        : `${f.label} (address ${f.addr}) → line ${f.addr / LINE} → set ${f.set}: ${f.hit ? 'hit' : `miss${f.evicted ? `, evicting ${f.evicted}` : ''}`}.`;
+      this.querySelector('[data-stat]')!.textContent = `${ways}-way · access ${this.i}/${TRACE.length} · hits ${f.hits} · misses ${f.misses}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === TRACE.length;
+    }
+  }
+  customElements.define('cache-simulator', CacheSimulator);
+</script>

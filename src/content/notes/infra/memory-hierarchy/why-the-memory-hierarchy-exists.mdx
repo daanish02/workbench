@@ -1,8 +1,143 @@
 ---
 title: "Memory Hierarchy"
-description: "The speed/cost/capacity triangle, no single memory type wins on all three."
+description: "Why computers use a ladder of small fast memories in front of large slow ones, and why locality makes that ladder work."
 order: 1
 tier: core
+takeaways:
+  - "No memory technology is fast, large and cheap at once, so computers stack them: registers, L1, L2, L3 caches, DRAM, then storage, each larger and slower than the one above."
+  - "On a 2022 desktop CPU an L1 hit takes about 4 cycles (0.8 ns) and a DRAM access about 400 (80 ns); a hard-drive seek would be over a year if one cycle were one second."
+  - "The hierarchy works because programs show **locality**: **temporal** (reuse soon) and **spatial** (use neighbours), so a small cache serves most accesses."
+  - "**Average memory access time** = hit time + miss rate × miss penalty; with typical rates three cache levels make memory look about 62× faster than DRAM alone."
+  - "Access patterns decide everything: a hot loop hits 99.5% in a small cache, random lookups 0.3%."
+resources:
+  - title: "Memory hierarchy (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Memory_hierarchy"
+    note: "The levels, their properties, and how the hierarchy evolved."
+  - title: "What Every Programmer Should Know About Memory (Drepper, 2007)"
+    url: "https://people.freebsd.org/~lstewart/articles/cpumemory.pdf"
+    note: "The long classic on caches, DRAM and how code interacts with them; old numbers, durable ideas."
+  - title: "Chips and Cheese"
+    url: "https://chipsandcheese.com/"
+    note: "Measured cache and memory latencies for current CPUs and GPUs, with methodology."
 ---
 
-_Placeholder. Content not written yet._
+A modern CPU core can start several instructions every nanosecond, but fetching one value from main memory takes about 80 nanoseconds. If every load waited for memory, the processor would sit idle almost all the time. The fix is not one better memory but a **hierarchy**: small, fast memories close to the core hold the data in use, backed by larger, slower ones. This note explains why no single memory can do the job, lays out the levels with real numbers, shows the **locality** that makes caching work, and introduces **average memory access time**, the formula behind every later note in this section. It continues from the [fetch-execute cycle](../../../cs/foundations/fetch-execute-cycle/) and leads down into [Storage Hierarchy](../../storage/the-storage-hierarchy/).
+
+## Fast, Big, Cheap: Pick Two
+
+Memory technologies trade three properties against each other:
+
+- **Speed**: SRAM, made of six transistors per bit, switches in well under a nanosecond but takes a lot of chip area.
+- **Capacity and cost**: DRAM stores a bit in one transistor and one capacitor, so it packs far more bits per chip and costs far less per byte, but each access takes tens of nanoseconds ([Main Memory](../main-memory/)).
+- **Distance**: signals take time to cross a chip, and wires to off-chip memory add more. A memory that is big is also physically far from the core.
+
+So the fast memory must be small, and the big memory must be slow. A hierarchy uses both: a little SRAM next to the core, a lot of DRAM further away, and storage below that.
+
+## The Levels
+
+On a 2022 desktop CPU, the AMD Ryzen 9 7950X (Zen 4), with approximate cycle counts:
+
+```python
+GHZ = 5.0                                         # an AMD Ryzen 9 7950X (Zen 4, 2022) boosting near 5 GHz
+levels = [  # level, size per core (or shared), latency in cycles (approximate)
+    ("register", "~1 KB", 1),
+    ("L1 data cache", "32 KiB", 4),
+    ("L2 cache", "1 MiB", 14),
+    ("L3 cache (shared)", "32 MiB", 50),
+    ("DRAM (DDR5)", "64 GiB", 400),
+]
+for name, size, cycles in levels:
+    ns = cycles / GHZ
+    print(f"{name:18} {size:>7}  {cycles:4} cycles = {ns:6.1f} ns  ({cycles:3}x a register)")
+# register             ~1 KB     1 cycles =    0.2 ns  (  1x a register)
+# L1 data cache       32 KiB     4 cycles =    0.8 ns  (  4x a register)
+# L2 cache             1 MiB    14 cycles =    2.8 ns  ( 14x a register)
+# L3 cache (shared)   32 MiB    50 cycles =   10.0 ns  ( 50x a register)
+# DRAM (DDR5)         64 GiB   400 cycles =   80.0 ns  (400x a register)
+```
+
+In words: each step down is roughly 3 to 30 times larger and slower. L1 answers in 4 cycles (0.8 ns) but holds only 32 KiB; DRAM holds 64 GiB but takes about 400 cycles (80 ns). The L1 and L2 belong to each core; the L3 is shared by the eight cores of one chiplet. Exact figures vary by chip and clock speed, but every modern CPU has this shape.
+
+<LatencyLadder />
+
+These are the numbers behind [Latency Numbers](../../../cs/appendix-reference/latency-numbers/). Below DRAM the ladder continues into SSDs and hard drives, thousands to millions of times slower again.
+
+## Locality Makes It Work
+
+A small cache helps only if the data a program needs next is likely to be already in it. Real programs make that likely, because their accesses have **locality**:
+
+- **Temporal locality**: data used now is likely to be used again soon (a loop counter, a hot function's variables).
+- **Spatial locality**: data near something just used is likely to be used soon (the next element of an array, the next instruction).
+
+Caches exploit both: they keep recently used data, and they move memory in **cache lines** of 64 bytes, so fetching one value brings its neighbours along ([Cache Basics](../cache-basics/)). How well this works depends entirely on the access pattern:
+
+```python
+import random
+
+random.seed(0)
+N = 1 << 20                                       # a 1M-word address space
+seq = list(range(0, 50_000))                      # walking an array in order
+loop = [i % 2_000 for i in range(50_000)]         # a hot loop over 2,000 words
+rnd = [random.randrange(N) for _ in range(50_000)]  # random lookups in a big table
+
+def hit_rate(trace, cache_words=4096, line_words=8):
+    cache, order, hits = set(), [], 0
+    for addr in trace:
+        line = addr // line_words                 # caches move whole lines, not single words
+        if line in cache:
+            hits += 1
+            order.remove(line); order.append(line)
+        else:
+            if len(order) == cache_words // line_words:
+                cache.discard(order.pop(0))       # evict the least recently used line
+            cache.add(line); order.append(line)
+    return hits / len(trace)
+
+for name, trace in [("sequential", seq), ("hot loop", loop), ("random", rnd)]:
+    print(f"{name:10} hit rate {hit_rate(trace):.1%}")
+# sequential hit rate 87.5%
+# hot loop   hit rate 99.5%
+# random     hit rate 0.3%
+```
+
+In words: with a 4,096-word cache and 8-word lines, walking an array in order hits 87.5% of the time (one miss brings in the next 7 words), a loop over 2,000 words that fit in the cache hits 99.5%, and random lookups in a table 256 times larger than the cache hit only 0.3%. The same hardware is nearly perfect for one program and useless for another; [Cache-Friendly Code](../cache-friendly-code/) shows how to write the first kind.
+
+## Average Memory Access Time
+
+The effect of a cache is summarised by the **average memory access time (AMAT)**:
+
+$$
+\text{AMAT} = t_{\text{hit}} + m \times t_{\text{miss penalty}}.
+
+$$
+
+In words: every access pays the hit time of the first level; the fraction $m$ that misses also pays the time to get the data from the next level, whose own AMAT is computed the same way. Applied level by level:
+
+```python
+def amat(hit_ns, miss_rate, miss_penalty_ns):
+    return hit_ns + miss_rate * miss_penalty_ns    # average memory access time
+
+dram = 80.0
+l3 = amat(10.0, 0.30, dram)                       # L3 misses go to DRAM
+l2 = amat(2.8, 0.20, l3)                          # L2 misses go to L3
+l1 = amat(0.8, 0.05, l2)                          # L1 misses go to L2
+print(f"L3 effective {l3:.1f} ns, L2 effective {l2:.1f} ns, L1 effective {l1:.2f} ns")
+print(f"no caches: {dram:.0f} ns per access, {dram / l1:.0f}x slower")
+for rate in (0.05, 0.10, 0.20):
+    print(f"L1 miss rate {rate:.0%}: {amat(0.8, rate, l2):.2f} ns per access")
+# L3 effective 34.0 ns, L2 effective 9.6 ns, L1 effective 1.28 ns
+# no caches: 80 ns per access, 62x slower
+# L1 miss rate 5%: 1.28 ns per access
+# L1 miss rate 10%: 1.76 ns per access
+# L1 miss rate 20%: 2.72 ns per access
+```
+
+In words: with miss rates of 5% in L1, 20% in L2 and 30% in L3 (illustrative values), the average access takes 1.28 ns, 62 times faster than going to DRAM every time. The miss rate matters more than it looks: doubling the L1 miss rate from 5% to 10% raises the average from 1.28 to 1.76 ns, and 20% more than doubles it. A few percent of misses can dominate a program's run time.
+
+<Callout type="pitfall">
+"Memory is 100 ns away" and "memory bandwidth is 80 GB/s" describe different things. A CPU hides latency by having many misses in flight at once (out-of-order execution, [Prefetching](../prefetching/)), so a streaming loop can approach full bandwidth, while code that follows pointers, where each address depends on the previous load, pays the full latency every time. Linked lists and trees are slow for this reason, not because they do more work.
+</Callout>
+
+<Callout type="key">
+The memory hierarchy is a bet on locality: keep a small, fast copy of what the program is using now. When the bet pays, memory looks almost as fast as the L1 cache and almost as big as DRAM; when access patterns are random, every miss pays the full price of the level below.
+</Callout>

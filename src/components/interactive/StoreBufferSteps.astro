@@ -1,0 +1,165 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Store buffers let both cores read the old value"
+  caption="The store-buffering test: core 0 runs x = 1 then reads y, core 1 runs y = 1 then reads x. Each store waits in its core's store buffer (yellow) before reaching memory, and a load reads memory without waiting for it. Both loads can then see 0, an outcome no interleaving of the two programs allows (red). An mfence after each store drains the buffer first, and at least one load sees 1 (green)."
+>
+  <store-buffer-steps>
+    <input type="hidden" data-mode value="plain" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="plain" aria-pressed="true">No fence</button>
+      <button type="button" class="btn" data-choice="fence" aria-pressed="false">mfence</button>
+    </span>
+    <svg class="sb-svg" data-svg viewBox="0 0 440 200" role="img" aria-label="Two cores with store buffers above shared memory"></svg>
+    <p class="sb-msg" data-msg></p>
+    <p class="sb-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </store-buffer-steps>
+</Figure>
+
+<style>
+  .sb-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 10px auto 0;
+  }
+  .sb-svg :global(rect.box) {
+    fill: rgba(66, 133, 244, 0.12);
+    stroke: var(--border);
+  }
+  .sb-svg :global(rect.box.cur) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .sb-svg :global(rect.buf) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+  }
+  .sb-svg :global(rect.mem) {
+    fill: rgba(66, 133, 244, 0.2);
+    stroke: var(--g-blue);
+  }
+  .sb-svg :global(rect.ok) {
+    fill: rgba(52, 168, 83, 0.4);
+    stroke: var(--g-green);
+  }
+  .sb-svg :global(rect.bad) {
+    fill: rgba(234, 67, 53, 0.45);
+    stroke: var(--g-red);
+  }
+  .sb-svg :global(text) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .sb-svg :global(text.c) {
+    fill: var(--text);
+    text-anchor: middle;
+  }
+  .sb-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .sb-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  interface Frame { pc: number[]; buf: string[][]; mem: Record<string, number>; r: (number | null)[]; act: number; result: string; msg: string }
+  const PROG: Record<string, string[][]> = {
+    plain: [['x = 1', 'r0 = y'], ['y = 1', 'r1 = x']],
+    fence: [['x = 1', 'mfence', 'r0 = y'], ['y = 1', 'mfence', 'r1 = x']],
+  };
+
+  function frames(mode: string): Frame[] {
+    const pc = [0, 0], buf: string[][] = [[], []], mem: Record<string, number> = { x: 0, y: 0 }, r: (number | null)[] = [null, null];
+    const out: Frame[] = [];
+    const push = (act: number, msg: string, result = '') =>
+      out.push({ pc: [...pc], buf: buf.map((b) => [...b]), mem: { ...mem }, r: [...r], act, result, msg });
+    push(-1, 'x and y start at 0 in memory. Both store buffers are empty.');
+    const store = (c: number) => { const v = c === 0 ? 'x' : 'y'; buf[c].push(v); pc[c]++; push(c, `Core ${c} executes ${v} = 1: the store goes into its store buffer and the core moves on without waiting.`); };
+    const drain = (c: number, why: string) => { const v = buf[c].shift()!; mem[v] = 1; push(c, why.replace('$', v)); };
+    const load = (c: number) => {
+      const v = c === 0 ? 'y' : 'x';
+      r[c] = mem[v]; pc[c]++;
+      push(c, `Core ${c} executes r${c} = ${v}: nothing for ${v} in its own buffer, so it reads memory and gets ${mem[v]}.`);
+    };
+    store(0);
+    store(1);
+    if (mode === 'plain') {
+      load(0);
+      load(1);
+      drain(0, 'The buffers drain later: $ = 1 reaches memory.');
+      drain(1, 'And $ = 1. Final: r0 = 0 and r1 = 0, although each core wrote before it read. Sequential consistency forbids this; x86 allows it.');
+      out[out.length - 1].result = 'bad';
+    } else {
+      pc[0]++; drain(0, 'Core 0 executes mfence: it waits until its buffer has drained, so $ = 1 is now in memory.');
+      pc[1]++; drain(1, 'Core 1 executes mfence: $ = 1 drains to memory too.');
+      load(0);
+      load(1);
+      out[out.length - 1].result = 'ok';
+      out[out.length - 1].msg += ' Final: r0 = 1 and r1 = 1. With the fences at least one load must see the other core\'s store.';
+    }
+    return out;
+  }
+
+  class StoreBufferSteps extends HTMLElement {
+    fr: Frame[] = [];
+    i = 0;
+    prog: string[][] = [];
+    connectedCallback() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!;
+      const reset = () => {
+        this.prog = PROG[mode.value];
+        this.fr = frames(mode.value);
+        this.i = 0;
+        this.draw();
+      };
+      mode.addEventListener('change', reset);
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < this.fr.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', reset);
+      reset();
+    }
+    draw() {
+      const f = this.fr[this.i];
+      let s = '';
+      for (let c = 0; c < 2; c++) {
+        const x = 10 + c * 220;
+        s += `<rect class="box${f.act === c ? ' cur' : ''}" x="${x}" y="6" width="200" height="74" rx="6" /><text x="${x + 8}" y="18">core ${c}</text>`;
+        this.prog[c].forEach((ins, k) => {
+          const mark = k < f.pc[c] ? '✓ ' : k === f.pc[c] ? '▸ ' : '  ';
+          s += `<text x="${x + 8}" y="${36 + k * 14}" style="fill: ${k < f.pc[c] ? 'var(--text)' : 'var(--text-muted)'}">${mark}${ins}</text>`;
+        });
+        s += `<text x="${x + 130}" y="18">r${c} = ${f.r[c] ?? '?'}</text>`;
+        s += `<text x="${x}" y="96">store buffer</text>`;
+        s += `<rect class="${f.buf[c].length ? 'buf' : 'box'}" x="${x}" y="104" width="200" height="26" rx="4" />`;
+        s += `<text class="c" x="${x + 100}" y="117">${f.buf[c].map((v) => v + ' = 1').join(', ') || 'empty'}</text>`;
+      }
+      const mc = f.result || 'mem';
+      s += `<text x="10" y="148">memory</text>`;
+      s += `<rect class="${mc}" x="10" y="158" width="420" height="30" rx="4" />`;
+      s += `<text class="c" x="220" y="173">x = ${f.mem.x}    y = ${f.mem.y}</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const verdict = f.result === 'bad' ? 'both 0: reordered' : f.result === 'ok' ? 'SC outcome' : 'running';
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${this.fr.length - 1} · r0 = ${f.r[0] ?? '?'} · r1 = ${f.r[1] ?? '?'} · ${verdict}`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === this.fr.length - 1;
+    }
+  }
+  customElements.define('store-buffer-steps', StoreBufferSteps);
+</script>

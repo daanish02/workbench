@@ -74,6 +74,8 @@ Short titles: Instruction Set Architectures → "Instruction Sets" (x86 vs ARM v
 
 ## 4. Memory Hierarchy & Caching
 
+_Status 2026-10-22: written 1–5 (Memory Hierarchy, Cache Basics, Cache Replacement, Cache Coherence, Main Memory), each with a figure. Still stubs: 6 Memory Controllers, 7 TLBs & Paging, 8 Prefetching, 9 Non-Volatile Memory, 10 Memory Ordering, 11 Cache-Friendly Code. Then Appendix (glossary, spec-sheets, units-and-magnitudes). In TLBs & Paging, add a short "page not in RAM" section: the hardware side of a page fault and what swap costs on SSD vs HDD (numbers from Storage Hierarchy); the OS side of swap is already in `cs/operating-systems/virtual-memory`, link it._
+
 1. **Why the memory hierarchy exists** — the speed/cost/capacity triangle, no single memory type wins on all three
 2. **Cache basics** — cache lines, hits/misses, direct-mapped vs. set-associative vs. fully-associative
 3. **Cache replacement policies** — LRU and friends, at the hardware level _(the same ideas as `cs/operating-systems/page-replacement`, applied one layer lower)_
@@ -95,15 +97,17 @@ Also cover: HBM (stacked DRAM beside GPUs) in Main Memory, since the GPU section
 
 ## 5. Storage
 
-1. **The storage hierarchy** — from registers down to disk, continuing the ladder from Memory Hierarchy
-2. **HDD vs. SSD** — how each physically stores and retrieves data
-3. **Storage interfaces** — SATA, NVMe — conceptually, what changed and why NVMe is faster
-4. **RAID** — redundancy and performance tradeoffs across RAID levels
-5. **How a file system maps to physical storage** — the hardware-facing half of `cs/operating-systems/file-systems`
-6. **Storage area networks** — storage as a shared network resource
+1. **The storage hierarchy** — the tiers below RAM (NVMe, SATA SSD, HDD, tape, cloud archive), cost per GB against latency, hot/warm/cold tiering
+2. **Hard drives** _(split from HDD vs SSD, 2026-10-22)_ — platters, heads, seek and rotational latency, CMR vs SMR, HAMR
+3. **Flash and SSDs** _(split from HDD vs SSD, slug renamed to `flash-and-ssds`)_ — NAND cells SLC to QLC, pages vs erase blocks, FTL, garbage collection, write amplification, wear levelling, TRIM, SLC cache
+4. **Storage interfaces** — SATA/AHCI vs NVMe queues, SAS, PCIe lanes, form factors (M.2, U.2, EDSFF)
+5. **Storage performance** _(new, 2026-10-22)_ — IOPS vs throughput vs latency, queue depth, Little's law, random vs sequential, tail latency, reading fio output
+6. **RAID** — RAID 0/1/5/6/10, XOR parity, rebuild time, write penalty, erasure coding at scale
+7. **How a file system maps to physical storage** — LBA, sector sizes, alignment, the durability chain (page cache, drive cache, media), fsync, FUA, power-loss protection [Blocks to Files]
+8. **Drive failures** _(new, advanced, 2026-10-22)_ — AFR from fleet statistics, UBER and rebuild risk, bit rot, checksums, scrubbing, SMART; ends with "RAID is not a backup": 3-2-1-1-0 rule, RPO/RTO, independent vs correlated copies
+9. **Storage area networks** — iSCSI, Fibre Channel, NVMe-oF, NFS/SMB, distributed storage [SAN & NAS]
 
-Short titles: The Storage Hierarchy → "Storage Hierarchy" (or fold into Memory Hierarchy's ladder and drop, to avoid repeating it), How a File System Maps to Physical Storage → "Blocks to Files", Storage Area Networks → "SAN & NAS".
-Also cover in HDD vs SSD: flash internals (pages vs erase blocks, FTL, write amplification, wear levelling, TRIM), the reason SSD writes slow down when full. Erasure coding vs RAID at scale in RAID or SAN.
+Do not re-teach: `cs/operating-systems/file-systems` (inodes, allocation, journaling), `cs/cloud/storage-models` (block/file/object), `cs/databases/storage-engines` (WAL, B-tree, LSM).
 
 **Interactive:** HDD vs. SSD access-pattern comparison (sequential vs. random reads, why SSDs don't suffer from seek time), RAID level visualizer (same data, different RAID configurations, see what survives a drive failure).
 
@@ -114,13 +118,15 @@ Also cover in HDD vs SSD: flash internals (pages vs erase blocks, FTL, write amp
 _(The physical layer beneath `cs/networks`, which covers protocols and logical behavior — this section is the wires, radios, and switches themselves.)_
 
 1. **Physical transmission media** — copper, fiber optics, wireless — tradeoffs in speed, distance, interference
-2. **Network interface cards, switches, and routers** — what each piece of hardware actually does, physically
-3. **Bandwidth, latency, and throughput** — the physical constraints behind the numbers quoted in `cs/networks`
-4. **Wireless technology basics** — WiFi standards at a conceptual level, why newer standards are faster
-5. **Data center networking topologies** — spine-leaf and similar architectures at scale
-6. **RDMA and SmartNICs** _(new)_ — kernel bypass, RDMA/RoCE, DPUs offloading networking and storage; leads into InfiniBand in GPUs & Parallelism. [RDMA & SmartNICs]
+2. **Bandwidth, latency, and throughput** — the physical constraints behind the numbers quoted in `cs/networks` (moved before the device notes: store-and-forward delay needs serialization delay first)
+3. **Network interface cards** — PHY/MAC/SerDes, DMA descriptor rings, interrupt coalescing, offloads (checksum, TSO, RSS) _(split out 2026-10-22)_
+4. **Hubs and switches** _(new, split out 2026-10-22)_ — repeaters and hubs as layer 1, collision domains, bridges, switching ASICs, CAM tables, store-and-forward vs cut-through, buffers
+5. **Routers** _(new, split out 2026-10-22)_ — control plane vs data plane hardware, TCAM for longest-prefix match, line cards and fabric, what a home router contains; pitfall: routers answer ping (ICMP) from the slow, rate-limited control-plane CPU, so a mid-path hop can show high or missing replies while forwarding fine
+6. **Wireless technology basics** — WiFi standards at a conceptual level, why newer standards are faster
+7. **Data center networking topologies** — spine-leaf and similar architectures at scale
+8. **RDMA and SmartNICs** _(new)_ — kernel bypass, RDMA/RoCE, DPUs offloading networking and storage; leads into InfiniBand in GPUs & Parallelism. [RDMA & SmartNICs]
 
-Short titles: Physical Transmission Media → "Transmission Media" (include signal encoding, NRZ vs PAM4), Network Interface Cards, Switches, and Routers → "NICs & Switches" (cut-through vs store-and-forward, ASIC forwarding tables), Bandwidth, Latency, and Throughput → "Bandwidth & Latency" (bandwidth-delay product; link `cs/appendix/latency-numbers`), Wireless Technology Basics → "Wireless Basics", Data Center Networking Topologies → "Data Center Topologies".
+Short titles: Physical Transmission Media → "Transmission Media" (include signal encoding, NRZ vs PAM4), Network Interface Cards → "Network Interface Cards", plus "Hubs & Switches" (cut-through vs store-and-forward, ASIC forwarding tables) and "Routers", Bandwidth, Latency, and Throughput → "Bandwidth & Latency" (bandwidth-delay product; link `cs/appendix/latency-numbers`), Wireless Technology Basics → "Wireless Basics", Data Center Networking Topologies → "Data Center Topologies".
 
 **Interactive:** transmission medium comparison (same data, copper vs. fiber vs. wireless, latency/bandwidth visualized side by side), network hardware path (a packet's physical journey through a NIC → switch → router, distinct from the protocol-level journey already shown in CS's Networking section).
 

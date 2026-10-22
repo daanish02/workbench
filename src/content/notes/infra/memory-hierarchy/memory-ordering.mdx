@@ -1,8 +1,193 @@
 ---
 title: "Memory Ordering"
-description: "Why hardware reorders memory operations, x86 vs ARM ordering, fences and atomic instructions."
+description: "Why processors let memory operations become visible out of program order, store buffers, x86 TSO vs ARM weak ordering shown with litmus tests, fences, acquire/release, and atomic read-modify-write with CAS and LL/SC."
 order: 10
 tier: advanced
+takeaways:
+  - "Under **sequential consistency** all threads' operations interleave in one order that respects each program. Real CPUs relax this for speed, mainly because of **store buffers**."
+  - "x86 (**TSO**) lets a later load pass an earlier store: in the store-buffering test both loads can read 0. ARM and POWER are **weakly ordered**: they also let two stores or two loads swap, so a reader can see a flag set before the data it guards."
+  - "**Fences** (`mfence`, `dmb`) and **acquire/release** operations restore the order where it matters; the litmus checker shows the forbidden outcomes disappear with them."
+  - "**Atomic read-modify-write** (x86 `lock cmpxchg`, ARM LL/SC or LSE atomics) makes an update indivisible: four simulated threads lost 2494 of 4000 plain increments, and none with a compare-and-swap loop."
+  - "Write portable code against the language memory model (C++ `std::atomic`, Java `volatile`, Rust atomics), never against what one CPU happens to do."
+resources:
+  - title: "Memory Barriers: a Hardware View for Software Hackers (McKenney, 2010)"
+    url: "http://www.rdrop.com/users/paulmck/scalability/paper/whymb.2010.07.23a.pdf"
+    note: "Builds store buffers and invalidate queues step by step and shows exactly why each barrier is needed."
+  - title: "x86-TSO: A Rigorous and Usable Programmer's Model (Sewell et al., CACM 2010)"
+    url: "https://www.cl.cam.ac.uk/~pes20/weakmemory/cacm.pdf"
+    note: "The store-buffer model of x86 used in this note, with the litmus tests that define it."
+  - title: "Memory ordering (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Memory_ordering"
+    note: "Compiler and hardware reordering, barriers, and a table of which reorderings each architecture allows."
 ---
 
-_Placeholder. Content not written yet._
+[Cache Coherence](../cache-coherence/) ended on a gap: coherence keeps every copy of *one* line consistent, but says nothing about the order in which writes to *different* locations become visible to other cores. That order is the processor's **memory model**, and it is weaker than most programmers assume. This note explains why hardware lets memory operations appear out of program order, how x86 and ARM differ, what fences and atomic instructions do about it, and how this underlies the locks of [Synchronization](../../../cs/operating-systems/synchronization/). It is advanced because it needs coherence, caches and [out-of-order execution](../../cpu-architecture/out-of-order-execution-and-superscalar-processors/) first.
+
+## Sequential Consistency
+
+The intuitive model is **sequential consistency** (SC), defined by Leslie Lamport in 1979: the result of any run is as if all operations of all threads were executed in some single order, and each thread's operations appear in that order as written in its program. Threads may interleave in any way, but nothing inside a thread is reordered.
+
+No mainstream processor guarantees SC for ordinary loads and stores, because it would forbid optimisations that each give a large speedup:
+
+- **Store buffers.** A store that misses the cache would stall the core for the whole miss. Instead it is written into a small per-core **store buffer** and the core moves on; the buffer drains to the cache later. A later load to a different address does not wait for the buffer, so the load effectively happens before the store.
+- **Out-of-order and speculative loads.** Cores issue loads as soon as their address is known, not in program order.
+- **Non-blocking caches and interconnects** deliver different lines at different speeds, so two stores can become visible to other cores in either order.
+
+On one core none of this is visible: the core forwards from its own store buffer and preserves dependencies, so a single-threaded program always sees its own operations in order. The difference appears only when another core watches.
+
+## Litmus Tests
+
+Memory models are pinned down by tiny **litmus tests**: two threads, a few operations, and the question of which final values are allowed. Two classic ones:
+
+- **Store buffering (SB):** thread 0 does `x = 1; r0 = y`, thread 1 does `y = 1; r1 = x`. Under SC at least one store comes first in the single order, so `r0 = 0, r1 = 0` is impossible.
+- **Message passing (MP):** thread 0 writes `data = 1; flag = 1`, thread 1 reads `r0 = flag; r1 = data`. Under SC, seeing `flag = 1` means `data = 1` is visible too, so `r0 = 1, r1 = 0` is impossible.
+
+<StoreBufferSteps />
+
+The program below enumerates every allowed outcome under three models: SC, x86's **TSO** (total store order, modelled exactly as FIFO store buffers), and a weak model in the style of ARM, where operations on different variables may be reordered unless a fence separates them:
+
+```python
+from itertools import permutations
+
+# A thread is a list of ops: ("st", var, value), ("ld", var, reg) or ("fence",)
+SB = [[("st", "x", 1), ("ld", "y", "r0")], [("st", "y", 1), ("ld", "x", "r1")]]       # store buffering
+MP = [[("st", "data", 1), ("st", "flag", 1)], [("ld", "flag", "r0"), ("ld", "data", "r1")]]  # message passing
+
+def sc(threads, mem=None, regs=None):
+    """Every interleaving that keeps each thread's program order."""
+    mem, regs = mem or {}, regs or {}
+    if not any(threads):
+        return {tuple(sorted(regs.items()))}
+    out = set()
+    for i, t in enumerate(threads):
+        if t:
+            op, rest = t[0], threads[:i] + [t[1:]] + threads[i + 1:]
+            m, r = dict(mem), dict(regs)
+            if op[0] == "st":
+                m[op[1]] = op[2]
+            elif op[0] == "ld":
+                r[op[2]] = m.get(op[1], 0)
+            out |= sc(rest, m, r)
+    return out
+
+def tso(threads, bufs=None, mem=None, regs=None):
+    """x86-TSO: each store waits in a FIFO store buffer; loads check their own buffer first."""
+    bufs, mem, regs = bufs or [[] for _ in threads], mem or {}, regs or {}
+    if not any(threads) and not any(bufs):
+        return {tuple(sorted(regs.items()))}
+    out = set()
+    for i, t in enumerate(threads):
+        if bufs[i]:                                  # drain the oldest buffered store to memory
+            (var, val), b = bufs[i][0], [list(x) for x in bufs]
+            b[i] = b[i][1:]
+            out |= tso(threads, b, {**mem, var: val}, regs)
+        if t:
+            op, rest, b, r = t[0], threads[:i] + [t[1:]] + threads[i + 1:], [list(x) for x in bufs], dict(regs)
+            if op[0] == "st":
+                b[i].append((op[1], op[2]))
+            elif op[0] == "ld":
+                own = [v for var, v in b[i] if var == op[1]]
+                r[op[2]] = own[-1] if own else mem.get(op[1], 0)
+            elif bufs[i]:
+                continue                             # a fence waits until the buffer is empty
+            out |= tso(rest, b, mem, r)
+    return out
+
+def weak(threads):
+    """ARM-like: ops on different variables may be reordered unless a fence is between them."""
+    def orders(t):
+        for p in permutations(t):
+            ok = all(not (p.index(a) > p.index(b) and (a[0] == "fence" or b[0] == "fence" or a[1] == b[1]))
+                     for k, a in enumerate(t) for b in t[k + 1:])
+            if ok:
+                yield list(p)
+    out = set()
+    def go(acc, i):
+        if i == len(threads):
+            out.update(sc(acc))
+            return
+        for o in orders(threads[i]):
+            go(acc + [o], i + 1)
+    go([], 0)
+    return out
+
+def show(name, test, model):
+    outs = sorted(", ".join(f"{k}={v}" for k, v in o) for o in model(test))
+    print(f"{name:8} {model.__name__:4}: {' | '.join(outs)}")
+
+for name, test in [("SB", SB), ("MP", MP)]:
+    for model in (sc, tso, weak):
+        show(name, test, model)
+fenced = lambda test: [[t[0], ("fence",), t[1]] for t in test]
+show("SB+fence", fenced(SB), tso)
+show("MP+fence", fenced(MP), weak)
+# SB       sc  : r0=0, r1=1 | r0=1, r1=0 | r0=1, r1=1
+# SB       tso : r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=0 | r0=1, r1=1
+# SB       weak: r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=0 | r0=1, r1=1
+# MP       sc  : r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=1
+# MP       tso : r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=1
+# MP       weak: r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=0 | r0=1, r1=1
+# SB+fence tso : r0=0, r1=1 | r0=1, r1=0 | r0=1, r1=1
+# MP+fence weak: r0=0, r1=0 | r0=0, r1=1 | r0=1, r1=1
+```
+
+In words: SC allows three outcomes for each test. TSO adds exactly one, `r0=0, r1=0` in store buffering, because both stores can still sit in their buffers when both loads read memory; it does not allow the bad message-passing outcome, since x86 store buffers drain in order and loads are not reordered with loads. The weak model allows both bad outcomes, including `r0=1, r1=0` in message passing: the reader saw the flag but not the data. With a fence between the two operations of each thread, both bad outcomes disappear. The weak model here is a simplification; the real ARMv8 and POWER models have more rules, such as respecting address dependencies.
+
+## Fences and Acquire/Release
+
+A **fence** (memory barrier) forbids reordering across it. A full fence (`mfence` on x86, `dmb ish` on ARM) makes all memory operations before it visible before any after it; on x86 that means draining the store buffer, which costs tens of cycles. Most synchronisation only needs one direction, which is cheaper:
+
+- a **release** store (`stlr` on ARM) makes every earlier read and write visible before the store itself: used to publish data, as in `flag = 1`;
+- an **acquire** load (`ldar` on ARM) keeps every later read and write after it: used to consume, as in reading `flag`.
+
+A release store paired with an acquire load that reads its value is enough to make message passing correct. On x86 ordinary stores already have release semantics and ordinary loads acquire semantics, so only the store-buffering pattern (a store followed by a load of a different variable, as in Dekker's and Peterson's mutual exclusion algorithms) needs a full fence.
+
+Programmers rarely write these instructions directly. The language **memory model** promises SC for programs whose shared variables are all atomics or protected by locks (data-race-free programs), and the compiler emits the right fences per CPU: C and C++ `std::atomic` with `memory_order_seq_cst`, `acquire` and `release`, Java's `volatile` and `java.util.concurrent`, Rust's `Ordering`. The compiler is bound by the same rules: without atomics it is free to reorder, merge or delete ordinary memory accesses itself.
+
+## Atomic Read-Modify-Write
+
+Ordering alone cannot make `counter += 1` safe: it is a load, an add and a store, and two threads can both load the same value. Processors provide **atomic read-modify-write** instructions that do all three indivisibly, by holding the cache line exclusively (in M state, see [Cache Coherence](../cache-coherence/)) for the duration:
+
+- x86: the `lock` prefix (`lock xadd`, `lock cmpxchg`), which also acts as a full fence;
+- ARM and RISC-V: **load-linked / store-conditional** (LL/SC: `ldxr`/`stxr`, `lr`/`sc`): the load marks the line, and the store succeeds only if nobody else wrote it in between, otherwise the code retries. ARMv8.1 added single-instruction atomics (LSE: `ldadd`, `cas`) because LL/SC loops scale badly under contention.
+
+The universal building block is **compare-and-swap** (CAS): write a new value only if the location still holds the expected old value, and report whether it did. Here four threads each add 1000 to a counter, with a random interleaving:
+
+```python
+import random
+
+def run(use_cas, threads=4, per_thread=1000, seed=3):
+    rng = random.Random(seed)
+    counter, failed_cas = 0, 0
+    left = [per_thread] * threads                   # increments still to do
+    seen = [None] * threads                          # value each thread loaded, None = must load next
+    while any(left):
+        t = rng.choice([i for i in range(threads) if left[i]])   # the scheduler interleaves at random
+        if seen[t] is None:
+            seen[t] = counter                        # step 1: load
+        elif not use_cas:
+            counter = seen[t] + 1                    # step 2: plain store, may overwrite a newer value
+            seen[t], left[t] = None, left[t] - 1
+        elif counter == seen[t]:                     # step 2: compare-and-swap succeeds
+            counter = seen[t] + 1
+            seen[t], left[t] = None, left[t] - 1
+        else:                                        # someone else changed it: reload and retry
+            seen[t], failed_cas = None, failed_cas + 1
+    return counter, failed_cas
+
+for use_cas in (False, True):
+    counter, failed = run(use_cas)
+    print(f"{'CAS loop  ' if use_cas else 'load+store'}: counter = {counter} of 4000, failed CAS attempts = {failed}")
+# load+store: counter = 1506 of 4000, failed CAS attempts = 0
+# CAS loop  : counter = 4000 of 4000, failed CAS attempts = 3911
+```
+
+In words: with a plain load and store, an increment is lost whenever another thread stores between a thread's load and its store; this interleaving loses 2494 of 4000 increments and ends at 1506. With a CAS loop the counter ends at exactly 4000, but 3911 CAS attempts failed and were retried: correctness is paid for in retries, and each retry also moves the cache line between cores. That is why a single hot atomic counter scales poorly and per-thread counters scale well ([Cache Coherence](../cache-coherence/)). Locks, semaphores and lock-free queues are all built from these instructions plus the right fences.
+
+<Callout type="pitfall">
+Code that works on x86 can break on ARM. A message-passing handoff written with plain variables (`data = ...; ready = true` on one thread, `while (!ready); use(data)` on another) almost always works on x86, whose TSO model keeps stores in order, and then fails rarely and unreproducibly on ARM servers or Apple-silicon laptops. In C and C++ it is a data race, undefined behaviour on every CPU, and the compiler may hoist the `ready` load out of the loop. `volatile` in C and C++ does not fix it: it gives neither atomicity nor ordering. Use atomics with release and acquire, or a lock.
+</Callout>
+
+<Callout type="key">
+Processors make memory operations visible out of program order, mainly because stores wait in store buffers. x86 TSO only lets loads pass earlier stores; ARM and POWER let almost any pair of independent accesses swap. Fences and acquire/release operations restore order where it is needed, atomic read-modify-write instructions make updates indivisible, and language memory models hide the per-CPU details as long as shared data goes through atomics or locks.
+</Callout>

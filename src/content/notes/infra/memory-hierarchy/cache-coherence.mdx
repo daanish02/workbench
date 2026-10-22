@@ -1,8 +1,129 @@
 ---
 title: "Cache Coherence"
-description: "The MESI protocol, why multicore systems need it at all."
+description: "Why private caches on many cores need a protocol to agree on memory, how MESI works, snooping vs directories, and what coherence traffic costs."
 order: 4
 tier: advanced
+takeaways:
+  - "Each core has private L1 and L2 caches, so the same memory line can be cached in several places. **Cache coherence** keeps all copies agreeing: every read sees the latest write to that location."
+  - "**MESI** gives each cached line a state: **Modified** (only copy, dirty), **Exclusive** (only copy, clean), **Shared** (clean, possibly elsewhere), **Invalid**. A write requires the only valid copy, so it invalidates all others."
+  - "Cores find each other's copies by **snooping** (broadcasting requests) on small chips or with a **directory** (a table of who holds each line) on large ones."
+  - "Coherence is invisible but not free: two cores incrementing one counter move the line between them on 999 of 1000 writes, and **false sharing** does the same to unrelated variables on one line."
+  - "Coherence is about one location; the order in which writes to **different** locations become visible is **memory ordering**, a separate topic."
+resources:
+  - title: "MESI protocol (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/MESI_protocol"
+    note: "The state machine with every transition, plus MOESI and MESIF variants used by AMD and Intel."
+  - title: "Cache coherence (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cache_coherence"
+    note: "The definition, snooping and directory protocols, and their scaling limits."
+  - title: "Directory-based cache coherence (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Directory-based_cache_coherence"
+    note: "How large multiprocessors track sharers without broadcasting."
 ---
 
-_Placeholder. Content not written yet._
+A multicore CPU gives every core its own L1 and L2 caches ([Cache Basics](../cache-basics/)). That is what makes them fast, and it creates a problem: if core 0 writes a variable while core 1 has an old copy of the same line in its cache, core 1 could keep reading the stale value forever. Programs that share memory between threads would silently break. **Cache coherence** is the hardware protocol that prevents this, so that the many caches behave like one memory. This note explains what coherence guarantees, how the **MESI** protocol enforces it, how cores find each other's copies, and the performance traps it creates. It is the hardware beneath shared-memory threads in [Synchronization](../../../cs/operating-systems/synchronization/) and the multicore designs in [Multicore CPUs](../../gpus-parallelism/multicore-cpus/).
+
+## What Coherence Guarantees
+
+A memory system is coherent if, for every single memory location:
+
+1. a core that reads after its own write sees that write (unless another core wrote in between),
+2. a write by one core eventually becomes visible to reads by all other cores,
+3. all cores see the writes to that location in the same order.
+
+The simplest way to guarantee this is a rule known as **single writer, multiple readers**: at any moment a line is either writable by exactly one cache, or readable by any number of caches, never both. Before a core may write, every other copy must be invalidated.
+
+## MESI
+
+Each cache tracks a state for every line it holds:
+
+- **Modified (M)**: this cache has the only copy, and it has been changed; memory is out of date, so this cache must supply the data or write it back.
+- **Exclusive (E)**: this cache has the only copy, unchanged; it may be written without telling anyone.
+- **Shared (S)**: unchanged, and other caches may hold it too; it must not be written until the others are invalidated.
+- **Invalid (I)**: no usable copy.
+
+```python
+def mesi(ops, cores=3):
+    state = ["I"] * cores                         # each core's copy of one cache line
+    for core, op in ops:
+        others = [c for c in range(cores) if c != core]
+        holders = [c for c in others if state[c] != "I"]
+        dirty = [c for c in holders if state[c] == "M"]
+        if op == "read":
+            if state[core] != "I":
+                msg = "hit, no bus traffic"
+            else:
+                msg = "read miss: " + (f"core {dirty[0]} supplies its modified copy, " if dirty else "")
+                msg += f"shared with {holders}" if holders else "no other copy, so Exclusive"
+                for c in holders:
+                    state[c] = "S"                # every other holder drops to Shared
+                state[core] = "S" if holders else "E"
+        else:
+            if state[core] == "M":
+                msg = "write hit"
+            elif state[core] == "E":
+                msg = "write hit, silent upgrade (nobody else has it)"
+            else:
+                msg = f"must invalidate {holders} first" if holders else "read-for-ownership from memory"
+                for c in others:
+                    state[c] = "I"
+            state[core] = "M"
+        print(f"core {core} {op:5} -> {' '.join(state)}   {msg}")
+
+mesi([(0, "read"), (0, "write"), (1, "read"), (2, "read"), (1, "write"), (0, "read")])
+# core 0 read  -> E I I   read miss: no other copy, so Exclusive
+# core 0 write -> M I I   write hit, silent upgrade (nobody else has it)
+# core 1 read  -> S S I   read miss: core 0 supplies its modified copy, shared with [0]
+# core 2 read  -> S S S   read miss: shared with [0, 1]
+# core 1 write -> I M I   must invalidate [0, 2] first
+# core 0 read  -> S S I   read miss: core 1 supplies its modified copy, shared with [1]
+```
+
+In words: core 0 reads a line nobody has and gets it Exclusive, so its write needs no traffic at all; that is what the E state is for, since most data is private to one thread. When core 1 reads, core 0 supplies its modified copy and both become Shared. When core 1 then writes, it must first invalidate cores 0 and 2, and core 0's next read misses and fetches the new value from core 1. Every read always sees the latest write.
+
+<MesiSteps />
+
+Vendors extend MESI: AMD uses **MOESI**, whose **Owned** state lets a dirty line be shared without writing it back to memory first; Intel uses **MESIF**, whose **Forward** state names one sharer to answer requests so several caches do not all reply.
+
+## Snooping and Directories
+
+When a core misses or needs ownership, it must find the other copies. Two approaches:
+
+- **Snooping**: the request is broadcast to all caches, which check ("snoop") their tags and respond. Simple and fast for a handful of cores on one bus or ring, but broadcast traffic grows with the core count.
+- **Directory**: a table records, for each line, which caches hold it. A request goes to the directory, which forwards it only to the actual holders. This scales to dozens or hundreds of cores and multiple sockets, at the cost of directory storage and an extra hop. Modern server chips use directories or **snoop filters**, often kept alongside the L3.
+
+## What Coherence Costs
+
+Coherence is automatic, so its cost is easy to miss. Every time a line is written by one core and then used by another, it must travel between caches, which takes tens of nanoseconds on one chip and more across sockets:
+
+```python
+def transfers(writes, cores_sharing):
+    # each write to a line last written by another core must first pull it over and invalidate the others
+    owner, moves = None, 0
+    for i in range(writes):
+        core = i % cores_sharing
+        if owner is not None and owner != core:
+            moves += 1
+        owner = core
+    return moves
+
+for cores in (1, 2, 4):
+    print(f"{cores} core(s) incrementing one shared counter 1000 times: {transfers(1000, cores)} line transfers")
+# 1 core(s) incrementing one shared counter 1000 times: 0 line transfers
+# 2 core(s) incrementing one shared counter 1000 times: 999 line transfers
+# 4 core(s) incrementing one shared counter 1000 times: 999 line transfers
+```
+
+In words: one core incrementing a counter keeps the line Modified in its own cache with no transfers. Two cores taking turns move the line back and forth on 999 of 1000 increments, so adding a second core makes the counter slower, not faster. Scalable code gives each thread its own counter and combines them at the end.
+
+<Callout type="pitfall">
+**False sharing**: coherence works on whole 64-byte lines, not variables. Two threads writing two *different* variables that happen to sit on the same line ping-pong it exactly like a shared counter, though they share no data. Per-thread counters in an array of adjacent integers are the classic case. Padding or aligning each thread's data to its own cache line removes it ([Cache-Friendly Code](../cache-friendly-code/)).
+</Callout>
+
+## Coherence Is Not Ordering
+
+Coherence speaks about one location at a time. It says nothing about the order in which writes to *different* locations become visible: if core 0 writes `data` and then `ready`, coherence alone does not stop core 1 from seeing the new `ready` before the new `data`. That is governed by the processor's **memory model**, enforced with fences and atomic instructions ([Memory Ordering](../memory-ordering/)).
+
+<Callout type="key">
+Coherence makes many private caches act like one memory by enforcing a single writer or many readers per line. MESI's states let private data stay local and silent, while shared, written data pays a cross-core transfer on every handoff, which is why contended and falsely shared lines are among the most common multicore slowdowns.
+</Callout>

@@ -1,8 +1,119 @@
 ---
 title: "Reading Spec Sheets"
-description: "How to read a CPU, GPU or SSD datasheet and which numbers matter for which workload."
+description: "How to read a CPU, GPU or SSD datasheet: which numbers matter for which workload, what the marketing figures hide, and three calculations that turn specs into expectations."
 order: 3
 tier: core
+takeaways:
+  - "Read a spec sheet with a workload in mind: compute-heavy code cares about cores, clocks and FLOPS; data-heavy code about memory channels and bandwidth; storage about latency, random IOPS and endurance."
+  - "A 96-core server with 12 DDR5-4800 channels has 460.8 GB/s, only 4.8 GB/s per core, less than an 8-core desktop's 12.0 GB/s per core."
+  - "Divide peak FLOPS by memory bandwidth to get the **ridge point**: an H100 SXM needs about 295 FLOPs per byte in dense BF16 before compute, not memory, limits it."
+  - "SSD endurance in **TBW** converts to **drive writes per day**: 1200 TBW on 2 TB over 5 years is 0.33 DWPD. Sequential and peak IOPS figures are best cases measured at high queue depth."
+resources:
+  - title: "NVIDIA H100 Tensor Core GPU (NVIDIA)"
+    url: "https://www.nvidia.com/en-us/data-center/h100/"
+    note: "A real accelerator datasheet: FLOPS per precision with and without sparsity, memory bandwidth, NVLink and power."
+  - title: "TechPowerUp GPU Database"
+    url: "https://www.techpowerup.com/gpu-specs/"
+    note: "Uniform spec pages for thousands of GPUs, handy for comparing bandwidth, units and clocks."
+  - title: "Roofline model (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Roofline_model"
+    note: "The model behind the ridge-point calculation: peak compute, peak bandwidth and arithmetic intensity."
 ---
 
-_Placeholder. Content not written yet._
+A datasheet lists dozens of numbers, chosen partly to inform and partly to sell. The useful skill is knowing which two or three of them predict the performance of a particular workload, and which conditions the headline figures were measured under. This page walks through CPU, GPU and SSD datasheets field by field, then shows three calculations that turn specs into expectations. Units are explained in [Units & Magnitudes](../units-and-magnitudes/); terms in the [Hardware Glossary](../glossary/).
+
+<FilterTable placeholder="Filter, e.g. TDP, bandwidth, IOPS, cache">
+
+### CPU
+
+| Spec | What it means | What to watch |
+| --- | --- | --- |
+| Cores / threads | Physical cores, and hardware threads with SMT (2 per core on most x86) | SMT threads share a core's units; they add perhaps 10–30% throughput, not 2× |
+| Performance / efficiency cores | Hybrid chips mix large and small cores | Core count alone overstates multithreaded speed on hybrid chips |
+| Base / boost clock | Guaranteed clock under sustained load vs the peak for a few cores briefly | All-core sustained clocks sit between the two and depend on cooling |
+| Cache (L2, L3) | On-chip SRAM per core and shared | L3 size matters for working sets of a few to a few hundred MiB ([Memory Hierarchy](../../memory-hierarchy/why-the-memory-hierarchy-exists/)) |
+| TDP / power limits | The heat the cooler must remove; actual draw can exceed TDP during boost | Laptops with the same chip differ widely because their power limits differ |
+| Memory channels and speed | Number of DDR channels and supported MT/s | Sets peak bandwidth: channels × MT/s × 8 bytes ([Main Memory](../../memory-hierarchy/main-memory/)) |
+| PCIe lanes and generation | How many devices at what speed connect directly to the CPU | GPUs and NVMe drives compete for lanes; check the platform, not only the chip |
+| ISA extensions | AVX2, AVX-512, AMX, NEON, SVE | Vector width doubles peak FLOPS per core when code uses it ([SIMD on CPUs](../../gpus-parallelism/simd-instructions-on-cpus/)) |
+
+### GPU and Accelerator
+
+| Spec | What it means | What to watch |
+| --- | --- | --- |
+| Memory capacity | HBM or GDDR on the board | Decides which model or dataset fits at all; often the first limit for AI work |
+| Memory bandwidth | Bytes per second between GPU and its memory | Limits every memory-bound kernel (elementwise ops, LLM token generation) |
+| FLOPS per precision | Peak for FP64, FP32, TF32, BF16/FP16, FP8, FP4 | Only the precision your code uses counts; "with sparsity" figures are 2× the dense ones |
+| Tensor / matrix cores | Units that multiply small matrices per instruction | Most of the headline FLOPS; reached only through matrix libraries ([AI Accelerators](../../gpus-parallelism/tensor-cores-and-specialized-ai-hardware/)) |
+| SM / CU count, clock | Number of multiprocessors and their clock | Useful for comparing within one vendor's generation |
+| Interconnect | NVLink, Infinity Fabric or PCIe bandwidth to other GPUs and the host | Limits multi-GPU training and host-to-device copies ([Interconnects](../../gpus-parallelism/interconnects/)) |
+| Board power | Watts for the whole card or module | Sets rack power and cooling; SXM modules and PCIe cards of one chip differ in power and clocks |
+| Form factor | PCIe card, SXM/OAM module | The same chip name can mean very different performance |
+
+### SSD
+
+| Spec | What it means | What to watch |
+| --- | --- | --- |
+| Interface | SATA, NVMe over PCIe 3.0 / 4.0 / 5.0 and lane count | Caps sequential speed: SATA ~0.55 GB/s, PCIe 4.0 x4 ~7 GB/s ([Storage Interfaces](../../storage/storage-interfaces/)) |
+| Sequential read / write | MB/s for large transfers at high queue depth | Write figures often hold only while the SLC cache lasts |
+| Random 4K IOPS | Small random operations per second, usually at QD32 or higher | Most applications run at low queue depth, where IOPS are far lower ([Storage Performance](../../storage/storage-performance/)) |
+| Latency | Time per read or write, sometimes quoted at QD1 | Rarely on consumer sheets; the number that matters for databases |
+| NAND type | SLC, TLC, QLC | QLC is cheaper per TB, slower to write after the cache and less durable ([Flash & SSDs](../../storage/flash-and-ssds/)) |
+| DRAM cache / HMB | On-drive DRAM for the mapping table, or a slice of host memory | DRAM-less drives slow down on random access across large spans |
+| Endurance (TBW, DWPD) | Terabytes written, or full-drive writes per day, covered by the warranty | Write-heavy servers need a drive rated for it |
+| Power-loss protection | Capacitors that flush cached writes on power failure | Needed for `fsync` to be both fast and safe ([Blocks to Files](../../storage/how-a-file-system-maps-to-physical-storage/)) |
+
+</FilterTable>
+
+## Bandwidth per Core
+
+A server CPU's spec sheet shows many cores and many memory channels. Dividing one by the other tells how much bandwidth each core gets when all are busy:
+
+```python
+cores, channels, mt_s = 96, 12, 4800                 # AMD EPYC 9654 (2022): 96 cores, 12 channels of DDR5-4800
+bw = channels * mt_s * 8 / 1000                      # 8 bytes per transfer per 64-bit channel
+print(f"memory bandwidth: {bw:.1f} GB/s total, {bw / cores:.1f} GB/s per core")
+desktop = 2 * 6000 * 8 / 1000                        # desktop: 2 channels of DDR5-6000, 8 cores
+print(f"desktop: {desktop:.1f} GB/s total, {desktop / 8:.1f} GB/s per core")
+# memory bandwidth: 460.8 GB/s total, 4.8 GB/s per core
+# desktop: 96.0 GB/s total, 12.0 GB/s per core
+```
+
+In words: twelve channels of DDR5-4800 give the 96-core server 460.8 GB/s, almost five times the desktop's 96.0 GB/s, but shared by 96 cores it is 4.8 GB/s each, while each of the desktop's 8 cores gets 12.0 GB/s. A memory-bound program, such as a large scan or a sparse matrix product, stops scaling long before it uses all 96 cores. Populating fewer channels than the CPU supports cuts these numbers proportionally, which is why server spec sheets and motherboard manuals stress filling every channel.
+
+## The Ridge Point
+
+An accelerator lists peak FLOPS and memory bandwidth. Their ratio is the **ridge point** of the [Roofline Model](../../gpus-parallelism/roofline-model/): the arithmetic intensity (FLOPs per byte read from memory) a kernel needs before compute, not bandwidth, becomes its limit. For NVIDIA's H100 SXM:
+
+```python
+bandwidth = 3.35e12                                  # H100 SXM: bytes per second of HBM3
+peaks = {"FP64": 34e12, "FP32": 67e12, "BF16 tensor, dense": 989e12, "BF16 tensor, sparse": 1979e12}
+for name, flops in peaks.items():
+    print(f"{name:20} {flops / 1e12:6.0f} TFLOP/s, needs {flops / bandwidth:5.0f} FLOPs per byte to be compute-bound")
+# FP64                     34 TFLOP/s, needs    10 FLOPs per byte to be compute-bound
+# FP32                     67 TFLOP/s, needs    20 FLOPs per byte to be compute-bound
+# BF16 tensor, dense      989 TFLOP/s, needs   295 FLOPs per byte to be compute-bound
+# BF16 tensor, sparse    1979 TFLOP/s, needs   591 FLOPs per byte to be compute-bound
+```
+
+In words: with 3.35 TB/s of HBM3, ordinary FP32 code needs 20 FLOPs per byte to use the compute, but dense BF16 tensor-core work needs about 295, and the sparse figure 591. Large matrix multiplications reach that; elementwise operations (about 1 FLOP per several bytes) and the token-by-token phase of LLM inference do not, so on those the GPU runs at its memory bandwidth and the headline FLOPS are irrelevant. The sparse number doubles the dense one by assuming structured sparsity in the weights, which most models do not have.
+
+## SSD Endurance and IOPS
+
+```python
+capacity_tb, tbw, years = 2, 1200, 5                 # a 2 TB TLC NVMe drive rated 1200 TBW over a 5-year warranty
+dwpd = tbw / (capacity_tb * 365 * years)
+print(f"endurance: {dwpd:.2f} drive writes per day for {years} years")
+print(f"writing 200 GB a day uses up the rating in {tbw * 1000 / 200 / 365:.1f} years")
+iops, block = 1_000_000, 4096                        # quoted random-read IOPS at 4 KiB, high queue depth
+print(f"{iops:,} IOPS x 4 KiB = {iops * block / 1e9:.1f} GB/s")
+# endurance: 0.33 drive writes per day for 5 years
+# writing 200 GB a day uses up the rating in 16.4 years
+# 1,000,000 IOPS x 4 KiB = 4.1 GB/s
+```
+
+In words: 1200 TBW on a 2 TB drive over 5 years allows 0.33 full-drive writes per day. A desktop writing 200 GB a day would take 16.4 years to reach the rating, so endurance rarely matters there; a database server rewriting its whole drive daily needs a drive rated for 1 DWPD or more, typical of enterprise models. A quoted 1,000,000 random-read IOPS at 4 KiB is 4.1 GB/s of data, reachable only with dozens of requests in flight; at queue depth 1 the same drive does a small fraction of that, set by its latency ([Storage Performance](../../storage/storage-performance/)).
+
+<Callout type="pitfall">
+Headline numbers are best cases under stated conditions, usually in the footnotes: boost clocks for one or two cores, FLOPS with sparsity, SSD writes into an empty SLC cache, IOPS at queue depth 32 or more, bandwidth at the fastest supported memory with every channel filled. Before trusting a number, find its conditions and ask whether your workload meets them. When it matters, measure: `stream` for memory bandwidth, `fio` for storage, a vendor matrix-multiply benchmark for FLOPS.
+</Callout>

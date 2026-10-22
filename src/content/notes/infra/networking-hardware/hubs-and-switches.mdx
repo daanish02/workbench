@@ -1,0 +1,161 @@
+---
+title: "Hubs & Switches"
+description: "Repeaters, hubs, bridges and switching ASICs: how local frames are copied or forwarded in hardware, and how switches buffer."
+order: 4
+tier: core
+takeaways:
+  - "A **repeater** or **hub** works on signals, not frames: it copies every bit to every port, so all hosts share one half-duplex medium and one **collision domain**."
+  - "A **switch** is a many-port **bridge** built into a **switching ASIC**: it reads each frame's destination MAC, looks it up in a hardware table, and sends it out of one port, so every port is its own full-duplex link."
+  - "**Store-and-forward** switches receive the whole frame and check its FCS before sending; **cut-through** switches start after the header. Through 3 switches at 10 Gbit/s, a 1500 B frame takes 5.70 µs against 2.13 µs."
+  - "When several ports send to one, the output **buffer** absorbs the difference until it fills; then the switch drops. Under 2:1 overload, 16 MB lasts 1.28 ms on a 100G port."
+  - "Switched networks must not contain loops: a broadcast would circle forever. **Spanning Tree Protocol** disables redundant links until they are needed."
+resources:
+  - title: "Network switch (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Network_switch"
+    note: "Layers, forwarding methods, managed vs unmanaged, and the history from bridges."
+  - title: "Cut-through switching (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Cut-through_switching"
+    note: "Latency against error checking, fragment-free mode, and when a switch must fall back to storing."
+  - title: "Spanning Tree Protocol (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Spanning_Tree_Protocol"
+    note: "Root bridge election, port states and the faster Rapid STP."
+---
+
+[Link Layer](../../../cs/networks/link-layer/) explains what a switch decides: learn source MAC addresses, forward by destination, flood when the destination is unknown. This note is about the hardware that makes those decisions billions of times per second, and about the simpler devices it replaced. A frame leaving a [Network Interface Card](../network-interface-cards/) usually meets a switch first. The note starts with **repeaters and hubs**, which copy signals blindly, moves to **bridges**, and then opens a modern **switching ASIC**: its MAC table, its forwarding modes, its buffers, and the loops it must avoid.
+
+## Repeaters and Hubs
+
+A signal fades with distance ([Transmission Media](../physical-transmission-media/)). A **repeater** receives a weakened signal and sends out a clean, full-strength copy, bit by bit, without understanding frames at all. It works purely at the physical layer, layer 1.
+
+A **hub** is a repeater with many ports: every bit arriving on one port is repeated out of all the others. All hosts on a hub therefore share one medium, as if they were on one long cable:
+
+- Only one host can transmit at a time, so links run **half duplex** (send or receive, not both).
+- If two hosts start at once, their signals overlap and both frames are destroyed: a **collision**. Every port on the hub is in one **collision domain**, and hosts use CSMA/CD (listen first, detect collisions, wait a random time) to share it.
+- Every host receives every frame and its NIC throws away the ones not addressed to it, so nothing on a hub is private.
+
+```python
+def per_host_mbps(ports, rate_mbps, device):
+    if device == "hub":
+        return rate_mbps / ports                 # one shared half-duplex medium, ignoring collisions
+    return rate_mbps                             # each port is its own full-duplex link
+
+for ports in (4, 24):
+    hub = per_host_mbps(ports, 100, "hub")
+    sw = per_host_mbps(ports, 100, "switch")
+    print(f"{ports:2} busy hosts on 100 Mbit/s: hub {hub:5.1f} Mbit/s each, switch {sw:.0f} Mbit/s each way")
+#  4 busy hosts on 100 Mbit/s: hub  25.0 Mbit/s each, switch 100 Mbit/s each way
+# 24 busy hosts on 100 Mbit/s: hub   4.2 Mbit/s each, switch 100 Mbit/s each way
+```
+
+In words: on a 100 Mbit/s hub, 24 busy hosts get at most 4.2 Mbit/s each, and less in practice because collisions waste time. On a switch each gets 100 Mbit/s in each direction. Hubs are obsolete for this reason, and Ethernet above 1 Gbit/s does not support half duplex at all.
+
+<HubVsSwitch />
+
+## Bridges Split the Medium
+
+A **bridge** connects two hub segments and works at layer 2: it receives whole frames, learns which MAC addresses live on which side, and forwards a frame across only when the destination is on the other side. Traffic local to one segment stays there, and each segment becomes its own collision domain. Early bridges were computers running forwarding software with two network cards.
+
+A **switch** is a bridge with one host per port, built in hardware. With one host per port and full duplex, there is nothing to collide with: each port is a private link in each direction. The learning and flooding rules are exactly those of a bridge, which is why standards still describe switches as "bridges". A Wi-Fi **access point** is a bridge too: it joins the wireless medium to the wired LAN at layer 2, forwarding frames between them ([Wireless Basics](../wireless-technology-basics/)).
+
+## Inside a Switching ASIC
+
+A data-centre switch is built around one chip, a **switching ASIC** (application-specific integrated circuit), with a small general-purpose CPU beside it for management. For scale: Broadcom's Tomahawk 5 (2022) switches 51.2 Tbit/s on one chip, through 512 SerDes lanes at 100 Gbit/s each, enough for 64 ports of 800 Gbit/s. Inside, each frame passes a pipeline:
+
+1. **Ingress port**: SerDes and MAC turn the signal into a frame and check it, as on a NIC.
+2. **Parser**: extracts the header fields the switch cares about (MAC addresses, VLAN tag, and for layer-3 switches the IP header).
+3. **Lookup**: the destination MAC is looked up in the **MAC table** to find the output port; the source MAC is learned into it.
+4. **Buffer and queue**: the frame is written into a shared packet memory and a pointer is placed on the output port's queue.
+5. **Egress port**: the scheduler picks the next frame for the port, and the MAC and SerDes send it.
+
+The MAC table is an **exact-match** table: the switch needs the entry whose key equals the destination address. In software that is a hash table:
+
+```python
+mac_table = {}                                   # exact-match table: MAC address -> port
+
+def learn(src, port):
+    mac_table[src] = port
+
+def forward(dst, in_port, n_ports=8):
+    if dst in mac_table:
+        return [mac_table[dst]]
+    return [p for p in range(n_ports) if p != in_port]   # unknown destination: flood
+
+learn("aa:aa:aa:00:00:01", 1)
+print("to unknown B:", forward("bb:bb:bb:00:00:02", in_port=1))
+learn("bb:bb:bb:00:00:02", 5)
+print("to known B:  ", forward("bb:bb:bb:00:00:02", in_port=1))
+# to unknown B: [0, 2, 3, 4, 5, 6, 7]
+# to known B:   [5]
+```
+
+In words: before B has sent anything, a frame for B is flooded to all 7 other ports; once B's address has been learned on port 5, frames go to port 5 only. In silicon the table is a hardware hash table or a **CAM** (content-addressable memory), which compares the key against every stored entry in parallel and returns the match in one clock cycle, so lookup time does not grow with the number of entries. Entries expire after an **aging time** (300 seconds by default in the IEEE standard) so the table follows hosts that move.
+
+A switch is **non-blocking** if its internal capacity is at least the sum of all its ports, so any pattern of traffic in which no output port is oversubscribed runs at full speed. Datasheets give this as switching capacity (Tbit/s) and forwarding rate (packets per second).
+
+## Store-and-Forward vs Cut-Through
+
+A **store-and-forward** switch receives the whole frame, checks the FCS, and only then starts sending it. Corrupted frames are dropped at the first switch, but every switch adds one full transmission time. A **cut-through** switch starts sending as soon as it has read the destination MAC from the first 14 bytes, while the rest of the frame is still arriving:
+
+```python
+def path_latency_us(frame_bytes, rate_gbps, switches, mode, header_bytes=14, per_switch_ns=300):
+    tx = frame_bytes * 8 / (rate_gbps * 1e3)              # full transmission time of the frame, us
+    lookup = per_switch_ns / 1e3                          # pipeline delay inside each switch, us
+    if mode == "store-and-forward":
+        return tx * (switches + 1) + lookup * switches    # every switch waits for the whole frame
+    head = header_bytes * 8 / (rate_gbps * 1e3)           # time to receive the destination MAC
+    return tx + (head + lookup) * switches
+
+for size in (64, 1500, 9000):
+    saf = path_latency_us(size, 10, 3, "store-and-forward")
+    ct = path_latency_us(size, 10, 3, "cut-through")
+    print(f"{size:5} B through 3 switches at 10 Gbit/s: store-and-forward {saf:6.2f} us, cut-through {ct:5.2f} us")
+#    64 B through 3 switches at 10 Gbit/s: store-and-forward   1.10 us, cut-through  0.98 us
+#  1500 B through 3 switches at 10 Gbit/s: store-and-forward   5.70 us, cut-through  2.13 us
+#  9000 B through 3 switches at 10 Gbit/s: store-and-forward  29.70 us, cut-through  8.13 us
+```
+
+In words: with an assumed 300 ns pipeline delay per switch, cut-through saves little for 64-byte frames (0.98 against 1.10 µs) but a lot for large ones: 2.13 against 5.70 µs at 1500 bytes and 8.13 against 29.70 µs at 9000 bytes, because store-and-forward pays the 1.2 µs or 7.2 µs transmission time four times instead of once. This is the per-hop transmission cost from [Bandwidth & Latency](../bandwidth-latency-and-throughput/), paid or avoided at each switch.
+
+<CutThroughTiming />
+
+Cut-through has limits. It cannot drop a corrupted frame it has already started sending; it can only mark the frame's FCS as bad so the next store-and-forward device or the receiving NIC discards it. And it works only when the output port is free and no slower than the input: a frame headed for a busy port, or from a 100G port to a 10G one, must be stored anyway. Low-latency trading networks and many data-centre switches use cut-through; most enterprise switches store and forward.
+
+## Buffers and Congestion
+
+A switch port can send only at its own rate. When two input ports each send 100 Gbit/s to the same 100 Gbit/s output, half the traffic has nowhere to go and waits in the **packet buffer**. This **incast** pattern is common: a request fans out to many servers, and all their replies come back to one port at once. How long the buffer lasts is simple arithmetic:
+
+```python
+def fill_time_us(buffer_bytes, in_gbps, out_gbps):
+    excess = (in_gbps - out_gbps) * 1e9 / 8      # bytes per second the queue grows by
+    return buffer_bytes / excess * 1e6
+
+# two senders at full rate converge on one port of the same speed (2:1 incast)
+for buf_mb in (1, 16, 64):
+    t = fill_time_us(buf_mb * 1e6, in_gbps=200, out_gbps=100)
+    print(f"{buf_mb:2} MB of buffer for one 100G port under 2:1 overload: full after {t:7.1f} us")
+#  1 MB of buffer for one 100G port under 2:1 overload: full after    80.0 us
+# 16 MB of buffer for one 100G port under 2:1 overload: full after  1280.0 us
+# 64 MB of buffer for one 100G port under 2:1 overload: full after  5120.0 us
+```
+
+In words: the queue grows by 12.5 GB per second, so 1 MB fills in 80 µs and even 64 MB lasts only 5.12 ms. Buffers absorb short **microbursts**, not sustained overload; once full, the switch drops new frames (**tail drop**), and TCP senders see the loss and slow down. Switch ASICs share one buffer among all ports, typically tens of megabytes, because on-chip memory is expensive; deep-buffer switches add gigabytes of external DRAM for routers at the edge of long links. Large buffers trade drops for queueing delay, the bufferbloat problem from [Bandwidth & Latency](../bandwidth-latency-and-throughput/). Data-centre switches also mark packets with **ECN** (explicit congestion notification) before the buffer is full, so senders slow down without losing anything.
+
+## Loops and Spanning Tree
+
+Engineers add redundant links between switches so one cable failure does not cut the network. But plain Ethernet frames have no hop count, and switches flood broadcasts and unknown destinations out of every port. With a loop, a single broadcast is copied around it forever, multiplying at every switch with more than two links, until the links are saturated: a **broadcast storm**. MAC tables also thrash, because the same source address keeps arriving on different ports.
+
+The **Spanning Tree Protocol (STP)** prevents this. Switches exchange small messages, elect a **root bridge**, and each keeps only its best path toward the root; the remaining redundant ports are put into a blocking state that forwards no data. The active links form a tree, which has no loops by definition. If an active link fails, a blocked one takes over (within a few seconds with Rapid STP, IEEE 802.1w). Data centres use routing between switches instead, which keeps all links active ([Data Center Topologies](../data-center-networking-topologies/)).
+
+<Callout type="pitfall">
+Plugging both ends of one cable into the same cheap **unmanaged** switch, or two such switches into each other twice, creates a loop with no spanning tree to break it. The whole network slows to a crawl within seconds, every port light blinks constantly, and nothing points at the cable. Managed switches run STP and can shut a looping port down automatically.
+</Callout>
+
+## Managed Switches and PoE
+
+An **unmanaged** switch only learns and forwards. A **managed** switch adds a CPU and an operating system for configuration: **VLANs** (one physical switch divided into separate broadcast domains, with frames tagged by VLAN ID on links that carry several), STP, link aggregation (several cables acting as one faster link), port mirroring for packet capture, and counters for monitoring. The CPU configures the ASIC's tables; it does not touch the data frames, which stay in the ASIC.
+
+Many switches also supply power to devices over the same cable: **Power over Ethernet (PoE)**. The IEEE standards allow up to 15.4 W per port (802.3af), 30 W (802.3at) and 90 W (802.3bt Type 4) at the switch, enough for phones, cameras, Wi-Fi access points and small displays. The switch's total power budget usually limits how many ports can deliver full power at once.
+
+<Callout type="key">
+Hub to switch is the step from a **shared medium** to **dedicated links**. A hub copies signals, so every port shares one collision domain and one rate. A switch forwards frames, so every port is its own full-duplex link, and congestion moves from collisions on the wire to queues in the switch's buffer.
+</Callout>
