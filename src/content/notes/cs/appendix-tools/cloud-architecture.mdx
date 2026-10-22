@@ -1,0 +1,203 @@
+---
+title: "Cloud Architecture"
+description: "The building blocks of a production cloud setup, on AWS with Google Cloud and Azure equivalents: accounts, networks, load balancers, compute, data, queues, keys and how environments map onto them."
+order: 8
+tier: core
+takeaways:
+  - "Production runs in its **own account**, separate from dev and staging; an **organization** groups the accounts and applies guardrail policies to all of them."
+  - "A **VPC** is a private network with an address range. It is split into **public subnets** (load balancers, NAT gateways) and **private subnets** (applications, databases) in at least two **availability zones**."
+  - "Traffic comes in through a **load balancer**, goes out through a **NAT gateway**, and is filtered by **security groups** (stateful, per resource) and network ACLs (stateless, per subnet)."
+  - "Applications get permissions from **IAM roles**, not stored keys; secrets live in a **secret manager**, and data is encrypted with keys held in **KMS**."
+  - "Slow or bursty work goes through a **queue** (SQS) to workers; files go to **object storage** (S3); everything is described in Terraform and observed with logs, metrics and an audit trail."
+resources:
+  - title: "What is Amazon VPC? (AWS)"
+    url: "https://docs.aws.amazon.com/vpc/latest/userguide/what-is-amazon-vpc.html"
+    note: "The reference for VPCs, subnets, route tables, gateways and security groups."
+  - title: "AWS Well-Architected Framework (AWS)"
+    url: "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html"
+    note: "AWS's checklist for reliable, secure and cost-aware architectures, organised in six pillars."
+  - title: "Compare AWS and Azure services to Google Cloud (Google Cloud)"
+    url: "https://cloud.google.com/docs/get-started/aws-azure-gcp-service-comparison"
+    note: "The official mapping between the three providers' service names."
+---
+
+Most production systems in industry run on a public cloud, and most of them are assembled from the same dozen kinds of building blocks: accounts, a private network split into subnets, load balancers, compute, managed databases, object storage, queues, identity, keys and monitoring. The names differ between providers, the shapes do not. This sheet walks through a typical production setup on AWS, the most common provider, with the Google Cloud and Azure names in the table at the end. The ideas behind it are in [Cloud Computing](../../cloud/service-models/) and [System Design](../../system-design/scalability/); how dev, staging and production differ is in [Deployment Environments](../../software-engineering/deployment-environments/); the code that creates all of this is in the [Terraform Sheet](../terraform-sheet/).
+
+## Strengths and Weaknesses
+
+| Good at | Bad at |
+| --- | --- |
+| Capacity in minutes, paid by the hour or request, no hardware to buy | Cost control: idle resources, data transfer and NAT traffic add up quietly |
+| Managed services (databases, queues, load balancers) that handle patching, backups and failover | Lock-in: managed services and their APIs differ between providers |
+| Several availability zones and regions for redundancy | Complexity: networking and IAM have many interacting rules |
+| Everything is an API, so infrastructure can be code | Shared responsibility: the provider secures the cloud, you secure what you put in it |
+
+## Accounts and Organizations
+
+An **account** (AWS) or **project** (Google Cloud) or **subscription** (Azure) is the unit of isolation and billing: resources, permissions and quotas belong to one account, and nothing crosses between accounts unless explicitly allowed. Companies use many accounts, one per environment and team at least, grouped in an **organization**. Its **organizational units** (OUs) carry **service control policies** (SCPs), guardrails that no one inside an account can override, such as "only these regions" or "never disable CloudTrail".
+
+<CloudAccounts />
+
+People do not get users with passwords in each account. They sign in once through **IAM Identity Center** (single sign-on) and assume a **role** in the accounts they may use, typically admin in dev, read-only in production, with production changes made only by the deployment pipeline's role ([Authorization](../../security/authorization/)).
+
+## Regions and Zones
+
+A **region** is a geographic area (eu-west-1 is Ireland) with several **availability zones** (AZs): separate data centres with independent power and networking, a few milliseconds apart. A production system spreads every tier over at least two zones, so a zone failure removes capacity instead of the service. Regions are independent; using several is for disaster recovery, latency to distant users or data-residency law, and it multiplies cost and complexity ([Replication](../../distributed-systems/replication/)).
+
+## VPC and Subnets
+
+A **VPC** (virtual private cloud) is a private network in one region with an address range in CIDR notation, such as `10.20.0.0/16` ([IP Addressing](../../networks/ip-addressing/)). It is divided into **subnets**, each in one zone. A **public subnet** has a route to the internet gateway, so resources in it can have public addresses; a **private subnet** does not, so nothing on the internet can reach it directly. The usual layout is three tiers per zone: public (load balancers, NAT gateways), private app (containers, instances) and private data (databases, caches).
+
+```python
+import ipaddress
+
+vpc = ipaddress.ip_network("10.20.0.0/16")
+blocks = vpc.subnets(new_prefix=20)            # 16 blocks of 4,096 addresses
+plan = {}
+for tier in ["public", "app", "data"]:
+    for az in ["a", "b"]:
+        plan[f"{tier}-{az}"] = next(blocks)
+
+for name, net in plan.items():
+    usable = net.num_addresses - 5              # AWS reserves 5 addresses in every subnet
+    print(f"{name:9} {str(net):15} {usable:>5} usable")
+print(vpc.num_addresses, "in the VPC,", sum(1 for _ in blocks), "blocks left for later")
+print(ipaddress.ip_address("10.20.33.7") in plan["app-a"], ipaddress.ip_address("10.20.33.7") in plan["app-b"])
+# public-a  10.20.0.0/20     4091 usable
+# public-b  10.20.16.0/20    4091 usable
+# app-a     10.20.32.0/20    4091 usable
+# app-b     10.20.48.0/20    4091 usable
+# data-a    10.20.64.0/20    4091 usable
+# data-b    10.20.80.0/20    4091 usable
+# 65536 in the VPC, 10 blocks left for later
+# True False
+```
+
+In words: the `/16` holds 65,536 addresses, cut here into 16 blocks of `/20` (4,096 each). Six are used for three tiers in two zones, leaving 10 for a third zone or new tiers later. AWS reserves 5 addresses per subnet, so each has 4,091 usable. Plan ranges so they do not overlap with other VPCs or the office network, or they can never be connected later.
+
+<CloudVpc />
+
+## Routing and Gateways
+
+Each subnet has a **route table**. A public subnet's table sends `0.0.0.0/0` (everything not local) to the **internet gateway**. A private subnet's table sends it to a **NAT gateway** in a public subnet of the same zone, which lets private resources make outbound connections (to call an API or download updates) while staying unreachable from outside. NAT gateways charge per gigabyte, so traffic to AWS's own services (S3, SQS, KMS) goes instead through **VPC endpoints**, private routes that never leave the provider's network. Separate VPCs connect through **peering** or a **transit gateway**; offices and data centres through a VPN or a dedicated line ([Routing](../../networks/routing/)).
+
+<VpcRouteTables />
+
+## Security Groups and ACLs
+
+| | Security group | Network ACL |
+| --- | --- | --- |
+| Attached to | A resource's network interface | A subnet |
+| State | **Stateful**: replies to allowed traffic are allowed automatically | **Stateless**: rules needed in both directions |
+| Rules | Allow only | Allow and deny, evaluated in order |
+| Typical use | The main firewall: "the app accepts 8000 from the load balancer's group" | A coarse extra layer, for example blocking an address range |
+
+Security groups can name other security groups as the source, which is how tiers are chained: the load balancer accepts 443 from anywhere, the app accepts 8000 only from the load balancer's group, the database accepts 5432 only from the app's group. No rule ever needs an IP address that changes when a task restarts ([Network Security](../../security/network-security/)).
+
+<SecurityGroupChain />
+
+## Load Balancers and Edge
+
+An **Application Load Balancer** (ALB) works at HTTP level: it terminates TLS with a certificate from ACM, routes by host and path, and checks target health. A **Network Load Balancer** (NLB) forwards TCP or UDP with very low overhead and static addresses. In front of them, **Route 53** answers DNS, **CloudFront** caches static content at edge locations near users, and **WAF** filters common attacks such as SQL injection and bad bots before they reach the application ([Load Balancing & CDNs](../../networks/load-balancing-and-cdns/)).
+
+## Compute
+
+| Service | What you manage | Good for |
+| --- | --- | --- |
+| **EC2** | Virtual machines: OS, patching, scaling groups | Full control, special hardware (GPUs), legacy software |
+| **ECS on Fargate** | Containers only; AWS runs the servers | Most web services and workers |
+| **EKS** | Kubernetes control plane managed; nodes yours or Fargate | Teams standardised on Kubernetes ([Kubernetes Sheet](../kubernetes-sheet/)) |
+| **Lambda** | A function; AWS runs everything else, billed per call | Event handlers, glue, spiky low-volume work ([Serverless](../../cloud/serverless/)) |
+
+Whatever the compute, it runs in the private app subnets, scales on load ([Auto-scaling](../../cloud/auto-scaling/)), and gets permissions from an **IAM role** attached to the instance, task or function, never from access keys in configuration.
+
+## Data and Storage
+
+**RDS** and **Aurora** run PostgreSQL or MySQL with automated backups, patching and a **Multi-AZ** standby that takes over in about a minute if the primary fails ([PostgreSQL Sheet](../postgres-sheet/)). **DynamoDB** is a serverless key-value and document database for single-digit-millisecond lookups at any scale ([NoSQL](../../databases/nosql/)). **ElastiCache** runs Redis or Valkey for caching and sessions ([Caching Strategies](../../system-design/caching-strategies/)). **S3** stores objects (files, backups, data lake tables) with eleven nines of durability; buckets are private by default and should stay so, with access through IAM policies or signed URLs ([Storage Models](../../cloud/storage-models/)).
+
+## Queues and Events
+
+**SQS** is a managed queue: producers send messages, workers receive and delete them, and a message that fails too often moves to a **dead-letter queue** for inspection. **SNS** publishes one message to many subscribers (fan-out). **EventBridge** routes events between services and from schedules. **Kinesis** or managed Kafka (MSK) carry ordered, replayable streams. A queue between the web tier and slow work keeps responses fast and absorbs spikes ([Message Queues](../../system-design/message-queues/)).
+
+## Identity, Keys and Secrets
+
+**IAM** decides who (a person's role, a service's role) may do what (an action such as `s3:GetObject`) on which resource; grant the least that works. **KMS** holds encryption keys that never leave it; services encrypt data with a data key that KMS itself encrypts (**envelope encryption**), so revoking access to the KMS key makes the data unreadable ([Cryptography](../../security/cryptography/)). **Secrets Manager** (or Parameter Store) stores database passwords and API keys, rotates them, and hands them to applications that have the right role. **CloudTrail** records every API call in every account for audit.
+
+<Callout type="pitfall">
+The most common cloud breaches are configuration, not exploits: an S3 bucket made public, a security group open to `0.0.0.0/0` on a database port, long-lived access keys committed to a repository, or a role with `*` permissions. Block public S3 access at the account level, never put access keys in code (use roles), restrict database security groups to the app's group, and let an organization-wide policy and a scanner (AWS Config, Security Hub) catch the rest.
+</Callout>
+
+## Observability and Operations
+
+**CloudWatch** collects metrics and logs and raises alarms; **X-Ray** or OpenTelemetry traces requests across services ([Observability](../../software-engineering/observability/)). **AWS Backup** schedules backups across services, and copies to another account protect them from a compromised production account. **Cost Explorer** and budgets with alerts belong in every account from the first day, because the bill is the metric nobody watches until it is too late.
+
+## Environments on the Cloud
+
+The same architecture is deployed once per environment from the same Terraform modules, with different variables ([Deployment Environments](../../software-engineering/deployment-environments/)):
+
+<CloudPromotion />
+
+| | dev | staging | prod |
+| --- | --- | --- | --- |
+| Account | dev account | staging account (non-prod OU) | prod account (prod OU) |
+| Zones | 1 | 2 | 2 or 3 |
+| Database | Small single instance | Multi-AZ, smaller class | Multi-AZ, sized for load, backups copied out |
+| NAT gateways | 1 shared (cheaper) | 1 per zone | 1 per zone |
+| Data | Synthetic | Pseudonymised copy | Real |
+| Who can change it | Engineers | Pipeline | Pipeline after approval |
+
+## Provider Equivalents
+
+<FilterTable placeholder="Filter: queue, key, kubernetes…">
+
+| Building block | AWS | Google Cloud | Azure |
+| --- | --- | --- | --- |
+| Isolation unit | Account | Project | Subscription |
+| Grouping and guardrails | Organizations, OUs, SCPs | Organization, folders, org policies | Management groups, Azure Policy |
+| Private network | VPC | VPC (global, subnets regional) | Virtual Network (VNet) |
+| Firewall per resource | Security group | Firewall rules, network tags | Network security group |
+| Outbound for private subnets | NAT gateway | Cloud NAT | NAT Gateway |
+| HTTP load balancer | ALB | External Application Load Balancer | Application Gateway, Front Door |
+| DNS | Route 53 | Cloud DNS | Azure DNS |
+| CDN and WAF | CloudFront, WAF | Cloud CDN, Cloud Armor | Front Door, WAF |
+| Virtual machines | EC2 | Compute Engine | Virtual Machines |
+| Serverless containers | ECS on Fargate, App Runner | Cloud Run | Container Apps |
+| Kubernetes | EKS | GKE | AKS |
+| Functions | Lambda | Cloud Run functions | Azure Functions |
+| Relational database | RDS, Aurora | Cloud SQL, AlloyDB | Azure SQL, Database for PostgreSQL |
+| Key-value / document | DynamoDB | Firestore, Bigtable | Cosmos DB |
+| Cache | ElastiCache | Memorystore | Azure Cache for Redis |
+| Object storage | S3 | Cloud Storage | Blob Storage |
+| Queue | SQS | Pub/Sub, Cloud Tasks | Service Bus, Queue Storage |
+| Pub/sub and events | SNS, EventBridge | Pub/Sub, Eventarc | Event Grid |
+| Streams | Kinesis, MSK | Pub/Sub, Managed Kafka | Event Hubs |
+| Identity and roles | IAM | IAM, service accounts | Entra ID, managed identities |
+| Single sign-on | IAM Identity Center | Cloud Identity | Entra ID |
+| Encryption keys | KMS | Cloud KMS | Key Vault |
+| Secrets | Secrets Manager | Secret Manager | Key Vault |
+| Metrics and logs | CloudWatch | Cloud Monitoring, Cloud Logging | Azure Monitor |
+| Audit trail | CloudTrail | Cloud Audit Logs | Activity Log |
+
+</FilterTable>
+
+## Pitfalls
+
+- **One account for everything**: a dev script with broad permissions can then delete production. Separate accounts from the start; moving later is painful.
+- **Single zone**: everything in one AZ works until the zone has a bad day. Spread every tier over at least two.
+- **Overlapping CIDR ranges**: two VPCs both using `10.0.0.0/16` can never be peered. Plan address space across the company.
+- **Surprise NAT and transfer costs**: pulling container images or writing to S3 through a NAT gateway is billed per gigabyte; add VPC endpoints.
+- **Click-ops**: resources created in the console are undocumented and drift between environments. Create everything with Terraform, and treat console access to production as read-only.
+- **Untested backups**: a backup that has never been restored is a hope, not a backup. Restore into staging on a schedule.
+
+## Tooling
+
+```bash
+aws sso login --profile prod-readonly                 # sign in through Identity Center
+aws sts get-caller-identity --profile prod-readonly   # which account and role am I using?
+aws ec2 describe-vpcs --query 'Vpcs[].{id:VpcId,cidr:CidrBlock}' --output table
+aws ecs list-services --cluster shop-prod
+aws logs tail /ecs/shop-api --follow --since 10m
+aws sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names ApproximateNumberOfMessages
+```
+
+Infrastructure is written in Terraform, with one module for the network and others for each service, instantiated per environment ([Terraform Sheet](../terraform-sheet/)). `gcloud` and `az` are the Google Cloud and Azure command-line tools; `aws-vault` or SSO profiles keep credentials out of files; `infracost` estimates the cost of a Terraform change before it is applied.

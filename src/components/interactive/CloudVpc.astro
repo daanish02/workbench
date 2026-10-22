@@ -1,0 +1,200 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A typical production VPC, and how traffic moves through it"
+  caption="One production account in one region. The VPC 10.20.0.0/16 spans two availability zones; each zone has its own public subnet (load balancer, NAT gateway), private app subnet (containers) and private data subnet (database, cache), each a /20 from the subnet plan above, and every address sits inside its subnet's range. NAT gateways also hold a public Elastic IP (EIP). Regional services such as S3, SQS and KMS sit outside the VPC and are reached through VPC endpoints. Pick a flow to trace it; the dashed line is the database's synchronous replica."
+>
+  <cloud-vpc>
+    <input type="hidden" data-flow value="request" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="request" aria-pressed="true">User request</button>
+      <button type="button" class="btn" data-choice="async" aria-pressed="false">Background job</button>
+      <button type="button" class="btn" data-choice="egress" aria-pressed="false">Outbound call</button>
+      <button type="button" class="btn" data-choice="secrets" aria-pressed="false">Secrets & keys</button>
+    </span>
+    <svg class="cv-svg" data-svg viewBox="0 0 720 440" role="img" aria-label="Production VPC across two zones with public, app and data subnets, plus regional services"></svg>
+    <p class="cv-msg" data-msg></p>
+    <p class="cv-stat mono" data-stat></p>
+  </cloud-vpc>
+</Figure>
+
+<style>
+  .cv-svg {
+    display: block;
+    width: 100%;
+    max-width: 760px;
+    margin: 10px auto 0;
+  }
+  .cv-svg :global(rect.zone) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .cv-svg :global(rect.vpc) {
+    fill: rgba(66, 133, 244, 0.04);
+    stroke: var(--g-blue);
+  }
+  .cv-svg :global(rect.az) {
+    fill: transparent;
+    stroke: var(--border);
+    stroke-dasharray: 4 3;
+  }
+  .cv-svg :global(rect.pub) {
+    fill: rgba(52, 168, 83, 0.07);
+    stroke: none;
+  }
+  .cv-svg :global(rect.priv) {
+    fill: rgba(66, 133, 244, 0.07);
+    stroke: none;
+  }
+  .cv-svg :global(rect.node) {
+    fill: var(--bg);
+    stroke: var(--border-strong);
+  }
+  .cv-svg :global(rect.node.on) {
+    fill: rgba(251, 188, 5, 0.25);
+    stroke: var(--g-yellow);
+    stroke-width: 1.8;
+  }
+  .cv-svg :global(polyline.flow) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2.2;
+    stroke-linejoin: round;
+  }
+  .cv-svg :global(line.rep) {
+    stroke: var(--g-blue);
+    stroke-width: 1.3;
+    stroke-dasharray: 4 3;
+  }
+  .cv-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cv-svg :global(text.ip) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .cv-svg :global(text.lbl) {
+    fill: var(--text-muted);
+    font-size: 11px;
+    text-anchor: start;
+    /* a halo in the background colour keeps labels readable where a flow line passes */
+    paint-order: stroke;
+    stroke: var(--bg-elev);
+    stroke-width: 7px;
+    stroke-linejoin: round;
+  }
+  .cv-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cv-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  // node boxes: [x, y, w, h, label, address]; addresses fall inside their subnet's range
+  const N: Record<string, [number, number, number, number, string, string?]> = {
+    users: [10, 10, 110, 34, 'users'],
+    internet: [136, 10, 130, 34, 'internet API'],
+    dns: [330, 10, 110, 34, 'Route 53'],
+    cdn: [456, 10, 170, 34, 'CloudFront + WAF'],
+    igw: [250, 76, 130, 30, 'internet gateway'],
+    albA: [44, 172, 104, 40, 'ALB', '10.20.4.10'],
+    natA: [156, 172, 104, 40, 'NAT gateway', 'EIP 203.0.113.10'],
+    albB: [296, 172, 104, 40, 'ALB', '10.20.20.10'],
+    natB: [408, 172, 104, 40, 'NAT gateway', 'EIP 203.0.113.11'],
+    appA: [44, 266, 216, 40, 'app task', '10.20.33.7'],
+    appB: [296, 266, 104, 40, 'app task', '10.20.50.4'],
+    wrkB: [408, 266, 104, 40, 'worker', '10.20.51.8'],
+    dbA: [44, 360, 126, 40, 'RDS primary', '10.20.70.5'],
+    cacheA: [178, 360, 82, 40, 'Redis', '10.20.71.3'],
+    dbB: [296, 360, 126, 40, 'RDS standby', '10.20.85.5'],
+    s3: [560, 130, 146, 34, 'S3'],
+    sqs: [560, 186, 146, 34, 'SQS'],
+    kms: [560, 242, 146, 34, 'KMS'],
+    sec: [560, 298, 146, 34, 'Secrets Manager'],
+    cw: [560, 354, 146, 34, 'CloudWatch'],
+  };
+  const FLOWS: Record<string, { path: string[]; extra?: string[][]; msg: string; stat: string }> = {
+    request: {
+      path: ['users', 'cdn', 'igw', 'albA', 'appA', 'dbA'],
+      extra: [['appA', 'cacheA']],
+      msg: 'DNS (Route 53) points the domain at CloudFront, which caches static files and filters attacks (WAF). Dynamic requests enter the VPC through the internet gateway to the load balancer in a public subnet, which forwards to app tasks in private subnets. The app reads Redis first, then the database. Nothing in a private subnet has a public IP.',
+      stat: 'users → CloudFront → IGW → ALB (public) → app (private) → Redis / RDS (private data)',
+    },
+    async: {
+      path: ['appA', 'sqs', 'wrkB', 's3'],
+      msg: 'The app answers quickly and puts slow work (emails, image resizing, reports) on an SQS queue. Workers in the app subnets poll the queue, do the work, and write results to S3. A traffic spike only makes the queue longer; workers scale on queue depth.',
+      stat: 'app → SQS → worker → S3 · reached through VPC endpoints, not the internet',
+    },
+    egress: {
+      path: ['appB', 'natB', 'igw', 'internet'],
+      msg: 'An app task calls an outside API (payments, email). Private subnets route 0.0.0.0/0 to the NAT gateway in their zone, which sends the request out through the internet gateway with its own public IP. Replies come back the same way; nobody outside can open a connection inward.',
+      stat: 'app (private) → NAT (public, same zone) → IGW → internet · outbound only',
+    },
+    secrets: {
+      path: ['appA', 'sec', 'kms'],
+      extra: [['dbA', 'kms'], ['s3', 'kms']],
+      msg: 'At start-up the app fetches the database password from Secrets Manager, using its IAM role instead of a stored credential. Secrets Manager, the RDS disks and S3 objects are encrypted with keys held in KMS, which never leave it; every use is logged in CloudTrail.',
+      stat: 'IAM role → Secrets Manager → KMS · RDS and S3 encrypted at rest with KMS keys',
+    },
+  };
+
+  const centre = (id: string) => {
+    const [x, y, w, h] = N[id];
+    return [x + w / 2, y + h / 2];
+  };
+
+  class CloudVpc extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-flow]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const f = FLOWS[this.querySelector<HTMLInputElement>('[data-flow]')!.value];
+      const on = new Set([...f.path, ...(f.extra ?? []).flat()]);
+      // flows first, so zone labels and nodes are drawn over them
+      let s = [f.path, ...(f.extra ?? [])]
+        .map((ids) => `<polyline class="flow" points="${ids.map((id) => centre(id).join(',')).join(' ')}" />`)
+        .join('');
+      s += '<rect class="zone" x="4" y="60" width="712" height="376" rx="10" /><text class="lbl" x="400" y="78">prod account · region eu-west-1</text>';
+      s += '<rect class="vpc" x="20" y="92" width="516" height="332" rx="10" /><text class="lbl" x="32" y="110">VPC 10.20.0.0/16</text>';
+      [['a', 30], ['b', 282]].forEach(([az, x]) => {
+        const ax = x as number;
+        s += `<rect class="az" x="${ax}" y="122" width="244" height="292" rx="8" /><text class="lbl" x="${ax + 10}" y="138">zone ${az}</text>`;
+        // the /20 blocks from the subnet plan in the note: public 0/16, app 32/48, data 64/80
+        const third = (base: number) => base + (az === 'a' ? 0 : 16);
+        [['pub', 'public', 148, 0], ['priv', 'private app', 242, 32], ['priv', 'private data', 336, 64]].forEach(([cls, name, y, base]) => {
+          s += `<rect class="${cls}" x="${ax + 6}" y="${y}" width="232" height="66" rx="6" />`;
+          s += `<text class="lbl" x="${ax + 14}" y="${(y as number) + 12}">${name} · 10.20.${third(base as number)}.0/20</text>`;
+        });
+      });
+      s += '<text class="lbl" x="560" y="114">regional services</text>';
+      const [ax, ay] = centre('dbA');
+      const [bx, by] = centre('dbB');
+      s += `<line class="rep" x1="${ax + 63}" y1="${ay}" x2="${bx - 63}" y2="${by}" />`;
+      // opaque backing first: the tinted highlight is see-through and the flow lines run underneath
+      for (const [id, [x, y, w, h, label, ip]] of Object.entries(N)) {
+        s += `<rect class="node" x="${x}" y="${y}" width="${w}" height="${h}" rx="4" />`;
+        if (on.has(id)) s += `<rect class="node on" x="${x}" y="${y}" width="${w}" height="${h}" rx="4" />`;
+        s += ip
+          ? `<text x="${x + w / 2}" y="${y + 13}">${label}</text><text class="ip" x="${x + w / 2}" y="${y + 29}">${ip}</text>`
+          : `<text x="${x + w / 2}" y="${y + h / 2}">${label}</text>`;
+      }
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      this.querySelector('[data-stat]')!.textContent = f.stat;
+    }
+  }
+  customElements.define('cloud-vpc', CloudVpc);
+</script>

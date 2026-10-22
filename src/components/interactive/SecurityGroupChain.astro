@@ -1,0 +1,130 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Security groups chain the tiers by reference"
+  caption="Three security groups, one per tier, each allowing inbound traffic only from the tier in front of it. Rules name another group as the source instead of an IP address, so they stay correct as tasks start and stop with new addresses. Pick a connection: green is allowed by the highlighted rule, red has no rule and is dropped. Outbound replies need no rule because security groups are stateful."
+>
+  <security-group-chain>
+    <input type="hidden" data-conn value="web" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="web" aria-pressed="true">internet → ALB :443</button>
+      <button type="button" class="btn" data-choice="direct" aria-pressed="false">internet → app :8000</button>
+      <button type="button" class="btn" data-choice="lbapp" aria-pressed="false">ALB → app :8000</button>
+      <button type="button" class="btn" data-choice="appdb" aria-pressed="false">app → RDS :5432</button>
+      <button type="button" class="btn" data-choice="lbdb" aria-pressed="false">ALB → RDS :5432</button>
+    </span>
+    <svg class="sg-svg" data-svg viewBox="0 0 720 230" role="img" aria-label="Internet, load balancer, app and database security groups with their inbound rules"></svg>
+    <p class="sg-stat mono" data-stat></p>
+  </security-group-chain>
+</Figure>
+
+<style>
+  .sg-svg {
+    display: block;
+    width: 100%;
+    max-width: 760px;
+    margin: 10px auto 0;
+  }
+  .sg-svg :global(rect.bg) {
+    fill: var(--bg);
+  }
+  .sg-svg :global(rect.grp) {
+    fill: rgba(66, 133, 244, 0.1);
+    stroke: var(--g-blue);
+  }
+  .sg-svg :global(rect.net) {
+    fill: transparent;
+    stroke: var(--border-strong);
+    stroke-dasharray: 5 3;
+  }
+  .sg-svg :global(rect.rule) {
+    fill: transparent;
+    stroke: var(--border);
+  }
+  .sg-svg :global(rect.rule.hit) {
+    fill: rgba(52, 168, 83, 0.28);
+    stroke: var(--g-green);
+  }
+  .sg-svg :global(path.ok) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2.4;
+  }
+  .sg-svg :global(path.no) {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 2.4;
+    stroke-dasharray: 6 4;
+  }
+  .sg-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .sg-svg :global(text.c) {
+    text-anchor: middle;
+  }
+  .sg-svg :global(text.r) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .sg-svg :global(text.x) {
+    fill: var(--g-red);
+    font-size: 18px;
+    text-anchor: middle;
+  }
+  .sg-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  // columns: x of each box; rule: inbound rule text per group
+  const COL: Record<string, number> = { net: 10, alb: 190, app: 370, db: 550 };
+  const GROUPS: Record<string, { title: string; rule: string }> = {
+    alb: { title: 'sg-alb', rule: 'in 443 from 0.0.0.0/0' },
+    app: { title: 'sg-app', rule: 'in 8000 from sg-alb' },
+    db: { title: 'sg-db', rule: 'in 5432 from sg-app' },
+  };
+  const CONNS: Record<string, { from: string; to: string; ok: boolean; stat: string }> = {
+    web: { from: 'net', to: 'alb', ok: true, stat: 'allowed by sg-alb: in 443 from 0.0.0.0/0 · the load balancer is the only public entry' },
+    direct: { from: 'net', to: 'app', ok: false, stat: 'dropped: sg-app only accepts sg-alb, and the app has no public IP anyway' },
+    lbapp: { from: 'alb', to: 'app', ok: true, stat: 'allowed by sg-app: in 8000 from sg-alb · any load balancer node, whatever its IP' },
+    appdb: { from: 'app', to: 'db', ok: true, stat: 'allowed by sg-db: in 5432 from sg-app · new tasks are allowed as soon as they join sg-app' },
+    lbdb: { from: 'alb', to: 'db', ok: false, stat: 'dropped: sg-db names only sg-app, so even another tier inside the VPC cannot reach the database' },
+  };
+
+  class SecurityGroupChain extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-conn]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const c = CONNS[this.querySelector<HTMLInputElement>('[data-conn]')!.value];
+      const x1 = COL[c.from] + 160, x2 = COL[c.to];
+      // arrows to non-adjacent boxes arc over the boxes in between
+      const adjacent = x2 - x1 === 20;
+      const d = adjacent ? `M ${x1} 80 L ${x2} 80` : `M ${x1 - 80} 30 C ${x1 - 80} 6, ${x2 + 80} 6, ${x2 + 80} 30`;
+      let s = `<path class="${c.ok ? 'ok' : 'no'}" d="${d}" />`;
+      s += `<rect class="net" x="${COL.net}" y="40" width="160" height="80" rx="8" /><text class="c" x="${COL.net + 80}" y="72">internet</text><text class="c r" x="${COL.net + 80}" y="92">any address</text>`;
+      for (const [id, g] of Object.entries(GROUPS)) {
+        const x = COL[id];
+        const hit = c.ok && c.to === id;
+        s += `<rect class="bg" x="${x}" y="40" width="160" height="80" rx="8" /><rect class="grp" x="${x}" y="40" width="160" height="80" rx="8" />`;
+        s += `<text class="c" x="${x + 80}" y="62">${id === 'alb' ? 'ALB' : id === 'app' ? 'app tasks' : 'RDS'}</text>`;
+        s += `<text class="c r" x="${x + 80}" y="84">${g.title}</text>`;
+        s += `<text class="r" x="${x}" y="146">inbound rules</text>`;
+        s += `<rect class="rule${hit ? ' hit' : ''}" x="${x}" y="158" width="160" height="28" rx="4" /><text class="c r" x="${x + 80}" y="172">${g.rule}</text>`;
+        s += `<text class="r" x="${x}" y="206">outbound: all (stateful)</text>`;
+      }
+      if (!c.ok) s += `<text class="x" x="${COL[c.to] + 80}" y="30">✕</text>`;
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = c.stat;
+    }
+  }
+  customElements.define('security-group-chain', SecurityGroupChain);
+</script>

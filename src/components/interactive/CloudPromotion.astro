@@ -1,0 +1,179 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One image moves from the shared account into dev, staging and prod"
+  caption="The pipeline runs in a shared CI/CD account. It builds the image once, stores it in the registry (ECR), and deploys it into each environment's own account by assuming a deploy role there; each account pulls the same image digest and runs it in its own VPC, built from the same Terraform modules. Step through a release of version 1.4.3: yellow is what the current step touches, green accounts run the new version."
+>
+  <cloud-promotion>
+    <svg class="cp-svg" data-svg viewBox="0 0 720 350" role="img" aria-label="Shared CI/CD account with pipeline and registry, and dev, staging and prod accounts each running the application"></svg>
+    <p class="cp-msg" data-msg></p>
+    <p class="cp-stat mono" data-stat></p>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+  </cloud-promotion>
+</Figure>
+
+<style>
+  .cp-svg {
+    display: block;
+    width: 100%;
+    max-width: 760px;
+    margin: 10px auto 0;
+  }
+  .cp-svg :global(rect.acct) {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .cp-svg :global(rect.acct.prod) {
+    stroke: var(--g-red);
+  }
+  .cp-svg :global(rect.vpc) {
+    fill: rgba(66, 133, 244, 0.05);
+    stroke: var(--g-blue);
+    stroke-dasharray: 5 3;
+  }
+  .cp-svg :global(rect.box) {
+    fill: var(--bg);
+    stroke: var(--border-strong);
+  }
+  .cp-svg :global(rect.box.new) {
+    fill: rgba(52, 168, 83, 0.28);
+    stroke: var(--g-green);
+  }
+  .cp-svg :global(rect.box.canary) {
+    fill: rgba(52, 168, 83, 0.14);
+    stroke: var(--g-green);
+    stroke-dasharray: 4 3;
+  }
+  .cp-svg :global(rect.box.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.4;
+  }
+  .cp-svg :global(rect.gate) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .cp-svg :global(rect.gate.pass) {
+    fill: rgba(52, 168, 83, 0.28);
+    stroke: var(--g-green);
+  }
+  .cp-svg :global(rect.gate.on) {
+    fill: rgba(251, 188, 5, 0.3);
+    stroke: var(--g-yellow);
+  }
+  .cp-svg :global(path.arrow) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.2;
+  }
+  .cp-svg :global(.cp-head) {
+    fill: var(--g-yellow);
+  }
+  .cp-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cp-svg :global(text.m) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .cp-svg :global(text.l) {
+    text-anchor: start;
+  }
+  .cp-msg {
+    min-height: 3em;
+    margin: 8px 0 4px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cp-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+</style>
+
+<script>
+  const ENVS = ['dev', 'staging', 'prod'];
+  const X: Record<string, number> = { dev: 300, staging: 460, prod: 620 };
+  // ver: version running per environment ('canary' = new version on a slice of prod)
+  // on: ids touched this step; arrows: [from, to] pairs; gates passed so far
+  interface Frame { ver: Record<string, string>; on: string[]; arrows: string[][]; gates: number; gateOn: number; msg: string }
+  const OLD = { dev: 'old', staging: 'old', prod: 'old' };
+  const FRAMES: Frame[] = [
+    { ver: OLD, on: ['git'], arrows: [], gates: 0, gateOn: -1, msg: 'A pull request is merged to main. Every environment still runs 1.4.2.' },
+    { ver: OLD, on: ['pipe', 'ecr'], arrows: [['git', 'pipe'], ['pipe', 'ecr']], gates: 0, gateOn: -1, msg: 'The pipeline (in the shared CI/CD account) runs the unit tests, builds the image once and pushes it to ECR as shop-api@sha256:4f2a…, tagged 1.4.3.' },
+    { ver: { ...OLD, dev: 'new' }, on: ['dev'], arrows: [['pipe', 'dev'], ['ecr', 'dev']], gates: 0, gateOn: -1, msg: 'The pipeline assumes the deploy role in the dev account, applies Terraform for dev, and updates the service. Dev pulls the image from ECR across accounts (the registry policy allows it).' },
+    { ver: { ...OLD, dev: 'new' }, on: [], arrows: [], gates: 1, gateOn: 0, msg: 'Gate 1: integration and end-to-end tests run against dev. They pass.' },
+    { ver: { dev: 'new', staging: 'new', prod: 'old' }, on: ['staging'], arrows: [['pipe', 'staging'], ['ecr', 'staging']], gates: 1, gateOn: -1, msg: 'Same image, staging account: the database migration runs first, then the deploy. Staging is production-shaped (two zones, Multi-AZ database) with pseudonymised data.' },
+    { ver: { dev: 'new', staging: 'new', prod: 'old' }, on: [], arrows: [], gates: 2, gateOn: 1, msg: 'Gate 2: smoke tests pass in staging and a release owner approves. Nobody can deploy to prod by hand; only the pipeline role can.' },
+    { ver: { dev: 'new', staging: 'new', prod: 'canary' }, on: ['prod'], arrows: [['pipe', 'prod'], ['ecr', 'prod']], gates: 2, gateOn: -1, msg: 'Prod account: migration, then a canary. A small share of tasks run 1.4.3 while error rates and latency are watched.' },
+    { ver: { dev: 'new', staging: 'new', prod: 'new' }, on: ['prod'], arrows: [], gates: 3, gateOn: 2, msg: 'Gate 3: the canary is healthy, so the rollout completes. All three accounts now run the same digest; only their configuration and data differ.' },
+  ];
+  const GATES = ['e2e tests', 'smoke + OK', 'canary OK'];
+
+  class CloudPromotion extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => {
+        if (this.i < FRAMES.length - 1) this.i++;
+        this.draw();
+      });
+      this.querySelector('[data-reset]')!.addEventListener('click', () => {
+        this.i = 0;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const f = FRAMES[this.i];
+      const on = (id: string) => (f.on.includes(id) ? ' on' : '');
+      let s = '<defs><marker id="cp-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" class="cp-head" /></marker></defs>';
+      // shared account
+      s += `<rect class="box${on('git')}" x="30" y="24" width="160" height="44" rx="6" /><text x="110" y="40">GitHub</text><text class="m" x="110" y="56">main branch</text>`;
+      s += '<rect class="acct" x="10" y="92" width="200" height="232" rx="10" /><text class="m l" x="20" y="108">shared CI/CD account</text>';
+      s += `<rect class="box${on('pipe')}" x="30" y="124" width="160" height="52" rx="6" /><text x="110" y="142">pipeline</text><text class="m" x="110" y="160">build once, deploy</text>`;
+      s += `<rect class="box${on('ecr')}" x="30" y="236" width="160" height="52" rx="6" /><text x="110" y="254">ECR registry</text><text class="m" x="110" y="272">${this.i >= 1 ? '1.4.3 @sha256:4f2a…' : '1.4.2 @sha256:9c1e…'}</text>`;
+      // environment accounts
+      ENVS.forEach((env) => {
+        const x = X[env];
+        const v = f.ver[env];
+        s += `<rect class="acct${env === 'prod' ? ' prod' : ''}" x="${x - 74}" y="92" width="148" height="232" rx="10" />`;
+        s += `<text class="m l" x="${x - 64}" y="108">${env}</text>`;
+        s += `<rect class="box${on(env)}" x="${x - 62}" y="124" width="124" height="52" rx="6" /><text x="${x}" y="142">deploy role</text><text class="m" x="${x}" y="160">assumed by pipeline</text>`;
+        s += `<rect class="vpc" x="${x - 62}" y="190" width="124" height="122" rx="8" /><text class="m l" x="${x - 54}" y="204">VPC (${env === 'dev' ? '1 zone' : '2 zones'})</text>`;
+        const cls = v === 'new' ? ' new' : v === 'canary' ? ' canary' : '';
+        const label = v === 'new' ? 'app 1.4.3' : v === 'canary' ? '1.4.2 + canary' : 'app 1.4.2';
+        s += `<rect class="box${cls}" x="${x - 52}" y="216" width="104" height="34" rx="5" /><text x="${x}" y="233">${label}</text>`;
+        s += `<rect class="box" x="${x - 52}" y="262" width="104" height="34" rx="5" /><text x="${x}" y="279">${env === 'dev' ? 'db (seed)' : env === 'staging' ? 'db (masked)' : 'db (real)'}</text>`;
+      });
+      // gates: after dev, after staging, and the canary check in prod
+      [380, 540, 660].forEach((gx, k) => {
+        const cls = f.gateOn === k ? ' on' : k < f.gates ? ' pass' : '';
+        s += `<rect class="gate${cls}" x="${gx - 54}" y="28" width="108" height="34" rx="17" /><text class="m" x="${gx}" y="45">${GATES[k]}</text>`;
+      });
+      // the pipeline reaches each account over the top (deploy role); images are pulled along the bottom
+      f.arrows.forEach(([a, b]) => {
+        let d: string;
+        if (a === 'git') d = 'M 110 68 L 110 122';
+        else if (b === 'ecr') d = 'M 110 176 L 110 234';
+        else if (a === 'pipe') d = `M 190 140 L 218 140 L 218 80 L ${X[b]} 80 L ${X[b]} 122`;
+        else d = `M 190 274 L 218 274 L 218 338 L ${X[b]} 338 L ${X[b]} 314`;
+        s += `<path class="arrow" d="${d}" marker-end="url(#cp-arrow)" />`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-msg]')!.textContent = f.msg;
+      const where = ENVS.map((e) => `${e} ${f.ver[e] === 'new' ? '1.4.3' : f.ver[e] === 'canary' ? 'canary' : '1.4.2'}`).join(' · ');
+      this.querySelector('[data-stat]')!.textContent = `step ${this.i}/${FRAMES.length - 1} · ${where} · gates passed ${f.gates}/3`;
+      this.querySelector<HTMLButtonElement>('[data-step-btn]')!.disabled = this.i === FRAMES.length - 1;
+    }
+  }
+  customElements.define('cloud-promotion', CloudPromotion);
+</script>

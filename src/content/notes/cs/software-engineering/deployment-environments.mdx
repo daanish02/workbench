@@ -1,0 +1,122 @@
+---
+title: "Deployment Environments"
+description: "Why software runs in several copies (dev, QA, staging, production), what differs between them, and how one artifact moves safely from one to the next."
+order: 10
+tier: core
+takeaways:
+  - "An **environment** is a complete, separate copy of the system: its own servers, database, configuration and credentials. The usual chain is **dev → QA → staging → production**, each one closer to the real thing."
+  - "**Build once, promote the same artifact**: the image tested in staging is byte-for-byte the one that reaches production. Only **configuration** differs, and it comes from outside the artifact."
+  - "**Parity** decides how much a test is worth: staging should match production in versions, topology and infrastructure code, even if it is smaller."
+  - "Lower environments never hold raw production data or production secrets. Use synthetic or **pseudonymised** data, and keep production in its own cloud account."
+  - "**Preview environments** (one per pull request) and **ephemeral** test environments remove the queue for a single shared staging."
+resources:
+  - title: "The Twelve-Factor App: Dev/prod parity (12factor.net)"
+    url: "https://12factor.net/dev-prod-parity"
+    note: "The short principle behind keeping environments alike; its Config page covers configuration from the environment."
+  - title: "Deployment Pipeline (Martin Fowler)"
+    url: "https://martinfowler.com/bliki/DeploymentPipeline.html"
+    note: "Why a build moves through stages that each raise confidence before production."
+  - title: "Organizing Your AWS Environment Using Multiple Accounts (AWS)"
+    url: "https://docs.aws.amazon.com/whitepapers/latest/organizing-your-aws-environment/organizing-your-aws-environment.html"
+    note: "How companies separate production, non-production and shared services into accounts."
+---
+
+A change that works on a laptop can still fail in production: a different database version, a missing permission, ten times the traffic, real customer data with shapes nobody expected. Testing directly in production would make users the testers. Teams therefore run several copies of the system, called **environments**, and move each change through them, gaining confidence at every step. This note covers which environments are common and what each is for, how one artifact is promoted while its configuration changes, how close the copies need to be, what data and secrets they may hold, and how they are isolated. It builds on [CI/CD](../ci-cd/), which automates the moves, and leads into [Releases and Incidents](../releases-and-incidents/), which covers the final step into users' hands. The [Cloud Architecture](../../appendix-tools/cloud-architecture/) sheet shows how these environments map onto cloud accounts and networks.
+
+## The Usual Environments
+
+An **environment** is a complete, independent deployment of the system: its own compute, database, queues, configuration and credentials, so that nothing done in one can affect another. Names vary between companies, but the roles are stable:
+
+| Environment | Purpose | Who uses it | Data |
+| --- | --- | --- | --- |
+| **Local / dev** | Write and run code; break things freely | One engineer | Seed data, local containers |
+| **CI** | Run the automated tests on every push, then disappear | The pipeline | Created per run, then deleted |
+| **QA / test** | Manual and exploratory testing, integration with other teams' services | Testers, other teams | Shared synthetic data |
+| **Staging / pre-prod** | Final rehearsal in a production-like setup: deploy, migrate, smoke test | The pipeline, release owners | Pseudonymised or synthetic, production-sized |
+| **Production** | Serves real users | Customers | Real data |
+
+Smaller teams merge QA into staging; regulated ones add a **UAT** (user acceptance testing) environment where the business signs off, or a **performance** environment sized for load tests. Each extra environment costs money and maintenance, so add one only for a question the others cannot answer.
+
+## Promotion, Not Rebuilds
+
+The pipeline builds the artifact (for example a container image, identified by its digest) **once**, and every later stage deploys that same artifact ([Containerization](../containerization/)). Rebuilding for each environment would test one binary and ship another, since dependencies, base images or compilers may have changed in between. What does change per environment is **configuration**: endpoints, credentials, feature flags, sizes. It lives outside the artifact and is injected at deploy time, usually as environment variables or mounted files.
+
+<EnvPromotion />
+
+The script below resolves configuration in the usual layered way: built-in defaults, then the environment's own overrides, then environment variables set by the deployment, which win.
+
+```python
+DEFAULTS = {"log_level": "INFO", "replicas": 2, "db_host": "localhost", "debug": False}
+PER_ENV = {
+    "dev":     {"log_level": "DEBUG", "replicas": 1, "debug": True},
+    "staging": {"db_host": "db.staging.internal"},
+    "prod":    {"replicas": 6, "db_host": "db.prod.internal"},
+}
+
+def parse(raw, like):
+    if isinstance(like, bool):                  # bool("false") is True, so booleans need their own rule
+        return raw.lower() in ("1", "true", "yes")
+    return type(like)(raw)
+
+def load_config(env, environ):
+    cfg = DEFAULTS | PER_ENV[env]               # defaults, then the environment's overrides
+    for key in cfg:                             # environment variables win, as in a container
+        var = f"APP_{key.upper()}"
+        if var in environ:
+            cfg[key] = parse(environ[var], DEFAULTS[key])
+    return cfg
+
+for env in ["dev", "staging", "prod"]:
+    print(env, load_config(env, {}))
+print("prod + vars", load_config("prod", {"APP_REPLICAS": "9", "APP_DEBUG": "false"}))
+# dev {'log_level': 'DEBUG', 'replicas': 1, 'db_host': 'localhost', 'debug': True}
+# staging {'log_level': 'INFO', 'replicas': 2, 'db_host': 'db.staging.internal', 'debug': False}
+# prod {'log_level': 'INFO', 'replicas': 6, 'db_host': 'db.prod.internal', 'debug': False}
+# prod + vars {'log_level': 'INFO', 'replicas': 9, 'db_host': 'db.prod.internal', 'debug': False}
+```
+
+In words: dev turns on debug logging and runs one replica, staging changes only the database host, and production runs 6 replicas against its own database. An environment variable then raises production to 9 replicas without a new build. `APP_DEBUG="false"` stays `False` only because booleans are parsed explicitly: `bool("false")` is `True` in Python, a classic configuration bug.
+
+Each promotion passes a **gate**: tests in CI, a QA sign-off, smoke tests and an approval before production. Database **migrations** travel with the artifact and run in every environment in the same order, so production never receives a schema change that staging has not already applied ([CI/CD](../ci-cd/)).
+
+## Environment Parity
+
+A test in staging is only as good as staging's resemblance to production. **Parity** has three parts: the same software (versions of the runtime, database and OS image), the same shape (load balancer, replicas across zones, network rules, permissions) and the same deployment process. Staging can be smaller, but it should be built from the **same infrastructure code** with different variables, for example one Terraform module instantiated once per environment ([Infrastructure as Code](../infrastructure-as-code/)). Hand-made changes to one environment create **drift**, and a test that passed in a drifted staging proves little.
+
+Some differences are unavoidable and should be listed, not hidden: third-party services in sandbox mode (payments, email), smaller data volumes, fewer regions. Each one is a class of bug that only production can reveal, which is why releases still roll out in stages and are watched ([Observability](../observability/)).
+
+## Data and Secrets
+
+Lower environments are touched by more people and tools, with weaker controls, so they must not hold what production protects. **Secrets** (database passwords, API keys) are separate per environment and live in a secret manager, never in the artifact or the repository; a leaked staging key must not open production. **Data** in lower environments is synthetic, or a production copy that has been **pseudonymised**: personal fields replaced by consistent fake values, so joins and duplicates still behave as in production ([Compliance & Privacy](../../security/compliance-and-privacy/)).
+
+```python
+import hashlib
+import hmac
+
+KEY = b"rotate-me-per-copy"                     # a secret held by the copy job, never by staging
+
+def pseudonymise(email):
+    digest = hmac.new(KEY, email.lower().encode(), hashlib.sha256).hexdigest()[:10]
+    return f"user_{digest}@example.test"
+
+prod_rows = [("Ana@shop.com", 31), ("bo@shop.com", 25), ("ana@shop.com", 99)]
+for email, total in prod_rows:
+    print(pseudonymise(email), total)
+# user_1bc0338d0b@example.test 31
+# user_c52f7c72b3@example.test 25
+# user_1bc0338d0b@example.test 99
+```
+
+In words: an HMAC (a keyed hash) maps each email to a stable fake address, so both of Ana's orders, written with different capitalisation, still belong to the same pseudonymous user, while the real address never reaches staging. The key stays with the copy job; without it, nobody in staging can hash a guessed email to find out who is who.
+
+<Callout type="pitfall">
+"It worked in staging" fails in three recurring ways. Staging **drifted**: someone changed it by hand, so it no longer matches production. Staging was **shared**: one team's half-finished deploy broke another team's test, so people stopped trusting it and started skipping it. Or staging held **real data**: a copy of production with real emails, and a test job sent them all a message. Build every environment from code, give teams their own short-lived environments, and never copy raw production data down.
+</Callout>
+
+## Isolation Between Environments
+
+Environments are separated at every layer, so a mistake in one cannot reach another. In the cloud the strongest boundary is a separate **account** (AWS) or **project** (Google Cloud) per environment, with production alone in its own: separate permissions, billing and quotas, and no network path between them by default. Inside an account, each environment has its own network and its own roles. Engineers usually have broad access to dev, read-only or no access to production, and production changes go only through the pipeline ([Authorization](../../security/authorization/)).
+
+## Preview and Ephemeral Environments
+
+A single shared staging becomes a queue. **Preview environments** solve this by creating a short-lived copy of the application for each pull request, with its own URL, and deleting it when the pull request closes. **Ephemeral** test environments do the same for integration tests in CI. Both depend on infrastructure that can be created from code in minutes, and on data that can be generated rather than copied. They complement staging rather than replace it: the last rehearsal before production still happens in the long-lived, production-shaped environment.

@@ -1,0 +1,97 @@
+---
+import Figure from '../Figure.astro';
+
+// organisational units (OUs) and the accounts inside them; prod is the only account in its OU
+const ous = [
+  { name: 'Security', x: 8, accounts: ['log archive', 'audit'], cls: 'sec' },
+  { name: 'Infrastructure', x: 186, accounts: ['network hub', 'shared CI/CD'], cls: 'inf' },
+  { name: 'Non-prod', x: 364, accounts: ['dev', 'staging'], cls: 'np' },
+  { name: 'Prod', x: 542, accounts: ['prod'], cls: 'prod' },
+];
+---
+
+<Figure
+  kind="Diagram"
+  title="Environments are separate accounts under one organization"
+  caption="A common multi-account layout (an AWS Organization; Google Cloud uses folders and projects the same way). The management account only owns the organization and billing. Organizational units group accounts and carry guardrail policies (SCPs): Security holds the central CloudTrail logs and audit tooling, Infrastructure the shared network and CI/CD, and workloads are split so that production sits alone. People sign in once through IAM Identity Center and assume a role in each account they may use."
+>
+  <svg class="ca-svg" viewBox="0 0 720 270" role="img" aria-label="Organization root with Security, Infrastructure, Non-prod and Prod organizational units and their accounts">
+    <rect class="ca-root" x="250" y="8" width="220" height="36" rx="6"></rect>
+    <text class="ca-c" x="360" y="26">management account (org root)</text>
+    <rect class="ca-sso" x="504" y="8" width="208" height="36" rx="6"></rect>
+    <text class="ca-c" x="608" y="26">IAM Identity Center (SSO)</text>
+    {ous.map((ou) => (
+      <g>
+        <path class="ca-line" d={`M 360 44 L 360 60 L ${ou.x + 85} 60 L ${ou.x + 85} 76`}></path>
+        <rect class={`ca-ou ca-${ou.cls}`} x={ou.x} y="76" width="170" height="186" rx="8"></rect>
+        <text class="ca-t" x={ou.x + 85} y="94">{ou.name} OU</text>
+        <text class="ca-m" x={ou.x + 85} y="112">SCP guardrails</text>
+        {ou.accounts.map((a, i) => (
+          <g>
+            <rect class="ca-acct" x={ou.x + 14} y={126 + i * 66} width="142" height="54" rx="6"></rect>
+            <text class="ca-c" x={ou.x + 85} y={146 + i * 66}>{a}</text>
+            <text class="ca-m" x={ou.x + 85} y={164 + i * 66}>account</text>
+          </g>
+        ))}
+      </g>
+    ))}
+  </svg>
+</Figure>
+
+<style>
+  .ca-svg {
+    display: block;
+    width: 100%;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .ca-root {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+  }
+  .ca-sso {
+    fill: transparent;
+    stroke: var(--border-strong);
+    stroke-dasharray: 4 3;
+  }
+  .ca-ou {
+    fill: transparent;
+    stroke: var(--border-strong);
+  }
+  .ca-acct {
+    fill: rgba(66, 133, 244, 0.12);
+    stroke: var(--g-blue);
+  }
+  .ca-np .ca-acct,
+  .ca-np {
+    stroke: var(--g-yellow);
+  }
+  .ca-prod {
+    fill: rgba(234, 67, 53, 0.08);
+    stroke: var(--g-red);
+  }
+  .ca-sec {
+    stroke: var(--g-green);
+  }
+  .ca-line {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.3;
+  }
+  .ca-svg text {
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .ca-c,
+  .ca-t {
+    fill: var(--text);
+  }
+  .ca-t {
+    font-weight: 600;
+  }
+  .ca-m {
+    fill: var(--text-muted);
+    font-size: 11px !important;
+  }
+</style>

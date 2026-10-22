@@ -1,0 +1,197 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="C4: one system, three zoom levels"
+  caption="The same online shop drawn at three C4 levels. Context shows the system as one box among its users and external systems. Container zooms into the system: the separately deployed pieces (apps, databases, queues) and how they talk. Component zooms into one container, the API, and shows its main parts. Every box says what it is, its technology and its job; every arrow says what flows and over which protocol. Blue is the part being described, grey is outside it, and the dashed line is the boundary being zoomed into."
+>
+  <c4-zoom>
+    <input type="hidden" data-level value="context" />
+    <span class="choice">
+      <button type="button" class="btn" data-choice="context" aria-pressed="true">1 · Context</button>
+      <button type="button" class="btn" data-choice="container" aria-pressed="false">2 · Container</button>
+      <button type="button" class="btn" data-choice="component" aria-pressed="false">3 · Component</button>
+    </span>
+    <svg class="c4-svg" data-svg viewBox="0 0 720 350" role="img" aria-label="C4 diagram of an online shop at the selected zoom level"></svg>
+    <p class="c4-stat mono" data-stat></p>
+  </c4-zoom>
+</Figure>
+
+<style>
+  .c4-svg {
+    display: block;
+    width: 100%;
+    max-width: 760px;
+    margin: 10px auto 0;
+  }
+  .c4-svg :global(rect.bg) {
+    fill: var(--bg);
+  }
+  .c4-svg :global(rect.in) {
+    fill: rgba(66, 133, 244, 0.22);
+    stroke: var(--g-blue);
+  }
+  .c4-svg :global(rect.person) {
+    fill: rgba(52, 168, 83, 0.2);
+    stroke: var(--g-green);
+  }
+  .c4-svg :global(rect.ext) {
+    fill: rgba(154, 160, 166, 0.1);
+    stroke: var(--border-strong);
+  }
+  .c4-svg :global(rect.boundary) {
+    fill: transparent;
+    stroke: var(--g-blue);
+    stroke-dasharray: 6 4;
+  }
+  .c4-svg :global(polyline) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.4;
+  }
+  .c4-svg :global(.c4-head) {
+    fill: var(--text-faint);
+  }
+  .c4-svg :global(text) {
+    fill: var(--text);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .c4-svg :global(text.name) {
+    font-weight: 700;
+  }
+  .c4-svg :global(text.type),
+  .c4-svg :global(text.desc) {
+    fill: var(--text-muted);
+    font-size: 10px;
+  }
+  .c4-svg :global(text.edge),
+  .c4-svg :global(text.blbl) {
+    fill: var(--text-muted);
+    font-size: 10px;
+    paint-order: stroke;
+    stroke: var(--bg-elev);
+    stroke-width: 7px;
+    stroke-linejoin: round;
+  }
+  .c4-svg :global(text.blbl) {
+    text-anchor: start;
+    fill: var(--g-blue);
+  }
+  .c4-stat {
+    font-size: 0.8125rem;
+    color: var(--text);
+    margin: 8px 0;
+  }
+</style>
+
+<script>
+  // box: [x, y, w, kind, name, type, description]; every box is 64 high
+  type Box = [number, number, number, 'in' | 'person' | 'ext', string, string, string];
+  // edge: points of the arrow, then the label and its position
+  type Edge = [number[][], string, number, number];
+  interface Level { boxes: Box[]; edges: Edge[]; boundary?: [number, number, number, number, string]; stat: string }
+
+  const LEVELS: Record<string, Level> = {
+    context: {
+      boxes: [
+        [40, 20, 200, 'person', 'Customer', '[Person]', 'buys products online'],
+        [480, 20, 200, 'person', 'Support agent', '[Person]', 'handles refunds'],
+        [260, 140, 200, 'in', 'Online Shop', '[Software System]', 'sells products, takes orders'],
+        [40, 266, 200, 'ext', 'Payment provider', '[External System]', 'charges cards'],
+        [480, 266, 200, 'ext', 'Email service', '[External System]', 'delivers email'],
+      ],
+      edges: [
+        [[[140, 84], [300, 140]], 'places orders', 210, 112],
+        [[[580, 84], [420, 140]], 'issues refunds', 510, 112],
+        [[[300, 204], [140, 266]], 'charges cards [HTTPS]', 210, 236],
+        [[[420, 204], [580, 266]], 'sends receipts [API]', 510, 236],
+      ],
+      stat: 'level 1 · audience: everyone · 1 system, 2 people, 2 external systems',
+    },
+    container: {
+      boundary: [200, 6, 370, 338, 'Online Shop [Software System]'],
+      boxes: [
+        [10, 20, 170, 'person', 'Customer', '[Person]', 'buys products online'],
+        [220, 20, 160, 'in', 'Web app', '[Container: React]', 'pages in the browser'],
+        [220, 140, 160, 'in', 'API', '[Container: Python]', 'orders, payments, auth'],
+        [220, 260, 160, 'in', 'Database', '[Container: PostgreSQL]', 'orders and users'],
+        [420, 140, 140, 'in', 'Job queue', '[Container: SQS]', 'pending emails'],
+        [420, 260, 140, 'in', 'Worker', '[Container: Python]', 'sends receipts'],
+        [590, 20, 124, 'ext', 'Payment provider', '[External System]', 'charges cards'],
+        [590, 260, 124, 'ext', 'Email service', '[External System]', 'delivers email'],
+      ],
+      edges: [
+        [[[180, 52], [220, 52]], 'HTTPS', 200, 40],
+        [[[300, 84], [300, 140]], 'JSON/HTTPS', 300, 112],
+        [[[300, 204], [300, 260]], 'SQL', 300, 232],
+        [[[380, 172], [420, 172]], 'enqueue', 400, 160],
+        [[[490, 204], [490, 260]], 'polls', 490, 232],
+        [[[560, 292], [590, 292]], 'API', 575, 280],
+        [[[380, 152], [400, 152], [400, 52], [590, 52]], 'charges cards [HTTPS]', 495, 40],
+      ],
+      stat: 'level 2 · audience: developers and operators · 5 containers inside the boundary',
+    },
+    component: {
+      boundary: [180, 6, 360, 338, 'API [Container: Python]'],
+      boxes: [
+        [10, 20, 150, 'ext', 'Web app', '[Container: React]', 'pages in the browser'],
+        [200, 20, 150, 'in', 'Orders router', '[Component: FastAPI]', 'HTTP endpoints'],
+        [370, 20, 150, 'in', 'Auth middleware', '[Component]', 'checks the token'],
+        [200, 140, 150, 'in', 'Order service', '[Component]', 'business rules'],
+        [370, 140, 150, 'in', 'Payments client', '[Component]', 'wraps provider API'],
+        [200, 260, 150, 'in', 'Order repository', '[Component: SQL]', 'reads and writes'],
+        [370, 260, 150, 'in', 'Job publisher', '[Component]', 'puts jobs on queue'],
+        [10, 260, 150, 'ext', 'Database', '[Container]', 'orders and users'],
+        [560, 140, 154, 'ext', 'Payment provider', '[External System]', 'charges cards'],
+        [560, 260, 154, 'ext', 'Job queue', '[Container]', 'pending emails'],
+      ],
+      edges: [
+        [[[160, 52], [200, 52]], 'JSON', 180, 40],
+        [[[350, 52], [370, 52]], 'uses', 360, 40],
+        [[[275, 84], [275, 140]], 'calls', 275, 112],
+        [[[350, 172], [370, 172]], 'charge', 360, 160],
+        [[[275, 204], [275, 260]], 'save', 275, 232],
+        [[[340, 204], [390, 260]], 'enqueue', 365, 232],
+        [[[520, 172], [560, 172]], 'HTTPS', 540, 160],
+        [[[200, 292], [160, 292]], 'SQL', 180, 280],
+        [[[520, 292], [560, 292]], 'SQS API', 540, 280],
+      ],
+      stat: 'level 3 · audience: developers of the API · 6 components; level 4 (code) is generated, not drawn',
+    },
+  };
+
+  class C4Zoom extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-level]')!.addEventListener('change', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const lv = LEVELS[this.querySelector<HTMLInputElement>('[data-level]')!.value];
+      let s = '<defs><marker id="c4-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" class="c4-head" /></marker></defs>';
+      if (lv.boundary) {
+        const [x, y, w, h, label] = lv.boundary;
+        s += `<rect class="boundary" x="${x}" y="${y}" width="${w}" height="${h}" rx="10" />`;
+        s += `<text class="blbl" x="${x + 10}" y="${y + h - 12}">${label}</text>`;
+      }
+      lv.edges.forEach(([pts]) => {
+        s += `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" marker-end="url(#c4-arrow)" />`;
+      });
+      lv.boxes.forEach(([x, y, w, kind, name, type, desc]) => {
+        s += `<rect class="bg" x="${x}" y="${y}" width="${w}" height="64" rx="${kind === 'person' ? 18 : 6}" />`;
+        s += `<rect class="${kind}" x="${x}" y="${y}" width="${w}" height="64" rx="${kind === 'person' ? 18 : 6}" />`;
+        s += `<text class="name" x="${x + w / 2}" y="${y + 16}">${name}</text>`;
+        s += `<text class="type" x="${x + w / 2}" y="${y + 32}">${type}</text>`;
+        s += `<text class="desc" x="${x + w / 2}" y="${y + 48}">${desc}</text>`;
+      });
+      lv.edges.forEach(([, label, lx, ly]) => {
+        s += `<text class="edge" x="${lx}" y="${ly}">${label}</text>`;
+      });
+      this.querySelector('[data-svg]')!.innerHTML = s;
+      this.querySelector('[data-stat]')!.textContent = lv.stat;
+    }
+  }
+  customElements.define('c4-zoom', C4Zoom);
+</script>
