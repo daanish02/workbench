@@ -24,7 +24,12 @@ links reads the notes the way src/lib/graph.ts does (markdown links outside code
   mentions   note titles (and acronyms in titles) that a note mentions without linking to them
   similar    TF-IDF cosine similarity between notes that are not linked to each other
   compare    overlap between mentions and the top similar pairs
-Options: --area A (source area), --to B (target area), --cross (cross-area only), --limit N, --sections.
+  orphans    notes with no links either way, with the signals that say whether a link is missing
+  apply F    wrap the first prose mention for each `src -> dst` line of file F in a link (dry run unless --write)
+Options: --area A (source area), --to B (target area), --cross (cross-area only), --limit N, --sections, --write.
+Orphans that were reviewed and are fine without links go in REVIEWED_LEAVES (note id -> reason).
+Rules: link when the reader needs the target or it is the natural next step, first useful mention only, never to force
+coverage. Read the area-pair table (per 1000 pairs, fill%) against the within-area fill, not against 100%.
 Appendix sections and stub notes are left out. Aliases for mentions go in ALIASES below.
 """
 
@@ -330,7 +335,7 @@ def load_notes():
             return hit.group(1) if hit else ""
 
         notes.append(SimpleNamespace(
-            id=nid, area=parts[0], section=parts[1], title=field("title"), desc=field("description"),
+            id=nid, area=parts[0], section=parts[1], title=field("title"), order=int((re.search(r"^order:\s*(\d+)", fm, re.M) or [0, 0])[1]), desc=field("description"),
             takeaways=" ".join(re.findall(r'^  - "(.*)"\s*$', fm, re.M)), body=CODE.sub("", body),
             stub=PLACEHOLDER in body, appendix=parts[1].startswith("appendix"),
         ))
@@ -428,8 +433,8 @@ def links_stats(notes, edges, args):
     for c in sorted(comps.values(), key=len)[:-1][:6]:
         print("  small component:", ", ".join(notes[i].id for i in c[:6]))
     print("\ntop hubs by incoming links: " + ", ".join(f"{notes[i].id.split('/', 2)[2]} ({inn[i]})" for i in sorted(written, key=lambda i: -inn[i])[:8]))
-    orph = [notes[i].id for i in written if not out[i] and not inn[i]]
-    print(f"\norphans (no links either way): {len(orph)}" + "".join(f"\n  {o}" for o in orph[:25]))
+    orph = [notes[i].id for i in written if not out[i] and not inn[i] and notes[i].id not in REVIEWED_LEAVES]
+    print(f"\norphans (no links either way, not yet reviewed): {len(orph)}; run `links orphans` for the signals" + "".join(f"\n  {o}" for o in orph[:25]))
 
 
 def links_by_size(notes, edges, e, written, areas):
@@ -462,6 +467,104 @@ def links_by_size(notes, edges, e, written, areas):
     for a in (a for a in areas if by_area[a]):
         vals = sorted(out[i] for i in by_area[a])
         print(f"{a:<11} median {vals[len(vals) // 2]} outgoing, {sum(1 for v in vals if v > 10)} notes over 10, {sum(1 for v in vals if v == 0)} with none")
+
+
+# notes that were looked at and are fine without links, keyed by note id: they stop showing as orphans in `links stats`
+REVIEWED_LEAVES = {}
+MASK = re.compile(r"`[^`\n]*`|\$\$.*?\$\$|\$[^$\n]*\$|\[[^\]]*\]\([^)]*\)|<[^>]+>|https?://\S+")
+
+
+def links_orphans(notes, edges, args):
+    """For every written note with no links either way, list the signals that say whether a link is missing."""
+    live = {i for i, n in enumerate(notes) if not n.appendix}
+    e = {(a, b) for a, b in edges if a in live and b in live}
+    out, inn = Counter(a for a, _ in e), Counter(b for _, b in e)
+    written = [i for i in live if not notes[i].stub]
+    orphans = [i for i in written if not out[i] and not inn[i] and notes[i].id not in REVIEWED_LEAVES]
+    if args.area:
+        orphans = [i for i in orphans if notes[i].area == args.area]
+    cands, _ = mention_candidates(notes, edges)
+    sims = similar_pairs(notes, edges)
+    sections = {}
+    for i in written:
+        sections.setdefault((notes[i].area, notes[i].section), []).append(i)
+    short = lambda j: notes[j].id.split("/", 1)[1]
+    print(f"{len(orphans)} orphans to review ({len(REVIEWED_LEAVES)} already reviewed as leaves)")
+    print("signals: mentioned by / mentions = titles named in the text without a link; similar = TF-IDF >= 0.12; section = neighbours by order\n")
+    for i in sorted(orphans, key=lambda i: notes[i].id):
+        to_it = sorted((c for c in cands if c.dst == i), key=lambda c: -c.score)[:3]
+        from_it = sorted((c for c in cands if c.src == i), key=lambda c: -c.score)[:3]
+        sim = sorted(((p.score, p.b if p.a == i else p.a) for p in sims if i in (p.a, p.b) and p.score >= 0.12), reverse=True)[:3]
+        sib = sorted(sections[(notes[i].area, notes[i].section)], key=lambda j: notes[j].order)
+        pos = sib.index(i)
+        print(f"{'check' if to_it or from_it or sim else 'likely leaf':<12} {notes[i].id}")
+        print(f"    mentioned by: {[short(c.src) + ' [' + c.term + ']' for c in to_it]}")
+        print(f"    mentions:     {[short(c.dst) + ' [' + c.term + ']' for c in from_it]}")
+        print(f"    similar:      {[(round(s, 2), short(j)) for s, j in sim]}")
+        print(f"    section:      prev={short(sib[pos - 1]) if pos else '-'}  next={short(sib[pos + 1]) if pos + 1 < len(sib) else '-'}")
+
+
+def rel_link(src, dst):
+    s, d = src.split("/"), dst.split("/")
+    if s[:2] == d[:2]:
+        return f"../{d[2]}/"
+    if s[0] == d[0]:
+        return f"../../{d[1]}/{d[2]}/"
+    return f"../../../{d[0]}/{d[1]}/{d[2]}/"
+
+
+def links_apply(notes, edges, args):
+    """Wrap the first prose mention of a target's title in a link. PAIRS lines: `src_id -> dst_id` or `src_id -> dst_id | regex`.
+    Dry run unless --write. Skips headings, tables, code, math and text that is already a link; skips pairs already linked."""
+    by_id = {n.id: n for n in notes}
+    done = missed = 0
+    for raw in pathlib.Path(args.pairs).read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        custom = None
+        if "|" in raw:
+            raw, custom = [x.strip() for x in raw.split("|", 1)]
+        src, dst = [x.strip() for x in raw.split("->")]
+        path = NOTE_ROOT / f"{src}.mdx"
+        text = path.read_bytes().decode("utf-8")
+        nl = "\r\n" if "\r\n" in text else "\n"
+        lines = text.replace("\r\n", "\n").split("\n")
+        link = rel_link(src, dst)
+        if f"]({link})" in text:
+            print(f"already linked: {src} -> {dst}")
+            continue
+        if custom:
+            pat = re.compile(custom, re.I)
+        else:
+            base = re.sub(r"\s*\([^)]*\)", "", by_id[dst].title).strip()
+            words = [re.escape(stem(w.lower())) + "s?" for w in re.findall(r"[A-Za-z0-9]+", base)]
+            pat = re.compile(r"(?<![\w-])" + r"[\s-]+".join(words) + r"(?![\w-])", re.I)
+        fences, in_code, hit = 0, False, False
+        for k, line in enumerate(lines):
+            if line.strip() == "---" and fences < 2:
+                fences += 1
+                continue
+            if fences < 2:
+                continue
+            if line.strip().startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code or line.startswith(("#", "|", "import ", "<")):
+                continue
+            m = pat.search(MASK.sub(lambda x: " " * len(x.group()), line))
+            if not m:
+                continue
+            print(f"{src.split('/', 2)[2]} -> {dst.split('/', 2)[2]}: ...{line[max(0, m.start() - 50):m.start()]}[[{line[m.start():m.end()]}]]{line[m.end():m.end() + 40]}...")
+            if args.write:
+                lines[k] = line[:m.start()] + f"[{line[m.start():m.end()]}]({link})" + line[m.end():]
+                path.write_bytes(nl.join(lines).encode("utf-8"))
+            hit = True
+            break
+        done, missed = done + hit, missed + (not hit)
+        if not hit:
+            print(f"NO SPOT (add a sentence by hand): {src} -> {dst}")
+    print(f"{done} linked, {missed} without a spot" + ("" if args.write else " (dry run; add --write to apply)"))
 
 
 def mention_candidates(notes, edges, keep_links=False):
@@ -617,7 +720,7 @@ def links_compare(notes, edges, args):
 def cmd_links(args):
     notes = load_notes()
     edges = build_edges(notes)
-    {"stats": links_stats, "mentions": links_mentions, "similar": links_similar, "compare": links_compare}[args.mode](notes, edges, args)
+    {"stats": links_stats, "mentions": links_mentions, "similar": links_similar, "compare": links_compare, "orphans": links_orphans, "apply": links_apply}[args.mode](notes, edges, args)
     return 0
 
 
@@ -647,7 +750,9 @@ def main():
     fi.add_argument("answers")
     fi.set_defaults(fn=cmd_fill)
     ln = sub.add_parser("links")
-    ln.add_argument("mode", choices=["stats", "mentions", "similar", "compare"])
+    ln.add_argument("mode", choices=["stats", "mentions", "similar", "compare", "orphans", "apply"])
+    ln.add_argument("pairs", nargs="?")
+    ln.add_argument("--write", action="store_true")
     ln.add_argument("--area")
     ln.add_argument("--to")
     ln.add_argument("--cross", action="store_true")
