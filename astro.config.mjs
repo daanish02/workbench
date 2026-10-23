@@ -28,6 +28,15 @@ function findByClass(node, cls) {
   }
   return undefined;
 }
+// KaTeX writes every formula as MathML, its TeX source and visible glyphs, and pagefind indexes all three, so
+// search excerpts repeat each formula. Marking the MathML as ignored keeps it for screen readers but out of the index.
+function rehypeIgnoreMathml() {
+  const walk = (node) => {
+    if (node.properties?.className?.includes?.('katex-mathml')) node.properties.dataPagefindIgnore = 'all';
+    node.children?.forEach(walk);
+  };
+  return walk;
+}
 function languageHeaders() {
   return {
     name: 'language-headers',
@@ -76,9 +85,10 @@ export default defineConfig({
   base,
   trailingSlash: 'always',
   markdown: {
-    processor: unified(),
-    remarkPlugins: [remarkMath],
-    rehypePlugins: [[rehypeKatex, { strict: false }]],
+    processor: unified({
+      remarkPlugins: [remarkMath],
+      rehypePlugins: [[rehypeKatex, { strict: false }], rehypeIgnoreMathml],
+    }),
   },
   integrations: [
     expressiveCode({
