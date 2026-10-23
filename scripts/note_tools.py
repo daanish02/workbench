@@ -401,6 +401,7 @@ def links_stats(notes, edges, args):
     print(f"{'':<11}" + "".join(f"{a:>11}" for a in areas))
     for a in areas:
         print(f"{a:<11}" + "".join(f"{sum(1 for x, y in e if notes[x].area == a and notes[y].area == b):>11}" for b in areas))
+    links_by_size(notes, edges, e, written, areas)
     secs = {}
     for i in written:
         secs.setdefault((notes[i].area, notes[i].section), []).append(i)
@@ -429,6 +430,38 @@ def links_stats(notes, edges, args):
     print("\ntop hubs by incoming links: " + ", ".join(f"{notes[i].id.split('/', 2)[2]} ({inn[i]})" for i in sorted(written, key=lambda i: -inn[i])[:8]))
     orph = [notes[i].id for i in written if not out[i] and not inn[i]]
     print(f"\norphans (no links either way): {len(orph)}" + "".join(f"\n  {o}" for o in orph[:25]))
+
+
+def links_by_size(notes, edges, e, written, areas):
+    """Area-pair table normalised by size, so a large area is not read as 'more linked' just for having more notes."""
+    sims = similar_pairs(notes, set())  # every pair, linked or not, best first
+    plausible = {frozenset((p.a, p.b)) for p in sims if p.score >= 0.2}
+    cands, _ = mention_candidates(notes, edges)
+    plausible |= {frozenset((c.src, c.dst)) for c in cands}
+    linked = {frozenset(x) for x in e}
+    by_area = {a: [i for i in written if notes[i].area == a] for a in areas}
+    print("\nby area pair, adjusted for size (each pair of notes counted once)")
+    print(f"{'pair':<22}{'links':>6}{'per 1000':>9}{'A->B notes':>11}{'B->A notes':>11}{'plausible':>10}{'linked':>7}{'fill%':>6}")
+    for ai, a in enumerate(areas):
+        for b in areas[ai:]:
+            na, nb = by_area[a], by_area[b]
+            sb, sa = set(nb), set(na)
+            pairs = len(na) * (len(na) - 1) // 2 if a == b else len(na) * len(nb)
+            links = sum(1 for x in linked if len(x) == 2 and ((a == b and all(i in sa for i in x)) or (a != b and any(i in sa for i in x) and any(i in sb for i in x))))
+            a_to_b = sum(1 for i in na if any(x == i and y in sb and y != i for x, y in e))
+            b_to_a = sum(1 for i in nb if any(x == i and y in sa and y != i for x, y in e))
+            plaus = [q for q in plausible if (a == b and all(i in sa for i in q)) or (a != b and any(i in sa for i in q) and any(i in sb for i in q))]
+            hit = sum(1 for q in plaus if q in linked)
+            print(f"{a + ' - ' + b:<22}{links:>6}{1000 * links / max(pairs, 1):>9.1f}{100 * a_to_b / max(len(na), 1):>10.0f}%{100 * b_to_a / max(len(nb), 1):>10.0f}%{len(plaus):>10}{hit:>7}{100 * hit / max(len(plaus), 1):>6.0f}")
+    print("per 1000 = links per 1000 possible note pairs; A->B notes = share of A notes that link to any B note;")
+    print("plausible = pairs with TF-IDF similarity >= 0.2 or an unlinked title mention; fill% = share of those already linked")
+    out = Counter(a for a, _ in e)
+    words = {i: len(re.findall(r"\w+", clean(notes[i].body, keep_links=True))) for i in written}
+    dense = sorted(written, key=lambda i: -out[i])[:5]
+    print("\nmost outgoing links: " + ", ".join(f"{notes[i].id.split('/', 2)[2]} ({out[i]}, {1000 * out[i] / max(words[i], 1):.1f}/1000 words)" for i in dense))
+    for a in (a for a in areas if by_area[a]):
+        vals = sorted(out[i] for i in by_area[a])
+        print(f"{a:<11} median {vals[len(vals) // 2]} outgoing, {sum(1 for v in vals if v > 10)} notes over 10, {sum(1 for v in vals if v == 0)} with none")
 
 
 def mention_candidates(notes, edges):
