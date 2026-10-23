@@ -109,7 +109,7 @@ In words: 10.1.2.7 matches all four rows, and because the /24 row comes first it
 
 <TcamLookup />
 
-The price is hardware. Every TCAM bit has its own comparison logic, so TCAM takes far more chip area and power per bit than ordinary memory (SRAM), and every search activates every row. That matters because the table is large: the global Internet routing table held about 1,085,000 IPv4 and 259,000 IPv6 prefixes in October 2026 (bgp.potaroo.net), and a router carrying the full table needs room for all of them plus growth. Routers therefore mix techniques: TCAM for ACLs and the most specific routes, and **algorithmic** lookups (compressed tries or hash tables of prefixes by length) in SRAM or attached HBM for the bulk of the table.
+The price is hardware. Every TCAM bit has its own comparison logic, so TCAM takes far more chip area and power per bit than ordinary memory (SRAM), and every search activates every row. That matters because the table is large: the global Internet routing table held about 1,085,000 IPv4 and 259,000 IPv6 prefixes in October 2026 (bgp.potaroo.net), and a router carrying the full table needs room for all of them plus growth. Routers therefore mix techniques: TCAM for ACLs and the most specific routes, and **algorithmic** lookups (compressed tries or [hash tables](../../../cs/data-structures/hash-tables/) of prefixes by length) in SRAM or attached HBM for the bulk of the table.
 
 ## Chassis, Line Cards, Fabric
 
@@ -154,7 +154,7 @@ The box sold as a "router" for homes is several devices sharing one board:
 - a **switch** chip behind the LAN ports ([Hubs & Switches](../hubs-and-switches/));
 - one or more **Wi-Fi radios**, making it a wireless **access point**: a bridge between Wi-Fi and the wired LAN ([Wireless Basics](../wireless-technology-basics/));
 - **NAT** (network address translation), so every device shares the one public IPv4 address;
-- a **DHCP server**, which hands each device that joins an IP address, subnet mask, default gateway and DNS server for a limited lease, plus a **DNS forwarder** and a stateful **firewall**;
+- a **DHCP server**, which hands each device that joins an IP address, subnet mask, default gateway and [DNS](../../../cs/networks/dns/) server for a limited lease, plus a **DNS forwarder** and a stateful **firewall**;
 - sometimes the **modem** too (cable or DSL); fibre usually has a separate ONT.
 
 <HomeNetwork />
@@ -198,7 +198,7 @@ NAT already makes the home router keep a table entry per flow. Dedicated **middl
 
 - A **stateful firewall** checks the first packet of each connection against its rules, then records the flow in a table so later packets pass with a fast lookup. Its limits are table size (concurrent flows) and **new connections per second**, since each new flow goes through rule matching and table insertion.
 - A **VPN gateway** (or concentrator) encrypts and decrypts every packet of every tunnel (IPsec or WireGuard). Throughput is set by cryptography, so these boxes rely on AES instructions in the CPU or dedicated crypto engines, and each tunnel's handshake costs public-key operations.
-- An **IDS** (intrusion detection system) inspects traffic for signs of attack and raises alerts ([Network Security](../../../cs/security/network-security/) shows where each sits and why most alerts are false). It usually works on a copy of the traffic from a switch's mirror port or a passive optical **tap**, so it cannot slow or block anything. An **IPS** (intrusion prevention system) sits inline and drops what matches. Both do **deep packet inspection**: matching thousands of patterns against payloads, not just headers, which needs pattern-matching hardware or many cores, and cannot see inside encrypted traffic unless it terminates TLS itself.
+- An **IDS** (intrusion detection system) inspects traffic for signs of attack and raises alerts ([Network Security](../../../cs/security/network-security/) shows where each sits and why most alerts are false). It usually works on a copy of the traffic from a switch's mirror port or a passive optical **tap**, so it cannot slow or block anything. An **IPS** (intrusion prevention system) sits inline and drops what matches. Both do **deep packet inspection**: matching thousands of patterns against payloads, not just headers, which needs pattern-matching hardware or many cores, and cannot see inside encrypted traffic unless it terminates [TLS](../../../cs/networks/tls/) itself.
 - **Load balancers** keep per-connection state to spread traffic over servers ([Load Balancing & CDNs](../../../cs/networks/load-balancing-and-cdns/)).
 
 Vendors often combine all of these in one **next-generation firewall** box. Its datasheet usually lists several throughput figures that fall sharply as features are switched on: plain firewalling with large packets is the highest, and threat inspection or VPN throughput can be several times lower.
