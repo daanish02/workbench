@@ -99,7 +99,8 @@ export const areas: Area[] = [
       { id: 'shallow-neural-networks', title: 'Shallow Neural Networks' },
       { id: 'reinforcement-learning', title: 'Reinforcement Learning' },
       { id: 'ml-systems', title: 'ML Systems' },
-      { id: 'appendix', title: 'Appendix' },
+      { id: 'appendix-reference', title: 'Appendix A' },
+      { id: 'appendix-libraries', title: 'Appendix B' },
     ],
   },
   {
