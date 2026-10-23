@@ -44,7 +44,7 @@ function resolve(fromId: string, link: string): string | null {
   return parts.join('/');
 }
 
-export async function buildGraph(): Promise<Graph> {
+async function build(): Promise<Graph> {
   const notes: Note[] = await getCollection('notes');
   const sectionTitle = new Map(areas.flatMap((a) => a.sections.map((s) => [`${a.id}/${s.id}`, s.title])));
   const index = new Map(notes.map((n, i) => [n.id, i]));
@@ -91,4 +91,27 @@ export async function buildGraph(): Promise<Graph> {
     }
   });
   return { nodes, edges, broken };
+}
+
+// built once per build: every note page asks for its neighbourhood, and the graph page for the whole graph
+let cached: Promise<Graph> | undefined;
+export const buildGraph = (): Promise<Graph> => (cached ??= build());
+
+/** One note and the notes linked to or from it, with every link among them: the data for a neighbourhood graph. */
+export function neighbourhood(g: Graph, id: string) {
+  const self = g.nodes.findIndex((n) => n.id === id);
+  const keep = new Set<number>([self]);
+  // appendix pages (glossary, cheat sheets) link to everything, so they are left out, as in the whole graph
+  const shown = (i: number) => !g.nodes[i].sectionTitle.startsWith('Appendix');
+  for (const [s, t] of g.edges) {
+    if (s === self && shown(t)) keep.add(t);
+    if (t === self && shown(s)) keep.add(s);
+  }
+  const ids = [...keep].sort((a, b) => a - b);
+  const at = new Map(ids.map((old, i) => [old, i]));
+  return {
+    nodes: ids.map((i) => g.nodes[i]),
+    edges: g.edges.filter(([s, t]) => keep.has(s) && keep.has(t)).map(([s, t]) => [at.get(s)!, at.get(t)!] as [number, number]),
+    home: at.get(self)!,
+  };
 }

@@ -1,0 +1,926 @@
+---
+// The graph view: a canvas with force layout, zoom, pan, drag and a note panel. Used full-size on the graph page
+// (with its own controls in the "controls" slot) and as a small neighbourhood graph on each note page.
+import { areas } from '../data/areas';
+import AreaIcon from './AreaIcon.astro';
+
+interface Props {
+  data: unknown;
+  /** 'local' = the neighbourhood of one note: no filters, and the page keeps its own scrolling */
+  variant?: 'full' | 'local';
+}
+const { data, variant = 'full' } = Astro.props;
+---
+
+<note-graph data-variant={variant}>
+  <slot name="controls" />
+  <div class="gp-stage" data-stage>
+    <canvas data-canvas aria-label="Graph of notes and the links between them"></canvas>
+    {variant === 'local' && <button type="button" class="btn gp-fit" data-fit>Fit</button>}
+    <aside class="gp-panel" data-panel hidden></aside>
+  </div>
+  <p class="gp-stat" data-stat aria-live="polite"></p>
+  <script type="application/json" data-graph set:html={JSON.stringify(data)} />
+  {areas.map((a) => <template data-area-icon={a.id}><AreaIcon id={a.id} size={13} /></template>)}
+</note-graph>
+
+<style>
+  note-graph {
+    display: block;
+    /* area colours: the same tokens the area icons and figures use */
+    --ga-math: var(--g-red);
+    --ga-infra: var(--text-muted);
+    --ga-cs: var(--g-blue);
+    --ga-ml: var(--g-yellow);
+    --ga-dl: var(--g-green);
+    --ga-applied-dl: var(--g-blue-l);
+  }
+  .gp-stage {
+    position: relative;
+    height: calc(100svh - var(--header-h) - 210px);
+    min-height: 460px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .gp-stage canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+  }
+  .gp-stat {
+    margin: 10px 0 0;
+    font: 0.75rem var(--font-mono);
+    color: var(--text-muted);
+    min-height: 1.5em;
+  }
+  .gp-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 280px;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    padding: 14px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-elev);
+  }
+  .gp-panel[hidden] {
+    display: none;
+  }
+  .gp-panel :global(.gp-close) {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+  }
+  .gp-panel :global(.gp-close:hover) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+  .gp-panel :global(h2) {
+    margin: 0 28px 8px 0;
+    font-size: 1rem;
+    line-height: 1.3;
+  }
+  .gp-panel :global(.gp-meta) {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0 0 16px;
+    font: 0.6875rem var(--font-mono);
+    color: var(--text-muted);
+  }
+  .gp-panel :global(.gp-meta svg) {
+    flex: none;
+  }
+  .gp-panel :global(.gp-desc) {
+    display: -webkit-box;
+    -webkit-line-clamp: 8;
+    line-clamp: 8;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin: 0 0 18px;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--text-muted);
+  }
+  .gp-panel :global(.gp-adv) {
+    margin-left: 8px;
+    padding: 0 5px;
+    vertical-align: middle;
+    font: 0.625rem var(--font-mono);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    color: var(--text-muted);
+  }
+  .gp-panel :global(.gp-open) {
+    display: inline-block;
+    margin-bottom: 12px;
+    text-decoration: none;
+  }
+  .gp-panel :global(h3) {
+    margin: 12px 0 6px;
+    font: 700 0.625rem var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--c);
+  }
+  .gp-panel :global(.gp-list) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .gp-panel :global(.gp-link) {
+    appearance: none;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 2px 10px 2px 8px;
+    font: 0.75rem/1.5 var(--font-sans);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .gp-panel :global(.gp-link::before) {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c);
+    flex: none;
+  }
+  .gp-panel :global(.gp-link:hover) {
+    color: var(--text);
+    border-color: var(--c);
+  }
+  .gp-panel :global(.gp-none) {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--text-faint);
+  }
+  /* the neighbourhood graph on a note page: a fixed-height box that lets the page scroll past it */
+  note-graph[data-variant='local'] .gp-stage {
+    height: 400px;
+    min-height: 0;
+  }
+  .gp-fit {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+  }
+  @media (max-width: 640px) {
+    .gp-stage {
+      height: calc(100svh - var(--header-h) - 260px);
+      min-height: 380px;
+    }
+    note-graph[data-variant='local'] .gp-stage {
+      height: 360px;
+      min-height: 0;
+    }
+    .gp-panel {
+      top: auto;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      width: auto;
+      max-height: 55%;
+    }
+  }
+</style>
+
+<script>
+  interface GNode {
+    id: string;
+    title: string;
+    description: string;
+    area: string;
+    sectionTitle: string;
+    href: string;
+    written: boolean;
+    advanced: boolean;
+    rank: number;
+  }
+  interface GData {
+    areas: { id: string; title: string }[];
+    nodes: GNode[];
+    edges: [number, number][];
+    home?: number; // local graph: index of the note whose neighbourhood this is
+  }
+
+  // small seeded generator, so the starting layout (and so the settled one) is the same on every visit
+  function mulberry32(seed: number) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const COLLIDE = 0.35; // how hard overlapping dots are pushed apart
+  // spring length, repulsion between every pair, pull toward the area home point, and the minimum space between two
+  // dots' edges (graph units). The neighbourhood graph is smaller and spaced wider, so every title has room.
+  const FULL = { link: 46, charge: 55, anchor: 0.05, gap: 3 };
+  const LOCAL = { link: 95, charge: 520, anchor: 0, gap: 14 };
+  const ANCHOR_RING = 190; // distance of the area home points from the centre; smaller packs areas closer
+  const PLAY_MS = 20000; // length of the build-up animation
+  const ALPHA_DECAY = 0.0228; // cooling rate: the layout settles in a few seconds
+  const ALPHA_MIN = 0.003;
+
+  class NoteGraph extends HTMLElement {
+    data!: GData;
+    n = 0;
+    x!: Float64Array;
+    y!: Float64Array;
+    vx!: Float64Array;
+    vy!: Float64Array;
+    pin!: Uint8Array;
+    vis!: Uint8Array;
+    deg!: Uint16Array;
+    rw!: Float64Array; // dot radius in graph units
+    outs: number[][] = [];
+    ins: number[][] = [];
+    act: number[] = []; // indices of visible notes
+    anchor = new Map<string, [number, number]>();
+    col = new Map<string, string>();
+    rgb = new Map<string, [number, number, number]>(); // area colours as numbers, for the glows
+    ui: Record<string, string> = {};
+    canvas!: HTMLCanvasElement;
+    ctx!: CanvasRenderingContext2D;
+    W = 0;
+    H = 0;
+    dpr = 1;
+    cam = { x: 0, y: 0, k: 1 };
+    alpha = 1;
+    raf = 0;
+    hover = -1;
+    selected = -1;
+    q = '';
+    match: Uint8Array | null = null;
+    rand = mulberry32(7);
+    playing = false;
+    limit = Infinity; // while animating: how many notes (in curriculum order) are shown so far
+    total = 0;
+    t0 = 0;
+    local = false; // the neighbourhood graph on a note page
+    orphanCount = 0; // written notes with no links at all, whatever the orphan toggle shows
+    cfg = FULL;
+    home = -1; // local graph: the note itself, pinned in the middle
+
+    connectedCallback() {
+      this.data = JSON.parse(this.querySelector('[data-graph]')!.textContent!);
+      this.local = this.dataset.variant === 'local';
+      this.cfg = this.local ? LOCAL : FULL;
+      this.home = this.data.home ?? -1;
+      this.n = this.data.nodes.length;
+      const cs = getComputedStyle(this);
+      const tok = (name: string) => cs.getPropertyValue(name).trim();
+      this.ui = {
+        edge: tok('--border-strong'),
+        dim: tok('--border'),
+        out: tok('--g-blue-l'),
+        in: tok('--g-green-l'),
+        text: tok('--text'),
+        muted: tok('--text-muted'),
+        faint: tok('--text-faint'),
+        bg: tok('--bg'),
+        font: tok('--font-mono'),
+      };
+      this.data.areas.forEach((a, i) => {
+        this.col.set(a.id, tok(`--ga-${a.id}`));
+        // painting the token on a 1px canvas makes the browser hand back plain rgb, whatever syntax the token used
+        const px = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+        px.fillStyle = tok(`--ga-${a.id}`);
+        px.fillRect(0, 0, 1, 1);
+        const [r, g, b] = px.getImageData(0, 0, 1, 1).data;
+        this.rgb.set(a.id, [r, g, b]);
+        const ang = (i / this.data.areas.length) * Math.PI * 2 - Math.PI / 2;
+        this.anchor.set(a.id, [Math.cos(ang) * ANCHOR_RING, Math.sin(ang) * ANCHOR_RING]);
+      });
+
+      const n = this.n;
+      this.x = new Float64Array(n);
+      this.y = new Float64Array(n);
+      this.vx = new Float64Array(n);
+      this.vy = new Float64Array(n);
+      this.pin = new Uint8Array(n);
+      this.vis = new Uint8Array(n);
+      this.deg = new Uint16Array(n);
+      this.rw = new Float64Array(n);
+      this.data.nodes.forEach((node, i) => {
+        const [ax, ay] = this.anchor.get(node.area)!;
+        const a = this.rand() * Math.PI * 2;
+        const r = Math.sqrt(this.rand()) * 90;
+        this.x[i] = ax + Math.cos(a) * r;
+        this.y[i] = ay + Math.sin(a) * r;
+      });
+      if (this.local) {
+        // start on a ring around the note, so the layout settles the same way every time
+        const others = this.data.nodes.map((_, i) => i).filter((i) => i !== this.home);
+        others.forEach((i, k) => {
+          const a = (k / others.length) * Math.PI * 2;
+          this.x[i] = Math.cos(a) * 120;
+          this.y[i] = Math.sin(a) * 120;
+        });
+        if (this.home >= 0) {
+          this.x[this.home] = 0;
+          this.y[this.home] = 0;
+          this.pin[this.home] = 1;
+        }
+      }
+
+      this.canvas = this.querySelector('[data-canvas]')!;
+      this.ctx = this.canvas.getContext('2d')!;
+      this.bind();
+      new ResizeObserver(() => this.resize()).observe(this.querySelector('[data-stage]')!);
+      this.applyFilter();
+      this.resize();
+      // settle most of the layout before the first frame; the rest animates unless motion is reduced
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      for (let i = 0; i < (still ? 400 : 150); i++) this.tick();
+      if (still) this.alpha = 0;
+      this.fit();
+      this.schedule();
+    }
+
+    // filters ---------------------------------------------------------------
+    checked(sel: string) {
+      return (this.querySelector(sel) as HTMLInputElement).checked;
+    }
+    applyFilter() {
+      // the local graph has no filter controls: every area is on and every neighbour is shown
+      const areaOn = new Set(
+        this.data.areas.filter((a) => (this.querySelector(`[data-area="${a.id}"]`) as HTMLInputElement | null)?.checked ?? true).map((a) => a.id),
+      );
+      const orphans = this.querySelector('[data-orphans]') ? this.checked('[data-orphans]') : true;
+      const nodes = this.data.nodes;
+      // appendix pages (glossary, cheat sheets) link to everything and are left out
+      const base = nodes.map((node) => areaOn.has(node.area) && !node.sectionTitle.startsWith('Appendix'));
+      // an orphan has no link to or from a written note: written notes with no links at all,
+      // and unwritten notes that no written note links to or from
+      const connected = new Set<number>();
+      for (const [s, t] of this.data.edges) {
+        if (!base[s] || !base[t] || !(nodes[s].written || nodes[t].written)) continue;
+        connected.add(s);
+        connected.add(t);
+      }
+      this.orphanCount = nodes.filter((node, i) => base[i] && node.written && !connected.has(i)).length;
+      const eligible = nodes
+        .map((_, i) => i)
+        .filter((i) => base[i] && (orphans || connected.has(i)))
+        .sort((a, b) => nodes[a].rank - nodes[b].rank);
+      this.total = eligible.length;
+      const prev = this.vis.slice();
+      this.vis.fill(0);
+      this.act = [];
+      eligible.forEach((i, p) => {
+        if (p >= this.limit) return;
+        this.vis[i] = 1;
+        this.act.push(i);
+      });
+      if (this.playing) this.spawn(prev);
+      this.deg.fill(0);
+      this.outs = this.data.nodes.map(() => []);
+      this.ins = this.data.nodes.map(() => []);
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        this.outs[s].push(t);
+        this.ins[t].push(s);
+        this.deg[s]++;
+        this.deg[t]++;
+      }
+      for (let i = 0; i < this.n; i++) this.rw[i] = Math.min(3 + 1.7 * Math.sqrt(this.deg[i]), 14);
+      if (this.selected >= 0 && !this.vis[this.selected]) this.select(-1);
+      this.search(this.q);
+      this.alpha = Math.max(this.alpha, 0.4);
+      this.schedule();
+    }
+    // a note that appears during the animation starts next to the notes it links with, so it grows out of the graph
+    spawn(prev: Uint8Array) {
+      const sum = new Map<number, [number, number, number]>();
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        for (const [a, b] of [[s, t], [t, s]]) {
+          if (prev[a] || !prev[b]) continue;
+          const v = sum.get(a) ?? [0, 0, 0];
+          sum.set(a, [v[0] + this.x[b], v[1] + this.y[b], v[2] + 1]);
+        }
+      }
+      for (const i of this.act) {
+        if (prev[i]) continue;
+        const v = sum.get(i);
+        const [ax, ay] = this.anchor.get(this.data.nodes[i].area)!;
+        this.x[i] = (v ? v[0] / v[2] : ax) + (this.rand() - 0.5) * 12;
+        this.y[i] = (v ? v[1] / v[2] : ay) + (this.rand() - 0.5) * 12;
+        this.vx[i] = 0;
+        this.vy[i] = 0;
+      }
+    }
+    play() {
+      if (this.playing) return this.stopPlay();
+      this.fit();
+      this.playing = true;
+      this.limit = 0;
+      this.t0 = performance.now();
+      const btn = this.querySelector('[data-play]');
+      btn?.setAttribute('aria-pressed', 'true');
+      if (btn) btn.textContent = 'Stop';
+      this.applyFilter();
+    }
+    stopPlay() {
+      this.playing = false;
+      this.limit = Infinity;
+      const b = this.querySelector('[data-play]');
+      b?.setAttribute('aria-pressed', 'false');
+      if (b) b.textContent = 'Animate';
+      this.applyFilter();
+    }
+    search(q: string) {
+      this.q = q.trim().toLowerCase();
+      this.match = null;
+      if (this.q) {
+        this.match = new Uint8Array(this.n);
+        this.data.nodes.forEach((node, i) => {
+          if (this.vis[i] && node.title.toLowerCase().includes(this.q)) this.match![i] = 1;
+        });
+      }
+      this.schedule();
+    }
+
+    // physics ---------------------------------------------------------------
+    // The same scheme as a standard force-directed layout: every pair repels, every link is a spring,
+    // every dot is pulled toward its area's home point, and a cooling factor lets it settle.
+    tick() {
+      const { x, y, vx, vy, act, alpha } = this;
+      const m = act.length;
+      for (let a = 0; a < m; a++) {
+        const i = act[a];
+        for (let b = a + 1; b < m; b++) {
+          const j = act[b];
+          let dx = x[j] - x[i];
+          let dy = y[j] - y[i];
+          let d2 = dx * dx + dy * dy;
+          if (d2 > 160000) continue;
+          if (d2 < 25) {
+            dx = (this.rand() - 0.5) * 5;
+            dy = (this.rand() - 0.5) * 5;
+            d2 = 25;
+          }
+          const w = (this.cfg.charge * alpha) / d2;
+          vx[i] -= dx * w;
+          vy[i] -= dy * w;
+          vx[j] += dx * w;
+          vy[j] += dy * w;
+          // collision: dots never sit closer than their radii plus a gap
+          const gap = this.rw[i] + this.rw[j] + this.cfg.gap;
+          if (d2 < gap * gap) {
+            const push = ((gap - Math.sqrt(d2)) / Math.sqrt(d2)) * COLLIDE;
+            vx[i] -= dx * push;
+            vy[i] -= dy * push;
+            vx[j] += dx * push;
+            vy[j] += dy * push;
+          }
+        }
+      }
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        let dx = x[t] + vx[t] - x[s] - vx[s];
+        let dy = y[t] + vy[t] - y[s] - vy[s];
+        const l = Math.hypot(dx, dy) || 1e-6;
+        const k = ((l - this.cfg.link) / l) * alpha * (1 / Math.min(this.deg[s], this.deg[t]));
+        dx *= k;
+        dy *= k;
+        const bias = this.deg[s] / (this.deg[s] + this.deg[t]);
+        vx[t] -= dx * bias;
+        vy[t] -= dy * bias;
+        vx[s] += dx * (1 - bias);
+        vy[s] += dy * (1 - bias);
+      }
+      for (const i of act) {
+        const [ax, ay] = this.anchor.get(this.data.nodes[i].area)!;
+        vx[i] += (ax - x[i]) * this.cfg.anchor * alpha;
+        vy[i] += (ay - y[i]) * this.cfg.anchor * alpha;
+        if (this.pin[i]) {
+          vx[i] = 0;
+          vy[i] = 0;
+        } else {
+          vx[i] *= 0.6;
+          vy[i] *= 0.6;
+          x[i] += vx[i];
+          y[i] += vy[i];
+        }
+      }
+      this.alpha += (0 - this.alpha) * ALPHA_DECAY;
+    }
+    schedule() {
+      if (this.raf) return;
+      this.raf = requestAnimationFrame(() => {
+        this.raf = 0;
+        if (this.playing) {
+          const target = Math.ceil(((performance.now() - this.t0) / PLAY_MS) * this.total);
+          if (target >= this.total) this.stopPlay();
+          else if (target > this.limit) {
+            this.limit = target;
+            this.applyFilter();
+          }
+        }
+        if (this.alpha > ALPHA_MIN || this.playing) {
+          this.tick();
+          this.tick();
+          this.draw();
+          this.schedule();
+        } else {
+          this.alpha = 0;
+          this.draw();
+        }
+      });
+    }
+
+    // camera ----------------------------------------------------------------
+    resize() {
+      const r = this.canvas.getBoundingClientRect();
+      this.dpr = window.devicePixelRatio || 1;
+      this.W = r.width;
+      this.H = r.height;
+      this.canvas.width = Math.round(r.width * this.dpr);
+      this.canvas.height = Math.round(r.height * this.dpr);
+      this.draw();
+    }
+    fit() {
+      if (!this.act.length) return;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const i of this.act) {
+        x0 = Math.min(x0, this.x[i]);
+        x1 = Math.max(x1, this.x[i]);
+        y0 = Math.min(y0, this.y[i]);
+        y1 = Math.max(y1, this.y[i]);
+      }
+      const k = Math.min(this.W / (x1 - x0 + 80), this.H / (y1 - y0 + 80));
+      this.cam = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, k: Math.min(Math.max(k, 0.15), 3) };
+      this.draw();
+    }
+    sx(x: number) {
+      return (x - this.cam.x) * this.cam.k + this.W / 2;
+    }
+    sy(y: number) {
+      return (y - this.cam.y) * this.cam.k + this.H / 2;
+    }
+    radius(i: number) {
+      // zoomed out, dots shrink with the spacing so they do not pile up; zoomed in they grow more slowly
+      const k = this.cam.k;
+      return Math.max(2.2, this.rw[i] * (k < 1 ? k : Math.sqrt(k)));
+    }
+    zoomAt(px: number, py: number, factor: number) {
+      const c = this.cam;
+      const wx = c.x + (px - this.W / 2) / c.k;
+      const wy = c.y + (py - this.H / 2) / c.k;
+      c.k = Math.min(Math.max(c.k * factor, 0.12), 8);
+      c.x = wx - (px - this.W / 2) / c.k;
+      c.y = wy - (py - this.H / 2) / c.k;
+      this.draw();
+    }
+    pick(px: number, py: number) {
+      let best = -1;
+      let bestD = Infinity;
+      for (const i of this.act) {
+        const d2 = (this.sx(this.x[i]) - px) ** 2 + (this.sy(this.y[i]) - py) ** 2;
+        const r = this.radius(i) + 5;
+        if (d2 <= r * r && d2 < bestD) {
+          best = i;
+          bestD = d2;
+        }
+      }
+      return best;
+    }
+
+    // drawing ---------------------------------------------------------------
+    draw() {
+      const ctx = this.ctx;
+      const { W, H, ui, cam } = this;
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      this.backdrop();
+      // the neighbourhood graph rests on its own note, so its links show in colour from the start
+      const focus = this.hover >= 0 ? this.hover : this.selected >= 0 ? this.selected : this.home;
+      const near = new Set<number>();
+      if (focus >= 0) {
+        near.add(focus);
+        this.outs[focus].forEach((j) => near.add(j));
+        this.ins[focus].forEach((j) => near.add(j));
+      }
+
+      // edges, batched by style
+      const base = new Path2D();
+      const dim = new Path2D();
+      const out = new Path2D();
+      const inn = new Path2D();
+      for (const [s, t] of this.data.edges) {
+        if (!this.vis[s] || !this.vis[t]) continue;
+        // with a search active, only links that touch a match keep full strength, as a selected note does for its own links
+        const p = focus < 0 ? (!this.match || this.match[s] || this.match[t] ? base : dim) : s === focus ? out : t === focus ? inn : dim;
+        p.moveTo(this.sx(this.x[s]), this.sy(this.y[s]));
+        p.lineTo(this.sx(this.x[t]), this.sy(this.y[t]));
+      }
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = ui.edge;
+      ctx.stroke(base);
+      ctx.strokeStyle = ui.dim;
+      ctx.stroke(dim);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = ui.out;
+      ctx.stroke(out);
+      ctx.strokeStyle = ui.in;
+      ctx.stroke(inn);
+
+      // dots
+      const faded = (i: number) => (focus >= 0 ? !near.has(i) : this.match ? !this.match[i] : false);
+      for (const i of this.act) {
+        const px = this.sx(this.x[i]);
+        const py = this.sy(this.y[i]);
+        if (px < -20 || py < -20 || px > W + 20 || py > H + 20) continue;
+        const r = this.radius(i);
+        const c = this.col.get(this.data.nodes[i].area)!;
+        ctx.globalAlpha = faded(i) ? 0.15 : 1;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        if (this.data.nodes[i].written) {
+          ctx.fillStyle = c;
+          ctx.fill();
+        } else {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = c;
+          ctx.stroke();
+        }
+        // the ring marks the hovered or selected dot; the note a local graph is about is not ringed
+        if (i === focus && !(this.local && i === this.home && this.hover < 0 && this.selected < 0)) {
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(px, py, r + 3.5, 0, Math.PI * 2);
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = ui.text;
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      // labels: the focused dot and its neighbours, search matches, and hubs (more of them as you zoom in)
+      ctx.font = `11px ${ui.font}`;
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = ui.bg;
+      for (const i of this.act) {
+        const hub = this.deg[i] >= 14 / cam.k;
+        const shown = focus >= 0 ? near.has(i) : this.match ? !!this.match[i] : hub;
+        if (!shown) continue;
+        const px = this.sx(this.x[i]);
+        const py = this.sy(this.y[i]);
+        if (px < -20 || py < -20 || px > W + 20 || py > H + 20) continue;
+        let label = this.data.nodes[i].title;
+        if (label.length > 26) label = `${label.slice(0, 25)}…`;
+        const tx = px + this.radius(i) + 5;
+        ctx.strokeText(label, tx, py);
+        ctx.fillStyle = i === focus ? ui.text : focus >= 0 || this.match ? ui.muted : ui.faint;
+        ctx.fillText(label, tx, py);
+      }
+      this.stat(focus);
+    }
+    // depth behind the graph: a dot grid that moves with the camera, and a faint glow in each area's colour
+    backdrop() {
+      const { ctx, W, H, cam, ui } = this;
+      let step = 32 * cam.k;
+      while (step < 14) step *= 2; // thin the grid out when zoomed far out
+      ctx.fillStyle = ui.edge;
+      const ox = (((W / 2 - cam.x * cam.k) % step) + step) % step;
+      const oy = (((H / 2 - cam.y * cam.k) % step) + step) % step;
+      for (let gx = ox; gx < W; gx += step) for (let gy = oy; gy < H; gy += step) ctx.fillRect(gx - 0.8, gy - 0.8, 1.6, 1.6);
+      if (this.local) return; // the small neighbourhood graph has no area glow
+
+      const by = new Map<string, number[]>();
+      for (const i of this.act) {
+        const a = this.data.nodes[i].area;
+        by.set(a, [...(by.get(a) ?? []), i]);
+      }
+      by.forEach((list, area) => {
+        if (list.length < 3) return;
+        let cx = 0;
+        let cy = 0;
+        for (const i of list) {
+          cx += this.x[i];
+          cy += this.y[i];
+        }
+        cx /= list.length;
+        cy /= list.length;
+        let ms = 0;
+        for (const i of list) ms += (this.x[i] - cx) ** 2 + (this.y[i] - cy) ** 2;
+        const r = (Math.sqrt(ms / list.length) * 1.8 + 30) * cam.k;
+        const [cr, cg, cb] = this.rgb.get(area)!;
+        const grad = ctx.createRadialGradient(this.sx(cx), this.sy(cy), 0, this.sx(cx), this.sy(cy), r);
+        grad.addColorStop(0, `rgba(${cr},${cg},${cb},0.1)`);
+        grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(this.sx(cx) - r, this.sy(cy) - r, r * 2, r * 2);
+      });
+    }
+    stat(focus: number) {
+      const el = this.querySelector('[data-stat]')!;
+      if (this.local) {
+        el.textContent = 'Blue links go out from the highlighted note, green come in. Drag a dot, scroll to zoom, click for details.';
+        return;
+      }
+      let links = 0;
+      this.outs.forEach((o) => (links += o.length));
+      el.textContent =
+        focus >= 0
+          ? `${this.data.nodes[focus].title} · links to ${this.outs[focus].length} · linked from ${this.ins[focus].length}`
+          : `${this.act.length} notes · ${links} links · ${this.orphanCount} ${this.orphanCount === 1 ? 'orphan' : 'orphans'}`;
+    }
+
+    // selection and panel -----------------------------------------------------
+    select(i: number) {
+      this.selected = i;
+      const panel = this.querySelector<HTMLElement>('[data-panel]')!;
+      panel.hidden = i < 0;
+      if (i >= 0) this.renderPanel(panel, i);
+      this.draw();
+    }
+    centerOn(i: number) {
+      this.cam = { x: this.x[i], y: this.y[i], k: Math.max(this.cam.k, 1.4) };
+      this.draw();
+    }
+    renderPanel(panel: HTMLElement, i: number) {
+      const node = this.data.nodes[i];
+      const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (text) e.textContent = text;
+        return e;
+      };
+      panel.replaceChildren();
+      const close = el('button', 'btn gp-close');
+      close.innerHTML =
+        '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg>';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.addEventListener('click', () => this.select(-1));
+      const title = el('h2', '', node.title);
+      if (node.advanced) title.append(el('span', 'gp-adv', 'ADV'));
+      const meta = el('p', 'gp-meta');
+      const icon = this.querySelector<HTMLTemplateElement>(`template[data-area-icon="${node.area}"]`)?.content.firstElementChild;
+      if (icon) meta.append(icon.cloneNode(true));
+      meta.append(`${this.data.areas.find((a) => a.id === node.area)!.title} › ${node.sectionTitle}`);
+      // descriptions may hold $...$ math, which the panel shows as plain text
+      const desc = el('p', 'gp-desc', node.description.replace(/\\?\$/g, ''));
+      const open = el('a', 'btn primary gp-open', 'Open note');
+      open.href = node.href;
+      panel.append(close, title, meta, desc, open);
+      const group = (title: string, list: number[], colour: string) => {
+        const h = el('h3', '', `${title} (${list.length})`);
+        h.style.setProperty('--c', colour);
+        panel.append(h);
+        if (!list.length) return panel.append(el('p', 'gp-none', 'None'));
+        const ul = el('ul', 'gp-list');
+        for (const j of [...list].sort((a, b) => this.data.nodes[a].title.localeCompare(this.data.nodes[b].title))) {
+          const b = el('button', 'gp-link', this.data.nodes[j].title);
+          b.type = 'button';
+          b.style.setProperty('--c', this.col.get(this.data.nodes[j].area)!);
+          b.addEventListener('click', () => {
+            this.select(j);
+            this.centerOn(j);
+          });
+          const li = el('li');
+          li.append(b);
+          ul.append(li);
+        }
+        panel.append(ul);
+      };
+      group('Links to', this.outs[i], this.ui.out);
+      group('Linked from', this.ins[i], this.ui.in);
+    }
+
+    // input -------------------------------------------------------------------
+    bind() {
+      const cv = this.canvas;
+      const pts = new Map<number, { x: number; y: number }>();
+      let down: { x: number; y: number; lx: number; ly: number; moved: boolean; node: number } | null = null;
+      let pinch = 0; // distance between the two fingers last frame
+      const pos = (e: PointerEvent) => {
+        const r = cv.getBoundingClientRect();
+        return { x: e.clientX - r.left, y: e.clientY - r.top };
+      };
+      cv.addEventListener('pointerdown', (e) => {
+        cv.setPointerCapture(e.pointerId);
+        const p = pos(e);
+        pts.set(e.pointerId, p);
+        if (pts.size === 2) {
+          const [a, b] = [...pts.values()];
+          pinch = Math.hypot(a.x - b.x, a.y - b.y);
+          down = null;
+          return;
+        }
+        down = { x: p.x, y: p.y, lx: p.x, ly: p.y, moved: false, node: this.pick(p.x, p.y) };
+      });
+      cv.addEventListener('pointermove', (e) => {
+        const p = pos(e);
+        if (pts.has(e.pointerId)) pts.set(e.pointerId, p);
+        if (pts.size === 2) {
+          const [a, b] = [...pts.values()];
+          const d = Math.hypot(a.x - b.x, a.y - b.y);
+          if (pinch > 0) this.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinch);
+          pinch = d;
+          return;
+        }
+        if (down) {
+          if (!down.moved && Math.hypot(p.x - down.x, p.y - down.y) > 4) down.moved = true;
+          if (down.moved) {
+            if (down.node >= 0) {
+              const i = down.node;
+              this.pin[i] = 1;
+              this.x[i] = this.cam.x + (p.x - this.W / 2) / this.cam.k;
+              this.y[i] = this.cam.y + (p.y - this.H / 2) / this.cam.k;
+              this.alpha = Math.max(this.alpha, 0.3);
+              this.schedule();
+            } else {
+              this.cam.x -= (p.x - down.lx) / this.cam.k;
+              this.cam.y -= (p.y - down.ly) / this.cam.k;
+              this.draw();
+            }
+          }
+          down.lx = p.x;
+          down.ly = p.y;
+        } else if (e.pointerType === 'mouse' && pts.size === 0) {
+          const h = this.pick(p.x, p.y);
+          cv.style.cursor = h >= 0 ? 'pointer' : 'grab';
+          if (h !== this.hover) {
+            this.hover = h;
+            this.draw();
+          }
+        }
+      });
+      const end = (e: PointerEvent) => {
+        pts.delete(e.pointerId);
+        pinch = 0;
+        if (down) {
+          if (down.node >= 0 && down.node !== this.home) this.pin[down.node] = 0;
+          if (!down.moved) this.select(down.node);
+        }
+        down = null;
+      };
+      cv.addEventListener('pointerup', end);
+      cv.addEventListener('pointercancel', end);
+      cv.addEventListener('pointerleave', (e) => {
+        if (e.pointerType === 'mouse' && this.hover >= 0) {
+          this.hover = -1;
+          this.draw();
+        }
+      });
+      cv.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          const p = pos(e as unknown as PointerEvent);
+          this.zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
+        },
+        { passive: false },
+      );
+
+      this.addEventListener('change', (e) => {
+        if ((e.target as HTMLElement).matches('input[type="checkbox"]')) this.applyFilter();
+      });
+      const q = this.querySelector<HTMLInputElement>('[data-q]');
+      q?.addEventListener('input', () => this.search(q.value));
+      q?.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !this.match) return;
+        const first = this.act.find((i) => this.match![i]);
+        if (first === undefined) return;
+        this.select(first);
+        this.centerOn(first);
+      });
+      this.querySelector('[data-fit]')?.addEventListener('click', () => this.fit());
+      this.querySelector('[data-play]')?.addEventListener('click', () => this.play());
+      this.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') this.select(-1);
+      });
+    }
+  }
+  customElements.define('note-graph', NoteGraph);
+</script>
