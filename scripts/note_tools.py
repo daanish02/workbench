@@ -436,8 +436,8 @@ def links_by_size(notes, edges, e, written, areas):
     """Area-pair table normalised by size, so a large area is not read as 'more linked' just for having more notes."""
     sims = similar_pairs(notes, set())  # every pair, linked or not, best first
     plausible = {frozenset((p.a, p.b)) for p in sims if p.score >= 0.2}
-    cands, _ = mention_candidates(notes, edges)
-    plausible |= {frozenset((c.src, c.dst)) for c in cands}
+    cands, _ = mention_candidates(notes, set(), keep_links=True)  # linked mentions count too, so linking does not shrink the set
+    plausible |={frozenset((c.src, c.dst)) for c in cands}
     linked = {frozenset(x) for x in e}
     by_area = {a: [i for i in written if notes[i].area == a] for a in areas}
     print("\nby area pair, adjusted for size (each pair of notes counted once)")
@@ -464,7 +464,7 @@ def links_by_size(notes, edges, e, written, areas):
         print(f"{a:<11} median {vals[len(vals) // 2]} outgoing, {sum(1 for v in vals if v > 10)} notes over 10, {sum(1 for v in vals if v == 0)} with none")
 
 
-def mention_candidates(notes, edges):
+def mention_candidates(notes, edges, keep_links=False):
     """(source, target) pairs where the source names the target's title or acronym without linking to it."""
     lex, acr = {}, {}
     for j, n in enumerate(notes):
@@ -485,8 +485,8 @@ def mention_candidates(notes, edges):
     for i, n in enumerate(notes):
         if n.appendix or n.stub:
             continue
-        text = clean(n.body)
-        toks = [(m.group(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z0-9]+", text)]
+        text = clean(n.body, keep_links=keep_links)
+        toks =[(m.group(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z0-9]+", text)]
         low = [stem(w.lower()) for w, _, _ in toks]
         for k in range(len(toks)):
             found = []
