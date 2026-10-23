@@ -72,8 +72,8 @@ export async function buildGraph(): Promise<Graph> {
   const edges: [number, number][] = [];
   const broken: string[] = [];
   notes.forEach((n, from) => {
-    // markdown links only; code blocks are skipped so example URLs inside code do not count
-    const body = (n.body ?? '').replace(/```[\s\S]*?```/g, '');
+    // markdown links only; code blocks and inline code are skipped so example URLs and `f[T](…)` do not count
+    const body = (n.body ?? '').replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
     for (const m of body.matchAll(/\]\(([^)\s]+)\)/g)) {
       const target = resolve(n.id, m[1]);
       if (target === null) continue;
