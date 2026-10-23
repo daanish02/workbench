@@ -141,7 +141,8 @@ export const areas: Area[] = [
       { id: 'audio-foundations', title: 'Audio Foundations' },
       { id: 'speech-audio-models', title: 'Speech & Audio Models' },
       { id: 'other-domains', title: 'Other Domains' },
-      { id: 'appendix', title: 'Appendix' },
+      { id: 'appendix-reference', title: 'Appendix A' },
+      { id: 'appendix-libraries', title: 'Appendix B' },
     ],
   },
 ];
