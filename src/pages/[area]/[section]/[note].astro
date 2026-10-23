@@ -5,8 +5,10 @@ import Base from '../../../layouts/Base.astro';
 import Sidebar from '../../../components/Sidebar.astro';
 import Toc from '../../../components/Toc.astro';
 import AdvBadge from '../../../components/AdvBadge.astro';
+import GraphView from '../../../components/GraphView.astro';
 import { components } from '../../../components/interactive';
-import { getArea } from '../../../data/areas';
+import { areas, getArea } from '../../../data/areas';
+import { buildGraph, neighbourhood } from '../../../lib/graph';
 import { areaNav, noteParts, noteUrl, readingMinutes, type Note } from '../../../lib/nav';
 
 export async function getStaticPaths() {
@@ -27,6 +29,10 @@ const idx = flat.findIndex((n) => n.id === note.id);
 const prev = flat[idx - 1];
 const next = flat[idx + 1];
 const { Content, headings } = await render(note);
+// the neighbourhood graph: this note and everything linked to or from it; left out when nothing is
+const hood = neighbourhood(await buildGraph(), note.id);
+const graphData = { areas: areas.map((a) => ({ id: a.id, title: a.title })), ...hood };
+const showGraph = hood.nodes.length > 1 && !sectionId.startsWith('appendix');
 
 // Frontmatter strings are not markdown, so $...$ math in them is rendered with KaTeX here.
 // An escaped \$ (written \\$ in YAML) is a literal dollar sign, as in the MDX body.
@@ -76,6 +82,15 @@ const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
         <div class="prose">
           <Content components={components} />
         </div>
+
+        {
+          showGraph && (
+            <section class="connections" aria-labelledby="connections" data-pagefind-ignore>
+              <h2 id="connections">Connections</h2>
+              <GraphView data={graphData} variant="local" />
+            </section>
+          )
+        }
 
         {
           note.data.resources.length > 0 && (
@@ -176,11 +191,13 @@ const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
     font-size: 0.8125rem;
     color: var(--text-faint);
   }
+  .connections,
   .deeper {
     margin-top: 56px;
     padding-top: 28px;
     border-top: 1px solid var(--border);
   }
+  .connections h2,
   .deeper h2 {
     margin: 0 0 14px;
     font-size: 1.125rem;
