@@ -362,7 +362,7 @@ def build_edges(notes):
     index = {n.id: i for i, n in enumerate(notes)}
     edges = set()
     for i, n in enumerate(notes):
-        for m in re.finditer(r"\]\(([^)\s]+)\)", n.body):
+        for m in re.finditer(r"\]\(([^)\s]+)\)", re.sub(r"`[^`\n]*`", "", n.body)):  # inline code is not a link, as in graph.ts
             target = resolve(n.id, m.group(1))
             j = index.get(target) if target else None
             if j is not None and j != i:
