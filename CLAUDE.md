@@ -13,6 +13,7 @@ A study site of notes (Astro 7 + MDX + KaTeX), deployed to GitHub Pages under `/
   - `shots <path> ...` (e.g. `infra/storage/raid`): screenshots built pages with headless Edge and crops every figure to `.shots/<page>_fig<N>.png` (gitignored). Look at each crop before calling a figure done; it only shows the initial state, so step through steppers in `bun run dev` or say so.
   - `pending <file> ...`: appends every code block still marked `// output: PENDING` to `refs/verify-snippets.md` (skips entries already there).
   - `fill <note> <answers.txt>`: the user's pasted outputs (`answers/<lang>.txt`, numbered `1.`, `2.`, … in the order of the note's PENDING blocks) replace the markers; failed runs stay PENDING and the log is re-synced.
+  - `links <stats|mentions|similar|compare|orphans|apply>`: link audit; see Linking. Read-only, except `apply <file> --write`, which wraps mentions in links (dry run without `--write`).
   - `dollars [--apply] <file|dir> ...`: finds money such as `$30,000` in prose that KaTeX would read as math; `--apply` escapes it (`\$` in the body, `\\$` in YAML takeaways). Review the list before applying.
 - Tooling: bun only for JS (never npm, npx or yarn); uv only for Python (never bare pip). Pin exact versions.
 
@@ -68,6 +69,19 @@ Body pattern, as in the CS notes:
 7. Internal links are relative to the note URL: `../sibling/`, `../../other-section/note/`, `../../../cs/section/note/`. Appendix tables use absolute `/workbench/...` links. Every link must point to an existing note.
 
 Writing: plain, specific sentences with no padding. State facts precisely: no "always" or "never" unless true, and give conditions (for example "for continuous f"). Don't refer to "the next note" unless the `order` really makes it next; name and link the note instead.
+
+## Linking
+
+The note graph (`/workbench/graph/`, and the "Connections" graph on each note) is built from the markdown links in note bodies, so links are how a reader finds what to read first. They should show real dependencies, not fill a coverage target.
+
+- **Link when** the reader needs the target to follow the sentence (a prerequisite or a definition), or the target is the natural next step. One link per target per note, at its first useful mention. Never link a word that merely appears: "graph of a function" is not the graph data structure, and "Monte Carlo" means different things in randomized algorithms and in MCMC.
+- **Direction follows dependency.** A note links to what it relies on: cs and ml link back to the math they use; math links forward only to applications. Cross-area links only when it is the same idea in another setting.
+- **Inline first.** Wrap an existing mention. If a note has no natural spot, add one short plain sentence at the end of its opening paragraph. Do not add notes or sections just to create links. Appendix pages are left out of the graph, so do not rely on them for connections.
+- **No link fields in frontmatter.** Links live only in the body; the graph, the audit and the build all read the body.
+- **Measure, do not target.** `links stats` prints an area-pair table adjusted for size: `per 1000` is links per 1000 note pairs and `fill%` is the share of plausible pairs (similar text or an unlinked title mention) already linked. Compare a cross-area pair with the fill inside its own areas (about 25 to 40% in math and cs at the last check), never with 100%. Soft bands: about 2 to 6 outgoing links per note, none above about 10. A note may stay unlinked.
+- **Orphans** (written notes with no links either way): `links orphans` lists the signals (title mentions in each direction, text similarity, section neighbours). Link what is real. Record a true leaf in `REVIEWED_LEAVES` in `scripts/note_tools.py` with a reason.
+- **Writing a new note:** link its prerequisites in the opening paragraph, then run `links mentions` and `links similar` for its area to find notes that already mention its title and should link to it. After a batch of notes, run `links stats` again; the area-pair table has no data for areas that are still stubs, so read it afresh once ml, dl and applied-dl are written.
+- **Work in small batches**, one section per commit: put the pairs in a file, run `links apply <file>` as a dry run, read each change, then `--write`, then build.
 
 ## Code blocks (Python)
 
