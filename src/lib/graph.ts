@@ -9,6 +9,7 @@ const PLACEHOLDER = 'Placeholder. Content not written yet.';
 export interface GraphNode {
   id: string; // "<area>/<section>/<slug>"
   title: string;
+  description: string;
   area: string;
   section: string;
   sectionTitle: string;
@@ -53,6 +54,7 @@ export async function buildGraph(): Promise<Graph> {
     return {
       id: n.id,
       title: n.data.title,
+      description: n.data.description,
       area,
       section,
       sectionTitle: sectionTitle.get(`${area}/${section}`) ?? section,
