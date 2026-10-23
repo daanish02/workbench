@@ -2,6 +2,7 @@
 import Base from '../layouts/Base.astro';
 import { areas } from '../data/areas';
 import { buildGraph } from '../lib/graph';
+import AreaIcon from '../components/AreaIcon.astro';
 
 const g = await buildGraph();
 const written = g.nodes.filter((n) => n.written).length;
@@ -28,7 +29,7 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
               <>
                 <input type="checkbox" hidden checked data-area={a.id} />
                 <button type="button" class="btn gp-area" data-toggle aria-pressed="true" style={`--c: var(--ga-${a.id})`}>
-                  <i class="sw" />
+                  <AreaIcon id={a.id} size={15} />
                   {a.title}
                 </button>
               </>
@@ -50,6 +51,7 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
       </div>
       <p class="gp-stat" data-stat aria-live="polite"></p>
       <script type="application/json" data-graph set:html={JSON.stringify(data)} />
+      {areas.map((a) => <template data-area-icon={a.id}><AreaIcon id={a.id} size={13} /></template>)}
     </note-graph>
   </main>
 </Base>
@@ -102,11 +104,8 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
     color: var(--text);
     background: color-mix(in srgb, var(--c) 14%, transparent);
   }
-  .sw {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--c);
+  .gp-area :global(svg) {
+    flex: none;
   }
   .gp-search {
     flex: 1 1 200px;
@@ -179,13 +178,8 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
     font: 0.6875rem var(--font-mono);
     color: var(--text-muted);
   }
-  .gp-panel :global(.gp-meta::before) {
-    content: '';
+  .gp-panel :global(.gp-meta svg) {
     flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--c);
   }
   .gp-panel :global(.gp-desc) {
     display: -webkit-box;
@@ -821,8 +815,10 @@ const data = { areas: areas.map((a) => ({ id: a.id, title: a.title })), nodes: g
       close.addEventListener('click', () => this.select(-1));
       const title = el('h2', '', node.title);
       if (node.advanced) title.append(el('span', 'gp-adv', 'ADV'));
-      const meta = el('p', 'gp-meta', `${this.data.areas.find((a) => a.id === node.area)!.title} › ${node.sectionTitle}`);
-      meta.style.setProperty('--c', this.col.get(node.area)!);
+      const meta = el('p', 'gp-meta');
+      const icon = this.querySelector<HTMLTemplateElement>(`template[data-area-icon="${node.area}"]`)?.content.firstElementChild;
+      if (icon) meta.append(icon.cloneNode(true));
+      meta.append(`${this.data.areas.find((a) => a.id === node.area)!.title} › ${node.sectionTitle}`);
       // descriptions may hold $...$ math, which the panel shows as plain text
       const desc = el('p', 'gp-desc', node.description.replace(/\\?\$/g, ''));
       const open = el('a', 'btn primary gp-open', 'Open note');
