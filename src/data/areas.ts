@@ -120,7 +120,8 @@ export const areas: Area[] = [
       { id: 'practical-training', title: 'Practical Training' },
       { id: 'deep-reinforcement-learning', title: 'Deep Reinforcement Learning' },
       { id: 'deep-recommenders', title: 'Deep Recommenders' },
-      { id: 'appendix', title: 'Appendix' },
+      { id: 'appendix-reference', title: 'Appendix A' },
+      { id: 'appendix-libraries', title: 'Appendix B' },
     ],
   },
   {
