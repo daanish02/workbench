@@ -33,7 +33,8 @@ export const areas: Area[] = [
       { id: 'optimization', title: 'Optimization' },
       { id: 'information-theory', title: 'Information Theory' },
       { id: 'signals-fourier', title: 'Signals & Fourier' },
-      { id: 'appendix', title: 'Appendix' },
+      { id: 'appendix-reference', title: 'Appendix A' },
+      { id: 'appendix-libraries', title: 'Appendix B' },
     ],
   },
   {
