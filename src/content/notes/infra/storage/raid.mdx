@@ -66,7 +66,7 @@ In words: the parity of the four blocks is 0x362d3c3b; when the drive holding `o
 
 ## Capacity and Write Penalty
 
-Each level trades capacity, fault tolerance and write cost differently:
+Each level trades capacity, [fault tolerance](../../../cs/distributed-systems/fault-tolerance/) and write cost differently:
 
 ```python
 n, size_tb = 8, 20                                        # eight 20 TB drives
@@ -113,13 +113,13 @@ In words: even at a sustained 200 MB/s with no other load, a 20 TB drive takes 2
 
 ## Erasure Coding at Scale
 
-RAID works within one server. Distributed storage systems spread data across many servers and racks, and generalise parity to **erasure coding**: split each object into $k$ data pieces, compute $m$ parity pieces with a Reed-Solomon code, and place the $k + m$ pieces on different machines. Any $k$ of the $k + m$ pieces reconstruct the object. The second half of the output above compares the overheads: 3-way replication stores 3.00× the data to survive 2 losses, while RS(10,4) stores only 1.40× and survives 4. Cloud object stores and HDFS use codes like these for cold and warm data, and keep replication for hot data, because reading from a single replica is cheaper than gathering $k$ pieces, and rebuilding a lost piece requires reading $k$ others across the network.
+RAID works within one server. Distributed storage systems spread data across many servers and racks, and generalise parity to **erasure coding**: split each object into $k$ data pieces, compute $m$ parity pieces with a Reed-Solomon code, and place the $k + m$ pieces on different machines. Any $k$ of the $k + m$ pieces reconstruct the object. The second half of the output above compares the overheads: 3-way [replication](../../../cs/distributed-systems/replication/) stores 3.00× the data to survive 2 losses, while RS(10,4) stores only 1.40× and survives 4. Cloud object stores and HDFS use codes like these for cold and warm data, and keep replication for hot data, because reading from a single replica is cheaper than gathering $k$ pieces, and rebuilding a lost piece requires reading $k$ others across the network.
 
 ## How RAID Is Implemented
 
 - **Hardware RAID**: a controller card with its own processor and battery-backed cache presents the array to the operating system as one disk. Simple to use, but the on-disk format is tied to the controller vendor.
 - **Software RAID**: the operating system does the work (Linux `md`, Windows Storage Spaces). Modern CPUs compute parity with little effort, and the array can move between machines.
-- **File-system RAID**: ZFS and Btrfs combine RAID with the file system, so they know which blocks are in use (rebuilding only those), checksum every block to detect silent corruption, and avoid the write hole by never overwriting in place.
+- **File-system RAID**: ZFS and Btrfs combine RAID with the [file system](../../../cs/operating-systems/file-systems/), so they know which blocks are in use (rebuilding only those), checksum every block to detect silent corruption, and avoid the write hole by never overwriting in place.
 
 <Callout type="key">
 RAID buys speed by striping and survival by redundancy: copies (RAID 1, 10) or parity (RAID 5, 6). Parity saves capacity but costs write I/Os and long, risky rebuilds; erasure coding extends the same idea across machines. None of it protects against deletion, corruption written by software, ransomware or fire: RAID is availability, not backup.

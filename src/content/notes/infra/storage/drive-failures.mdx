@@ -68,13 +68,13 @@ In words: if drives really failed one read in $10^{14}$ bits, reading 140 TB wou
 
 Worse than an error is wrong data with no error. Firmware bugs, misdirected writes (data written to the wrong sector), bit flips in RAM or on a cable, and flash cells that drift can all return a block that reads fine but is not what was written. RAID alone cannot tell which copy is right: a mirror with two different blocks gives no hint which one is correct.
 
-The defence is **end-to-end checksums**: the file system (ZFS, Btrfs) or application stores a checksum of each block separately from the block, verifies it on every read, and on a mismatch reads the redundant copy and repairs the bad one. **Scrubbing** reads every block periodically (often monthly) to find latent errors while redundancy still exists, instead of discovering them during a rebuild.
+The defence is **end-to-end checksums**: the [file system](../../../cs/operating-systems/file-systems/) (ZFS, Btrfs) or application stores a checksum of each block separately from the block, verifies it on every read, and on a mismatch reads the redundant copy and repairs the bad one. **Scrubbing** reads every block periodically (often monthly) to find latent errors while redundancy still exists, instead of discovering them during a rebuild.
 
 **SMART** (self-monitoring, analysis and reporting technology) counters such as reallocated sectors and pending sectors give some warning: drives with rising counts are much more likely to fail. They are not reliable alone: in Google's 2007 study of over 100,000 drives, more than half of the failed drives showed no warning in the strongest SMART signals.
 
 ## RAID Is Not a Backup
 
-RAID, replication and snapshots on the same system protect **availability**: the service keeps running when hardware fails. They do not protect the **data** against most of the ways it is actually lost, because every redundant copy faithfully receives the same change:
+RAID, [replication](../../../cs/distributed-systems/replication/) and snapshots on the same system protect **availability**: the service keeps running when hardware fails. They do not protect the **data** against most of the ways it is actually lost, because every redundant copy faithfully receives the same change:
 
 - a user or script **deletes** or overwrites files: the deletion is mirrored instantly;
 - a **software bug** writes corrupt data: the corruption is replicated;
