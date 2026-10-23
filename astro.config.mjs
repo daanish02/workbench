@@ -37,6 +37,20 @@ function rehypeIgnoreMathml() {
   };
   return walk;
 }
+// Paragraphs that begin "In words:" get the label wrapped in <strong class="iw-label"> so CSS can colour it;
+// the notes write the label as plain text, so there is nothing to change in them.
+function rehypeInWords() {
+  const walk = (node) => {
+    const first = node.tagName === 'p' ? node.children?.[0] : undefined;
+    if (first?.type === 'text' && first.value.startsWith('In words:')) {
+      node.properties = { ...node.properties, className: [...(node.properties?.className ?? []), 'in-words'] };
+      node.children[0] = { type: 'text', value: first.value.slice('In words:'.length) };
+      node.children.unshift({ type: 'element', tagName: 'strong', properties: { className: ['iw-label'] }, children: [{ type: 'text', value: 'In words:' }] });
+    }
+    node.children?.forEach(walk);
+  };
+  return walk;
+}
 function languageHeaders() {
   return {
     name: 'language-headers',
@@ -87,7 +101,7 @@ export default defineConfig({
   markdown: {
     processor: unified({
       remarkPlugins: [remarkMath],
-      rehypePlugins: [[rehypeKatex, { strict: false }], rehypeIgnoreMathml],
+      rehypePlugins: [[rehypeKatex, { strict: false }], rehypeIgnoreMathml, rehypeInWords],
     }),
   },
   integrations: [
