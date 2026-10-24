@@ -17,6 +17,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # true when the secret exists; a step's own env is not visible to its "if", and this keeps the key out of the job env
+      HAVE_CHAT_KEY: ${{ secrets.OPENROUTER_KEY != '' }}
 
     steps:
       - uses: actions/checkout@v5
@@ -29,6 +32,32 @@ jobs:
         uses: actions/configure-pages@v6
 
       - run: bun install --frozen-lockfile
+
+      # Chat data (public/chat/): note chunks, their embeddings and the sealed shared key. Without the
+      # OPENROUTER_KEY secret these steps are skipped and the site builds without a working chat index.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.3
+
+      - run: uv run scripts/note_tools.py chunks
+
+      # the cache holds one vector per chunk text, so only edited notes are embedded again
+      - uses: actions/cache@v4
+        with:
+          path: public/chat/embed-cache.json
+          key: chat-embed-${{ github.run_id }}
+          restore-keys: chat-embed-
+
+      - run: bun scripts/chat-embed.mjs
+        if: env.HAVE_CHAT_KEY == 'true'
+        env:
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+
+      # seals the shared key under CHAT_PASSWORD; skipped (password unlock off) when either secret is missing
+      - run: bun scripts/chat-key.mjs
+        env:
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+          CHAT_PASSWORD: ${{ secrets.CHAT_PASSWORD }}
 
       - run: bun run build
         env:

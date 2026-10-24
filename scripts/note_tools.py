@@ -13,6 +13,7 @@
   uv run scripts/note_tools.py dollars [--apply] FILE  find (or escape) money like $30,000 that KaTeX reads as math
   uv run scripts/note_tools.py pending FILE ...        log code blocks marked `output: PENDING` in refs/verify-snippets.md
   uv run scripts/note_tools.py fill NOTE ANSWERS       fill PENDING outputs from a numbered answers file, in order
+  uv run scripts/note_tools.py chunks                  split notes into per-section chunks for the chat (public/chat/chunks.json)
   uv run scripts/note_tools.py links MODE [options]    link audit: stats | mentions | similar | compare (see below)
 
 shots needs a built site (`bun run build`); it starts `bun run preview` on port 4399 if nothing is listening
@@ -717,6 +718,75 @@ def links_compare(notes, edges, args):
         print(f"  {mset[k].score:4.1f}  {notes[mset[k].src].id} -> {notes[mset[k].dst].id}   [{mset[k].term}]")
 
 
+CHUNK_DIR = ROOT / "public" / "chat"
+CHUNK_MAX = 1600
+FIGURE = re.compile(r"^<[A-Z]\w*\b[^>]*/>\s*$", re.M)
+
+
+def heading_slug(text):
+    """github-slugger, as Astro makes heading ids: lowercase, drop punctuation, spaces to hyphens."""
+    text = re.sub(r"`", "", text).lower()
+    return re.sub(r"[^\w\- ]", "", text).replace(" ", "-")
+
+
+def split_section(text):
+    """Pieces of at most CHUNK_MAX characters, cut on blank lines outside code fences."""
+    pieces, cur, fence = [], "", False
+    for para in re.split(r"(?<=\n)\n(?=[^\n])", text):
+        if cur and len(cur) + len(para) > CHUNK_MAX and not fence:
+            pieces.append(cur.strip())
+            cur = ""
+        cur += para + "\n\n"
+        fence ^= para.count("```") % 2 == 1
+    if cur.strip():
+        pieces.append(cur.strip())
+    return pieces
+
+
+def build_chunks():
+    """One chunk per note section ("##" heading), long sections split. Code and math are kept."""
+    chunks = []
+    for p in sorted(NOTE_ROOT.rglob("*.mdx")):
+        nid = p.relative_to(NOTE_ROOT).with_suffix("").as_posix()
+        if len(nid.split("/")) != 3:
+            continue
+        raw = p.read_text(encoding="utf-8").replace("\r\n", "\n")
+        m = re.match(r"---\n(.*?)\n---\n(.*)", raw, re.S)
+        if not m or PLACEHOLDER in raw:
+            continue
+        title = (re.search(r'^title:\s*"(.*)"', m.group(1), re.M) or [0, nid])[1]
+        body = FIGURE.sub("", m.group(2))
+        # split on "## " lines that are not inside a code fence
+        sections, head, buf, fence = [], "", [], False
+        for line in body.split("\n"):
+            fence ^= line.startswith("```")
+            if not fence and line.startswith("## "):
+                sections.append((head, "\n".join(buf)))
+                head, buf = line[3:].strip(), []
+            else:
+                buf.append(line)
+        sections.append((head, "\n".join(buf)))
+        for head, text in sections:
+            if not text.strip():
+                continue
+            for k, piece in enumerate(split_section(text.strip())):
+                chunks.append({
+                    "id": f"{nid}#{heading_slug(head)}" if head else nid, "note": nid, "title": title, "heading": head,
+                    "part": k, "text": piece,
+                })
+    return chunks
+
+
+def cmd_chunks(args):
+    import json
+    chunks = build_chunks()
+    CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+    (CHUNK_DIR / "chunks.json").write_text(json.dumps(chunks, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    sizes = sorted(len(c["text"]) for c in chunks)
+    print(f"{len(chunks)} chunks from {len({c['note'] for c in chunks})} notes; chars median {sizes[len(sizes) // 2]}, max {sizes[-1]}")
+    return 0
+
+
 def cmd_links(args):
     notes = load_notes()
     edges = build_edges(notes)
@@ -749,6 +819,7 @@ def main():
     fi.add_argument("note")
     fi.add_argument("answers")
     fi.set_defaults(fn=cmd_fill)
+    sub.add_parser("chunks").set_defaults(fn=cmd_chunks)
     ln = sub.add_parser("links")
     ln.add_argument("mode", choices=["stats", "mentions", "similar", "compare", "orphans", "apply"])
     ln.add_argument("pairs", nargs="?")
