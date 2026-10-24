@@ -83,6 +83,17 @@ The note graph (`/workbench/graph/`, and the "Connections" graph on each note) i
 - **Writing a new note:** link its prerequisites in the opening paragraph, then run `links mentions` and `links similar` for its area to find notes that already mention its title and should link to it. After a batch of notes, run `links stats` again; the area-pair table has no data for areas that are still stubs, so read it afresh once ml, dl and applied-dl are written.
 - **Work in small batches**, one section per commit: put the pairs in a file, run `links apply <file>` as a dry run, read each change, then `--write`, then build.
 
+## Chat (Ask notes)
+
+A docked panel answers questions from the notes: the question is embedded, the closest note sections (chunks) are found in the browser, and one model writes an answer from only those sections. Code, config, data and prompt text are kept apart:
+
+- Panel: `src/components/Chat.astro` (markup, styles) and `chat-client.ts` (behaviour); `src/lib/chat-markdown.ts` renders replies (HTML-escaped first), `chat-prompt.ts` builds the system message.
+- Config: `src/data/chat-config.ts` (models, `GATE`, limits, `REVEAL_CPS`). Prompt text: `src/prompts/chat-system.md`. Starter chips: `src/data/chat-suggestions.ts`.
+- Generated data in `public/chat/` (gitignored): `chunks.json` from `uv run scripts/note_tools.py chunks`; `embeddings.f32` and `embed-cache.json` from `bun scripts/chat-embed.mjs` (needs `OPENROUTER_KEY`; only changed chunks are embedded); `key.json` from `bun scripts/chat-key.mjs` (the shared key sealed under `CHAT_PASSWORD`). The deploy workflow runs all three, with `OPENROUTER_KEY` and `CHAT_PASSWORD` as repo secrets. After editing notes, rerun `chunks` and `chat-embed` to refresh the local index.
+- `.env.local` holds the same two names for local use. Single-quote the values (`CHAT_PASSWORD='…'`): an unquoted `#` or `$` silently cuts the value, and `chat-key.mjs` refuses passwords under 12 characters.
+- Evals (`bun scripts/<name>.mjs`): `chat-eval` (retrieval recall, questions in `chat-eval.json`), `chat-answers` (compare models side by side), `chat-redteam` (off-topic and injection prompts in `chat-redteam.json`, and the `GATE` calibration). Rerun `chat-redteam` after changing the prompt or `GATE`.
+- Security: a key is never logged, put in the DOM or URL, or kept in `localStorage` (a tab's `sessionStorage` only). A Content-Security-Policy in `astro.config.mjs` limits scripts to this site and `connect-src` to this site and openrouter.ai. A new external script, font or API host must be added there; dev has no CSP, so check with `bun run build` and `bun run preview`. No `new Function` or `eval` in shipped code.
+
 ## Code blocks (Python)
 
 - Every block is **standalone**: its own imports and data, runnable alone. Never rely on an earlier block.
