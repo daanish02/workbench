@@ -190,9 +190,11 @@ const areaMap = Object.fromEntries(
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
+  /* arrow at the left, then the section title with its excerpt stacked underneath, so the excerpt gets the full width */
   .search-sub {
-    display: flex;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 8px;
     margin: 2px 0 0 12px;
     padding: 6px 10px;
     border-radius: 10px;
@@ -201,12 +203,23 @@ const areaMap = Object.fromEntries(
   }
   .search-sub::before {
     content: '↳';
+    grid-row: 1 / 3;
     color: var(--text-faint);
   }
   .search-sub .sub-title {
     font-weight: 600;
     color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .search-sub > span:not(.sub-title) {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
   }
   .search-dialog mark {
     background: rgba(138, 180, 248, 0.22);
@@ -228,6 +241,7 @@ const areaMap = Object.fromEntries(
 </style>
 
 <script>
+  import { coversWords, queryWords } from '../lib/search-filter';
   const btn = document.querySelector<HTMLButtonElement>('[data-search-open]')!;
   const dialog = document.querySelector<HTMLDialogElement>('.search-dialog')!;
   const input = dialog.querySelector<HTMLInputElement>('input')!;
@@ -331,12 +345,25 @@ const areaMap = Object.fromEntries(
     if (!q) return hint('Start typing to search every note by title, text or formula.');
     try {
       await loadIndex();
+      const words = queryWords(q);
+      const multi = words.length > 1;
       const res = await pagefind.search(q);
-      const top = await Promise.all(res.results.slice(0, 15).map((r: any) => r.data()));
+      let top = await Promise.all(res.results.slice(0, 15).map((r: any) => r.data()));
+      if (multi) {
+        // pagefind matches each word as a prefix ("red team" finds "reduce" and "teams"), so for several words
+        // the exact phrase comes first, then only pages that really contain every word
+        const exact = await pagefind.search(`"${words.join(' ')}"`);
+        const phrase = await Promise.all(exact.results.slice(0, 15).map((r: any) => r.data()));
+        const seen = new Set(phrase.map((d: any) => d.url));
+        const rest = top.filter(
+          (d: any) => !seen.has(d.url) && coversWords([d.excerpt, ...(d.sub_results ?? []).map((x: any) => x.excerpt)], words),
+        );
+        top = [...phrase, ...rest];
+      }
       if (mine !== seq) return;
       render(
         q,
-        res.results.length,
+        multi ? top.length : res.results.length,
         top.map((d: any) => ({
           title: d.meta?.title ?? d.url,
           url: d.url,
