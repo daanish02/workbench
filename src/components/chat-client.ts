@@ -283,6 +283,21 @@ async function embedQuery(text: string, signal: AbortSignal) {
 }
 
 const aboutThisNote = /\b(this|current) (note|page|one)\b/i;
+// "what should I read before / next" is answered from the note's links and its place in its section: no single section states it
+const readingOrder = /\b(read|learn|know|study|cover|start)\b.*\b(before|first|prior|beforehand)\b|\bprerequisites?\b|\bbefore (this|i)\b|\b(read|learn|study|what comes) (next|after)\b|\bafter this\b/i;
+const wantsNext = /\b(next|after)\b/i;
+interface Brief {
+  id: string;
+  title: string;
+  desc: string;
+}
+type Links = Record<string, { builds_on: Brief[]; leads_to: Brief[]; earlier: Brief[] }>;
+let linksLoad: Promise<Links> | undefined;
+function loadLinks() {
+  linksLoad ??= fetch(root.dataset.links!).then((r) => (r.ok ? (r.json() as Promise<Links>) : Promise.reject(new Error('The notes index is missing.'))));
+  linksLoad.catch(() => (linksLoad = undefined));
+  return linksLoad;
+}
 
 function retrieve(qv: number[], idx: { chunks: Chunk[]; vecs: Float32Array }): Hit[] {
   const hits = idx.chunks.map((chunk, i) => {
@@ -425,7 +440,26 @@ async function ask(text: string) {
     // a short follow-up ("why?") borrows the previous question to find its sections
     const prev = [...history].reverse().find((t) => t.role === 'user');
     const query = prev && text.length < 40 ? `${prev.content} ${text}` : text;
-    const here = pageNote && pageTitle && aboutThisNote.test(text);
+    const order = !!pageNote && !!pageTitle && readingOrder.test(text);
+    const here = order || (pageNote && pageTitle && aboutThisNote.test(text));
+    let orderChunk: Chunk | undefined;
+    let orderChips: Brief[] = [];
+    let orderLead = '';
+    if (order) {
+      const entry = (await loadLinks())[pageNote] ?? { builds_on: [], leads_to: [], earlier: [] };
+      const list = (items: Brief[]) => (items.length ? items.map((b, i) => `${i + 1}. ${b.title}: ${b.desc}`).join('\n') : 'none');
+      orderChunk = {
+        id: pageNote,
+        note: pageNote,
+        title: pageTitle!,
+        heading: 'Reading order',
+        text: `Notes that "${pageTitle}" links to as things it relies on:\n${list(entry.builds_on)}\n\nNotes just before it in the same section, in reading order:\n${list(entry.earlier)}\n\nNotes that link to it or follow from it:\n${list(entry.leads_to)}`,
+      };
+      const next = wantsNext.test(text);
+      orderLead = next ? 'Read next' : 'Read first';
+      const pool = next ? entry.leads_to : [...entry.builds_on, ...entry.earlier];
+      orderChips = pool.filter((b, i) => pool.findIndex((x) => x.id === b.id) === i).slice(0, 6);
+    }
     const qv = await embedQuery(here ? `${pageTitle}: ${text}` : query, abort.signal);
     const hits = retrieve(qv, idx);
     const covered = hits.some((h) => h.score >= GATE) || (here && hits.some((h) => h.chunk.note === pageNote));
@@ -436,7 +470,9 @@ async function ask(text: string) {
       addChips(bot.el, near.map((h) => ({ label: h.chunk.title, href: `${base}${h.chunk.note}/` })), 'Closest notes');
       return;
     }
-    const sections = here ? [...hits.filter((h) => h.chunk.note === pageNote), ...hits.filter((h) => h.chunk.note !== pageNote)].slice(0, TOP) : hits;
+    const sections = orderChunk
+      ? [{ score: 1, boosted: 1, chunk: orderChunk }, ...hits.filter((h) => h.chunk.note === pageNote).slice(0, 3)]
+      : here ? [...hits.filter((h) => h.chunk.note === pageNote), ...hits.filter((h) => h.chunk.note !== pageNote)].slice(0, TOP) : hits;
     const cite = (n: number) => (sections[n - 1] ? { href: sectionUrl(sections[n - 1].chunk), title: sectionLabel(sections[n - 1].chunk) } : null);
 
     bot.body.textContent = 'Reading the sections…';
@@ -505,6 +541,7 @@ async function ask(text: string) {
       .filter(Boolean);
     const seen = new Set<string>();
     addChips(bot.el, cited.filter((c) => !seen.has(c.id) && seen.add(c.id)).map((c) => ({ label: sectionLabel(c), href: sectionUrl(c) })));
+    addChips(bot.el, orderChips.map((b) => ({ label: b.title, href: `${base}${b.id}/` })), orderLead);
     history.push({ role: 'user', content: text }, { role: 'assistant', content: answer.replace(/\[\d{1,2}(?:\s*,\s*\d{1,2})*\]/g, '').trim() });
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
@@ -545,7 +582,10 @@ q<HTMLFormElement>('[data-chat-form]').addEventListener('submit', (e) => {
   grow();
   void ask(text);
 });
-root.querySelectorAll<HTMLElement>('[data-prompt]').forEach((b) => b.addEventListener('click', () => void ask(b.dataset.prompt!)));
+root.querySelectorAll<HTMLElement>('[data-prompt]').forEach((b) => {
+  b.hidden = !!b.dataset.needsNote && !pageNote;
+  b.addEventListener('click', () => void ask(b.dataset.prompt!));
+});
 clear.addEventListener('click', () => {
   if (busy) return;
   history.length = 0;
