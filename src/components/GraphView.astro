@@ -116,14 +116,17 @@ const { data, variant = 'full' } = Astro.props;
     line-height: 1.6;
     color: var(--text-muted);
   }
+  /* same amber pill as AdvBadge.astro */
   .gp-panel :global(.gp-adv) {
     margin-left: 8px;
-    padding: 0 5px;
+    padding: 1px 5px;
     vertical-align: middle;
-    font: 0.625rem var(--font-mono);
-    border: 1px solid var(--border-strong);
+    font: 700 0.5625rem/1.4 var(--font-mono);
+    letter-spacing: 0.06em;
+    border: 1px solid rgba(251, 188, 5, 0.5);
+    background: rgba(251, 188, 5, 0.12);
     border-radius: 4px;
-    color: var(--text-muted);
+    color: var(--g-yellow-l);
   }
   .gp-panel :global(.gp-open) {
     display: inline-block;
@@ -346,6 +349,18 @@ const { data, variant = 'full' } = Astro.props;
           this.y[this.home] = 0;
           this.pin[this.home] = 1;
         }
+        // Two unlinked neighbours settle into a straight line through the note whatever they start as (the springs
+        // and the repulsion between them agree). Hold them in a V instead, so three dots read as a shape.
+        const [p, q] = others;
+        const linked = this.data.edges.some(([s, t]) => (s === p && t === q) || (s === q && t === p));
+        if (others.length === 2 && !linked && this.home >= 0) {
+          [p, q].forEach((i, k) => {
+            const a = ((k ? -35 : -145) * Math.PI) / 180;
+            this.x[i] = Math.cos(a) * 110;
+            this.y[i] = Math.sin(a) * 110;
+            this.pin[i] = 1; // a drag unpins it like any other dot
+          });
+        }
       }
 
       this.canvas = this.querySelector('[data-canvas]')!;
@@ -565,6 +580,11 @@ const { data, variant = 'full' } = Astro.props;
       this.canvas.height = Math.round(r.height * this.dpr);
       this.draw();
     }
+    // the title drawn beside a dot, cut to 26 characters
+    label(i: number) {
+      const t = this.data.nodes[i].title;
+      return t.length > 26 ? `${t.slice(0, 25)}…` : t;
+    }
     fit() {
       if (!this.act.length) return;
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -574,7 +594,16 @@ const { data, variant = 'full' } = Astro.props;
         y0 = Math.min(y0, this.y[i]);
         y1 = Math.max(y1, this.y[i]);
       }
-      const k = Math.min(this.W / (x1 - x0 + 80), this.H / (y1 - y0 + 80));
+      let k = Math.min(this.W / (x1 - x0 + 80), this.H / (y1 - y0 + 80));
+      if (this.local) {
+        // titles are drawn to the right of their dot and are the same size at any zoom, so leave room for the widest
+        // one past the rightmost dot (otherwise it is cut off at the edge of the box)
+        this.ctx.font = `11px ${this.ui.font}`;
+        const reach = (i: number, kk: number) => this.x[i] + (this.radius(i) + 5 + this.ctx.measureText(this.label(i)).width + 12) / kk;
+        x1 = Math.max(x1, ...this.act.map((i) => reach(i, k)));
+        k = Math.min(this.W / (x1 - x0 + 40), this.H / (y1 - y0 + 80));
+        x1 = Math.max(x1, ...this.act.map((i) => reach(i, k)));
+      }
       this.cam = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, k: Math.min(Math.max(k, 0.15), 3) };
       this.draw();
     }
@@ -695,8 +724,7 @@ const { data, variant = 'full' } = Astro.props;
         const px = this.sx(this.x[i]);
         const py = this.sy(this.y[i]);
         if (px < -20 || py < -20 || px > W + 20 || py > H + 20) continue;
-        let label = this.data.nodes[i].title;
-        if (label.length > 26) label = `${label.slice(0, 25)}…`;
+        const label = this.label(i);
         const tx = px + this.radius(i) + 5;
         ctx.strokeText(label, tx, py);
         ctx.fillStyle = i === focus ? ui.text : focus >= 0 || this.match ? ui.muted : ui.faint;
