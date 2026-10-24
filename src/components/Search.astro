@@ -243,8 +243,11 @@ const areaMap = Object.fromEntries(
   if (/Mac|iPhone|iPad|iPod/.test(navigator.userAgent)) kbd.textContent = '⌘K';
 
   // pagefind's JS API, loaded once on first open; fails in dev (no index)
-  // Vite's dev server can't serve public/ modules imported this way (500), so the import is hidden from it
-  const importModule = new Function('url', 'return import(url)') as (url: string) => Promise<any>;
+  // Vite's dev server can't serve public/ modules imported this way (500), so in dev the import is hidden from it.
+  // The built site has a Content-Security-Policy without unsafe-eval, so there it is a plain dynamic import.
+  const importModule: (url: string) => Promise<any> = import.meta.env.DEV
+    ? (new Function('url', 'return import(url)') as (url: string) => Promise<any>)
+    : (url) => import(/* @vite-ignore */ url);
   let pagefind: any = null;
   let loading: Promise<unknown> | null = null;
   function loadIndex() {

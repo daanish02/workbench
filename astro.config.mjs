@@ -98,6 +98,33 @@ export default defineConfig({
   site,
   base,
   trailingSlash: 'always',
+  // the chat loads katex lazily; listing it keeps the dev server from re-optimising it mid-session
+  vite: { optimizeDeps: { include: ['katex'] } },
+  // Content-Security-Policy as a <meta> tag (GitHub Pages cannot send headers). Scripts must be this site's own
+  // or hashed, so injected script cannot run or read the chat key; requests may only go to this site and OpenRouter.
+  security: {
+    csp: {
+      scriptDirective: { resources: ["'self'", "'wasm-unsafe-eval'"] },
+      styleDirective: {
+        resources: [
+          "'self'",
+          'https://fonts.googleapis.com',
+          'https://cdn.jsdelivr.net',
+          // KaTeX and code blocks set inline style attributes
+          { resource: "'unsafe-inline'", kind: 'attribute' },
+        ],
+      },
+      directives: [
+        "default-src 'self'",
+        "connect-src 'self' https://openrouter.ai",
+        "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net",
+        "img-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ],
+    },
+  },
   markdown: {
     processor: unified({
       remarkPlugins: [remarkMath],
