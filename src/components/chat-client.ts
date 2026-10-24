@@ -166,7 +166,8 @@ q<HTMLFormElement>('[data-key-form]').addEventListener('submit', (e) => {
 // password: decrypts public/chat/key.json (see scripts/chat-key.mjs) into the shared key, in memory only
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 async function openSharedKey(password: string) {
-  const res = await fetch(root.dataset.keyfile!).catch(() => null);
+  // no-store: after the password is rotated, a copy cached for the host's default 10 minutes would still say "wrong password"
+  const res = await fetch(root.dataset.keyfile!, { cache: 'no-store' }).catch(() => null);
   if (!res?.ok) throw new Error('Password unlock is not set up on this site. Use your own key above.');
   const sealed = await res.json();
   if (sealed.v !== 1 || !(sealed.iters > 0 && sealed.iters <= 2_000_000)) throw new Error('Password unlock is not set up on this site. Use your own key above.');

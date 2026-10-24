@@ -19,7 +19,9 @@ export async function seal(key, password, iters = KEY_ITERS) {
 }
 
 if (import.meta.main) {
-  const { OPENROUTER_KEY: key, CHAT_PASSWORD: password } = process.env;
+  // a secret pasted into GitHub often carries a trailing newline or space; the reader never types one, so drop it
+  const key = process.env.OPENROUTER_KEY?.trim();
+  const password = process.env.CHAT_PASSWORD?.trim();
   if (!key || !password) {
     console.log('OPENROUTER_KEY or CHAT_PASSWORD is not set: password unlock stays off (no key.json written).');
     process.exit(0);
@@ -32,5 +34,6 @@ if (import.meta.main) {
   const dir = resolve(import.meta.dirname, '..', 'public', 'chat');
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/key.json`, JSON.stringify(await seal(key, password)));
-  console.log('wrote public/chat/key.json');
+  // lengths only, never the values: compare the password length with the one you chose
+  console.log(`wrote public/chat/key.json (password ${password.length} characters, key ${key.length} characters)`);
 }
