@@ -8,6 +8,7 @@
 """One entry point for the checks used while writing notes.
 
   uv run scripts/note_tools.py check <area> [filter]   run every Python block (wraps check_notes.py)
+  uv run scripts/note_tools.py outputs <area> [filter] [--write]   move inline `# prints:` outputs into a trailing output block (dry run unless --write)
   uv run scripts/note_tools.py verify [area ...]       bun run build, then katex-error and control-character checks
   uv run scripts/note_tools.py shots <url-path> ...    screenshot built pages and crop each figure to a PNG
   uv run scripts/note_tools.py dollars [--apply] FILE  find (or escape) money like $30,000 that KaTeX reads as math
@@ -66,6 +67,11 @@ def run(cmd, **kw):
 
 def cmd_check(args):
     return run(["uv", "run", "scripts/check_notes.py", args.area, *([args.filter] if args.filter else [])]).returncode
+
+
+def cmd_outputs(args):
+    extra = ["--migrate"] + (["--write"] if args.write else [])
+    return run(["uv", "run", "scripts/check_notes.py", args.area, *([args.filter] if args.filter else []), *extra]).returncode
 
 
 def cmd_verify(args):
@@ -777,11 +783,47 @@ def build_chunks():
     return chunks
 
 
+def build_links():
+    """Per note: the written notes it links to (what it builds on) and the notes that link to it (what leads on from it).
+
+    Links are the note's own statement of what it relies on (see Linking), so they answer "what should I read before this",
+    which no single section's text does. Appendix pages and stubs are left out; order is first mention in the note."""
+    notes = load_notes()
+    index = {n.id: n for n in notes}
+    builds_on = {n.id: [] for n in notes}
+    leads_to = {n.id: [] for n in notes}
+    for n in notes:
+        if n.appendix or n.stub:
+            continue
+        for m in re.finditer(r"\]\(([^)\s]+)\)", re.sub(r"`[^`\n]*`", "", n.body)):
+            target = index.get(resolve(n.id, m.group(1)) or "")
+            if not target or target.id == n.id or target.appendix or target.stub or target.id in builds_on[n.id]:
+                continue
+            builds_on[n.id].append(target.id)
+            leads_to[target.id].append(n.id)
+    # the sections are ordered to be read in sequence, so the notes just before one are its natural lead-in
+    earlier = {n.id: [] for n in notes}
+    by_section = {}
+    for n in sorted(notes, key=lambda n: (n.area, n.section, n.order)):
+        if n.appendix or n.stub:
+            continue
+        group = by_section.setdefault((n.area, n.section), [])
+        earlier[n.id] = [m.id for m in group[-4:]]
+        group.append(n)
+    brief = lambda nid: {"id": nid, "title": index[nid].title, "desc": index[nid].desc[:180]}
+    return {nid: {"builds_on": [brief(x) for x in builds_on[nid][:8]], "leads_to": [brief(x) for x in leads_to[nid][:6]],
+                  "earlier": [brief(x) for x in earlier[nid]]}
+            for nid in builds_on if builds_on[nid] or leads_to[nid] or earlier[nid]}
+
+
 def cmd_chunks(args):
     import json
     chunks = build_chunks()
     CHUNK_DIR.mkdir(parents=True, exist_ok=True)
     (CHUNK_DIR / "chunks.json").write_text(json.dumps(chunks, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    links = build_links()
+    (CHUNK_DIR / "links.json").write_text(json.dumps(links, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"{len(links)} notes with links")
     sizes = sorted(len(c["text"]) for c in chunks)
     print(f"{len(chunks)} chunks from {len({c['note'] for c in chunks})} notes; chars median {sizes[len(sizes) // 2]}, max {sizes[-1]}")
     return 0
@@ -801,6 +843,11 @@ def main():
     c.add_argument("area")
     c.add_argument("filter", nargs="?")
     c.set_defaults(fn=cmd_check)
+    o = sub.add_parser("outputs")
+    o.add_argument("area")
+    o.add_argument("filter", nargs="?")
+    o.add_argument("--write", action="store_true")
+    o.set_defaults(fn=cmd_outputs)
     v = sub.add_parser("verify")
     v.add_argument("areas", nargs="*")
     v.set_defaults(fn=cmd_verify)

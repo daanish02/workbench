@@ -44,8 +44,10 @@ t0, h = 0.7, 1e-6
 num = (f(x(t0 + h), y(t0 + h)) - f(x(t0 - h), y(t0 - h))) / (2 * h)
 xv, yv = x(t0), y(t0)
 chain = (2 * xv * yv) * (-np.sin(t0)) + (xv ** 2) * np.cos(t0)
-print("dz/dt numeric:", round(num, 6), " chain rule:", round(chain, 6))  # prints: dz/dt numeric: -0.187424  chain rule: -0.187424
-print("chain rule matches:", np.isclose(num, chain, rtol=1e-6))  # prints: chain rule matches: True
+print("dz/dt numeric:", round(num, 6), " chain rule:", round(chain, 6))
+print("chain rule matches:", np.isclose(num, chain, rtol=1e-6))
+# dz/dt numeric: -0.187424  chain rule: -0.187424
+# chain rule matches: True
 ```
 
 In words: both values are $-0.187424$, so the sum over the two routes is the full rate of change. Each route contributes one product: the change in $f$ caused by $x$ times the speed of $x$, plus the same for $y$.
@@ -66,7 +68,8 @@ a = 2 * w
 z = w * a
 dLdz = 2 * (z - target)
 dzdw = a + w * 2
-print("chain-rule gradient dL/dw:", round(dLdz * dzdw, 4))  # prints: chain-rule gradient dL/dw: -10.0
+print("chain-rule gradient dL/dw:", round(dLdz * dzdw, 4))
+# chain-rule gradient dL/dw: -10.0
 ```
 
 In words: $dL/dz = 2(0.5 - 3) = -5$. The weight reaches $z = wa$ by two routes, directly and through $a = 2w$, so $dz/dw$ is a sum of two terms: $a$ from the direct route plus $w \cdot 2$ through $a$, giving $1 + 1 = 2$. So $dL/dw = -10$. The loss drops if $w$ increases, which the sign tells you. Backpropagation computes exactly this, one local derivative at a time, and it stores $a$ and $z$ from the forward pass so they need not be recomputed.

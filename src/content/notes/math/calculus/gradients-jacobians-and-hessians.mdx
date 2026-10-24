@@ -43,10 +43,12 @@ def grad_num(f, p, h=1e-6):
     return g
 
 p = np.array([1.0, 2.0])
-print("gradient numeric:", np.round(grad_num(f, p), 4), " exact (2x, 6y) =", [2, 12])  # prints: gradient numeric: [ 2. 12.]  exact (2x, 6y) = [2, 12]
+print("gradient numeric:", np.round(grad_num(f, p), 4), " exact (2x, 6y) =", [2, 12])
 
 step = 0.01 * grad_num(f, p) / np.linalg.norm(grad_num(f, p))
-print("f increases along gradient:", f(p + step) > f(p))  # prints: f increases along gradient: True
+print("f increases along gradient:", f(p + step) > f(p))
+# gradient numeric: [ 2. 12.]  exact (2x, 6y) = [2, 12]
+# f increases along gradient: True
 ```
 
 In words: the gradient at $(1, 2)$ is $(2, 12)$, which points mostly in the $y$ direction because $f$ is steeper there. A small step along it increases $f$, as the geometry predicts.
@@ -77,7 +79,10 @@ for j in range(2):
     e = np.zeros(2)
     e[j] = h
     J[:, j] = (F(p + e) - F(p - e)) / (2 * h)
-print("Jacobian numeric:\n", np.round(J, 4))  # prints: Jacobian numeric: [[2. 1.] [1. 4.]]
+print("Jacobian numeric:\n", np.round(J, 4))
+# Jacobian numeric:
+#  [[2. 1.]
+#  [1. 4.]]
 ```
 
 In words: the numerical Jacobian is $\begin{pmatrix} 2 & 1 \\ 1 & 4 \end{pmatrix}$, matching the formula at $(1, 2)$. Each row holds the gradient of one output component.
@@ -94,8 +99,10 @@ import sympy as sp
 
 x, y = sp.symbols("x y")
 H = sp.hessian(x**2 + 3 * y**2, (x, y))           # second partial derivatives, computed symbolically
-print("Hessian:", H.tolist())                      # prints: Hessian: [[2, 0], [0, 6]]
-print("Hessian eigenvalues:", np.linalg.eigvalsh(np.array(H, dtype=float)))  # prints: Hessian eigenvalues: [2. 6.]
+print("Hessian:", H.tolist())
+print("Hessian eigenvalues:", np.linalg.eigvalsh(np.array(H, dtype=float)))
+# Hessian: [[2, 0], [0, 6]]
+# Hessian eigenvalues: [2. 6.]
 ```
 
 In words: both eigenvalues are positive, so the bowl curves upward in every direction. The eigenvalue $6$ is larger than $2$, so the function is more sharply curved in the $y$ direction. That steep direction caps the learning rate: [gradient descent](../../optimization/gradient-descent/) is stable only for $\eta < 2/6$, and at such a rate the flatter $x$ direction, with curvature $2$, converges slowly.

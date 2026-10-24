@@ -30,8 +30,10 @@ A simple model writes each observation as trend plus seasonal plus noise. Suppos
 import math
 
 y = [2 * t + 5 * math.sin(2 * math.pi * t / 12) for t in range(1, 145)]
-print("value at month 1 and month 13 differ by:", round(y[12] - y[0], 4))  # prints: value at month 1 and month 13 differ by: 24.0
-print("seasonal part repeats: sin difference over one year:", round(5 * math.sin(2 * math.pi * 13 / 12) - 5 * math.sin(2 * math.pi * 1 / 12), 10))  # prints: seasonal part repeats: sin difference over one year: 0.0
+print("value at month 1 and month 13 differ by:", round(y[12] - y[0], 4))
+print("seasonal part repeats: sin difference over one year:", round(5 * math.sin(2 * math.pi * 13 / 12) - 5 * math.sin(2 * math.pi * 1 / 12), 10))
+# value at month 1 and month 13 differ by: 24.0
+# seasonal part repeats: sin difference over one year: 0.0
 ```
 
 In words: a year later the value has risen by $24$, which is the trend $2 \times 12$, with the seasonal part exactly the same. Separating the two is the first step in most analyses.
@@ -53,7 +55,8 @@ def acf(x, k):
 import random
 random.seed(14)
 noise = [random.gauss(0, 1) for _ in range(2000)]
-print("autocorrelation of white noise, lag 1:", round(acf(noise, 1), 3))  # prints: autocorrelation of white noise, lag 1: 0.016
+print("autocorrelation of white noise, lag 1:", round(acf(noise, 1), 3))
+# autocorrelation of white noise, lag 1: 0.016
 ```
 
 In words: independent noise has autocorrelation near zero at every lag, so any clear pattern in the autocorrelation points to dependence. The value is not exactly $0$ because the sample is finite.
@@ -79,7 +82,10 @@ for _ in range(5000):
     x.append(phi * x[-1] + random.gauss(0, 1))
 x = x[100:]  # drop the start-up period
 for k in (1, 2, 5):
-    print(f"lag {k}: sample {acf(x, k):.3f}, theory {phi ** k:.3f}")  # prints: lag 1: sample 0.812, theory 0.800
+    print(f"lag {k}: sample {acf(x, k):.3f}, theory {phi ** k:.3f}")
+# lag 1: sample 0.812, theory 0.800
+# lag 2: sample 0.659, theory 0.640
+# lag 5: sample 0.351, theory 0.328
 ```
 
 In words: the sample autocorrelations are $0.812$, $0.659$ and $0.351$, against theory values $0.8$, $0.64$ and $0.33$. The dependence is real and decays with the lag, which is what a forecast uses: the best guess for tomorrow is a fraction $\phi$ of today's deviation from the mean.

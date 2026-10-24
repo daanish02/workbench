@@ -40,7 +40,8 @@ for _ in range(reps):
     ss = sum((v - m) ** 2 for v in x)
     biased += ss / n
     unbiased += ss / (n - 1)
-print("average of divide-by-n:", round(biased / reps, 3), " average of divide-by-(n-1):", round(unbiased / reps, 3))  # prints: average of divide-by-n: 0.797 average of divide-by-(n-1): 0.996
+print("average of divide-by-n:", round(biased / reps, 3), " average of divide-by-(n-1):", round(unbiased / reps, 3))
+# average of divide-by-n: 0.797  average of divide-by-(n-1): 0.996
 ```
 
 In words: with $n = 5$ the divide-by-$n$ version averages $0.797$, close to $\frac{4}{5} = 0.8$ of the true variance $1$, as the formula predicts. The divide-by-$(n-1)$ version averages $0.996$, close to $1$. The bias is largest for small samples and vanishes as $n$ grows.
@@ -55,7 +56,8 @@ The check below takes $7$ heads in $10$ flips and searches a fine grid of $\thet
 k, n = 7, 10
 grid = [i / 1000 for i in range(1, 1000)]
 best = max(grid, key=lambda t: t ** k * (1 - t) ** (n - k))
-print("grid MLE:", best, " k/n =", k / n)  # prints: grid MLE: 0.7 k/n = 0.7
+print("grid MLE:", best, " k/n =", k / n)
+# grid MLE: 0.7  k/n = 0.7
 ```
 
 In words: the grid search lands on $0.7$, the observed proportion. This is the usual answer for the Bernoulli model, and it is the one the grid is checking.
@@ -67,10 +69,12 @@ import math
 from scipy.optimize import minimize_scalar
 
 k, n = 7000, 10000
-print("raw likelihood at 0.7:", 0.7 ** k * 0.3 ** (n - k))     # prints: raw likelihood at 0.7: 0.0
+print("raw likelihood at 0.7:", 0.7 ** k * 0.3 ** (n - k))
 nll = lambda t: -(k * math.log(t) + (n - k) * math.log(1 - t))  # negative log-likelihood
 res = minimize_scalar(nll, bounds=(1e-9, 1 - 1e-9), method="bounded")
-print("MLE from the log-likelihood:", round(res.x, 4))         # prints: MLE from the log-likelihood: 0.7
+print("MLE from the log-likelihood:", round(res.x, 4))
+# raw likelihood at 0.7: 0.0
+# MLE from the log-likelihood: 0.7
 ```
 
 In words: the raw likelihood underflows to exactly $0$, so a grid over it would find nothing, while the log-likelihood is an ordinary number and its minimiser is $0.7$. Run it with `uv run --with scipy`.
@@ -86,7 +90,8 @@ alpha, beta = 2, 2
 k, n = 7, 10
 grid = [i / 1000 for i in range(1, 1000)]
 map_est = max(grid, key=lambda t: t ** (k + alpha - 1) * (1 - t) ** (n - k + beta - 1))
-print("MAP with Beta(2, 2) prior:", map_est, " formula (k + 1)/(n + 2) =", round((k + 1) / (n + 2), 4))  # prints: MAP with Beta(2, 2) prior: 0.667 formula (k + 1)/(n + 2) = 0.6667
+print("MAP with Beta(2, 2) prior:", map_est, " formula (k + 1)/(n + 2) =", round((k + 1) / (n + 2), 4))
+# MAP with Beta(2, 2) prior: 0.667  formula (k + 1)/(n + 2) = 0.6667
 ```
 
 In words: the prior pulls the estimate from $0.7$ toward $0.5$, to about $0.667$. With more data the pull weakens, which is the main reason MAP and MLE agree for large samples.

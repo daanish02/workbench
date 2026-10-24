@@ -34,7 +34,8 @@ Each row sums to $1$, because from any state the chain must go somewhere. The sc
 
 ```python
 P = [[0.8, 0.2], [0.4, 0.6]]
-print("row sums:", [round(sum(row), 10) for row in P])  # prints: row sums: [1.0, 1.0]
+print("row sums:", [round(sum(row), 10) for row in P])
+# row sums: [1.0, 1.0]
 ```
 
 In words: the first row gives tomorrow's chances starting from Sunny, and the second row gives them starting from Rainy.
@@ -54,7 +55,11 @@ pi = [1.0, 0.0]
 for t in range(1, 11):
     pi = step(pi, P)
     if t in (1, 2, 5, 10):
-        print(f"t = {t:>2}: P(sunny) = {pi[0]:.4f}, P(rainy) = {pi[1]:.4f}")  # prints: t =  1: P(sunny) = 0.8000, P(rainy) = 0.2000
+        print(f"t = {t:>2}: P(sunny) = {pi[0]:.4f}, P(rainy) = {pi[1]:.4f}")
+# t =  1: P(sunny) = 0.8000, P(rainy) = 0.2000
+# t =  2: P(sunny) = 0.7200, P(rainy) = 0.2800
+# t =  5: P(sunny) = 0.6701, P(rainy) = 0.3299
+# t = 10: P(sunny) = 0.6667, P(rainy) = 0.3333
 ```
 
 In words: after one day the chance of sunshine is $0.8$, as the matrix says. The values drift toward a fixed point. By day ten the distribution is already close to the long-run value found next.
@@ -72,7 +77,8 @@ step = lambda pi, P: [sum(pi[i] * P[i][j] for i in range(2)) for j in range(2)]
 a = 2 / 3
 pi_star = [a, 1 - a]
 after = step(pi_star, P)
-print("pi P =", [round(x, 6) for x in after], " pi =", [round(x, 6) for x in pi_star])  # prints: pi P = [0.666667, 0.333333]  pi = [0.666667, 0.333333]
+print("pi P =", [round(x, 6) for x in after], " pi =", [round(x, 6) for x in pi_star])
+# pi P = [0.666667, 0.333333]  pi = [0.666667, 0.333333]
 ```
 
 In words: multiplying $\pi$ by $P$ returns $\pi$, so once the chain reaches this distribution it stays there. Long-run, the weather is sunny two days in three.
@@ -84,11 +90,13 @@ import numpy as np
 
 P = np.array([[0.8, 0.2], [0.4, 0.6]])
 pi = np.array([0.0, 1.0]) @ np.linalg.matrix_power(P, 200)
-print("starting from rainy, after 200 steps:", np.round(pi, 6))  # prints: starting from rainy, after 200 steps: [0.666667 0.333333]
+print("starting from rainy, after 200 steps:", np.round(pi, 6))
 
 vals, vecs = np.linalg.eig(P.T)  # pi P = pi means pi is a left eigenvector with eigenvalue 1
 stat = np.real(vecs[:, np.argmax(np.real(vals))])
-print("eigenvalues:", np.round(np.real(vals), 4), " stationary:", np.round(stat / stat.sum(), 6))  # prints: eigenvalues: [1. 0.4]  stationary: [0.666667 0.333333]
+print("eigenvalues:", np.round(np.real(vals), 4), " stationary:", np.round(stat / stat.sum(), 6))
+# starting from rainy, after 200 steps: [0.666667 0.333333]
+# eigenvalues: [1.  0.4]  stationary: [0.666667 0.333333]
 ```
 
 In words: the long-run value does not depend on the starting state. The same vector is the eigenvector of $P^\top$ with eigenvalue $1$, which ties stationary distributions to the [Eigenvalues](../../linear-algebra/eigenvalues-and-eigenvectors/) note. The other eigenvalue, $0.4$, sets the speed: the distance to $\pi$ shrinks by a factor $0.4$ every step.

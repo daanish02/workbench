@@ -95,11 +95,13 @@ dg = lambda x: math.cos(x)
 x0, h = 1.5, 1e-6
 lhs = (f(x0 + h) * g(x0 + h) - f(x0 - h) * g(x0 - h)) / (2 * h)
 rhs = df(x0) * g(x0) + f(x0) * dg(x0)
-print("product rule holds:", math.isclose(lhs, rhs, rel_tol=1e-6))  # prints: product rule holds: True
+print("product rule holds:", math.isclose(lhs, rhs, rel_tol=1e-6))
 
 k = lambda x: math.sin(x * x)
 num = (k(x0 + h) - k(x0 - h)) / (2 * h)
-print("chain rule holds:", math.isclose(num, 2 * x0 * math.cos(x0 * x0), rel_tol=1e-6))  # prints: chain rule holds: True
+print("chain rule holds:", math.isclose(num, 2 * x0 * math.cos(x0 * x0), rel_tol=1e-6))
+# product rule holds: True
+# chain rule holds: True
 ```
 
 In words: both checks pass. The chain rule for $\sin(x^2)$ says the derivative is $2x\cos(x^2)$: the outer derivative $\cos$ evaluated at the inner function, times the inner derivative $2x$. Numerical differentiation confirms the formula without trusting the algebra.
@@ -110,9 +112,12 @@ A computer algebra system applies the same rules symbolically, which is the quic
 import sympy as sp
 
 x = sp.symbols("x")
-print(sp.diff(x**3 * sp.sin(x), x))        # prints: x**3*cos(x) + 3*x**2*sin(x)
-print(sp.diff(sp.sin(x**2), x))            # prints: 2*x*cos(x**2)
-print(sp.diff(sp.tan(x), x).equals(sp.sec(x)**2))  # prints: True
+print(sp.diff(x**3 * sp.sin(x), x))
+print(sp.diff(sp.sin(x**2), x))
+print(sp.diff(sp.tan(x), x).equals(sp.sec(x)**2))
+# x**3*cos(x) + 3*x**2*sin(x)
+# 2*x*cos(x**2)
+# True
 ```
 
 In words: SymPy returns the product rule's two terms, the chain rule's $2x\cos(x^2)$, and confirms the $\tan$ entry of the table. Run it with `uv run --with sympy`.

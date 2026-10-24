@@ -89,6 +89,52 @@ function languageHeaders() {
   };
 }
 
+// The notes show a block's printed output as comment lines at its end ("# 3.14"). Mark those lines so they render as an
+// output area, apart from the explanation comments inside the code. The text itself is unchanged, so copying still works.
+const COMMENT_PREFIX = {
+  python: '#', ruby: '#', r: '#',
+  javascript: '//', js: '//', typescript: '//', ts: '//', go: '//', rust: '//', java: '//', c: '//', cpp: '//',
+  csharp: '//', kotlin: '//', swift: '//', php: '//', sql: '--', lua: '--',
+};
+function collectByClass(node, cls, out = []) {
+  if (node.properties?.className?.includes?.(cls)) out.push(node);
+  for (const child of node.children ?? []) collectByClass(child, cls, out);
+  return out;
+}
+function outputBlocks() {
+  return {
+    name: 'output-blocks',
+    hooks: {
+      postprocessRenderedBlock: ({ codeBlock, renderData }) => {
+        const prefix = COMMENT_PREFIX[codeBlock.language];
+        if (!prefix) return;
+        const texts = codeBlock.getLines().map((l) => l.text.trim());
+        let start = texts.length;
+        while (start > 0 && (texts[start - 1] === '' || texts[start - 1].startsWith(prefix))) start--;
+        while (start < texts.length && texts[start] === '') start++;
+        // needs real code above it, and at least one comment line below
+        if (start === 0 || start >= texts.length) return;
+        collectByClass(renderData.blockAst, 'ec-line').forEach((line, i) => {
+          if (i < start) return;
+          line.properties.className.push('ec-out');
+          if (i === start) line.properties.className.push('ec-out-first');
+        });
+      },
+    },
+    baseStyles: `
+      /* output area: a gap below the code, then a green bar and tint, a small label on the first line, muted text */
+      .ec-line.ec-out { background: rgba(52, 168, 83, 0.07); box-shadow: inset 2px 0 0 rgba(52, 168, 83, 0.55); }
+      .ec-line.ec-out span { color: #9bc7a4 !important; }
+      .ec-line.ec-out-first { position: relative; margin-top: 0.75rem; }
+      .ec-line.ec-out-first::after {
+        content: 'output'; position: absolute; right: 10px; top: 3px;
+        font: 600 0.625rem 'JetBrains Mono', ui-monospace, monospace; letter-spacing: 0.06em;
+        text-transform: uppercase; color: rgba(155, 199, 164, 0.55); pointer-events: none;
+      }
+    `,
+  };
+}
+
 // In GitHub Actions, actions/configure-pages provides the real origin and base path.
 // Locally we fall back to the project-site layout: https://<user>.github.io/workbench/
 const site = process.env.SITE_ORIGIN || 'http://localhost:4321';
@@ -135,7 +181,7 @@ export default defineConfig({
     expressiveCode({
       themes: ['github-dark-default'],
       // Code blocks get a header bar (language tab left, copy button right); shell blocks keep the terminal frame.
-      plugins: [languageHeaders()],
+      plugins: [languageHeaders(), outputBlocks()],
       styleOverrides: {
         borderRadius: '12px',
         borderColor: '#262626',

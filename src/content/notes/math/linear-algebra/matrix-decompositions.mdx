@@ -42,13 +42,16 @@ L = np.array([[1.0, 0.0],
               [A[1, 0] / A[0, 0], 1.0]])
 U = np.array([[A[0, 0], A[0, 1]],
               [0.0, A[1, 1] - L[1, 0] * A[0, 1]]])
-print("L U reproduces A:", np.allclose(L @ U, A))  # prints: L U reproduces A: True
-print("U is upper triangular:", np.allclose(np.tril(U, -1), 0))  # prints: U is upper triangular: True
+print("L U reproduces A:", np.allclose(L @ U, A))
+print("U is upper triangular:", np.allclose(np.tril(U, -1), 0))
 
 b = np.array([1.0, 2.0])
 y = solve_triangular(L, b, lower=True)   # forward substitution, about n^2 work
 x = solve_triangular(U, y)               # back substitution
-print("solution via LU equals direct solve:", np.allclose(x, np.linalg.solve(A, b)))  # prints: solution via LU equals direct solve: True
+print("solution via LU equals direct solve:", np.allclose(x, np.linalg.solve(A, b)))
+# L U reproduces A: True
+# U is upper triangular: True
+# solution via LU equals direct solve: True
 ```
 
 In words: the multiplier $\frac{6}{4} = 1.5$ sits in $L$, and $U$ holds the eliminated rows. The product $LU$ returns $A$, and the two triangular solves give the same answer as a direct solve. The factorisation is the same for any $\mathbf{b}$.
@@ -90,7 +93,8 @@ import numpy as np
 A = np.array([[4.0, 3.0],
               [6.0, 3.0]])
 Q, R = np.linalg.qr(A)
-print("Q orthogonal:", np.allclose(Q.T @ Q, np.eye(2)), " Q R reproduces A:", np.allclose(Q @ R, A))  # prints: Q orthogonal: True Q R reproduces A: True
+print("Q orthogonal:", np.allclose(Q.T @ Q, np.eye(2)), " Q R reproduces A:", np.allclose(Q @ R, A))
+# Q orthogonal: True  Q R reproduces A: True
 ```
 
 In words: $Q$ is orthogonal and $QR$ returns $A$. The same factorisation solves least squares without forming $A^\top A$, which avoids squaring the condition number.
@@ -105,8 +109,12 @@ import numpy as np
 S = np.array([[4.0, 2.0],
               [2.0, 3.0]])
 G = np.linalg.cholesky(S)
-print("Cholesky factor G:\n", np.round(G, 4))  # prints: Cholesky factor G: [[2. 0. ] [1. 1.4142]]
-print("G G^T reproduces S:", np.allclose(G @ G.T, S))  # prints: G G^T reproduces S: True
+print("Cholesky factor G:\n", np.round(G, 4))
+print("G G^T reproduces S:", np.allclose(G @ G.T, S))
+# Cholesky factor G:
+#  [[2.     0.    ]
+#  [1.     1.4142]]
+# G G^T reproduces S: True
 ```
 
 In words: $G$ is lower triangular and $GG^\top$ returns $S$. Gaussian models and many optimisers use this factor to sample from or solve with a covariance matrix.
