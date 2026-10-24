@@ -52,7 +52,9 @@ const classes = [
     overflow-x: auto;
   }
   .ops {
-    width: 100%;
+    width: max-content;
+    max-width: 100%;
+    margin-inline: auto;
     border-collapse: collapse;
     font: 0.8125rem var(--font-mono);
   }
@@ -132,9 +134,9 @@ const classes = [
       const vis = CLS.filter((c) => this.on.has(c.id));
       const tr = (v: number) => (this.logY ? Math.log10(Math.max(v, 1)) : v);
       const ymax = Math.max(1e-9, ...vis.map((c) => tr(c.f(n))));
+      // the grid follows the axes: round values on a linear axis, powers of ten (and 2 to 9 times them) on a log axis
+      this.querySelector('svg')!.dataset.grid = JSON.stringify({ box: [P, P, W - P, H - P], x: [1, n], y: this.logY ? [1, 10 ** ymax, 'log'] : [0, ymax] });
       let svg = '';
-      // horizontal guides
-      for (let k = 1; k < 4; k++) svg += `<line x1="0" x2="${W}" y1="${(H * k) / 4}" y2="${(H * k) / 4}" stroke="#1f1f1f" stroke-width="1"/>`;
       for (const c of vis) {
         const pts: string[] = [];
         for (let s = 0; s <= 120; s++) {
