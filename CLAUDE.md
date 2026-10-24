@@ -97,7 +97,7 @@ A docked panel answers questions from the notes: the question is embedded, the c
 ## Code blocks (Python)
 
 - Every block is **standalone**: its own imports and data, runnable alone. Never rely on an earlier block.
-- Show real output. Either `print(x)  # prints: <exact output>` for one line, or trailing comment lines at the end of the block, one per output line. Never hand-write or guess output: run it and paste it. Never truncate with `...`.
+- Show real output as trailing comment lines at the very end of the block, one per output line (`# 3.14`); the site draws them as a separate green output area. Keep explanation comments short (about 60 characters) and put nothing but output in that final run. Never hand-write or guess output: run it and paste it. Never truncate with `...`. The old inline form `print(x)  # prints: 42` still passes the checker, but do not write new ones; `uv run scripts/note_tools.py outputs <area> [filter]` lists blocks that use it and `--write` rewrites them (it runs each block and moves the real output to the end).
 - Seed all randomness (`np.random.default_rng(seed)`, `random.seed(...)`). Never print timings or other machine-dependent values; print a boolean check instead.
 - Prefer clarity: a short hand-written version when the algorithm is the topic, then a one-line library check (numpy, scipy, sympy, networkx, statsmodels). Mention the run command when a library is used, e.g. "Run it with `uv run --with numpy --with scipy`."
 - Comments explain why, not what. Use 4-space indentation.
@@ -131,6 +131,7 @@ import Figure from '../Figure.astro';
 - Sliders: `<label class="xx-lbl">name <input type="range" …> <b data-xv>value</b></label>`, with the current value shown.
 - Readout: one `<p>` in monospace with the key numbers, formatted like `a = 1 · b = 2 · verdict`.
 - **Axes: every chart names what each axis measures** (with units or "log scale" where they apply). Wrap the chart: `<div class="axes" style="--ax-w: 440px"><span class="ax-y">density</span><svg …/><span class="ax-x">heads probability θ</span></div>` (`--ax-w` = the chart's max-width; styles in `global.css`; works for any viewBox units and for canvas). Coordinate planes use `x` and `y`. When one SVG holds several panels with different axes, put the titles inside it instead with `<text class="ax-title">` (rotate the y title with `transform="translate(x y) rotate(-90)"`). Add `<text class="ax-tick">` end values where the scale is fixed and not obvious.
+- **Grid: every data chart gets a faint grid behind the data**, from `src/lib/chart-grid.ts`: `chartGrid({ box, x, y })` returns SVG markup for major lines at round values and fainter minor lines between them (a log axis gets a line per power of ten and minor lines at 2 to 9 times it). `box` is the plot area in the SVG's units and each axis gives the data range it spans; leave an axis out for no lines in that direction (a bar chart has no grid on its category axis). Put it before the data so the data draws on top, and redraw it when the scale changes. No tick numbers by default. Examples: `GeometricSums`, `BigOGrowth` (log toggle), `ErrorVsSteps` (log axis, server-rendered).
 - Layout: SVG with a `viewBox` and `width: 100%; max-width: …`; it must work at phone width.
 
 ## Gotchas

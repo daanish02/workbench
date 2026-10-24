@@ -63,7 +63,7 @@ Also cover in I/O Interfacing: memory-mapped vs port I/O, polling vs interrupts 
 10. **Exotic architectures** — VLIW, dataflow architectures
 11. **Measuring CPU performance** _(new, place right after CPU components)_ — the iron law (time = instructions × CPI × clock period), IPC, why GHz alone misleads, benchmarks (SPEC) and their traps. [CPU Performance]
 12. **Floating point hardware** _(new)_ — IEEE 754 layout, rounding, denormals, FMA, then FP16 / BF16 / FP8 / INT8 range-vs-precision trade-offs; feeds DL directly. Link `cs/foundations/number-representation` for integers. [Floating-Point Hardware]
-13. **Speculation attacks** _(new, capstone)_ — Spectre and Meltdown: why speculation leaks through cache timing, mitigations and their cost. Rowhammer can go here or in Main Memory. [Hardware Security]
+13. **Speculation attacks** _(new, capstone)_ — Spectre and Meltdown: why speculation leaks through cache timing, mitigations and their cost. Rowhammer can go here or in Main Memory. Cross-link both ways with `cs/security/memory-safety-bugs` (software memory bugs and the mitigations hardware helps with: non-executable memory, pointer authentication, memory tagging); do not re-teach them here. [Hardware Security]
 14. **Hardware virtualization** _(new)_ — VT-x/AMD-V, nested page tables, IOMMU; links to `cs/cloud/vms-vs-containers`. [Hardware Virtualization]
 
 Short titles: Instruction Set Architectures → "Instruction Sets" (x86 vs ARM vs RISC-V today), Out-of-Order Execution and Superscalar Processors → "Out-of-Order Execution", Instruction-Level Parallelism → "Instruction Parallelism" (consider merging into OoO: it overlaps pipelining + superscalar), The Datapath → "The Datapath".
