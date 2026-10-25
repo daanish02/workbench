@@ -1,6 +1,12 @@
 // Chat settings, shared by the panel (browser) and the chat scripts (scripts/chat-*.mjs), so evals test what ships.
 // The prompt text is in src/prompts/, the suggestion chips in chat-suggestions.ts.
-export const CHAT_MODEL = 'anthropic/claude-haiku-5.5';
+/** answer models offered in the panel: `label` is what the UI shows, `effort` is pinned (reasoning effort sent to OpenRouter) */
+export const CHAT_MODELS = [
+  { key: 'deepseek', label: 'DeepSeek 4.1', id: 'deepseek/deepseek-v4.1-flash-1017', effort: 'low' },
+  { key: 'haiku', label: 'Haiku 5.5', id: 'anthropic/claude-haiku-5.5', effort: 'low' },
+] as const;
+/** the default: first in the list */
+export const CHAT_MODEL = CHAT_MODELS[0].id;
 export const EMBED_MODEL = 'openai/text-embedding-3-small';
 /** text-embedding-3 vectors cut to their first dims and renormalised */
 export const DIMS = 512;

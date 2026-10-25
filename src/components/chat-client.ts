@@ -1,7 +1,7 @@
 // Behaviour of the Ask notes panel (markup and styles live in Chat.astro).
 // Flow for a question: embed it (OpenRouter), score it against the prebuilt chunk vectors in the browser,
 // stop if nothing is close enough (GATE), else stream an answer from the chat model using only the top sections.
-import { CHAT_MODEL, DIMS, EMBED_MODEL, GATE, HISTORY_TURNS, MAX_QUESTION, REVEAL_CPS, SHARED_COOLDOWN_MS, SHARED_DAILY_CAP, TOP } from '../data/chat-config';
+import { CHAT_MODELS, DIMS, EMBED_MODEL, GATE, HISTORY_TURNS, MAX_QUESTION, REVEAL_CPS, SHARED_COOLDOWN_MS, SHARED_DAILY_CAP, TOP } from '../data/chat-config';
 import PROMPT from '../prompts/chat-system.md?raw';
 import { systemMessage } from '../lib/chat-prompt';
 import { renderMarkdown } from '../lib/chat-markdown';
@@ -52,6 +52,18 @@ const store = {
     } catch {}
   },
 };
+// answer model: the reader's pick (kept in this tab), else the first
+let chatModel: (typeof CHAT_MODELS)[number] = CHAT_MODELS.find((m) => m.key === store.get('chat-model', true)) ?? CHAT_MODELS[0];
+const modelBtns = document.querySelectorAll<HTMLButtonElement>('[data-chat-model]');
+const paintModel = () => modelBtns.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.chatModel === chatModel.key)));
+modelBtns.forEach((b) =>
+  b.addEventListener('click', () => {
+    chatModel = CHAT_MODELS.find((m) => m.key === b.dataset.chatModel) ?? chatModel;
+    store.set('chat-model', chatModel.key, true);
+    paintModel();
+  }),
+);
+paintModel();
 let apiKey = store.get('chat-key', true) ?? '';
 // the password-unlocked shared key, as opposed to a reader's own key
 let shared = store.get('chat-shared', true) === '1';
@@ -129,6 +141,7 @@ grab.addEventListener('pointercancel', endGrab);
 const showChat = (on: boolean) => {
   lock.hidden = on;
   main.hidden = !on;
+  modelBtns[0]?.parentElement?.toggleAttribute('hidden', !on);
 };
 // only a masked form of the key is ever shown; the real key is used for request headers and nothing else
 const mask = q('[data-chat-mask]');
@@ -482,10 +495,10 @@ async function ask(text: string) {
       headers: headers(),
       signal: abort.signal,
       body: JSON.stringify({
-        model: CHAT_MODEL,
+        model: chatModel.id,
         stream: true,
         max_tokens: 700,
-        reasoning: { effort: 'low' },
+        reasoning: { effort: chatModel.effort },
         messages: [
           { role: 'system', content: systemMessage(PROMPT, sections.map((h) => h.chunk)) },
           ...history.slice(-HISTORY_TURNS * 2),
