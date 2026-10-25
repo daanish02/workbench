@@ -80,10 +80,51 @@ function languageHeaders() {
         /* library versions: muted, right-aligned, stopping short of the copy button; long lists end in an ellipsis */
         & .header { align-items: center; }
         & .code-libs {
-          margin: 0 calc(1.75rem + 1.9rem) 0 auto; min-width: 0; padding-left: 1rem;
+          margin: 0 calc(2 * 1.75rem + 0.25rem + 1.9rem) 0 auto; min-width: 0; padding-left: 1rem;
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           font: 0.6875rem 'JetBrains Mono', ui-monospace, monospace; color: #6e6e6e;
         }
+      }
+    `,
+  };
+}
+
+// A wrap toggle beside the copy button: off by default, flips expressive-code's own `wrap` class on the block's <pre>.
+// It is added in the browser (the copy button is too), so blocks without JavaScript just scroll sideways as before.
+const WRAP_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3.5h12M2 12.5h4M2 8h9.5a2 2 0 0 1 0 4H9.5M11 10.5 9.5 12 11 13.5"/></svg>';
+function wrapToggle() {
+  return {
+    name: 'wrap-toggle',
+    jsModules: [
+      `document.querySelectorAll('.expressive-code').forEach((ec) => {
+        const pre = ec.querySelector('pre');
+        const copy = ec.querySelector('.copy');
+        if (!pre || !copy || copy.previousElementSibling?.classList.contains('wrap-btn')) return;
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'wrap-btn';
+        b.title = 'Wrap long lines';
+        b.setAttribute('aria-label', 'Wrap long lines');
+        b.setAttribute('aria-pressed', 'false');
+        b.innerHTML = ${JSON.stringify(WRAP_ICON)};
+        b.addEventListener('click', () => b.setAttribute('aria-pressed', String(pre.classList.toggle('wrap'))));
+        copy.before(b);
+      });`,
+    ],
+    baseStyles: `
+      .wrap-btn {
+        position: absolute; z-index: 1; display: inline-flex; align-items: center; justify-content: center;
+        inset-block-start: calc(var(--ec-brdWd) + var(--button-spacing));
+        inset-inline-end: calc(var(--ec-brdWd) + var(--ec-uiPadInl) / 2 + 1.75rem + 0.25rem);
+        width: 1.75rem; height: 1.75rem; padding: 0; margin: 0; cursor: pointer;
+        /* same border as the copy button: its colour at its own opacity */
+        border: var(--ec-brdWd) solid color-mix(in srgb, var(--ec-frm-inlBtnBrd) calc(var(--ec-frm-inlBtnBrdOpa) * 100%), transparent);
+        border-radius: 0.2rem;
+        background: transparent; color: var(--ec-frm-inlBtnFg); opacity: 0.75;
+        transition: opacity 0.2s, background 0.2s, color 0.2s, border-color 0.2s;
+        @media (scripting: none) { display: none; }
+        &:hover, &:focus-visible { opacity: 1; background: color-mix(in srgb, var(--ec-frm-inlBtnBg) calc(var(--ec-frm-inlBtnBgHoverOrFocusOpa) * 100%), transparent); }
+        &[aria-pressed='true'] { opacity: 1; color: #8ab4f8; border-color: #8ab4f8; background: rgba(138, 180, 248, 0.12); }
       }
     `,
   };
@@ -181,7 +222,7 @@ export default defineConfig({
     expressiveCode({
       themes: ['github-dark-default'],
       // Code blocks get a header bar (language tab left, copy button right); shell blocks keep the terminal frame.
-      plugins: [languageHeaders(), outputBlocks()],
+      plugins: [languageHeaders(), outputBlocks(), wrapToggle()],
       styleOverrides: {
         borderRadius: '12px',
         borderColor: '#262626',
