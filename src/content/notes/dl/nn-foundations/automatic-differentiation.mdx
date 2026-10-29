@@ -3,6 +3,146 @@ title: "Automatic Differentiation"
 description: "How frameworks compute exact gradients without anyone hand-deriving them."
 order: 3
 tier: advanced
+takeaways:
+  - "**Automatic differentiation** (autodiff) applies the chain rule to the actual operations a program runs. It gives exact derivatives up to floating-point rounding, unlike finite differences, and works on loops and branches, unlike symbolic differentiation."
+  - "**Forward mode** carries a derivative alongside each value (dual numbers, $a + b\\varepsilon$ with $\\varepsilon^2 = 0$). One pass gives the derivative with respect to one input."
+  - "**Reverse mode** records the operations on a **tape** during the forward pass, then sweeps it backwards. One pass gives the derivative of one output with respect to every input; this is backpropagation."
+  - "For a loss $L : \\mathbb{R}^n \\to \\mathbb{R}$ with millions of parameters, reverse mode costs a small constant times one forward pass, while forward mode would need $n$ passes."
+  - "Frameworks either build the graph as the code runs (PyTorch, eager mode) or trace a function into a graph first (JAX, `torch.compile`)."
+resources:
+  - title: "Automatic Differentiation in Machine Learning: a Survey (Baydin et al., JMLR)"
+    url: "https://www.jmlr.org/papers/v18/17-468.html"
+    note: "The standard reference: forward and reverse mode, their costs, and how they compare to numerical and symbolic differentiation."
+  - title: "Autograd mechanics (PyTorch docs)"
+    url: "https://docs.pytorch.org/docs/stable/notes/autograd.html"
+    note: "How PyTorch records the graph, saves tensors for backward, and handles in-place operations."
+  - title: "The Autodiff Cookbook (JAX docs)"
+    url: "https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html"
+    note: "grad, jvp and vjp as composable function transformations, with Jacobians and Hessians built from them."
 ---
 
-_Placeholder. Content not written yet._
+[Backpropagation Derived](../backpropagation-fully-derived/) wrote the backward pass of a two-layer network by hand: five lines of matrix calculus. A transformer has hundreds of operations of dozens of kinds, and researchers change them daily. Nobody derives those gradients by hand. **Automatic differentiation** makes the program differentiate itself: every primitive operation knows its local derivative, and the framework chains them using the [computational graph](../computational-graphs/) of whatever code actually ran. This note separates autodiff from the two other ways to get derivatives, builds forward mode with dual numbers and reverse mode with a tape, and explains why deep learning uses reverse mode. It assumes the [multivariable chain rule](../../../math/calculus/the-chain-rule-multivariable/) and [Jacobians](../../../math/calculus/gradients-jacobians-and-hessians/).
+
+## Three ways to differentiate
+
+| Method | How | Problem for deep learning |
+|---|---|---|
+| Numerical (finite differences) | $\frac{f(x + h) - f(x - h)}{2h}$ per input | Two evaluations per parameter, and rounding error from the choice of $h$ |
+| Symbolic (SymPy, Mathematica) | Rewrite the formula with derivative rules | Expressions grow huge, and code with loops and branches is not a formula |
+| Automatic | Chain the local derivatives of the operations actually executed | None of the above; costs memory to store intermediate values |
+
+Autodiff is exact in the same sense the forward computation is: each local derivative is evaluated in floating point, with no truncation error from a step size. It also handles control flow for free, because it differentiates the path the program took on this input, not a formula.
+
+## Forward mode
+
+**Forward mode** pushes derivatives forward together with values. The cleanest way to see it is with **dual numbers** $a + b\varepsilon$, where $\varepsilon$ is a symbol with $\varepsilon^{2} = 0$. Expanding a function at $a + b\varepsilon$ by its [Taylor series](../../../math/calculus/taylor-series/) leaves only the first two terms:
+
+$$
+f(a + b\varepsilon) = f(a) + f'(a)\, b\, \varepsilon.
+
+$$
+
+In words: evaluating any function on a dual number returns its value in the first part and its derivative, times $b$, in the second part. Setting $b = 1$ for the input of interest and $0$ for the others reads off one partial derivative. The rules follow from $\varepsilon^{2} = 0$: $(a + b\varepsilon)(c + d\varepsilon) = ac + (ad + bc)\varepsilon$ is the product rule.
+
+```python
+import math
+
+class Dual:
+    """a + b·eps with eps² = 0: b carries the derivative along."""
+    def __init__(self, val, dot=0.0):
+        self.val, self.dot = val, dot
+    def __add__(self, o):
+        o = o if isinstance(o, Dual) else Dual(o)
+        return Dual(self.val + o.val, self.dot + o.dot)
+    def __mul__(self, o):
+        o = o if isinstance(o, Dual) else Dual(o)
+        return Dual(self.val * o.val, self.dot * o.val + self.val * o.dot)
+    __radd__, __rmul__ = __add__, __mul__
+
+def sin(d):
+    return Dual(math.sin(d.val), math.cos(d.val) * d.dot)
+
+def f(x, y):
+    return x * y + sin(x)
+
+# seed dx = 1 to get df/dx, then dy = 1 to get df/dy: one pass per input
+dfdx = f(Dual(2.0, 1.0), Dual(3.0, 0.0))
+dfdy = f(Dual(2.0, 0.0), Dual(3.0, 1.0))
+print("f =", round(dfdx.val, 4), " df/dx =", round(dfdx.dot, 4), " df/dy =", round(dfdy.dot, 4))
+print("exact df/dx = y + cos(x) =", round(3 + math.cos(2), 4))
+# f = 6.9093  df/dx = 2.5839  df/dy = 2.0
+# exact df/dx = y + cos(x) = 2.5839
+```
+
+In words: $f(x, y) = xy + \sin x$ at $(2, 3)$ is 6.9093, and the dual parts give $\partial f / \partial x = 2.5839$, equal to $y + \cos x$, and $\partial f / \partial y = 2.0 = x$. The function `f` is ordinary code; operator overloading did the differentiation. But it took two passes, one per input. In general one forward-mode pass computes a **Jacobian-vector product** $J v$: the derivative of every output in one input direction $v$.
+
+## Reverse mode
+
+**Reverse mode** runs the program once forward, recording each operation, its inputs and its local derivatives on a **tape** (the graph). Then it walks the tape backwards from the output, accumulating $\bar v = \partial f / \partial v$ exactly as in [Computational Graphs](../computational-graphs/). The class below records the graph as the code runs.
+
+```python
+import math
+
+class Var:
+    """A node that records its parents and local derivatives as it is built."""
+    def __init__(self, val, parents=()):
+        self.val, self.parents, self.grad = val, parents, 0.0
+    def __add__(self, o):
+        return Var(self.val + o.val, ((self, 1.0), (o, 1.0)))
+    def __mul__(self, o):
+        return Var(self.val * o.val, ((self, o.val), (o, self.val)))
+    def sin(self):
+        return Var(math.sin(self.val), ((self, math.cos(self.val)),))
+    def backward(self):
+        order, seen = [], set()
+        def visit(v):  # topological order by depth-first search
+            if id(v) not in seen:
+                seen.add(id(v))
+                for p, _ in v.parents:
+                    visit(p)
+                order.append(v)
+        visit(self)
+        self.grad = 1.0
+        for v in reversed(order):
+            for p, local in v.parents:
+                p.grad += v.grad * local
+
+x, y = Var(2.0), Var(3.0)
+f = x * y + x.sin()   # running the code builds the graph
+f.backward()          # one reverse pass gives every input's gradient
+print("f =", round(f.val, 4), " df/dx =", round(x.grad, 4), " df/dy =", round(y.grad, 4))
+# f = 6.9093  df/dx = 2.5839  df/dy = 2.0
+```
+
+In words: the same two partial derivatives, 2.5839 and 2.0, from a single backward pass. $x$ feeds both the product and the sine, so its gradient is the sum of $y = 3$ and $\cos 2 = -0.4161$. One reverse pass computes a **vector-Jacobian product** $u^\top J$: the derivative of one output direction $u$ with respect to every input. This class is a scalar version of what PyTorch's autograd does with tensors.
+
+## Why reverse mode wins
+
+For a function $f : \mathbb{R}^{n} \to \mathbb{R}^{m}$, a full Jacobian costs $n$ forward-mode passes or $m$ reverse-mode passes, each a small constant times the cost of evaluating $f$.
+
+| Shape | Example | Cheaper mode |
+|---|---|---|
+| $n \gg m$, many inputs, few outputs | loss of a network: $n$ = millions of parameters, $m = 1$ | reverse: 1 pass |
+| $n \ll m$, few inputs, many outputs | a trajectory's sensitivity to one physical constant | forward: 1 pass |
+| $n \approx m$ | a Jacobian for a small system | either, or a mix |
+
+In words: training differentiates one scalar loss with respect to all parameters, so reverse mode gives the whole gradient for the cost of a few forward passes, whatever the parameter count. Forward mode would need one pass per parameter. This asymmetry, often called the **cheap gradient principle**, is the reason deep learning is computationally feasible.
+
+The price is memory. Reverse mode needs every intermediate value the local derivatives use, so all of them stay alive from the forward pass until the backward pass reaches them. Forward mode needs only the current values. **Gradient checkpointing** trades between the two: keep only some activations and recompute the rest during the backward pass.
+
+<Callout type="pitfall">
+Autodiff differentiates the code, not the mathematics you meant. Non-differentiable points get whatever the implementation chose (PyTorch's ReLU uses slope 0 at exactly 0), and a numerically unstable formula has unstable derivatives: `log(softmax(z))` written as two steps can produce `inf` gradients where the fused `log_softmax` does not. Modifying a saved tensor in place before `backward()` is an error in PyTorch for the same reason: the tape needs the original value.
+</Callout>
+
+## How frameworks build the tape
+
+There are two strategies for getting the graph.
+
+- **Define-by-run (eager)**: PyTorch builds the graph as the Python code executes, like the `Var` class. Each tensor produced by a tracked operation keeps a reference to a `grad_fn`, the backward function of the operation that made it. Control flow is just Python, and the graph can differ on every call. `loss.backward()` walks it, adds into each parameter's `.grad`, and frees it.
+- **Trace then transform**: JAX runs the function once on abstract placeholders to record a graph (a jaxpr), then transforms it: `jax.grad` produces a new function that computes the gradient, which can be compiled, differentiated again, or vectorised. `torch.compile` traces PyTorch code into graphs in a similar way for speed.
+
+Both rely on the same thing: a table of primitives (matmul, add, exp, convolution, …), each with a forward implementation and a vector-Jacobian product. Adding a new operation to a framework means writing both. Higher derivatives come from differentiating the backward pass itself, which is possible because it too is made of primitives.
+
+<Callout type="key">
+Autodiff is the chain rule run by the program: forward mode pushes one input's derivative through every operation, reverse mode pulls one output's gradient back to every input. Deep learning has one output and millions of inputs, so it uses reverse mode, and pays for it in memory.
+</Callout>

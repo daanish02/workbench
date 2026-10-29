@@ -1,0 +1,177 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Forward values, then backward gradients"
+  caption="The neuron L = (relu(w·x + b) − y)² as a graph. Step forward to compute each value (blue) in order, then backward: each gradient g = ∂L/∂node (green) is the gradient of the node it feeds times a local derivative. The current node is yellow. It ends with ∂L/∂w = 4 and ∂L/∂x = 6, as in the note's code."
+>
+  <comp-graph>
+    <div class="ctl-row">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="cg-svg" viewBox="0 0 520 240" role="img" aria-label="Computational graph of one neuron with a squared loss, with values and gradients at each node">
+      <g data-edges></g>
+      <g data-nodes></g>
+    </svg>
+    <p class="cg-msg" data-msg aria-live="polite"></p>
+  </comp-graph>
+</Figure>
+
+<style>
+  .ctl-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .cg-svg {
+    display: block;
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .cg-svg :global(.cg-edge) {
+    stroke: var(--border);
+    stroke-width: 1.5;
+  }
+  .cg-svg :global(.cg-edge.hot) {
+    stroke: var(--g-green);
+  }
+  .cg-svg :global(.cg-bg) {
+    fill: var(--bg);
+  }
+  .cg-svg :global(.cg-node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .cg-svg :global(.cg-node.in) {
+    fill: rgba(66, 133, 244, 0.06);
+    stroke-dasharray: 3 3;
+  }
+  .cg-svg :global(.cg-node.now) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .cg-svg :global(.cg-op) {
+    fill: var(--text);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cg-svg :global(.cg-val) {
+    fill: var(--g-blue-l);
+    font: 13px var(--font-mono);
+    text-anchor: middle;
+  }
+  .cg-svg :global(.cg-grad) {
+    fill: var(--g-green-l);
+    font: 13px var(--font-mono);
+    text-anchor: middle;
+  }
+  .cg-msg {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  type Node = { id: string; x: number; y: number; op: string; val: number; grad: number; input?: boolean };
+  // x = 2, w = 3, b = −4, y = 1 gives L = 1; gradients from the backward pass in the note.
+  const NODES: Node[] = [
+    { id: 'w', x: 40, y: 60, op: 'w', val: 3, grad: 4, input: true },
+    { id: 'x', x: 40, y: 160, op: 'x', val: 2, grad: 6, input: true },
+    { id: 'u', x: 135, y: 110, op: '×', val: 6, grad: 2 },
+    { id: 'b', x: 135, y: 200, op: 'b', val: -4, grad: 2, input: true },
+    { id: 'z', x: 225, y: 155, op: '+', val: 2, grad: 2 },
+    { id: 'a', x: 310, y: 155, op: 'relu', val: 2, grad: 2 },
+    { id: 'y', x: 310, y: 60, op: 'y', val: 1, grad: -2, input: true },
+    { id: 'd', x: 395, y: 110, op: '−', val: 1, grad: 2 },
+    { id: 'L', x: 480, y: 110, op: '²', val: 1, grad: 1 },
+  ];
+  const EDGES: [string, string][] = [
+    ['w', 'u'], ['x', 'u'], ['u', 'z'], ['b', 'z'], ['z', 'a'], ['a', 'd'], ['y', 'd'], ['d', 'L'],
+  ];
+  // Each step reveals values or gradients for some nodes and explains the rule used.
+  const STEPS: { val?: string[]; grad?: string[]; msg: string }[] = [
+    { val: ['u'], msg: 'forward: u = w · x = 3 · 2 = 6' },
+    { val: ['z'], msg: 'forward: z = u + b = 6 − 4 = 2' },
+    { val: ['a'], msg: 'forward: a = relu(z) = 2, since z > 0' },
+    { val: ['d'], msg: 'forward: d = a − y = 2 − 1 = 1' },
+    { val: ['L'], msg: 'forward: L = d² = 1. Every value is stored for the backward pass.' },
+    { grad: ['L'], msg: 'backward: seed ∂L/∂L = 1' },
+    { grad: ['d'], msg: '∂L/∂d = 1 · 2d = 2' },
+    { grad: ['a', 'y'], msg: '∂L/∂a = 2 · 1 = 2 and ∂L/∂y = 2 · (−1) = −2' },
+    { grad: ['z'], msg: '∂L/∂z = 2 · relu′(2) = 2 · 1 = 2' },
+    { grad: ['u', 'b'], msg: 'an add passes the gradient through: ∂L/∂u = ∂L/∂b = 2' },
+    { grad: ['w', 'x'], msg: 'a multiply swaps its inputs: ∂L/∂w = 2 · x = 4, ∂L/∂x = 2 · w = 6' },
+  ];
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const fmt = (v: number) => (v < 0 ? `−${-v}` : `${v}`);
+
+  class CompGraph extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw(new Set(NODES.filter((n) => n.input).map((n) => n.id)), new Set(), []);
+      this.querySelector('[data-msg]')!.textContent = 'Inputs: x = 2, w = 3, b = −4, target y = 1. Press Step.';
+    }
+    step() {
+      if (this.i >= STEPS.length) return;
+      this.i++;
+      const shownVal = new Set(NODES.filter((n) => n.input).map((n) => n.id));
+      const shownGrad = new Set<string>();
+      STEPS.slice(0, this.i).forEach((s) => {
+        s.val?.forEach((id) => shownVal.add(id));
+        s.grad?.forEach((id) => shownGrad.add(id));
+      });
+      const cur = STEPS[this.i - 1];
+      this.draw(shownVal, shownGrad, [...(cur.val ?? []), ...(cur.grad ?? [])]);
+      this.querySelector('[data-msg]')!.textContent = cur.msg;
+      if (this.i >= STEPS.length) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw(vals: Set<string>, grads: Set<string>, now: string[]) {
+      const at = (id: string) => NODES.find((n) => n.id === id)!;
+      const edges = this.querySelector('[data-edges]')!;
+      const nodes = this.querySelector('[data-nodes]')!;
+      edges.replaceChildren();
+      nodes.replaceChildren();
+      for (const [a, b] of EDGES) {
+        const l = document.createElementNS(NS, 'line');
+        const p = at(a);
+        const q = at(b);
+        l.setAttribute('x1', `${p.x}`);
+        l.setAttribute('y1', `${p.y}`);
+        l.setAttribute('x2', `${q.x}`);
+        l.setAttribute('y2', `${q.y}`);
+        // light up an edge once the gradient has flowed back along it
+        l.setAttribute('class', grads.has(a) && grads.has(b) ? 'cg-edge hot' : 'cg-edge');
+        edges.append(l);
+      }
+      for (const n of NODES) {
+        const g = document.createElementNS(NS, 'g');
+        const r = n.op === 'relu' ? 24 : 20;
+        g.innerHTML =
+          `<circle cx="${n.x}" cy="${n.y}" r="${r}" class="cg-bg"></circle>` +
+          `<circle cx="${n.x}" cy="${n.y}" r="${r}" class="cg-node${n.input ? ' in' : ''}${now.includes(n.id) ? ' now' : ''}"></circle>` +
+          `<text x="${n.x}" y="${n.y}" class="cg-op">${n.op}</text>` +
+          (vals.has(n.id) ? `<text x="${n.x}" y="${n.y - r - 8}" class="cg-val">${n.input ? '' : n.id + '='}${fmt(n.val)}</text>` : '') +
+          (grads.has(n.id) ? `<text x="${n.x}" y="${n.y + r + 18}" class="cg-grad">g=${fmt(n.grad)}</text>` : '');
+        nodes.append(g);
+      }
+    }
+  }
+  customElements.define('comp-graph', CompGraph);
+</script>

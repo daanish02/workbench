@@ -3,6 +3,175 @@ title: "Computational Graphs"
 description: "Representing a network as a graph of operations, the structure everything else here depends on."
 order: 1
 tier: core
+takeaways:
+  - "A **computational graph** is a directed acyclic graph: inputs and parameters are leaves, every inner node is one simple operation, and an edge carries a value from one operation to the next."
+  - "The **forward pass** evaluates the nodes in topological order and stores every intermediate value; the **backward pass** visits them in reverse and computes $\\partial L / \\partial v$ for every node $v$."
+  - "Each node only needs its **local derivative**. The gradient of a node is the gradient of its output times that local derivative, the chain rule applied one edge at a time."
+  - "When a value feeds several operations, its gradient is the **sum** over those paths: $f = x^2 + 3x$ at $x = 5$ gets $10 + 3 = 13$."
+  - "Storing every forward value is why training uses far more memory than inference."
+resources:
+  - title: "Calculus on Computational Graphs (Christopher Olah)"
+    url: "https://colah.github.io/posts/2015-08-Backprop/"
+    note: "A short, picture-led explanation of forward- and reverse-mode on graphs, and why reverse mode wins for many inputs and one output."
+  - title: "Backpropagation, Intuitions (Stanford CS231n)"
+    url: "https://cs231n.github.io/optimization-2/"
+    note: "Gates with local gradients, staged computation and the patterns of add, multiply and max gates."
+  - title: "micrograd (Andrej Karpathy)"
+    url: "https://github.com/karpathy/micrograd"
+    note: "A complete scalar autograd engine and tiny neural network library in about 150 lines of Python."
 ---
 
-_Placeholder. Content not written yet._
+A neural network is a long chain of simple operations: multiply, add, apply a nonlinearity, compare with a target. Training needs the derivative of the loss with respect to every parameter, often millions of them, and computing those by hand is hopeless. Writing the network as a **computational graph** turns the problem into bookkeeping: one pass forward to compute values, one pass backward to compute gradients, with each operation knowing only its own derivative. This note builds the graph for a single neuron, runs both passes by hand and shows the one rule that is easy to miss, summing gradients where paths meet. It assumes the [multivariable chain rule](../../../math/calculus/the-chain-rule-multivariable/) and the [multi-layer perceptron](../../../ml/shallow-neural-networks/multi-layer-perceptrons/).
+
+## Graphs of operations
+
+A **computational graph** is a directed acyclic graph (a DAG, see [Graphs](../../../cs/data-structures/graphs/)). Its **leaves** are the inputs, the targets and the parameters. Each inner node applies one operation to the values on its incoming edges and sends the result along its outgoing edges. The final node is usually a scalar **loss** $L$.
+
+Take one neuron with a ReLU and a squared loss:
+
+$$
+L = \left(\operatorname{relu}(w x + b) - y\right)^{2}.
+
+$$
+
+In words: multiply the input $x$ by the weight $w$, add the bias $b$, apply $\operatorname{relu}(z) = \max(z, 0)$, subtract the target $y$, and square. Splitting it into named intermediate values gives five nodes: $u = w x$, $z = u + b$, $a = \operatorname{relu}(z)$, $d = a - y$ and $L = d^{2}$.
+
+The granularity is a choice. A framework may treat $w x + b$ as one "linear" node or as two; the derivatives come out the same, only the number of stored values changes.
+
+## The forward pass
+
+The **forward pass** evaluates nodes in **topological order**, an order in which every node comes after all of its inputs. The code stores the graph as a list already in that order and keeps every value in a dictionary.
+
+```python
+# one neuron with a squared loss, as a list of operations in topological order
+graph = [
+    ("u", "mul", ("w", "x")),
+    ("z", "add", ("u", "b")),
+    ("a", "relu", ("z",)),
+    ("d", "sub", ("a", "y")),
+    ("L", "square", ("d",)),
+]
+ops = {
+    "mul": lambda p, q: p * q,
+    "add": lambda p, q: p + q,
+    "sub": lambda p, q: p - q,
+    "relu": lambda p: max(p, 0.0),
+    "square": lambda p: p * p,
+}
+
+val = {"x": 2.0, "w": 3.0, "b": -4.0, "y": 1.0}
+for out, op, ins in graph:
+    val[out] = ops[op](*(val[i] for i in ins))
+    print(f"{out} = {op}{ins} = {val[out]}")
+# u = mul('w', 'x') = 6.0
+# z = add('u', 'b') = 2.0
+# a = relu('z',) = 2.0
+# d = sub('a', 'y') = 1.0
+# L = square('d',) = 1.0
+```
+
+In words: with $x = 2$, $w = 3$, $b = -4$ and target $y = 1$, the neuron outputs $a = 2$ and the loss is $L = 1$. Every intermediate value is kept, because the backward pass needs them: the derivative of $w x$ with respect to $w$ is $x$, and the derivative of ReLU depends on the sign of $z$.
+
+## The backward pass
+
+The **backward pass** computes the **gradient** $\bar v = \partial L / \partial v$ of the loss with respect to every node $v$. It starts from $\bar L = 1$ and walks the graph in reverse topological order. For a node $v$ that feeds into nodes $o_1, \dots, o_k$, the chain rule gives
+
+$$
+\bar v = \sum_{j=1}^{k} \bar o_j \, \frac{\partial o_j}{\partial v}.
+
+$$
+
+In words: a node's gradient is the gradient arriving from each node it feeds, times the **local derivative** of that node with respect to it, summed over all the nodes it feeds. A node never needs to know anything about the rest of the network, only its own local derivatives, which is what makes the method modular.
+
+The local derivatives of the five operations are simple: a multiply $p q$ has $\partial/\partial p = q$ and $\partial/\partial q = p$, an add passes 1 to both inputs, a subtract passes $1$ and $-1$, ReLU passes 1 if its input is positive and 0 otherwise, and a square passes $2p$.
+
+```python
+graph = [
+    ("u", "mul", ("w", "x")),
+    ("z", "add", ("u", "b")),
+    ("a", "relu", ("z",)),
+    ("d", "sub", ("a", "y")),
+    ("L", "square", ("d",)),
+]
+ops = {
+    "mul": lambda p, q: p * q,
+    "add": lambda p, q: p + q,
+    "sub": lambda p, q: p - q,
+    "relu": lambda p: max(p, 0.0),
+    "square": lambda p: p * p,
+}
+# local derivative of each output with respect to each input
+local = {
+    "mul": lambda p, q: (q, p),
+    "add": lambda p, q: (1.0, 1.0),
+    "sub": lambda p, q: (1.0, -1.0),
+    "relu": lambda p: (1.0 if p > 0 else 0.0,),
+    "square": lambda p: (2 * p,),
+}
+
+val = {"x": 2.0, "w": 3.0, "b": -4.0, "y": 1.0}
+for out, op, ins in graph:
+    val[out] = ops[op](*(val[i] for i in ins))
+
+grad = {name: 0.0 for name in val}
+grad["L"] = 1.0
+for out, op, ins in reversed(graph):
+    for name, g in zip(ins, local[op](*(val[i] for i in ins))):
+        grad[name] += grad[out] * g  # += because a value may feed several ops
+print({k: grad[k] for k in ["d", "a", "z", "u", "b", "w", "x"]})
+# {'d': 2.0, 'a': 2.0, 'z': 2.0, 'u': 2.0, 'b': 2.0, 'w': 4.0, 'x': 6.0}
+```
+
+In words: the square sends $2d = 2$ back, the subtract and ReLU pass it through unchanged (ReLU's input $z = 2$ is positive), and the add copies it to both $u$ and $b$. The multiply swaps its inputs: $\partial L / \partial w = 2 \cdot x = 4$ and $\partial L / \partial x = 2 \cdot w = 6$. One backward pass produced the gradient for every leaf at once.
+
+<CompGraphStepper />
+
+A finite difference confirms the weight's gradient. Nudging $w$ by $\pm h$ and dividing the change in $L$ by $2h$ approximates $\partial L / \partial w$.
+
+```python
+def loss(w, x=2.0, b=-4.0, y=1.0):
+    return (max(w * x + b, 0.0) - y) ** 2
+
+h = 1e-6
+numeric = (loss(3.0 + h) - loss(3.0 - h)) / (2 * h)
+print("dL/dw numeric:", round(numeric, 6), " backward pass:", 4.0)
+# dL/dw numeric: 4.0  backward pass: 4.0
+```
+
+In words: the numeric slope is 4.0, the same as the backward pass. This **gradient check** is the standard test for a hand-written backward function; it costs two forward passes per parameter, so it is used only on small cases.
+
+## Gradients add where paths meet
+
+When one value feeds several operations, changing it changes the loss along every path, and the contributions add. That is the sum in the backward rule, and it is why the code uses `+=`.
+
+```python
+# f(x) = x * x + 3 * x: x feeds two operations, so its gradient has two paths
+x = 5.0
+p = x * x
+q = 3 * x
+f = p + q
+
+df_dp, df_dq = 1.0, 1.0
+from_p = df_dp * (2 * x)  # through x * x, both factors are x
+from_q = df_dq * 3
+print("f =", f, " df/dx =", from_p + from_q, " paths:", from_p, "+", from_q)
+# f = 40.0  df/dx = 13.0  paths: 10.0 + 3.0
+```
+
+In words: $x$ reaches $f$ through $x^{2}$, contributing $2x = 10$, and through $3x$, contributing $3$, so $df/dx = 13$, which matches the derivative of $x^{2} + 3x$ at $x = 5$. In a network this happens constantly: a weight is used for every example in a batch, an input feeds every neuron of the next layer, and a residual connection sends a value both through a block and around it.
+
+<Callout type="pitfall">
+Assigning a gradient instead of accumulating it (`grad[x] = ...` instead of `+=`) silently keeps only the last path. The result is wrong but plausible, and only a gradient check catches it. The same rule explains why PyTorch accumulates into `.grad` across `backward()` calls and why training loops call `zero_grad()` before each step.
+</Callout>
+
+## Why the graph matters
+
+The graph view is what every later note in this section builds on:
+
+- [Backpropagation Derived](../backpropagation-fully-derived/) applies the backward rule to whole layers, where the values are vectors and matrices and the local derivatives are Jacobians.
+- [Automatic Differentiation](../automatic-differentiation/) shows how a framework records the graph while your code runs, so no one writes the backward pass by hand.
+- Memory: the forward pass keeps every intermediate value until the backward pass uses it. For a deep network that is far more memory than the parameters themselves, which is why inference, which needs no backward pass, can drop values as soon as they are used.
+
+<Callout type="key">
+Forward computes and stores values; backward multiplies local derivatives in reverse order and sums where paths meet. Every gradient in deep learning, however large the network, is this procedure.
+</Callout>

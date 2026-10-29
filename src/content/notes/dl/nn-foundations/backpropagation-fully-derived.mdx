@@ -2,7 +2,232 @@
 title: "Backpropagation Derived"
 description: "The chain rule applied through an entire network, step by step."
 order: 2
-tier: advanced
+tier: core
+takeaways:
+  - "**Backpropagation** is the backward pass of a computational graph applied layer by layer: one sweep from the loss to the input gives the gradient for every weight."
+  - "For a dense layer $Z = A W + b$, the gradients are $\\bar W = A^\\top \\bar Z$, $\\bar b = \\sum_{\\text{rows}} \\bar Z$ and $\\bar A = \\bar Z W^\\top$. Each gradient has the shape of the thing it differentiates."
+  - "An elementwise activation multiplies the gradient elementwise by its derivative: $\\bar Z = \\bar A \\odot \\sigma'(Z)$."
+  - "Softmax followed by cross-entropy has the simple combined gradient $p - y$; divide by the batch size $n$ for a mean loss."
+  - "A gradient check against finite differences is the test: the derived $W_1$ gradient of a 4-5-3 network matches to a relative error below $10^{-6}$."
+resources:
+  - title: "How the backpropagation algorithm works (Michael Nielsen)"
+    url: "http://neuralnetworksanddeeplearning.com/chap2.html"
+    note: "The four equations of backpropagation derived with the error term per layer, plus a proof of each."
+  - title: "Deep Feedforward Networks, Section 6.5 (Goodfellow, Bengio, Courville)"
+    url: "https://www.deeplearningbook.org/contents/mlp.html"
+    note: "The general back-propagation algorithm on computational graphs, with its cost and the tensor version."
+  - title: "TensorFlow Playground"
+    url: "https://playground.tensorflow.org/"
+    note: "Train a small network in the browser: change layers, activations and learning rate and watch the decision boundary and each neuron's output."
 ---
 
-_Placeholder. Content not written yet._
+[Computational Graphs](../computational-graphs/) ran the backward pass one scalar at a time. A real network works with matrices: a batch of examples times a weight matrix, thousands of numbers per node. **Backpropagation** is the same backward pass with each node a whole layer, and deriving it means finding the local derivative of a matrix product, a bias add, an activation and the loss, then chaining them. This note derives those four rules, assembles them into the full gradient of a two-layer network, checks it numerically and trains with it; run the code with `uv run --with numpy`. It uses the [multivariable chain rule](../../../math/calculus/the-chain-rule-multivariable/), [matrices as transformations](../../../math/linear-algebra/matrices-as-transformations/) and [matrix calculus](../../../math/calculus/matrix-calculus/); the network itself is the [multi-layer perceptron](../../../ml/shallow-neural-networks/multi-layer-perceptrons/).
+
+## Setup and notation
+
+A batch of $n$ examples with $d$ features is a matrix $X$ of shape $n \times d$, one example per row. A two-layer network with $h$ hidden units and $k$ classes computes
+
+$$
+Z_1 = X W_1 + b_1, \quad A_1 = \operatorname{relu}(Z_1), \quad Z_2 = A_1 W_2 + b_2, \quad P = \operatorname{softmax}(Z_2),
+
+$$
+
+with $W_1$ of shape $d \times h$, $W_2$ of shape $h \times k$, and the bias vectors added to every row. The loss is the mean cross-entropy against one-hot targets $Y$ (shape $n \times k$):
+
+$$
+L = -\frac{1}{n} \sum_{i=1}^{n} \sum_{c=1}^{k} Y_{ic} \log P_{ic}.
+
+$$
+
+In words: the first layer maps each example to $h$ hidden features, ReLU zeroes the negative ones, the second layer produces $k$ scores called **logits**, softmax turns each row of logits into probabilities, and the loss averages the negative log probability of the correct class.
+
+As in the scalar case, write $\bar M = \partial L / \partial M$ for the gradient of the scalar loss with respect to a matrix $M$. Because $L$ is a scalar, $\bar M$ always has **the same shape as $M$**: one number per entry, saying how the loss changes when that entry moves. This shape rule decides where every transpose goes.
+
+## The loss layer
+
+For one example with logits $z$ and probabilities $p_c = e^{z_c} / \sum_j e^{z_j}$, the loss is $\ell = -\sum_c y_c \log p_c$. Differentiating $\log p_c = z_c - \log \sum_j e^{z_j}$ with respect to $z_m$ gives $\mathbb{1}[c = m] - p_m$. Summing against $y$, whose entries add up to 1:
+
+$$
+\frac{\partial \ell}{\partial z_m} = -\sum_c y_c \left( \mathbb{1}[c = m] - p_m \right) = p_m - y_m.
+
+$$
+
+In words: the gradient on the logits is the predicted probabilities minus the one-hot target. The correct class gets a negative gradient (raise its logit), every other class a positive one in proportion to the probability it wrongly received. For the mean over a batch, $\bar Z_2 = (P - Y) / n$.
+
+```python
+import numpy as np
+
+# softmax + cross-entropy for one example: the gradient is p - y
+z = np.array([2.0, 1.0, -1.0])
+y = np.array([0.0, 1.0, 0.0])  # one-hot: class 1 is correct
+
+def loss(z):
+    p = np.exp(z - z.max()) / np.exp(z - z.max()).sum()
+    return -np.sum(y * np.log(p))
+
+p = np.exp(z - z.max()) / np.exp(z - z.max()).sum()
+h = 1e-6
+numeric = np.array([(loss(z + h * e) - loss(z - h * e)) / (2 * h) for e in np.eye(3)])
+print("p     :", p.round(4))
+print("p - y :", (p - y).round(4))
+print("matches finite differences:", np.allclose(numeric, p - y, atol=1e-6))
+# p     : [0.7054 0.2595 0.0351]
+# p - y : [ 0.7054 -0.7405  0.0351]
+# matches finite differences: True
+```
+
+In words: the network puts 0.7054 on class 0 but the answer is class 1, so class 0's logit gets gradient $+0.7054$ (push it down) and class 1's gets $-0.7405$ (push it up). The finite differences agree. Subtracting `z.max()` before `exp` does not change the softmax but keeps `exp` from overflowing.
+
+## The dense layer
+
+Take $Z = A W + b$ with $A$ of shape $n \times m$, $W$ of shape $m \times h$, and suppose $\bar Z$ (shape $n \times h$) has already arrived from above. Entry $Z_{ij} = \sum_r A_{ir} W_{rj} + b_j$. The weight $W_{rj}$ appears in $Z_{ij}$ for every row $i$, with coefficient $A_{ir}$, so
+
+$$
+\bar W_{rj} = \sum_{i} \bar Z_{ij} A_{ir} \quad \Longrightarrow \quad \bar W = A^\top \bar Z.
+
+$$
+
+In words: the weight gradient sums, over the examples in the batch, the input to the weight times the gradient at its output. The sum over $i$ is the "gradients add where paths meet" rule: each weight is used once per example.
+
+The same reasoning gives the other two. $b_j$ appears in every row of column $j$ with coefficient 1, and $A_{ir}$ appears in every column of row $i$ with coefficient $W_{rj}$:
+
+$$
+\bar b = \sum_{i=1}^{n} \bar Z_{i,:}, \qquad \bar A = \bar Z \, W^\top.
+
+$$
+
+In words: the bias gradient is the column sum of $\bar Z$, and the gradient sent back to the layer's input is $\bar Z$ multiplied by the transposed weights. If you forget which side the transpose goes on, check shapes: $A^\top \bar Z$ is $(m \times n)(n \times h) = m \times h$, the shape of $W$, and $\bar Z W^\top$ is $(n \times h)(h \times m) = n \times m$, the shape of $A$.
+
+| Forward | Backward | Shapes |
+|---|---|---|
+| $Z = A W + b$ | $\bar W = A^\top \bar Z$ | $m \times h$ |
+| | $\bar b = $ column sums of $\bar Z$ | $h$ |
+| | $\bar A = \bar Z W^\top$ | $n \times m$ |
+| $A = \sigma(Z)$ elementwise | $\bar Z = \bar A \odot \sigma'(Z)$ | $n \times h$ |
+| $P = \operatorname{softmax}(Z)$, mean cross-entropy | $\bar Z = (P - Y) / n$ | $n \times k$ |
+
+## The activation layer
+
+An elementwise activation $A = \sigma(Z)$ connects each $A_{ij}$ to only $Z_{ij}$, so the Jacobian is diagonal and the backward step is an elementwise product, written $\odot$:
+
+$$
+\bar Z = \bar A \odot \sigma'(Z).
+
+$$
+
+In words: each entry's gradient is scaled by the activation's slope at that entry. For ReLU the slope is 1 where $Z > 0$ and 0 elsewhere, so the backward pass simply blocks the gradient of every unit that was off. For sigmoid the slope $\sigma(z)(1 - \sigma(z))$ is at most $0.25$, which is why long chains of sigmoids shrink gradients.
+
+The backward pass never forms a full Jacobian. The Jacobian of $Z \mapsto AW$ with respect to $W$ would have $(n h) \times (m h)$ entries; the rules above compute its product with $\bar Z$ directly, in the cost of one matrix multiply.
+
+## The full gradient
+
+Chaining the rules from the loss down gives the whole backward pass of the two-layer network:
+
+$$
+\bar Z_2 = \tfrac{1}{n}(P - Y), \quad \bar W_2 = A_1^\top \bar Z_2, \quad \bar A_1 = \bar Z_2 W_2^\top, \quad \bar Z_1 = \bar A_1 \odot \mathbb{1}[Z_1 > 0], \quad \bar W_1 = X^\top \bar Z_1.
+
+$$
+
+In words: start with prediction error, turn it into the last layer's weight gradient using that layer's input, send it back through the transposed weights, mask it with ReLU's slope, and repeat for the first layer. For a deeper network the middle two steps repeat once per layer. The code implements exactly these lines and checks $\bar W_1$ entry by entry against finite differences.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+n, d, h, k = 8, 4, 5, 3  # examples, inputs, hidden units, classes
+X = rng.normal(size=(n, d))
+Y = np.eye(k)[rng.integers(0, k, size=n)]
+W1, b1 = rng.normal(size=(d, h)) * 0.5, np.zeros(h)
+W2, b2 = rng.normal(size=(h, k)) * 0.5, np.zeros(k)
+
+def forward(W1, b1, W2, b2):
+    Z1 = X @ W1 + b1
+    A1 = np.maximum(Z1, 0)
+    Z2 = A1 @ W2 + b2
+    P = np.exp(Z2 - Z2.max(1, keepdims=True))
+    P /= P.sum(1, keepdims=True)
+    return Z1, A1, P, -np.mean(np.sum(Y * np.log(P), 1))
+
+Z1, A1, P, L = forward(W1, b1, W2, b2)
+dZ2 = (P - Y) / n                 # softmax + mean cross-entropy
+dW2, db2 = A1.T @ dZ2, dZ2.sum(0)
+dA1 = dZ2 @ W2.T
+dZ1 = dA1 * (Z1 > 0)              # relu' is 1 where Z1 > 0
+dW1, db1 = X.T @ dZ1, dZ1.sum(0)
+print("shapes:", dW1.shape, db1.shape, dW2.shape, db2.shape)
+
+# finite-difference check on every entry of W1
+num = np.zeros_like(W1)
+for idx in np.ndindex(W1.shape):
+    E = np.zeros_like(W1)
+    E[idx] = 1e-6
+    num[idx] = (forward(W1 + E, b1, W2, b2)[3] - forward(W1 - E, b1, W2, b2)[3]) / 2e-6
+rel = np.abs(num - dW1).max() / np.abs(dW1).max()
+print("loss:", round(L, 4), " W1 gradient matches:", rel < 1e-6)
+# shapes: (4, 5) (5,) (5, 3) (3,)
+# loss: 1.0235  W1 gradient matches: True
+```
+
+In words: every gradient has the shape of its parameter, and the derived $\bar W_1$ agrees with the numerical one to a relative error below $10^{-6}$ on all 20 entries. The check needed $2 \times 20$ extra forward passes for one matrix; the backward pass got all four gradients for the cost of about two forward passes.
+
+<Callout type="pitfall">
+Forgetting the $1/n$ (or applying it twice) does not break training outright, it silently changes the effective learning rate by a factor of the batch size. Shape errors are loud; scale errors are quiet. A gradient check against the exact loss you report catches both.
+</Callout>
+
+## Training with it
+
+With the gradients in hand, gradient descent (see [Gradient Descent](../../../math/optimization/gradient-descent/)) updates each parameter by $-\eta \bar W$ for a learning rate $\eta$. The network below learns two interleaved half-moons, a problem no linear classifier solves.
+
+```python
+import numpy as np
+
+# two interleaved half-moons: not linearly separable
+rng = np.random.default_rng(1)
+t = rng.uniform(0, np.pi, 200)
+X = np.vstack([np.c_[np.cos(t[:100]), np.sin(t[:100])],
+               np.c_[1 - np.cos(t[100:]), 0.5 - np.sin(t[100:])]])
+X += rng.normal(scale=0.2, size=X.shape)
+y = np.r_[np.zeros(100, int), np.ones(100, int)]
+Y = np.eye(2)[y]
+
+W1, b1 = rng.normal(size=(2, 16)), np.zeros(16)
+W2, b2 = rng.normal(size=(16, 2)) * 0.01, np.zeros(2)
+lr, n = 0.5, len(X)
+for step in range(2001):
+    Z1 = X @ W1 + b1
+    A1 = np.maximum(Z1, 0)
+    Z2 = A1 @ W2 + b2
+    P = np.exp(Z2 - Z2.max(1, keepdims=True))
+    P /= P.sum(1, keepdims=True)
+    if step % 500 == 0:
+        loss = -np.mean(np.log(P[np.arange(n), y]))
+        print(f"step {step:4d}  loss {loss:.3f}  accuracy {np.mean(P.argmax(1) == y):.2f}")
+    dZ2 = (P - Y) / n
+    dZ1 = (dZ2 @ W2.T) * (Z1 > 0)
+    W2 -= lr * A1.T @ dZ2
+    b2 -= lr * dZ2.sum(0)
+    W1 -= lr * X.T @ dZ1
+    b1 -= lr * dZ1.sum(0)
+# step    0  loss 0.660  accuracy 0.85
+# step  500  loss 0.063  accuracy 0.98
+# step 1000  loss 0.030  accuracy 0.99
+# step 1500  loss 0.021  accuracy 1.00
+# step 2000  loss 0.017  accuracy 1.00
+```
+
+In words: the loss starts at 0.660, close to $\ln 2 \approx 0.693$ for a network that is nearly guessing, and falls to 0.017 after 2000 steps while accuracy reaches 1.00 on the training set. The update lines are the full gradient from the previous section and nothing else; this is all a framework does for a dense network, except that it derives the backward lines itself, as [Automatic Differentiation](../automatic-differentiation/) explains.
+
+## The general recursion
+
+Naming $\delta_\ell = \bar Z_\ell$ for layer $\ell$ of an $L$-layer network with activation $\sigma$, the derivation above is the textbook recursion:
+
+$$
+\delta_L = \tfrac{1}{n}(P - Y), \qquad \delta_\ell = \left(\delta_{\ell + 1} W_{\ell + 1}^\top\right) \odot \sigma'(Z_\ell), \qquad \bar W_\ell = A_{\ell - 1}^\top \delta_\ell.
+
+$$
+
+In words: each layer's error is the next layer's error sent back through its weights and scaled by this layer's activation slope; the weight gradient is that error times the layer's input. Two things follow from the form. The cost of the backward pass is about twice the forward pass, two matrix multiplies per layer instead of one. And $\delta_\ell$ is a product of one weight matrix and one slope per layer above it, so it can shrink or grow exponentially with depth. That is the vanishing and exploding gradient problem, which [Weight Initialization](../weight-initialization/) and normalization layers exist to control.
+
+<Callout type="key">
+Four local rules cover a dense network: $\bar W = A^\top \bar Z$, $\bar b = $ column sums, $\bar A = \bar Z W^\top$, and $\bar Z = \bar A \odot \sigma'(Z)$, plus $(P - Y)/n$ at the top. When unsure, let the shapes place the transposes.
+</Callout>
