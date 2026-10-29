@@ -13,6 +13,8 @@ Owns architectures, training mechanics, and the mathematics of how deep networks
 
 ## 1. Neural Network Foundations, Deepened
 
+_Status 2026-10-29: all 7 notes written (numpy only, no torch pin yet). Figures: CompGraphStepper, InitDepth, ActivationCurves, ReluApprox. Tiers: backpropagation and weight-initialization changed to core; automatic-differentiation and the universal approximation proof stay advanced._
+
 _(Picks up exactly where `ml/shallow-neural-networks` left off — this is where backprop stops being "intuitive" and becomes fully derived.)_
 
 1. **Computational graphs** — representing a network as a graph of operations, the structure everything else here depends on

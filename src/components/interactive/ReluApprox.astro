@@ -1,0 +1,140 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One hidden layer of ReLUs approximates a curve"
+  caption="The network has n ReLU units, one per knot (yellow), and is built, not trained: each unit bends the line at its knot by exactly the change in slope there. Blue is the target, green the network, red the gap. Doubling n cuts the maximum error by about four, as in the note: 0.21 at 4 units, 0.0048 at 32 for sin."
+>
+  <relu-approx>
+    <div class="ra-ctl">
+      <input type="hidden" data-target value="sin" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="sin" aria-pressed="true">sin x</button>
+        <button type="button" class="btn" data-choice="wiggle" aria-pressed="false">sin 3x + x/3</button>
+      </span>
+    </div>
+    <label class="ra-lbl">hidden units n <input type="range" min="1" max="40" step="1" value="4" data-n /> <b data-nv>4</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">y</span>
+      <svg class="ra-svg" viewBox="0 0 400 220" data-grid='{"box":[20,10,390,210],"x":[0,6.2832],"y":[-2,3]}' role="img" aria-label="Target curve, piecewise-linear ReLU network approximation and the knots">
+        <line x1="20" y1="130" x2="390" y2="130" class="ra-axis"></line>
+        <path data-err class="ra-err"></path>
+        <path data-target-line class="ra-target"></path>
+        <path data-net class="ra-net"></path>
+        <g data-knots></g>
+        <text x="24" y="206" class="ax-tick">0</text>
+        <text x="386" y="206" class="ax-tick ra-end">2π</text>
+      </svg>
+      <span class="ax-x">x</span>
+    </div>
+    <p class="ra-stat" data-stat></p>
+  </relu-approx>
+</Figure>
+
+<style>
+  .ra-ctl {
+    margin-bottom: 10px;
+  }
+  .ra-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ra-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ra-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ra-axis {
+    stroke: var(--text-faint);
+    stroke-width: 1;
+  }
+  .ra-target {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .ra-net {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .ra-err {
+    fill: rgba(234, 67, 53, 0.3);
+    stroke: none;
+  }
+  .ra-svg :global(.ra-knot) {
+    fill: var(--g-yellow);
+  }
+  .ra-end {
+    text-anchor: end;
+  }
+  .ra-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const TWO_PI = 2 * Math.PI;
+  const TARGETS: Record<string, (x: number) => number> = {
+    sin: Math.sin,
+    wiggle: (x) => Math.sin(3 * x) + x / 3,
+  };
+  // Plot area [20, 10]–[390, 210] for x in [0, 2π] and y in [−2, 3].
+  const px = (x: number) => 20 + (x / TWO_PI) * 370;
+  const py = (y: number) => 210 - ((y + 2) / 5) * 200;
+
+  class ReluApprox extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-target]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-n]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const f = TARGETS[this.querySelector<HTMLInputElement>('[data-target]')!.value];
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-nv]')!.textContent = `${n}`;
+
+      // Same construction as the note: unit i is relu(x − knot_i), weighted by the slope change.
+      const knots = Array.from({ length: n + 1 }, (_, i) => (i / n) * TWO_PI);
+      const slopes = knots.slice(1).map((k, i) => (f(k) - f(knots[i])) / (k - knots[i]));
+      const w = slopes.map((s, i) => (i ? s - slopes[i - 1] : s));
+      const net = (x: number) => f(0) + w.reduce((acc, wi, i) => acc + wi * Math.max(x - knots[i], 0), 0);
+
+      let dT = '';
+      let dN = '';
+      let up = '';
+      let down = '';
+      let maxErr = 0;
+      const N = 600;
+      for (let i = 0; i <= N; i++) {
+        const x = (i / N) * TWO_PI;
+        const t = f(x);
+        const y = net(x);
+        maxErr = Math.max(maxErr, Math.abs(t - y));
+        dT += `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(t).toFixed(1)}`;
+        dN += `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(y).toFixed(1)}`;
+        up += `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(t).toFixed(1)}`;
+        down = `L${px(x).toFixed(1)},${py(y).toFixed(1)}` + down;
+      }
+      this.querySelector('[data-target-line]')!.setAttribute('d', dT);
+      this.querySelector('[data-net]')!.setAttribute('d', dN);
+      this.querySelector('[data-err]')!.setAttribute('d', `${up}${down}Z`);
+      this.querySelector('[data-knots]')!.innerHTML = knots
+        .map((k) => `<circle cx="${px(k).toFixed(1)}" cy="${py(f(k)).toFixed(1)}" r="3.5" class="ra-knot"></circle>`)
+        .join('');
+      this.querySelector('[data-stat]')!.textContent = `n = ${n} units · max error ${maxErr.toFixed(4)}`;
+    }
+  }
+  customElements.define('relu-approx', ReluApprox);
+</script>

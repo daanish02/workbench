@@ -3,6 +3,160 @@ title: "Deep Learning Losses"
 description: "Cross-entropy and MSE revisited at the scale and context deep nets actually use them."
 order: 6
 tier: core
+takeaways:
+  - "Use **cross-entropy** for classification, not MSE: through a sigmoid or softmax, cross-entropy's gradient on the logit is $p - y$, so a confidently wrong prediction gets a gradient near 1, where MSE's is near 0 (−0.998 against −0.005 at $z = -6$)."
+  - "Losses take **logits**, not probabilities. `CrossEntropyLoss` and `BCEWithLogitsLoss` apply the softmax or sigmoid inside, using **log-sum-exp**, which stays finite where `log(softmax(z))` gives `nan`."
+  - "**Label smoothing** trains against $1 - \\varepsilon$ on the true class instead of 1, so the loss stops rewarding ever more confident outputs."
+  - "For regression, MSE fits the mean and is pulled by outliers; MAE fits the median; **Huber** is quadratic near 0 and linear far away. On 1, 2, 2, 3, 3, 4, 50 the best constants are 9.29, 3.00 and 2.75."
+  - "A language model's loss is the mean cross-entropy of the next token; **perplexity** is its exponential, the effective number of equally likely choices."
+resources:
+  - title: "CrossEntropyLoss (PyTorch docs)"
+    url: "https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html"
+    note: "Logit inputs, class weights, ignore_index, label_smoothing and the reduction options, with the exact formulas."
+  - title: "When Does Label Smoothing Help? (Müller, Kornblith, Hinton)"
+    url: "https://arxiv.org/abs/1906.02629"
+    note: "What label smoothing does to the learned representations and to calibration, and why it hurts distillation."
+  - title: "Focal Loss for Dense Object Detection (Lin et al.)"
+    url: "https://arxiv.org/abs/1708.02002"
+    note: "Down-weights easy examples so a detector is not swamped by thousands of easy background boxes."
 ---
 
-_Placeholder. Content not written yet._
+The loss is the single number training pushes down, so it decides what the network learns and, through its gradient, how fast. The [cross-entropy](../../../math/information-theory/cross-entropy/) and mean squared error definitions are short; what matters in deep learning is how each one behaves at the end of a network: through a softmax, with logits in the thousands, on billions of tokens. This note explains why classification uses cross-entropy rather than MSE, how frameworks compute it without overflow, what label smoothing and class weights change, the regression losses and their response to outliers, and the language-model loss with perplexity. The gradient $p - y$ comes from [Backpropagation Derived](../backpropagation-fully-derived/).
+
+## Why not MSE for classes
+
+A binary classifier outputs a **logit** $z$, turned into a probability $p = \sigma(z)$ by the sigmoid. Compare the two losses for a target $y = 1$. Squared error $(p - 1)^2$ has, by the chain rule through the sigmoid, the gradient $2(p - 1)\, p (1 - p)$ on $z$. **Binary cross-entropy** $-\log p$ has the gradient $p - 1$: the sigmoid's slope cancels against the log.
+
+```python
+import math
+
+# one example, target y = 1, the model is confidently wrong
+for z in [-6.0, -2.0, 0.0, 2.0]:
+    p = 1 / (1 + math.exp(-z))
+    mse_grad = 2 * (p - 1) * p * (1 - p)  # d/dz of (p - 1)^2 through the sigmoid
+    bce_grad = p - 1                      # d/dz of -log p through the sigmoid
+    print(f"z {z:5.1f}  p {p:.4f}  MSE grad {mse_grad:8.5f}  BCE grad {bce_grad:8.5f}")
+# z  -6.0  p 0.0025  MSE grad -0.00492  BCE grad -0.99753
+# z  -2.0  p 0.1192  MSE grad -0.18496  BCE grad -0.88080
+# z   0.0  p 0.5000  MSE grad -0.25000  BCE grad -0.50000
+# z   2.0  p 0.8808  MSE grad -0.02503  BCE grad -0.11920
+```
+
+In words: at $z = -6$ the model gives the true class probability 0.0025, about as wrong as it can be. Cross-entropy's gradient is −0.998, a strong push; MSE's is −0.005, two hundred times weaker, because the sigmoid is saturated and MSE multiplies by its slope. MSE learns slowest exactly when the model is most wrong. Cross-entropy is also the [maximum likelihood](../../../math/statistics/estimation/) loss for a categorical output, so it is the principled choice, not just the convenient one.
+
+## Logits and log-sum-exp
+
+For $k$ classes the cross-entropy of the correct class $c$ under a softmax can be written without ever forming the probabilities:
+
+$$
+-\log \operatorname{softmax}(z)_c = \log \sum_{j=1}^{k} e^{z_j} - z_c = \operatorname{LSE}(z) - z_c.
+
+$$
+
+In words: the loss is the **log-sum-exp** of the logits minus the correct logit. LSE is computed stably by factoring out the largest logit, $\operatorname{LSE}(z) = m + \log \sum_j e^{z_j - m}$ with $m = \max_j z_j$, so the largest exponent is $e^{0} = 1$ and nothing overflows.
+
+```python
+import numpy as np
+
+z = np.array([1000.0, 0.0, -1000.0])  # large logits, class 0 is correct
+
+with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+    naive = -np.log(np.exp(z) / np.exp(z).sum())[0]
+# log-softmax via log-sum-exp: subtract the max first
+lse = z.max() + np.log(np.exp(z - z.max()).sum())
+stable = lse - z[0]
+print("naive:", naive, " stable:", stable)
+
+z2 = np.array([2.0, 1.0, -1.0])
+lse2 = z2.max() + np.log(np.exp(z2 - z2.max()).sum())
+print("ordinary logits, loss:", round(lse2 - z2[1], 4))
+# naive: nan  stable: 0.0
+# ordinary logits, loss: 1.349
+```
+
+In words: $e^{1000}$ overflows to infinity, infinity over infinity is `nan`, and the naive loss is `nan`. The stable form gives the correct 0.0: the model is certain and right. For ordinary logits $(2, 1, -1)$ with class 1 correct the loss is 1.349, which is $-\ln 0.2595$, the probability the softmax gave class 1 in the backpropagation note.
+
+<Callout type="pitfall">
+PyTorch's `nn.CrossEntropyLoss` expects raw logits and applies log-softmax itself; `nn.BCEWithLogitsLoss` expects logits and applies the sigmoid itself. Putting a softmax or sigmoid layer before them applies it twice. Training still runs, but the outputs are squashed, the gradients shrink and the model learns slowly or plateaus. Apply softmax only when you need probabilities for reporting.
+</Callout>
+
+## Label smoothing and weights
+
+With one-hot targets, cross-entropy keeps decreasing as the true-class probability approaches 1, so the logits are pushed to grow without limit. **Label smoothing** replaces the target with $(1 - \varepsilon)$ on the true class plus $\varepsilon / k$ spread over all $k$ classes.
+
+```python
+import numpy as np
+
+k, eps = 5, 0.1
+target_hard = np.eye(k)[0]
+target_smooth = (1 - eps) * target_hard + eps / k  # 0.92 on the true class
+
+for p_true in [0.9, 0.92, 0.99, 0.999]:
+    p = np.full(k, (1 - p_true) / (k - 1))
+    p[0] = p_true
+    hard = -np.sum(target_hard * np.log(p))
+    smooth = -np.sum(target_smooth * np.log(p))
+    print(f"p(true) {p_true:.3f}  hard loss {hard:.4f}  smoothed loss {smooth:.4f}")
+# p(true) 0.900  hard loss 0.1054  smoothed loss 0.3920
+# p(true) 0.920  hard loss 0.0834  smoothed loss 0.3897
+# p(true) 0.990  hard loss 0.0101  smoothed loss 0.4886
+# p(true) 0.999  hard loss 0.0010  smoothed loss 0.6644
+```
+
+In words: with 5 classes and $\varepsilon = 0.1$ the smoothed target puts 0.92 on the true class. The hard loss keeps falling all the way to 0.999, while the smoothed loss is lowest at 0.92 (0.3897) and rises again for more confident outputs (0.6644 at 0.999). The model is penalised for overconfidence, which usually improves calibration and slightly improves accuracy; it was used in the original transformer with $\varepsilon = 0.1$.
+
+Two other changes are common when classes are imbalanced. **Class weights** multiply each example's loss by a weight for its class, often inversely proportional to class frequency. **Focal loss** multiplies by $(1 - p_c)^{\gamma}$, which shrinks the loss of examples the model already gets right and keeps the hard ones; it was introduced for object detection, where almost every candidate box is easy background.
+
+## Regression losses
+
+For a real-valued target the usual losses are **MSE** $(y - \hat y)^2$, **MAE** $\lvert y - \hat y \rvert$, and **Huber**, quadratic for small errors and linear beyond a threshold $\delta$:
+
+$$
+\ell_\delta(r) = \begin{cases} \tfrac{1}{2} r^{2} & \lvert r \rvert \le \delta \\ \delta \left( \lvert r \rvert - \tfrac{1}{2} \delta \right) & \lvert r \rvert > \delta. \end{cases}
+
+$$
+
+In words: Huber behaves like MSE near zero, so its gradient shrinks smoothly as the fit improves, and like MAE far away, so one large error contributes a gradient of at most $\delta$ instead of one proportional to the error. The best constant prediction shows what each loss is estimating.
+
+```python
+import numpy as np
+
+y = np.array([1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 50.0])  # one outlier
+c = np.linspace(0, 50, 50001)                       # candidate constant predictions
+r = y[None, :] - c[:, None]
+
+def huber(r, delta=1.0):
+    return np.where(np.abs(r) <= delta, 0.5 * r**2, delta * (np.abs(r) - 0.5 * delta))
+
+for name, loss in [("MSE", (r**2).mean(1)), ("MAE", np.abs(r).mean(1)), ("Huber", huber(r).mean(1))]:
+    print(f"{name:5s} best constant: {c[loss.argmin()]:.2f}")
+print("mean:", round(y.mean(), 2), " median:", np.median(y))
+# MSE   best constant: 9.29
+# MAE   best constant: 3.00
+# Huber best constant: 2.75
+# mean: 9.29  median: 3.0
+```
+
+In words: MSE's best constant is the mean, 9.29, dragged far from the bulk of the data by the single 50. MAE's is the median, 3.00. Huber with $\delta = 1$ lands at 2.75: the outlier, like every point more than 1 away, pulls with a fixed force of 1, so its size no longer matters. Use MSE when large errors really are much worse, and Huber (PyTorch's `HuberLoss`, or `SmoothL1Loss`) when the targets contain outliers or noisy labels.
+
+## Language model loss
+
+A language model predicts a distribution over the vocabulary for each next token. Its loss is the cross-entropy of the actual next token, averaged over every position of every sequence in the batch. **Perplexity** is the exponential of that mean loss.
+
+```python
+import math
+
+# probabilities a language model gave to each actual next token
+p_tokens = [0.5, 0.25, 0.8, 0.1, 0.6]
+ce = -sum(math.log(p) for p in p_tokens) / len(p_tokens)
+print(f"mean cross-entropy {ce:.4f} nats, perplexity {math.exp(ce):.3f}")
+print(f"uniform over 50,000 tokens: loss {math.log(50000):.3f}, perplexity {math.exp(math.log(50000)):.0f}")
+# mean cross-entropy 1.0232 nats, perplexity 2.782
+# uniform over 50,000 tokens: loss 10.820, perplexity 50000
+```
+
+In words: five tokens with probabilities 0.5, 0.25, 0.8, 0.1 and 0.6 give a mean loss of 1.0232 nats and a perplexity of 2.782: on average the model was as uncertain as a uniform choice among about 2.8 tokens. A model that knows nothing and spreads probability evenly over a 50,000-token vocabulary starts at a loss of $\ln 50000 = 10.820$ and a perplexity of 50,000. That starting value is a useful check: a freshly initialised language model whose first loss is far from $\ln(\text{vocabulary size})$ has a bug.
+
+<Callout type="key">
+Pick the loss for what it estimates and for its gradient: cross-entropy on logits for classes (gradient $p - y$, computed with log-sum-exp), MSE for the mean, MAE for the median, Huber for a mean that ignores outliers. Know the loss of a model that guesses, $\ln k$ for $k$ classes, and check the first step against it.
+</Callout>

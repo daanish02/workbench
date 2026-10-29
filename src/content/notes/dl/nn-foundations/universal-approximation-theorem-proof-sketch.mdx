@@ -3,6 +3,161 @@ title: "Universal Approximation Proof"
 description: "A deeper look at the universal approximation theorem, with a proof sketch."
 order: 7
 tier: advanced
+takeaways:
+  - "**Universal approximation**: for any continuous $f$ on a compact set $K \\subset \\mathbb{R}^d$ and any $\\varepsilon > 0$, some network with one hidden layer is within $\\varepsilon$ of $f$ everywhere on $K$, provided the activation is continuous and not a polynomial."
+  - "In one dimension the proof is constructive: $n$ ReLUs reproduce the piecewise-linear interpolant of $f$ at $n + 1$ knots. For $\\sin$ on $[0, 2\\pi]$ the error falls from 0.21 at 4 units to 0.0012 at 64, a factor of about 4 per doubling."
+  - "In $d$ dimensions, write $f$ as a sum of **ridge functions** $g(a \\cdot x)$, for example a Fourier series, and approximate each one-dimensional $g$ with the 1D construction."
+  - "The theorem says nothing about how many units are needed, whether gradient descent finds them, or how well the result generalizes. The width can grow exponentially with the dimension."
+  - "**Depth** can be exponentially cheaper: composing a two-ReLU tent map $k$ times gives $2^{k}$ linear pieces from $2k$ units, while one hidden layer needs at least $2^{k} - 1$."
+resources:
+  - title: "A visual proof that neural nets can compute any function (Michael Nielsen)"
+    url: "http://neuralnetworksanddeeplearning.com/chap4.html"
+    note: "Builds steps, bumps and towers from sigmoids with interactive sliders; the 1D and 2D constructions in pictures."
+  - title: "Universal approximation theorem (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Universal_approximation_theorem"
+    note: "The precise statements (Cybenko, Hornik, Leshno et al.) and the arbitrary-width, arbitrary-depth and bounded-width variants."
+  - title: "Benefits of depth in neural networks (Matus Telgarsky)"
+    url: "https://arxiv.org/abs/1602.04485"
+    note: "The sawtooth construction: functions a deep network computes with few units that any shallow one needs exponentially many for."
 ---
 
-_Placeholder. Content not written yet._
+The [universal approximation theorem](../../../ml/shallow-neural-networks/universal-approximation-theorem/) is often quoted as "a neural network can represent any function". The precise statement is narrower and more useful: which functions, on which sets, in what sense of "approximate", with which activations, and what it costs. This note states the theorem carefully, proves the one-dimensional case by an explicit construction with ReLUs, extends the idea to $d$ dimensions with ridge functions, and then shows what the theorem does not say, including why depth matters even though one hidden layer suffices in principle. It uses uniform continuity from [Real Analysis](../../../math/calculus/real-analysis/) and the [activations](../modern-activations/) of this section.
+
+## The statement
+
+A one-hidden-layer network with $n$ units and activation $\sigma$ computes
+
+$$
+N(x) = c + \sum_{i=1}^{n} v_i \, \sigma(w_i \cdot x + b_i), \qquad x \in \mathbb{R}^{d}.
+
+$$
+
+In words: each hidden unit takes a weighted sum of the input plus a bias, applies $\sigma$, and the output is a weighted sum of the units plus a constant.
+
+**Theorem** (Cybenko 1989 for sigmoids; Leshno, Lin, Pinkus and Schocken 1993 in general). Let $\sigma$ be continuous. Then for every compact $K \subset \mathbb{R}^{d}$, every continuous $f : K \to \mathbb{R}$ and every $\varepsilon > 0$ there is a network $N$ of this form with
+
+$$
+\sup_{x \in K} \lvert f(x) - N(x) \rvert < \varepsilon
+
+$$
+
+if and only if $\sigma$ is not a polynomial.
+
+In words: on a bounded, closed region, a wide enough single hidden layer can stay within any tolerance of any continuous function, uniformly, at every point at once. Sigmoid, tanh, ReLU, GELU and SiLU all qualify. A polynomial activation does not: a sum of degree-$p$ polynomials of $w \cdot x$ is still a polynomial of degree at most $p$, and those form a closed set that does not contain, for example, $x_1^{p+1}$, so that function stays a fixed distance away however wide the layer. The "if and only if" also explains why a network with no activation, or a linear one, is no more expressive than a single linear map.
+
+## One dimension with ReLUs
+
+On an interval $[a, b]$, pick $n + 1$ equally spaced **knots** $t_0 < t_1 < \dots < t_n$ and let $L$ be the **piecewise-linear interpolant**: the function that equals $f$ at each knot and is a straight line in between. $L$ is exactly a ReLU network. Let $s_i$ be the slope of $L$ on $[t_i, t_{i+1}]$; then
+
+$$
+L(x) = f(t_0) + s_0 \operatorname{relu}(x - t_0) + \sum_{i=1}^{n-1} (s_i - s_{i-1}) \operatorname{relu}(x - t_i) \quad \text{for } x \in [a, b].
+
+$$
+
+In words: start at $f(t_0)$ with slope $s_0$, and at each knot add a ReLU that switches on there and changes the slope by exactly the right amount. Unit $i$ has input weight 1, bias $-t_i$ and output weight $s_i - s_{i-1}$: $n$ units, all weights written down, no training.
+
+The approximation step uses only continuity. A continuous $f$ on a closed interval is **uniformly continuous**: for every $\varepsilon$ there is a $\delta$ such that points closer than $\delta$ have values closer than $\varepsilon$. With knots less than $\delta$ apart, $f$ and $L$ both stay within $\varepsilon$ of $f(t_i)$ on each piece, so $\lvert f - L \rvert < 2\varepsilon$ everywhere. If $f$ is twice differentiable the error is at most $h^{2} \max \lvert f'' \rvert / 8$ for knot spacing $h$, which falls by four each time $n$ doubles.
+
+```python
+import numpy as np
+
+def relu_interpolant(f, a, b, n):
+    """One hidden layer of n ReLUs that matches f at n + 1 equally spaced knots."""
+    knots = np.linspace(a, b, n + 1)
+    slopes = np.diff(f(knots)) / np.diff(knots)
+    # output weight of unit i = change of slope at knot i
+    out_w = np.r_[slopes[0], np.diff(slopes)]
+    def net(x):
+        hidden = np.maximum(x[:, None] - knots[None, :-1], 0)  # unit i: relu(x - knot_i)
+        return f(knots[0]) + hidden @ out_w
+    return net
+
+f = np.sin
+x = np.linspace(0, 2 * np.pi, 10001)
+for n in [4, 8, 16, 32, 64]:
+    err = np.abs(relu_interpolant(f, 0, 2 * np.pi, n)(x) - f(x)).max()
+    print(f"{n:3d} ReLU units: max error {err:.5f}")
+#   4 ReLU units: max error 0.21051
+#   8 ReLU units: max error 0.07038
+#  16 ReLU units: max error 0.01885
+#  32 ReLU units: max error 0.00479
+#  64 ReLU units: max error 0.00120
+```
+
+In words: 4 units approximate $\sin$ on $[0, 2\pi]$ to within 0.21, 8 to within 0.070, and from there each doubling divides the error by about 4, down to 0.0012 at 64 units. The bound $h^{2}/8$ with $\max \lvert \sin'' \rvert = 1$ predicts 0.31 at 4 units and 0.0012 at 64, so the construction behaves as the analysis says.
+
+<ReluApprox />
+
+With sigmoids the same idea uses **steps** instead of bends. A steep sigmoid $\sigma(k(x - t))$ is close to a step at $t$, and the difference of two steps is a **bump**, close to 1 on an interval and 0 elsewhere. A weighted sum of narrow bumps is a staircase that follows $f$.
+
+```python
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-np.clip(z, -500, 500)))
+
+# a bump on [1, 2] from two steep sigmoids: step up at 1, step down at 2
+x = np.array([0.5, 0.9, 1.1, 1.5, 1.9, 2.1, 2.5])
+for k in [5, 50, 500]:
+    bump = sigmoid(k * (x - 1)) - sigmoid(k * (x - 2))
+    print(f"steepness {k:3d}:", " ".join(f"{v:.3f}" for v in bump))
+# steepness   5: 0.075 0.373 0.611 0.848 0.611 0.373 0.075
+# steepness  50: 0.000 0.007 0.993 1.000 0.993 0.007 0.000
+# steepness 500: 0.000 0.000 1.000 1.000 1.000 0.000 0.000
+```
+
+In words: at steepness 5 the "bump" is a soft hill that never reaches 1; at 50 it is 0.993 just inside $[1, 2]$ and 0.007 just outside; at 500 it is an indicator of the interval to three decimals. Two units per bump, one bump per small interval, gives the sigmoid version of the 1D proof.
+
+## Many dimensions
+
+A **ridge function** is a function of $x \in \mathbb{R}^{d}$ that depends only on one direction, $g(a \cdot x)$ for a vector $a$ and a function $g : \mathbb{R} \to \mathbb{R}$. A single hidden unit $\sigma(w \cdot x + b)$ is one. The proof sketch has two steps:
+
+1. **Every continuous $f$ on $K$ is close to a finite sum of ridge functions.** For example, $f$ can be approximated uniformly by a trigonometric polynomial $\sum_j \left( \alpha_j \cos(a_j \cdot x) + \beta_j \sin(a_j \cdot x) \right)$ (by the Stone–Weierstrass theorem, after extending $f$ continuously to a box). Each term is a ridge function of $a_j \cdot x$.
+2. **Each ridge function is close to a one-hidden-layer network.** On $K$, the scalar $u = a_j \cdot x$ ranges over a bounded interval, and the 1D construction approximates $g(u)$ there with units $\sigma(\text{weight} \cdot u + \text{bias}) = \sigma(\text{weight} \, a_j \cdot x + \text{bias})$, which are hidden units of the full network.
+
+Adding the networks for all the terms gives one wide hidden layer, and the two errors add up to less than any chosen $\varepsilon$. Cybenko's original proof is non-constructive instead: it shows, with the Hahn–Banach and Riesz representation theorems, that no nonzero measure can be orthogonal to every $\sigma(w \cdot x + b)$, so their span is dense.
+
+## What it does not say
+
+The theorem is an existence result. It leaves out everything that decides whether a network works in practice:
+
+- **Size.** The number of units can be enormous. Covering a $d$-dimensional cube with bumps of width $h$ takes about $(1/h)^{d}$ of them; for generic smooth functions, one-hidden-layer approximation to accuracy $\varepsilon$ can need a number of units exponential in $d$.
+- **Learnability.** It says the weights exist, not that gradient descent from a random start finds them. The construction above sets the weights by hand.
+- **Generalization.** Fitting $f$ on the training points is not fitting it elsewhere. A network wide enough to approximate anything is also wide enough to memorise noise, which is what regularization addresses.
+- **Other settings.** It covers continuous functions on compact sets in the sup norm. Discontinuous targets, unbounded domains and extrapolation are outside it.
+
+<Callout type="pitfall">
+"Neural networks are universal approximators" is not a reason a particular network will fit or generalize. Polynomials, Fourier series, splines and nearest-neighbour tables are universal approximators too. What makes deep networks useful is how efficiently they approximate the functions that occur in practice and how well training finds those approximations, neither of which the theorem addresses.
+</Callout>
+
+## Why depth helps
+
+One hidden layer of $m$ ReLUs computes a piecewise-linear function of one variable with at most $m + 1$ pieces, since each unit adds one bend. Composition multiplies instead of adds. The **tent map** $T(x) = 2\operatorname{relu}(x) - 4\operatorname{relu}(x - 0.5)$ rises from 0 to 1 on $[0, \tfrac12]$ and falls back on $[\tfrac12, 1]$, using two ReLUs. Composing it with itself doubles the number of pieces each time.
+
+```python
+import numpy as np
+
+def tent(x):
+    # 2 * relu(x) - 4 * relu(x - 0.5): up then down on [0, 1], two ReLUs
+    return 2 * np.maximum(x, 0) - 4 * np.maximum(x - 0.5, 0)
+
+x = np.linspace(0, 1, 2**16 + 1)
+y = x.copy()
+for depth in range(1, 7):
+    y = tent(y)
+    slopes = np.round(np.diff(y) / np.diff(x), 6)
+    pieces = 1 + np.count_nonzero(np.diff(slopes))
+    print(f"depth {depth}: {2 * depth:2d} ReLUs in total, {pieces:3d} linear pieces")
+# depth 1:  2 ReLUs in total,   2 linear pieces
+# depth 2:  4 ReLUs in total,   4 linear pieces
+# depth 3:  6 ReLUs in total,   8 linear pieces
+# depth 4:  8 ReLUs in total,  16 linear pieces
+# depth 5: 10 ReLUs in total,  32 linear pieces
+# depth 6: 12 ReLUs in total,  64 linear pieces
+```
+
+In words: $k$ layers of 2 ReLUs produce a sawtooth with $2^{k}$ linear pieces, 64 pieces from 12 units at depth 6. A one-hidden-layer network needs at least $2^{k} - 1 = 63$ units to produce 64 pieces, and Telgarsky showed that approximating such sawtooths with a shallow network takes exponentially many units. Depth lets a network reuse the same computation many times, which is one theoretical reason deep networks are preferred over very wide shallow ones.
+
+<Callout type="key">
+One hidden layer with any non-polynomial activation can approximate any continuous function on a compact set; in 1D the ReLU network is just the piecewise-linear interpolant. The theorem guarantees existence only. Size, trainability and generalization are separate questions, and depth can make the size exponentially smaller.
+</Callout>
