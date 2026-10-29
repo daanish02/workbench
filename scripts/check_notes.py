@@ -9,6 +9,7 @@
 #   "cryptography==50.0.2",
 #   "packaging==26.3",
 #   "capstone==5.0.9",
+#   "scikit-fuzzy==0.5.0",
 # ]
 # ///
 """Run every Python block in one area's notes on its own and check its printed output.

@@ -1,0 +1,257 @@
+---
+title: "Fuzzy Guide"
+description: "A working guide to fuzzy logic in Python with scikit-fuzzy: membership functions, fuzzy operations, rule-based controllers, defuzzification and alpha-cuts, plus how the other fuzzy libraries compare."
+order: 5
+tier: core
+takeaways:
+  - "**scikit-fuzzy** (imported as `skfuzzy`) works on NumPy arrays: a fuzzy set is a universe array plus a membership array of the same length, built with `trimf`, `trapmf`, `gaussmf` or `sigmf`."
+  - "On one universe, fuzzy AND, OR and NOT are plain `np.fmin`, `np.fmax` and `1 - mu`; `interp_membership` reads the degree between grid points."
+  - "`skfuzzy.control` builds a controller from `Antecedent`, `Consequent` and `Rule` objects, with `&`, `|` and `~` in rule conditions. The three-rule fan controller gives 62.45 % at 26 °C, the same as the hand-written one."
+  - "`defuzz` offers centroid, bisector and three maximum methods; on one clipped set they range from 35.0 to 62.45, so the method is a design choice."
+  - "Install it with numpy, scipy, networkx and packaging: scikit-fuzzy 0.5.0 imports all four but declares none of them as dependencies."
+resources:
+  - title: "scikit-fuzzy documentation"
+    url: "https://scikit-fuzzy.github.io/scikit-fuzzy/"
+    note: "API reference and the gallery of examples."
+  - title: "The tipping problem with the control API (scikit-fuzzy)"
+    url: "https://scikit-fuzzy.github.io/scikit-fuzzy/auto_examples/plot_tipping_problem_newapi.html"
+    note: "The standard worked example of `skfuzzy.control`, with plots of each step."
+  - title: "simpful (GitHub)"
+    url: "https://github.com/aresio/simpful"
+    note: "The main alternative: rules written as text, with Mamdani and Sugeno inference."
+---
+
+[Fuzzy Logic](../../foundations/fuzzy-logic/) builds membership functions, the min, max and $1 - x$ operations and a three-rule controller by hand. This page is the library companion: **scikit-fuzzy** does the same work on NumPy arrays, adds more membership shapes and defuzzification methods, and wraps rule bases in a small control API. It is a working reference: find the task in the table, then read the section for a runnable example. Run the examples with `uv run --with numpy --with scipy --with scikit-fuzzy --with networkx --with packaging python`.
+
+<FilterTable plain placeholder="Filter tasks, e.g. triangle, AND, rule, centroid, cut">
+
+### Membership functions
+
+| I want to... | Call |
+|---|---|
+| make a triangle with feet a, c and peak b | `fuzz.trimf(x, [a, b, c])` |
+| make a trapezoid with a flat top from b to c | `fuzz.trapmf(x, [a, b, c, d])` |
+| make a bell curve | `fuzz.gaussmf(x, mean, sigma)` |
+| make an S-curve for an open-ended term | `fuzz.sigmf(x, centre, slope)` |
+| read the degree at a point between grid values | `fuzz.interp_membership(x, mf, value)` |
+
+### Operations
+
+| I want to... | Call |
+|---|---|
+| AND, OR on one universe | `np.fmin(a, b)`, `np.fmax(a, b)` |
+| NOT | `fuzz.fuzzy_not(a)` |
+| AND, OR on two different universes | `fuzz.fuzzy_and(x, a, y, b)`, `fuzz.fuzzy_or(x, a, y, b)` |
+| take an alpha-cut | `fuzz.lambda_cut(mf, alpha)` |
+
+### Controllers
+
+| I want to... | Call |
+|---|---|
+| declare an input or output variable | `ctrl.Antecedent(universe, "name")`, `ctrl.Consequent(...)` |
+| add a term to a variable | `var["warm"] = fuzz.trimf(var.universe, [...])` |
+| generate evenly spaced terms | `var.automf(3, names=[...])` |
+| write a rule | `ctrl.Rule(temp["hot"] & hum["humid"], fan["high"])` |
+| run the controller | `sim = ctrl.ControlSystemSimulation(ctrl.ControlSystem(rules))`, then `sim.compute()` |
+
+### Defuzzification
+
+| I want to... | Call |
+|---|---|
+| reduce a fuzzy set to one number | `fuzz.defuzz(y, mf, "centroid")` |
+| use another method | `"bisector"`, `"mom"`, `"som"`, `"lom"` |
+| set the method in a controller | `ctrl.Consequent(..., defuzzify_method="mom")` |
+
+</FilterTable>
+
+## Choosing a Library
+
+Four Python libraries implement fuzzy logic. Each was installed on Python 3.14 with numpy 2.5.4 and scipy 1.18.1 and run on the fan controller from the [Fuzzy Logic](../../foundations/fuzzy-logic/) note.
+
+| Library | Version | What it offers | Used here? |
+|---|---|---|---|
+| scikit-fuzzy (`skfuzzy`) | 0.5.0, Aug 2024 | NumPy membership functions, operations, five defuzzification methods, a control API. Gave 62.45 % on the fan controller. | Yes: the widest low-level API, and plain arrays make each step inspectable. |
+| simpful | 2.12.0, Feb 2024 | Rules written as text (`"IF (temp IS warm) THEN (fan IS mid)"`), Mamdani and Sugeno inference. Gave 62.47 % on the same controller. | No: pleasant for rule bases, but less useful for showing membership arrays and the operations themselves. |
+| fuzzylogic | 1.5.0, Mar 2025 | Domains and rules with operator syntax. | No: its `triangular` asserts the peak lies strictly between the feet, so the shoulder sets cold and hot raised an `AssertionError` and need its separate `R` and `S` functions. |
+| pyit2fls | 0.9.0, Aug 2026 | Interval type-2 fuzzy sets and systems. Installs and imports. | No: type-2 only; see the last section. |
+
+`fuzzywuzzy`, `thefuzz` and `rapidfuzz` are not fuzzy logic: they do fuzzy *string matching* with edit distance, covered in [String Algorithms](../../../cs/algorithms/string-algorithms/).
+
+<Callout type="pitfall">
+scikit-fuzzy 0.5.0 declares no dependencies, yet `import skfuzzy` needs numpy and scipy, and `skfuzzy.control` also needs networkx and packaging. Installing scikit-fuzzy alone, for example `uv run --with scikit-fuzzy`, installs fine and then fails at import with `ModuleNotFoundError`; list all five.
+</Callout>
+
+## Membership Functions
+
+A fuzzy set in scikit-fuzzy is two arrays of the same length: the **universe** `x` (the sampled input values) and the **membership** array of degrees. The shape functions take the universe and the shape's parameters.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+x = np.arange(0, 41, 1)
+warm_tri = fuzz.trimf(x, [10, 20, 30])
+warm_trap = fuzz.trapmf(x, [10, 17, 23, 30])
+warm_gauss = fuzz.gaussmf(x, 20, 5)
+hot_sig = fuzz.sigmf(x, 30, 0.5)  # S-curve centred at 30
+
+# degree at a point between grid values: linear interpolation
+for name, mf in [("tri", warm_tri), ("trap", warm_trap), ("gauss", warm_gauss), ("sig", hot_sig)]:
+    print(name, round(fuzz.interp_membership(x, mf, 26.5), 3))
+# tri 0.35
+# trap 0.5
+# gauss 0.431
+# sig 0.151
+```
+
+In words: at 26.5 °C the triangle gives 0.35, exactly $(30 - 26.5) / 10$. The trapezoid's flat top ends at 23, so it reaches 0.5 on its falling side. The Gaussian with mean 20 and width 5 gives 0.431, and the S-curve for "hot" is still low at 0.151 because its centre is 30. `interp_membership` interpolates linearly between grid points, so a coarse grid bends curved shapes slightly.
+
+## AND, OR and NOT
+
+When both sets share one universe, the fuzzy operations are elementwise NumPy. `fuzzy_and` and `fuzzy_or` exist for sets on different universes: they resample both onto a common one first.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+x = np.arange(0, 41, 1)
+warm = fuzz.trimf(x, [10, 20, 30])
+hot = fuzz.trimf(x, [20, 40, 40])
+
+# on one universe the operations are plain elementwise numpy
+print("AND min:", np.fmin(warm, hot)[26], " product:", round((warm * hot)[26], 2))
+print("OR  max:", np.fmax(warm, hot)[26], " prob. sum:", round((warm + hot - warm * hot)[26], 2))
+print("NOT warm:", round(fuzz.fuzzy_not(warm)[26], 2))
+# AND min: 0.3  product: 0.12
+# OR  max: 0.4  prob. sum: 0.58
+# NOT warm: 0.6
+```
+
+In words: at 26 °C (index 26) warm is 0.4 and hot 0.3, so min gives 0.3 and max 0.4, the same numbers as the hand-written version. The product and probabilistic sum are one line each, 0.12 and 0.58.
+
+## Rules and a Controller
+
+`skfuzzy.control` wraps the four controller steps. An `Antecedent` is an input variable and a `Consequent` an output; terms are added by indexing; a `Rule` maps a condition to an output term. This is the fan controller from the fuzzy logic note, on a 0.01 grid.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+
+temp = ctrl.Antecedent(np.arange(0, 40.01, 0.01), "temp")
+fan = ctrl.Consequent(np.arange(0, 100.01, 0.01), "fan")
+temp["cold"] = fuzz.trimf(temp.universe, [0, 0, 20])
+temp["warm"] = fuzz.trimf(temp.universe, [10, 20, 30])
+temp["hot"] = fuzz.trimf(temp.universe, [20, 40, 40])
+fan["low"] = fuzz.trimf(fan.universe, [0, 0, 50])
+fan["mid"] = fuzz.trimf(fan.universe, [25, 50, 75])
+fan["high"] = fuzz.trimf(fan.universe, [50, 100, 100])
+
+rules = [ctrl.Rule(temp["cold"], fan["low"]),
+         ctrl.Rule(temp["warm"], fan["mid"]),
+         ctrl.Rule(temp["hot"], fan["high"])]
+sim = ctrl.ControlSystemSimulation(ctrl.ControlSystem(rules))
+for t in [8, 20, 26, 35]:
+    sim.input["temp"] = t
+    sim.compute()
+    print(t, "->", round(sim.output["fan"], 2))
+# 8 -> 18.57
+# 20 -> 50.0
+# 26 -> 62.45
+# 35 -> 82.5
+```
+
+In words: every output matches the hand-written controller: 18.57 % at 8 °C, 50.0 % at 20 °C, 62.45 % at 26 °C and 82.5 % at 35 °C. The simulation object is reused; each `compute` reads the current inputs.
+
+Conditions combine with `&` (AND, min), `|` (OR, max) and `~` (NOT). `automf` generates evenly spaced triangles over the whole universe, useful for a quick start.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+
+temp = ctrl.Antecedent(np.arange(0, 41, 1), "temp")
+hum = ctrl.Antecedent(np.arange(0, 101, 1), "humidity")
+fan = ctrl.Consequent(np.arange(0, 101, 1), "fan", defuzzify_method="mom")
+temp.automf(3, names=["cold", "warm", "hot"])  # three evenly spaced triangles
+hum.automf(3, names=["dry", "normal", "humid"])
+fan.automf(3, names=["low", "mid", "high"])
+
+rules = [ctrl.Rule(temp["hot"] & hum["humid"], fan["high"]),
+         ctrl.Rule(temp["warm"] | hum["normal"], fan["mid"]),
+         ctrl.Rule(~temp["hot"] & hum["dry"], fan["low"])]
+sim = ctrl.ControlSystemSimulation(ctrl.ControlSystem(rules))
+sim.inputs({"temp": 32, "humidity": 80})
+sim.compute()
+print("fan (mean of maximum):", round(sim.output["fan"], 2))
+# fan (mean of maximum): 90.0
+```
+
+In words: at 32 °C and 80 % humidity, hot and humid are both 0.6, so the first rule fires at 0.6 and clips "high" to a plateau from 80 to 100 %. The second rule fires at 0.4 and the third at 0, because the air is not dry. Mean of maximum takes the middle of the highest plateau, 90.0 %.
+
+## Defuzzification
+
+`defuzz` reduces a fuzzy set to one number. The **centroid** is the balance point of the area, the **bisector** splits the area in half, and the three maximum methods take the middle (`mom`), smallest (`som`) or largest (`lom`) point where the degree is highest.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+y = np.arange(0, 100.01, 0.01)
+agg = np.fmax(np.fmin(0.4, fuzz.trimf(y, [25, 50, 75])),
+              np.fmin(0.3, fuzz.trimf(y, [50, 100, 100])))
+for method in ["centroid", "bisector", "mom", "som", "lom"]:
+    print(f"{method:9s}", round(fuzz.defuzz(y, agg, method), 2))
+# centroid  62.45
+# bisector  60.78
+# mom       50.0
+# som       35.0
+# lom       65.0
+```
+
+In words: for the 26 °C output (medium clipped at 0.4, high at 0.3) the methods give anything from 35.0 to 62.45. The maximum methods look only at the top plateau of the medium set, from 35 to 65, and ignore the high rule entirely; the centroid and bisector use the whole shape, which is why controllers usually prefer them for smooth output.
+
+## Alpha-Cuts
+
+`lambda_cut` returns a 0/1 array marking the elements of an alpha-cut (scikit-fuzzy calls it a lambda-cut).
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+x = np.linspace(0, 40, 401)  # step 0.1, no drift
+warm = fuzz.trimf(x, [10, 20, 30])
+for a in [0.25, 0.5, 1.0]:
+    cut = x[fuzz.lambda_cut(warm, a) == 1]
+    print("alpha", a, "->", round(cut.min(), 1), "to", round(cut.max(), 1))
+# alpha 0.25 -> 12.6 to 27.4
+# alpha 0.5 -> 15.1 to 24.9
+# alpha 1.0 -> 20.0 to 20.0
+```
+
+In words: the cut at 0.5 runs from 15.1 to 24.9, not 15.0 to 25.0 as in the hand-written version, even though the degree at 15.0 is exactly 0.5.
+
+<Callout type="pitfall">
+In scikit-fuzzy 0.5.0, `lambda_cut(mf, alpha)` keeps degrees strictly greater than `alpha` for every `alpha` below 1 (a **strong** alpha-cut), although its docstring says `>=`. The endpoints, where the degree equals `alpha`, are dropped. For the usual definition write `mf >= alpha` directly.
+</Callout>
+
+## Type-2 Fuzzy Sets
+
+A **type-2** fuzzy set admits that the membership function itself is uncertain: two experts put the feet of "warm" in different places. An **interval type-2** set stores a lower and an upper membership function, and each element's degree is the interval between them; the band between the two curves is the **footprint of uncertainty**. scikit-fuzzy has no type-2 support, but the two bounds are ordinary arrays.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+# interval type-2 "warm": the expert is unsure where the feet are
+x = np.arange(0, 41, 1)
+upper = fuzz.trimf(x, [8, 20, 32])
+lower = fuzz.trimf(x, [12, 20, 28])
+for t in [14, 20, 26]:
+    print(t, "degree in [", round(lower[t], 2), ",", round(upper[t], 2), "]")
+# 14 degree in [ 0.25 , 0.5 ]
+# 20 degree in [ 1.0 , 1.0 ]
+# 26 degree in [ 0.25 , 0.5 ]
+```
+
+In words: at 14 and 26 °C the degree of "warm" is anywhere from 0.25 to 0.5, while at the peak, 20 °C, both bounds agree on 1.0. A type-2 controller carries these intervals through the rules and needs a **type reduction** step before defuzzifying; for that, use pyit2fls rather than writing it by hand.
