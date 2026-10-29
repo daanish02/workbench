@@ -3,6 +3,152 @@ title: "CNN Architectures"
 description: "LeNet, AlexNet, VGG and ResNet, told as a sequence of solved problems."
 order: 3
 tier: core
+takeaways:
+  - "**LeNet-5** (1998) set the template still used today: convolution and pooling stages that shrink the image and add channels, then a classifier. It had 61,706 parameters and read handwritten digits."
+  - "**AlexNet** (2012) scaled that template up and made it trainable with ReLU, dropout, data augmentation and GPUs. It cut the ImageNet top-5 error from 26.2 % to 15.3 % and started the deep learning era."
+  - "**VGG** (2014) showed that depth built from uniform 3 × 3 convolutions works: two 3 × 3 layers see as far as one 5 × 5 with 72 % of the weights and an extra nonlinearity. But 89 % of its 138 million parameters sat in three dense layers."
+  - "**GoogLeNet** (2014) used 1 × 1 convolutions and global average pooling to reach 6.7 % with about 7 million parameters; **ResNet** (2015) used residual connections to train 152 layers and reach 3.6 %."
+  - "Each step solved a specific problem: trainability (ReLU, initialization, normalization), overfitting (dropout, augmentation), parameter waste (small kernels, GAP) and depth (residual connections)."
+resources:
+  - title: "ImageNet Classification with Deep Convolutional Neural Networks (Krizhevsky, Sutskever, Hinton)"
+    url: "https://papers.nips.cc/paper_files/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html"
+    note: "The AlexNet paper: ReLU, dropout, augmentation and two-GPU training, in nine readable pages."
+  - title: "Very Deep Convolutional Networks for Large-Scale Image Recognition (Simonyan and Zisserman)"
+    url: "https://arxiv.org/abs/1409.1556"
+    note: "The VGG paper, with the argument for stacks of 3 × 3 convolutions."
+  - title: "Modern Convolutional Neural Networks (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_convolutional-modern/index.html"
+    note: "Runnable implementations of AlexNet, VGG, NiN, GoogLeNet, ResNet, DenseNet and later designs."
 ---
 
-_Placeholder. Content not written yet._
+The CNN architectures of 1998 to 2015 are usually presented as a list of names and layer diagrams. They are easier to remember as a chain of problems and fixes: each design kept what worked, found the next thing that stopped the network getting better, and fixed that. This note follows the chain from LeNet to ResNet with the parameter counts computed from each design, and ends with what came after. The building blocks are from [Convolution Operation](../the-convolution-operation/) and [Pooling](../pooling/); the benchmark for most of the story is the ImageNet Large Scale Visual Recognition Challenge (ILSVRC): 1.2 million training images in 1000 classes, scored by **top-5 error**, the share of test images whose correct class is not among the model's five best guesses.
+
+<ArchBlocks />
+
+## LeNet: the template
+
+**LeNet-5** (LeCun et al., 1998) recognised 32 × 32 handwritten digits and was deployed to read cheques. Its structure: a 5 × 5 convolution to 6 channels, subsampling (average pooling), a 5 × 5 convolution to 16 channels, subsampling again, then three fully connected layers down to 10 classes, with sigmoid-like activations. Every later CNN in this note keeps this shape: alternating convolution and downsampling, so the maps get smaller and the channels more numerous, then a classifier head.
+
+What held it back was not the design but the setting: small datasets, slow CPUs, and saturating activations that made deeper versions hard to train. For about a decade, hand-engineered features with support vector machines beat neural networks on most vision benchmarks.
+
+## AlexNet: scale it up
+
+**AlexNet** (Krizhevsky, Sutskever and Hinton, 2012) won ILSVRC 2012 with a top-5 error of 15.3 %, against 26.2 % for the next entry. The architecture was LeNet's, bigger: five convolutional layers (the first 11 × 11 with stride 4), max pooling, and three dense layers of 4096, 4096 and 1000 units. The decisive changes were around it, each fixing a reason large networks had failed:
+
+- **ReLU** instead of tanh: trained several times faster, with no saturation for positive inputs (see [Modern Activations](../../nn-foundations/modern-activations/)).
+- **Dropout** in the dense layers and **data augmentation** (random crops, flips, colour changes) against overfitting 60 million parameters.
+- **GPUs**: two GTX 580s with 3 GB each, the model split across them, about six days of training.
+
+```python
+def conv(c_in, c_out, k, bias=True):
+    return c_in * c_out * k * k + (c_out if bias else 0)
+
+def dense(n_in, n_out):
+    return n_in * n_out + n_out
+
+lenet = conv(1, 6, 5) + conv(6, 16, 5) + dense(16 * 5 * 5, 120) + dense(120, 84) + dense(84, 10)
+alexnet = (conv(3, 96, 11) + conv(96, 256, 5) + conv(256, 384, 3) + conv(384, 384, 3) + conv(384, 256, 3)
+           + dense(256 * 6 * 6, 4096) + dense(4096, 4096) + dense(4096, 1000))
+vgg_cfg = [64, 64, 128, 128, 256, 256, 256, 512, 512, 512, 512, 512, 512]
+vgg_conv, c = 0, 3
+for c_out in vgg_cfg:
+    vgg_conv += conv(c, c_out, 3)
+    c = c_out
+vgg16 = vgg_conv + dense(512 * 7 * 7, 4096) + dense(4096, 4096) + dense(4096, 1000)
+
+for name, n in [("LeNet-5 (1998)", lenet), ("AlexNet (2012)", alexnet), ("VGG-16 (2014)", vgg16)]:
+    print(f"{name:15s} {n:>12,} parameters")
+print(f"VGG-16 share in the three dense layers: {(vgg16 - vgg_conv) / vgg16:.0%}")
+# LeNet-5 (1998)        61,706 parameters
+# AlexNet (2012)    62,378,344 parameters
+# VGG-16 (2014)    138,357,544 parameters
+# VGG-16 share in the three dense layers: 89%
+```
+
+In words: LeNet-5 has 61,706 parameters, AlexNet a thousand times more, 62.4 million (counted for the single-GPU form), and VGG-16 138.4 million. In VGG-16, 89 % of the parameters sit in the three dense layers at the end, and only 11 % in the thirteen convolutional layers that do most of the computation. That imbalance is the next problem the chain solves.
+
+## VGG: depth from small kernels
+
+After AlexNet, the obvious question was whether deeper is better and how to build depth. **VGG** (Simonyan and Zisserman, 2014) answered with radical uniformity: only 3 × 3 convolutions with stride 1 and padding 1, 2 × 2 max pools, and channels doubling from 64 to 512 after each pool. VGG-16 and VGG-19 (counting weight layers) reached 7.3 % top-5 error in ILSVRC 2014.
+
+Why only 3 × 3? A stack of small kernels sees as far as one large one, with fewer weights and more nonlinearities.
+
+```python
+c = 256
+one_5x5 = 5 * 5 * c * c
+two_3x3 = 2 * (3 * 3 * c * c)
+print(f"one 5x5 layer:  {one_5x5:,} weights, receptive field 5, 1 nonlinearity")
+print(f"two 3x3 layers: {two_3x3:,} weights, receptive field 5, 2 nonlinearities ({two_3x3 / one_5x5:.0%})")
+one_7x7 = 7 * 7 * c * c
+three_3x3 = 3 * (3 * 3 * c * c)
+print(f"one 7x7 vs three 3x3: {three_3x3 / one_7x7:.0%} of the weights for the same receptive field")
+# one 5x5 layer:  1,638,400 weights, receptive field 5, 1 nonlinearity
+# two 3x3 layers: 1,179,648 weights, receptive field 5, 2 nonlinearities (72%)
+# one 7x7 vs three 3x3: 55% of the weights for the same receptive field
+```
+
+In words: with 256 channels in and out, two 3 × 3 layers cover the same 5 × 5 receptive field as one 5 × 5 layer with 72 % of the weights, and three 3 × 3 layers cover 7 × 7 with 55 %. The stack also applies two or three ReLUs instead of one, so it can represent more complex functions of the same patch. Nearly every CNN since uses 3 × 3 as its default kernel.
+
+VGG's problems were cost and depth. Its 138 million parameters and about 15 billion multiply-adds per image made it slow, and going much beyond 19 layers made training worse, not better, even with careful initialization.
+
+## GoogLeNet: cheaper width
+
+The ILSVRC 2014 winner, **GoogLeNet** (Szegedy et al.), reached 6.7 % top-5 error with about 7 million parameters, twenty times fewer than VGG. Two ideas did it:
+
+- **1 × 1 convolutions** as bottlenecks: a 1 × 1 convolution mixes channels at each pixel without looking at neighbours, so it can cut 256 channels to 64 before an expensive 3 × 3 or 5 × 5 convolution. See [Efficient Convolutions](../efficient-convolutions/).
+- **Global average pooling** instead of the large dense head, removing most of the parameters VGG spent there.
+
+Its **inception modules** ran 1 × 1, 3 × 3 and 5 × 5 convolutions and a pooling branch in parallel and concatenated the results, letting the network choose its receptive field per layer. The design was effective but intricate; the simpler idea that came next proved more influential.
+
+## ResNet: depth that trains
+
+He et al. (2015) observed the **degradation problem**: a 56-layer plain network had *higher training error* than a 20-layer one. That is not overfitting, which would show up only on test data; the deeper network was simply harder to optimise, even though it could in principle copy the shallow one and set its extra layers to the identity. **ResNet** made the identity the default: each block computes $x + F(x)$, so a block only has to learn a correction. With batch normalization in every block, ResNets trained to 152 layers, won ILSVRC 2015 with 3.57 % top-5 error, and became the standard backbone for vision. Why the skip connection works is the subject of [Residual Connections](../residual-connections/).
+
+```python
+def conv(c_in, c_out, k):
+    return c_in * c_out * k * k             # no bias: batch norm follows
+
+def bn(c):
+    return 2 * c                            # gamma and beta
+
+def bottleneck(c_in, mid, stride_block):
+    out = mid * 4
+    n = conv(c_in, mid, 1) + bn(mid) + conv(mid, mid, 3) + bn(mid) + conv(mid, out, 1) + bn(out)
+    if stride_block:                        # projection shortcut when shape changes
+        n += conv(c_in, out, 1) + bn(out)
+    return n, out
+
+total = conv(3, 64, 7) + bn(64)             # stem
+c = 64
+for mid, blocks in [(64, 3), (128, 4), (256, 6), (512, 3)]:
+    for b in range(blocks):
+        n, c = bottleneck(c, mid, b == 0)
+        total += n
+total += c * 1000 + 1000                    # global average pool, then one dense layer
+print(f"ResNet-50: {total:,} parameters, 50 weight layers deep")
+# ResNet-50: 25,557,032 parameters, 50 weight layers deep
+```
+
+In words: ResNet-50 is built from 16 **bottleneck** blocks (1 × 1 to reduce channels, 3 × 3, 1 × 1 to expand them by 4) in four stages, plus a 7 × 7 stem and a GAP classifier. It has 25.6 million parameters, under a fifth of VGG-16's, while being three times deeper and more accurate. The count matches the standard implementation exactly.
+
+<Callout type="pitfall">
+ImageNet top-5 errors from different years are not directly comparable. Entries used ensembles, multiple crops and test-time tricks (ResNet's 3.57 % is an ensemble; a single ResNet-152 scored about 4.5 %), and the often-quoted human error of about 5 % comes from one annotator's experiment, not a careful study. Compare architectures on the same training recipe and evaluation protocol.
+</Callout>
+
+## The chain so far
+
+| Model | Year | Top-5 error | Parameters | Problem it solved |
+|---|---|---|---|---|
+| LeNet-5 | 1998 | (digits) | 61,706 | the conv-pool-classifier template |
+| AlexNet | 2012 | 15.3 % | 62.4 M | training a big CNN: ReLU, dropout, augmentation, GPUs |
+| VGG-16 | 2014 | 7.3 % | 138.4 M | depth from uniform 3 × 3 stacks |
+| GoogLeNet | 2014 | 6.7 % | about 7 M | parameter waste: 1 × 1 bottlenecks, GAP |
+| ResNet-152 | 2015 | 3.57 % (ensemble) | 60 M | optimising very deep networks |
+
+<CnnTimeline />
+
+After ResNet the questions shifted from "can it train" to "how to spend compute": DenseNet (dense skip connections), MobileNet (cheap separable convolutions for phones), EfficientNet (balanced scaling, see [Architecture Scaling](../architecture-scaling/)). In 2020 vision transformers matched CNNs at large scale, and in 2022 ConvNeXt modernised the ResNet with transformer-era choices (larger kernels, layer norm, GELU, AdamW training) and matched them back, a reminder that the training recipe matters as much as the architecture.
+
+<Callout type="key">
+LeNet set the shape, AlexNet made it trainable at scale, VGG standardised 3 × 3 depth, GoogLeNet cut parameters with 1 × 1 convolutions and global pooling, and ResNet made depth itself trainable with identity shortcuts. Each answer is still in use.
+</Callout>

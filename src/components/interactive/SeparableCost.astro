@@ -1,0 +1,101 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What each kind of convolution costs per pixel"
+  caption="Multiply-adds per output pixel for a layer with C channels in and out and a k × k kernel (log scale). Standard: k²C². Depthwise separable: k²C + C². Grouped with 32 groups: k²C²/32. Drag C and pick k: the separable layer's saving approaches k² as C grows, and a larger kernel adds almost nothing to it because the 1 × 1 part dominates."
+>
+  <separable-cost>
+    <div class="sc-ctl">
+      <input type="hidden" data-k value="3" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="3" aria-pressed="true">k = 3</button>
+        <button type="button" class="btn" data-choice="5" aria-pressed="false">k = 5</button>
+        <button type="button" class="btn" data-choice="7" aria-pressed="false">k = 7</button>
+      </span>
+    </div>
+    <label class="sc-lbl">channels C <input type="range" min="5" max="10" step="1" value="8" data-c /> <b data-cv>256</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">multiply-adds per pixel (log)</span>
+      <svg class="sc-svg" viewBox="0 0 400 190" role="img" aria-label="Bar chart of convolution cost per pixel">
+        <g data-bars></g>
+      </svg>
+      <span class="ax-x">cost per output pixel</span>
+    </div>
+    <p class="sc-stat" data-stat></p>
+  </separable-cost>
+</Figure>
+
+<style>
+  .sc-ctl {
+    margin-bottom: 10px;
+  }
+  .sc-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .sc-lbl input[type='range'] {
+    flex: 1;
+  }
+  .sc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .sc-svg :global(.sc-name) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: end;
+    dominant-baseline: central;
+  }
+  .sc-svg :global(.sc-val) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .sc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const fmt = (v: number) => (v >= 1e6 ? `${(v / 1e6).toFixed(2)} M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} k` : `${v}`);
+
+  class SeparableCost extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-c]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      const C = 2 ** +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      this.querySelector('[data-cv]')!.textContent = `${C}`;
+      const rows: [string, number, string, string][] = [
+        ['standard', k * k * C * C, 'var(--g-red)', ''],
+        ['separable', k * k * C + C * C, 'var(--g-green)', 'depthwise ' + fmt(k * k * C) + ' + pointwise ' + fmt(C * C)],
+        ['grouped /32', (k * k * C * C) / 32, 'var(--g-blue)', ''],
+      ];
+      // log scale from 10^2 to 10^8 across 250 units
+      const w = (v: number) => Math.max(2, ((Math.log10(v) - 2) / 6) * 250);
+      this.querySelector('[data-bars]')!.innerHTML = rows
+        .map(([name, v, col], i) => {
+          const y = 20 + i * 55;
+          return `<rect x="100" y="${y}" width="${w(v).toFixed(1)}" height="30" style="fill:${col};opacity:0.85"></rect><text x="92" y="${y + 15}" class="sc-name">${name}</text><text x="${(106 + w(v)).toFixed(1)}" y="${y + 15}" class="sc-val">${fmt(v)}</text>`;
+        })
+        .join('');
+      const ratio = rows[1][1] / rows[0][1];
+      this.querySelector('[data-stat]')!.textContent =
+        `C = ${C}, k = ${k} · separable / standard = ${ratio.toFixed(3)} (${(1 / ratio).toFixed(1)}× cheaper) · ${rows[1][3]}`;
+    }
+  }
+  customElements.define('separable-cost', SeparableCost);
+</script>

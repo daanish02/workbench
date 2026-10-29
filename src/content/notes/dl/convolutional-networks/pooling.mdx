@@ -3,6 +3,157 @@ title: "Pooling"
 description: "Max and average pooling, and why downsampling helps the network."
 order: 2
 tier: core
+takeaways:
+  - "**Pooling** summarises each small window of a feature map with one number: **max pooling** keeps the largest value, **average pooling** the mean. A 2 × 2 pool with stride 2 halves height and width and has no parameters."
+  - "Downsampling grows the **receptive field** quickly: six 3 × 3 convolutions see 13 × 13 pixels, the same six with three 2 × 2 pools in between see 36 × 36, and VGG-16's convolutional part sees 212 × 212."
+  - "Max pooling gives a little **translation invariance**: a feature moved by 1 pixel leaves a 4 × 4 max-pooled map unchanged 77 % of the time, by 3 pixels only 31 %. CNNs are much less shift-invariant than often claimed."
+  - "**Global average pooling** averages each channel over the whole map before the classifier; for 512 × 7 × 7 features and 1000 classes it needs 513,000 parameters instead of 25 million."
+  - "In the backward pass, max pooling sends the whole gradient to the one input that won; average pooling splits it equally. Modern networks often downsample with strided convolutions instead."
+resources:
+  - title: "Computing Receptive Fields of Convolutional Neural Networks (Distill)"
+    url: "https://distill.pub/2019/computing-receptive-fields/"
+    note: "The receptive-field recursion with interactive diagrams, and the effective receptive field of real networks."
+  - title: "Making Convolutional Networks Shift-Invariant Again (Richard Zhang)"
+    url: "https://arxiv.org/abs/1904.11486"
+    note: "Shows how strided downsampling breaks shift invariance and fixes it with a blur before subsampling."
+  - title: "Network In Network (Lin, Chen, Yan)"
+    url: "https://arxiv.org/abs/1312.4400"
+    note: "Introduced global average pooling in place of large fully connected classifier layers."
 ---
 
-_Placeholder. Content not written yet._
+A stack of "same"-padded [convolutions](../the-convolution-operation/) keeps the feature maps at full resolution. That has two costs: compute grows with the number of pixels at every layer, and each output still depends only on a small patch of the input, while recognising an object needs information from most of the image. **Pooling** addresses both by shrinking the feature maps between convolutional blocks. This note defines max and average pooling, measures how fast they grow the receptive field, tests how much shift invariance they really give, and covers global average pooling and the alternatives modern networks use. Run the code with `uv run --with numpy`.
+
+## Max and average pooling
+
+A pooling layer slides a window over each channel separately, like a convolution with no weights, and replaces the window by one summary: its **maximum** or its **average**. The usual setting is a 2 × 2 window with stride 2, which halves the height and width and keeps the number of channels.
+
+```python
+import numpy as np
+
+def pool2d(x, size=2, mode="max"):
+    h, w = x.shape[0] // size, x.shape[1] // size
+    windows = x[:h * size, :w * size].reshape(h, size, w, size).swapaxes(1, 2)
+    return windows.max(axis=(2, 3)) if mode == "max" else windows.mean(axis=(2, 3))
+
+x = np.array([[1, 3, 2, 0],
+              [4, 6, 1, 1],
+              [0, 2, 9, 7],
+              [1, 1, 8, 5]], float)
+print("max pool:\n", pool2d(x, 2, "max"))
+print("average pool:\n", pool2d(x, 2, "mean"))
+# max pool:
+#  [[6. 2.]
+#  [2. 9.]]
+# average pool:
+#  [[3.5  1.  ]
+#  [1.   7.25]]
+```
+
+In words: the 4 × 4 map splits into four 2 × 2 windows. Max pooling keeps 6, 2, 2 and 9, the strongest response in each; average pooling keeps 3.5, 1, 1 and 7.25. Max pooling asks "did the feature occur anywhere in this window", which suits detectors whose large values mean "found"; average pooling keeps a smoother summary. Pooling has no parameters to learn.
+
+## Receptive field
+
+The **receptive field** of an output unit is the patch of the input image it depends on. A 3 × 3 convolution adds 2 pixels to it; after a stride-2 pooling every later layer's step covers twice as many input pixels, so later kernels add twice as much. With $k$ the kernel size and $s$ the stride of each layer, the receptive field grows by $(k - 1)$ times the product of all earlier strides.
+
+```python
+def receptive_field(layers):
+    rf, jump = 1, 1                       # jump: input pixels between neighbouring outputs
+    for k, s in layers:
+        rf += (k - 1) * jump
+        jump *= s
+    return rf
+
+conv, pool = (3, 1), (2, 2)
+print("6 conv layers:             ", receptive_field([conv] * 6))
+print("3 x (2 conv + 2x2 pool):   ", receptive_field([conv, conv, pool] * 3))
+print("VGG-16 conv part (5 blocks):", receptive_field([conv, conv, pool, conv, conv, pool]
+                                                      + [conv, conv, conv, pool] * 3))
+# 6 conv layers:              13
+# 3 x (2 conv + 2x2 pool):    36
+# VGG-16 conv part (5 blocks): 212
+```
+
+In words: six 3 × 3 convolutions alone see a 13 × 13 patch. The same six convolutions with a 2 × 2 pool after every second one see 36 × 36, nearly three times wider, and VGG-16's thirteen convolutions with five pools see 212 × 212, almost its whole 224 × 224 input. Shrinking the maps also cuts compute: each halving divides the pixels by 4, which is why networks double the channels after each downsampling and keep the cost per layer roughly constant.
+
+## How much invariance
+
+Max pooling is often said to make CNNs **translation invariant**: if a feature moves a little, the pooled output stays the same. The code places one active feature at a random spot in a 16 × 16 map and checks whether a 4 × 4 max pool gives the same output after shifting it.
+
+```python
+import numpy as np
+
+def maxpool(x, size=4):
+    h, w = x.shape[0] // size, x.shape[1] // size
+    return x[:h * size, :w * size].reshape(h, size, w, size).max(axis=(1, 3))
+
+rng = np.random.default_rng(0)
+same = {0: [], 1: [], 2: [], 3: []}
+for _ in range(2000):
+    x = np.zeros((16, 16))
+    r, c = rng.integers(0, 13, size=2)
+    x[r, c] = 1.0                                   # one active feature at a random spot
+    for shift in same:
+        xs = np.roll(x, shift, axis=1)
+        same[shift].append(np.array_equal(maxpool(x), maxpool(xs)))
+for shift, v in same.items():
+    print(f"shift {shift} px: 4x4 max-pooled map unchanged in {np.mean(v):.0%} of cases")
+# shift 0 px: 4x4 max-pooled map unchanged in 100% of cases
+# shift 1 px: 4x4 max-pooled map unchanged in 77% of cases
+# shift 2 px: 4x4 max-pooled map unchanged in 54% of cases
+# shift 3 px: 4x4 max-pooled map unchanged in 31% of cases
+```
+
+In words: a 1-pixel shift leaves the pooled map unchanged only when the feature stays inside the same 4 × 4 window, which happens in 77 % of cases (3 positions out of 4); a 2-pixel shift in 54 % and a 3-pixel shift in 31 %. Pooling gives invariance only to small shifts that do not cross a window boundary. Zhang (2019) showed that real CNN classifiers can change their prediction when an image moves by one pixel, and that blurring before subsampling restores much of the invariance.
+
+<PoolShift />
+
+<Callout type="pitfall">
+Do not rely on the architecture alone for invariance to position, scale or rotation. Convolutions are equivariant only to shifts, pooling adds a little shift invariance, and nothing in a standard CNN handles rotation or scale. Those come from **data augmentation**: train on shifted, scaled, flipped and cropped copies, see [Data Augmentation](../../regularization/data-augmentation/).
+</Callout>
+
+## Global average pooling
+
+At the end of a classifier the feature maps must become one vector of class scores. Early CNNs flattened the final maps and used large fully connected layers. **Global average pooling** (GAP) instead averages each channel over all positions, turning $C \times H \times W$ into a vector of $C$ numbers, followed by one small dense layer.
+
+```python
+c, h, w, classes = 512, 7, 7, 1000
+flatten = c * h * w * classes + classes          # dense layer on every position
+gap = c * classes + classes                      # dense layer on the per-channel average
+print(f"flatten + dense: {flatten:,} parameters")
+print(f"global average pool + dense: {gap:,} parameters ({flatten / gap:.0f}x fewer)")
+# flatten + dense: 25,089,000 parameters
+# global average pool + dense: 513,000 parameters (49x fewer)
+```
+
+In words: on ResNet-sized final features, 512 channels of 7 × 7, a flatten-and-dense head for 1000 classes has 25.1 million parameters; GAP plus a dense layer has 513,000, 49 times fewer. GAP also makes the network accept any input size, since the average is defined for any $H \times W$, and it is fully invariant to where in the image a feature appears. Every ResNet and most later CNNs end this way.
+
+## Gradients and alternatives
+
+Pooling's backward pass routes the incoming gradient to the inputs that produced the output.
+
+```python
+import numpy as np
+
+x = np.array([[1.0, 3.0], [4.0, 2.0]])           # one 2x2 window
+grad_out = 10.0                                  # gradient arriving at the pooled output
+
+g_max = np.zeros_like(x)
+g_max[np.unravel_index(x.argmax(), x.shape)] = grad_out   # only the winner gets it
+g_avg = np.full_like(x, grad_out / x.size)                # everyone gets an equal share
+print("max pool gradient:\n", g_max)
+print("average pool gradient:\n", g_avg)
+# max pool gradient:
+#  [[ 0.  0.]
+#  [10.  0.]]
+# average pool gradient:
+#  [[2.5 2.5]
+#  [2.5 2.5]]
+```
+
+In words: max pooling passes the whole gradient of 10 to the input that held the maximum, 4, and zero to the other three, so only the winning position learns from that step. Average pooling gives each input an equal 2.5.
+
+Pooling is no longer the only way to downsample. A **strided convolution** (stride 2) downsamples and learns how to combine the window at the same time; the all-convolutional network of Springenberg et al. replaced every pooling layer this way with no loss of accuracy, and ResNets downsample mostly with stride-2 convolutions. Max pooling survives at the very start of many networks, right after the first convolution, and GAP at the end.
+
+<Callout type="key">
+Pooling summarises small windows (max or average) to shrink feature maps, which grows the receptive field fast and cuts compute. It gives only a little shift invariance. Global average pooling turns the final maps into a vector with almost no parameters; strided convolutions are the learned alternative for downsampling.
+</Callout>

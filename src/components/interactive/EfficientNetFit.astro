@@ -1,0 +1,106 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Error against compute follows a power law"
+  caption="EfficientNet-B0 to B7 from the paper: ImageNet top-1 error against GFLOPs, both on log scales, where a power law is a straight line. The green line is the fit from the note, error ≈ 20.1 × GFLOPs^−0.081. Toggle the extrapolation to 370 GFLOPs, ten times beyond the data, to see what the fit predicts and why such predictions need care."
+>
+  <effnet-fit>
+    <div class="ef-ctl">
+      <input type="checkbox" hidden data-ext />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Extrapolate to 370 GFLOPs</button>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">top-1 error % (log scale)</span>
+      <svg class="ef-svg" viewBox="0 0 400 210" data-grid='{"box":[40,10,390,190],"x":[0.1,1000,"log"],"y":[10,30,"log"]}' role="img" aria-label="EfficientNet error against compute with a power-law fit">
+        <path data-fit class="ef-fit"></path>
+        <path data-ext-line class="ef-ext"></path>
+        <g data-pts></g>
+        <text x="40" y="205" class="ax-tick">0.1</text>
+        <text x="390" y="205" class="ax-tick ef-end">1000</text>
+        <text x="34" y="14" class="ax-tick ef-end">30</text>
+        <text x="34" y="192" class="ax-tick ef-end">10</text>
+      </svg>
+      <span class="ax-x">GFLOPs per image (log scale)</span>
+    </div>
+    <p class="ef-stat" data-stat></p>
+  </effnet-fit>
+</Figure>
+
+<style>
+  .ef-ctl {
+    margin-bottom: 10px;
+  }
+  .ef-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ef-fit {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .ef-ext {
+    fill: none;
+    stroke: var(--g-green-l);
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+  }
+  .ef-svg :global(.ef-pt) {
+    fill: var(--g-blue);
+  }
+  .ef-svg :global(.ef-pred) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .ef-svg :global(.ef-lab) {
+    fill: var(--text-muted);
+    font: 9px var(--font-mono);
+  }
+  .ef-end {
+    text-anchor: end;
+  }
+  .ef-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const GF = [0.39, 0.7, 1.0, 1.8, 4.2, 9.9, 19, 37];
+  const TOP1 = [77.1, 79.1, 80.1, 81.6, 82.9, 83.6, 84.0, 84.3];
+  const fit = (g: number) => 20.1 * g ** -0.081;
+  const px = (g: number) => 40 + ((Math.log10(g) + 1) / 4) * 350;
+  const py = (e: number) => 190 - ((Math.log10(e) - 1) / Math.log10(3)) * 180;
+  const line = (a: number, b: number) =>
+    Array.from({ length: 51 }, (_, i) => a * (b / a) ** (i / 50))
+      .map((g, i) => `${i ? 'L' : 'M'}${px(g).toFixed(1)},${py(fit(g)).toFixed(1)}`)
+      .join('');
+
+  class EffnetFit extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-fit]')!.setAttribute('d', line(0.39, 37));
+      this.querySelector('[data-ext]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const ext = this.querySelector<HTMLInputElement>('[data-ext]')!.checked;
+      this.querySelector('[data-ext-line]')!.setAttribute('d', ext ? line(37, 370) : '');
+      let html = GF.map(
+        (g, i) =>
+          `<circle cx="${px(g).toFixed(1)}" cy="${py(100 - TOP1[i]).toFixed(1)}" r="4" class="ef-pt"></circle><text x="${(px(g) + 5).toFixed(1)}" y="${(py(100 - TOP1[i]) - 6).toFixed(1)}" class="ef-lab">B${i}</text>`,
+      ).join('');
+      if (ext) html += `<circle cx="${px(370).toFixed(1)}" cy="${py(fit(370)).toFixed(1)}" r="6" class="ef-pred"></circle>`;
+      this.querySelector('[data-pts]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = ext
+        ? `fit at 370 GFLOPs: ${fit(370).toFixed(1)} % error (an extrapolation, not a measurement)`
+        : `B0 ${(100 - TOP1[0]).toFixed(1)} % at 0.39 GFLOPs → B7 ${(100 - TOP1[7]).toFixed(1)} % at 37 GFLOPs · each 10× compute cuts error by 17 %`;
+    }
+  }
+  customElements.define('effnet-fit', EffnetFit);
+</script>

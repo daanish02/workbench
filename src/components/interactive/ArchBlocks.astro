@@ -1,0 +1,228 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Five CNNs as block diagrams"
+  caption="Each row is one layer or group of layers, from the input (top) to the output class probabilities (bottom). The bar's length shows the feature map's side in pixels (log scale), so you can see the image shrink; the label gives the operation and the output as channels @ side. Blue is convolution, yellow is pooling, green is dense layers, and the lighter blue blocks are GoogLeNet's inception modules and ResNet's bottleneck blocks, whose skip connections are drawn as green arcs. Click a row for details."
+>
+  <arch-blocks>
+    <div class="ab2-ctl">
+      <input type="hidden" data-m value="vgg" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="lenet" aria-pressed="false">LeNet-5</button>
+        <button type="button" class="btn" data-choice="alex" aria-pressed="false">AlexNet</button>
+        <button type="button" class="btn" data-choice="vgg" aria-pressed="true">VGG-16</button>
+        <button type="button" class="btn" data-choice="goog" aria-pressed="false">GoogLeNet</button>
+        <button type="button" class="btn" data-choice="res" aria-pressed="false">ResNet-50</button>
+      </span>
+    </div>
+    <svg class="ab2-svg" data-svg role="img" aria-label="Block diagram of the selected CNN">
+      <g data-rows></g>
+    </svg>
+    <p class="ab2-sum" data-sum></p>
+    <p class="ab2-stat" data-stat aria-live="polite"></p>
+  </arch-blocks>
+</Figure>
+
+<style>
+  .ab2-ctl {
+    margin-bottom: 10px;
+  }
+  .ab2-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .ab2-svg :global(.ab2-row) {
+    cursor: pointer;
+  }
+  .ab2-svg :global(.ab2-row:hover rect) {
+    stroke: var(--g-yellow);
+  }
+  .ab2-svg :global(.ab2-row.sel rect) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .ab2-svg :global(.ab2-lab) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ab2-svg :global(.ab2-dim) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+    text-anchor: end;
+  }
+  .ab2-svg :global(.ab2-skip) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 1.5;
+  }
+  .ab2-sum {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text);
+    text-align: center;
+  }
+  .ab2-stat {
+    margin: 4px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  type Kind = 'in' | 'conv' | 'pool' | 'fc' | 'block' | 'out';
+  // [kind, label, channels, side, skip-blocks, detail]
+  type Row = [Kind, string, number, number, number, string];
+  type Model = { year: number; params: string; depth: number; err: string; idea: string; rows: Row[] };
+  const MODELS: Record<string, Model> = {
+    lenet: {
+      year: 1998, params: '61.7 k', depth: 5, err: 'digits, not ImageNet', idea: 'the conv → pool → dense template',
+      rows: [
+        ['in', 'input', 1, 32, 0, 'a 32 × 32 grey image of a digit'],
+        ['conv', 'conv 5×5', 6, 28, 0, '6 kernels of 5 × 5; no padding, so 32 → 28'],
+        ['pool', 'avg pool 2×2', 6, 14, 0, 'subsampling halves the map'],
+        ['conv', 'conv 5×5', 16, 10, 0, '16 kernels, each spanning all 6 input channels'],
+        ['pool', 'avg pool 2×2', 16, 5, 0, '16 maps of 5 × 5 = 400 numbers'],
+        ['fc', 'dense', 120, 1, 0, 'flatten 400 → 120 units'],
+        ['fc', 'dense', 84, 1, 0, '120 → 84'],
+        ['fc', 'dense', 10, 1, 0, 'one score per digit'],
+        ['out', 'output: 10 classes', 10, 1, 0, 'the largest score is the predicted digit'],
+      ],
+    },
+    alex: {
+      year: 2012, params: '62.4 M', depth: 8, err: '15.3 % top-5', idea: 'ReLU, dropout, augmentation, GPUs',
+      rows: [
+        ['in', 'input', 3, 227, 0, 'a 227 × 227 RGB crop'],
+        ['conv', 'conv 11×11 /4', 96, 55, 0, 'large kernel, stride 4: the map shrinks fast'],
+        ['pool', 'max pool 3×3 /2', 96, 27, 0, 'overlapping max pooling'],
+        ['conv', 'conv 5×5', 256, 27, 0, 'split across the two GPUs in the original'],
+        ['pool', 'max pool 3×3 /2', 256, 13, 0, ''],
+        ['conv', 'conv 3×3', 384, 13, 0, ''],
+        ['conv', 'conv 3×3', 384, 13, 0, ''],
+        ['conv', 'conv 3×3', 256, 13, 0, ''],
+        ['pool', 'max pool 3×3 /2', 256, 6, 0, '256 × 6 × 6 = 9216 numbers'],
+        ['fc', 'dense + dropout', 4096, 1, 0, '37.7 M weights in this one layer'],
+        ['fc', 'dense + dropout', 4096, 1, 0, '16.8 M weights'],
+        ['fc', 'dense', 1000, 1, 0, 'one score per ImageNet class'],
+        ['out', 'softmax: 1000 classes', 1000, 1, 0, 'probabilities over the 1000 ImageNet classes'],
+      ],
+    },
+    vgg: {
+      year: 2014, params: '138.4 M', depth: 16, err: '7.3 % top-5', idea: 'depth from uniform 3 × 3 stacks',
+      rows: [
+        ['in', 'input', 3, 224, 0, 'a 224 × 224 RGB image'],
+        ['conv', 'conv 3×3 ×2', 64, 224, 0, 'two 3 × 3 convolutions see a 5 × 5 patch'],
+        ['pool', 'max pool 2×2', 64, 112, 0, 'halve the size, then double the channels'],
+        ['conv', 'conv 3×3 ×2', 128, 112, 0, ''],
+        ['pool', 'max pool 2×2', 128, 56, 0, ''],
+        ['conv', 'conv 3×3 ×3', 256, 56, 0, 'three 3 × 3 see 7 × 7 with 55 % of the weights'],
+        ['pool', 'max pool 2×2', 256, 28, 0, ''],
+        ['conv', 'conv 3×3 ×3', 512, 28, 0, ''],
+        ['pool', 'max pool 2×2', 512, 14, 0, ''],
+        ['conv', 'conv 3×3 ×3', 512, 14, 0, ''],
+        ['pool', 'max pool 2×2', 512, 7, 0, '512 × 7 × 7 = 25,088 numbers'],
+        ['fc', 'dense', 4096, 1, 0, '102.8 M weights: 74 % of the whole network'],
+        ['fc', 'dense', 4096, 1, 0, ''],
+        ['fc', 'dense', 1000, 1, 0, ''],
+        ['out', 'softmax: 1000 classes', 1000, 1, 0, 'probabilities over the 1000 ImageNet classes'],
+      ],
+    },
+    goog: {
+      year: 2014, params: 'about 7 M', depth: 22, err: '6.7 % top-5', idea: '1 × 1 bottlenecks, inception modules, global pooling',
+      rows: [
+        ['in', 'input', 3, 224, 0, ''],
+        ['conv', 'conv 7×7 /2', 64, 112, 0, ''],
+        ['pool', 'max pool /2', 64, 56, 0, ''],
+        ['conv', 'conv 1×1, 3×3', 192, 56, 0, ''],
+        ['pool', 'max pool /2', 192, 28, 0, ''],
+        ['block', 'inception ×2', 480, 28, 0, 'parallel 1 × 1, 3 × 3, 5 × 5 and pooling branches, concatenated; 1 × 1 convolutions shrink channels first'],
+        ['pool', 'max pool /2', 480, 14, 0, ''],
+        ['block', 'inception ×5', 832, 14, 0, ''],
+        ['pool', 'max pool /2', 832, 7, 0, ''],
+        ['block', 'inception ×2', 1024, 7, 0, ''],
+        ['pool', 'global avg pool', 1024, 1, 0, 'replaces the huge dense layers of VGG'],
+        ['fc', 'dense', 1000, 1, 0, '1.0 M weights'],
+        ['out', 'softmax: 1000 classes', 1000, 1, 0, 'probabilities over the 1000 ImageNet classes'],
+      ],
+    },
+    res: {
+      year: 2015, params: '25.6 M', depth: 50, err: '3.57 % top-5 (ResNet-152 ensemble)', idea: 'identity shortcuts make depth trainable',
+      rows: [
+        ['in', 'input', 3, 224, 0, ''],
+        ['conv', 'conv 7×7 /2', 64, 112, 0, 'the stem'],
+        ['pool', 'max pool /2', 64, 56, 0, ''],
+        ['block', 'bottleneck ×3', 256, 56, 3, 'each block: 1 × 1 down to 64, 3 × 3, 1 × 1 up to 256, plus the input'],
+        ['block', 'bottleneck ×4', 512, 28, 4, 'the first block has stride 2 and a 1 × 1 projection on its shortcut'],
+        ['block', 'bottleneck ×6', 1024, 14, 6, '7.1 M parameters'],
+        ['block', 'bottleneck ×3', 2048, 7, 3, '15.0 M parameters, the largest stage'],
+        ['pool', 'global avg pool', 2048, 1, 0, ''],
+        ['fc', 'dense', 1000, 1, 0, '2.0 M weights'],
+        ['out', 'softmax: 1000 classes', 1000, 1, 0, 'probabilities over the 1000 ImageNet classes'],
+      ],
+    },
+  };
+  const COL: Record<Kind, string> = {
+    in: 'rgba(251,188,5,0.15)',
+    conv: 'rgba(66,133,244,0.55)',
+    pool: 'rgba(251,188,5,0.55)',
+    fc: 'rgba(52,168,83,0.55)',
+    block: 'rgba(138,180,248,0.35)',
+    out: 'rgba(251,188,5,0.15)',
+  };
+  const RH = 22;
+
+  class ArchBlocks extends HTMLElement {
+    sel = -1;
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => {
+        this.sel = -1;
+        this.draw();
+      });
+      this.querySelector('[data-rows]')!.addEventListener('click', (e) => {
+        const g = (e.target as Element).closest('[data-i]');
+        if (!g) return;
+        this.sel = +g.getAttribute('data-i')!;
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const m = MODELS[this.querySelector<HTMLInputElement>('[data-m]')!.value];
+      const H = m.rows.length * RH + 10;
+      this.querySelector('[data-svg]')!.setAttribute('viewBox', `0 0 400 ${H}`);
+      let html = '';
+      m.rows.forEach(([kind, label, ch, side, skip], i) => {
+        const y = 5 + i * RH;
+        // log scale: side 1 → 8 units, side 227 → 150 units
+        const w = 8 + (Math.log2(side) / Math.log2(227)) * 142;
+        html += `<g class="ab2-row${i === this.sel ? ' sel' : ''}" data-i="${i}">`;
+        html += `<rect x="20" y="${y}" width="400" height="${RH - 2}" fill="transparent" stroke="none"></rect>`;
+        html += `<rect x="${(175 - w).toFixed(1)}" y="${y + 1}" width="${w.toFixed(1)}" height="${RH - 4}" rx="3" style="fill:${COL[kind]};stroke:var(--border)"></rect>`;
+        html += `<text x="182" y="${y + RH / 2 - 1}" class="ab2-lab">${label}</text>`;
+        html += `<text x="390" y="${y + RH / 2 - 1}" class="ab2-dim">${kind === 'fc' || kind === 'out' ? ch : `${ch}@${side}`}</text>`;
+        if (skip) {
+          // one arc per bottleneck block on the left of the bar
+          for (let k = 0; k < Math.min(skip, 6); k++) {
+            const x0 = 175 - w - 4 - k * 4;
+            html += `<path d="M${x0},${y + 3} q-6,${(RH - 6) / 2} 0,${RH - 6}" class="ab2-skip"></path>`;
+          }
+        }
+        html += `</g>`;
+      });
+      this.querySelector('[data-rows]')!.innerHTML = html;
+      this.querySelector('[data-sum]')!.textContent = `${m.year} · ${m.params} parameters · ${m.depth} weight layers · ${m.err} · ${m.idea}`;
+      const r = m.rows[this.sel];
+      this.querySelector('[data-stat]')!.textContent = r
+        ? `${r[1]} → ${r[0] === 'fc' || r[0] === 'out' ? `${r[2]} units` : `${r[2]} channels of ${r[3]} × ${r[3]}`}${r[5] ? ' · ' + r[5] : ''}`
+        : 'Click a row for details.';
+    }
+  }
+  customElements.define('arch-blocks', ArchBlocks);
+</script>

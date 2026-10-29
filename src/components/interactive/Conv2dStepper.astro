@@ -1,0 +1,175 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A 3 × 3 kernel sliding over an image"
+  caption="The 7 × 7 input is a bright square on a dark background (0 or 1). Each step places the kernel on one 3 × 3 window (yellow), multiplies the nine pairs and adds them into one output cell. Blue output cells are positive, red negative, and stronger colour means a larger value. Pick a kernel and watch which parts of the square it responds to."
+>
+  <conv2d-stepper>
+    <div class="cs-ctl">
+      <input type="hidden" data-kernel value="vertical" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="vertical" aria-pressed="true">vertical edge</button>
+        <button type="button" class="btn" data-choice="horizontal" aria-pressed="false">horizontal edge</button>
+        <button type="button" class="btn" data-choice="blur" aria-pressed="false">blur</button>
+        <button type="button" class="btn" data-choice="sharpen" aria-pressed="false">sharpen</button>
+      </span>
+    </div>
+    <div class="cs-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="cs-svg" viewBox="0 0 470 210" role="img" aria-label="Input image with the current window, the kernel, and the output feature map">
+      <g data-input></g>
+      <g data-kgrid></g>
+      <g data-output></g>
+      <text x="96" y="204" class="cs-cap">input 7 × 7</text>
+      <text x="245" y="160" class="cs-cap">kernel 3 × 3</text>
+      <text x="395" y="204" class="cs-cap">output 5 × 5</text>
+    </svg>
+    <p class="cs-stat" data-stat></p>
+  </conv2d-stepper>
+</Figure>
+
+<style>
+  .cs-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .cs-svg {
+    display: block;
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .cs-svg :global(.cs-cell) {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+  .cs-svg :global(.cs-win) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .cs-svg :global(.cs-now) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .cs-svg :global(.cs-num) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cs-cap {
+    fill: var(--text-muted);
+    font: 500 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .cs-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  const N = 7;
+  const IMG = Array.from({ length: N }, (_, i) => Array.from({ length: N }, (_, j) => (i >= 2 && i <= 4 && j >= 2 && j <= 5 ? 1 : 0)));
+  const KERNELS: Record<string, number[][]> = {
+    vertical: [[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]],
+    horizontal: [[-1, -1, -1], [0, 0, 0], [1, 1, 1]],
+    blur: [[1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9], [1 / 9, 1 / 9, 1 / 9]],
+    sharpen: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]],
+  };
+  const M = N - 2;
+  const CELL = 26;
+  const IN_X = 5;
+  const OUT_X = 330;
+  const K_X = 206;
+  const K_Y = 52;
+
+  const fmt = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? `${Math.round(v)}` : v.toFixed(2)).replace('-', '−');
+  function fill(v: number, max: number): string {
+    if (Math.abs(v) < 1e-9) return 'var(--bg)';
+    const a = Math.min(1, Math.abs(v) / max) * 0.75 + 0.1;
+    return v > 0 ? `rgba(66,133,244,${a.toFixed(2)})` : `rgba(234,67,53,${a.toFixed(2)})`;
+  }
+
+  class Conv2dStepper extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-kernel]')!.addEventListener('input', () => this.reset());
+      this.reset();
+    }
+    kernel() {
+      return KERNELS[this.querySelector<HTMLInputElement>('[data-kernel]')!.value];
+    }
+    out(r: number, c: number): number {
+      const k = this.kernel();
+      let s = 0;
+      for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) s += IMG[r + a][c + b] * k[a][b];
+      return s;
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+      this.querySelector('[data-stat]')!.textContent = 'Press Step to place the kernel on the first window.';
+    }
+    step() {
+      if (this.i >= M * M) return;
+      this.i++;
+      this.draw();
+      const r = Math.floor((this.i - 1) / M);
+      const c = (this.i - 1) % M;
+      const k = this.kernel();
+      const terms: string[] = [];
+      for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) if (IMG[r + a][c + b] && k[a][b]) terms.push(fmt(k[a][b]));
+      this.querySelector('[data-stat]')!.textContent =
+        `out[${r}, ${c}] = sum of kernel × input over the window = ${terms.length ? terms.join(' + ').replaceAll('+ −', '− ') : '0'} = ${fmt(this.out(r, c))}`;
+      if (this.i >= M * M) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const k = this.kernel();
+      const cur = this.i - 1;
+      const r = cur >= 0 ? Math.floor(cur / M) : -1;
+      const c = cur >= 0 ? cur % M : -1;
+      let inp = '';
+      for (let a = 0; a < N; a++)
+        for (let b = 0; b < N; b++)
+          inp += `<rect x="${IN_X + b * CELL}" y="${8 + a * CELL}" width="${CELL}" height="${CELL}" class="cs-cell" style="fill:${IMG[a][b] ? 'rgba(52,168,83,0.55)' : 'var(--bg)'}"></rect>`;
+      if (r >= 0) inp += `<rect x="${IN_X + c * CELL}" y="${8 + r * CELL}" width="${3 * CELL}" height="${3 * CELL}" class="cs-win"></rect>`;
+      this.querySelector('[data-input]')!.innerHTML = inp;
+
+      const kmax = Math.max(...k.flat().map(Math.abs));
+      let kg = '';
+      for (let a = 0; a < 3; a++)
+        for (let b = 0; b < 3; b++)
+          kg += `<rect x="${K_X + b * CELL}" y="${K_Y + a * CELL}" width="${CELL}" height="${CELL}" class="cs-cell" style="fill:${fill(k[a][b], kmax)}"></rect><text x="${K_X + b * CELL + CELL / 2}" y="${K_Y + a * CELL + CELL / 2}" class="cs-num">${k[a][b] === 1 / 9 ? '⅑' : fmt(k[a][b])}</text>`;
+      this.querySelector('[data-kgrid]')!.innerHTML = kg;
+
+      let maxOut = 0;
+      for (let a = 0; a < M; a++) for (let b = 0; b < M; b++) maxOut = Math.max(maxOut, Math.abs(this.out(a, b)));
+      let out = '';
+      for (let a = 0; a < M; a++)
+        for (let b = 0; b < M; b++) {
+          const idx = a * M + b;
+          const shown = idx < this.i;
+          const v = this.out(a, b);
+          out += `<rect x="${OUT_X + b * CELL}" y="${34 + a * CELL}" width="${CELL}" height="${CELL}" class="cs-cell${idx === cur ? ' cs-now' : ''}" style="fill:${shown ? fill(v, maxOut || 1) : 'var(--bg)'}"></rect>`;
+          if (shown) out += `<text x="${OUT_X + b * CELL + CELL / 2}" y="${34 + a * CELL + CELL / 2}" class="cs-num">${fmt(v)}</text>`;
+        }
+      this.querySelector('[data-output]')!.innerHTML = out;
+    }
+  }
+  customElements.define('conv2d-stepper', Conv2dStepper);
+</script>

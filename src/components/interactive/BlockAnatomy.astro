@@ -1,0 +1,157 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Inside four convolution blocks"
+  caption="Each block drawn layer by layer, from input to output. Bar length is the number of channels; blue layers look at a 3 × 3 neighbourhood, green 1 × 1 layers only mix channels, yellow marks a depthwise layer (one filter per channel), and the green arc is a skip connection added back before the output. The right column is the cost in multiply-adds per output pixel. The bottleneck and the separable block both map 256 channels to 256 for about 12 % of the standard block's cost; MobileNetV2's inverted residual keeps a thin 64-channel interface and expands inside."
+>
+  <block-anatomy>
+    <div class="ba-ctl">
+      <input type="hidden" data-b value="std" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="std" aria-pressed="true">standard 3×3</button>
+        <button type="button" class="btn" data-choice="bott" aria-pressed="false">ResNet bottleneck</button>
+        <button type="button" class="btn" data-choice="sep" aria-pressed="false">depthwise separable</button>
+        <button type="button" class="btn" data-choice="inv" aria-pressed="false">inverted residual</button>
+      </span>
+    </div>
+    <svg class="ba-svg" data-svg role="img" aria-label="Layers of the selected convolution block with channel counts and costs">
+      <g data-rows></g>
+    </svg>
+    <p class="ba-stat" data-stat></p>
+  </block-anatomy>
+</Figure>
+
+<style>
+  .ba-ctl {
+    margin-bottom: 10px;
+  }
+  .ba-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .ba-svg :global(.ba-lab) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ba-svg :global(.ba-ch) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .ba-svg :global(.ba-cost) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: end;
+    dominant-baseline: central;
+  }
+  .ba-svg :global(.ba-head) {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+  }
+  .ba-svg :global(.ba-skip) {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+  }
+  .ba-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type Kind = 'in' | 'k3' | 'k1' | 'dw' | 'add' | 'out';
+  // [kind, label, channels, cost per pixel]
+  type Layer = [Kind, string, number, number];
+  const BLOCKS: Record<string, { layers: Layer[]; skip: boolean; note: string }> = {
+    std: {
+      layers: [['in', 'input', 256, 0], ['k3', '3×3 conv', 256, 589824], ['out', 'output', 256, 0]],
+      skip: false,
+      note: 'every output channel looks at every input channel in a 3 × 3 window',
+    },
+    bott: {
+      layers: [
+        ['in', 'input', 256, 0],
+        ['k1', '1×1 conv (reduce)', 64, 16384],
+        ['k3', '3×3 conv', 64, 36864],
+        ['k1', '1×1 conv (expand)', 256, 16384],
+        ['add', 'add the input', 256, 0],
+        ['out', 'output', 256, 0],
+      ],
+      skip: true,
+      note: 'the expensive 3 × 3 runs on a quarter of the channels',
+    },
+    sep: {
+      layers: [
+        ['in', 'input', 256, 0],
+        ['dw', '3×3 depthwise', 256, 2304],
+        ['k1', '1×1 conv (mix)', 256, 65536],
+        ['out', 'output', 256, 0],
+      ],
+      skip: false,
+      note: 'spatial filtering costs almost nothing; the 1 × 1 does 97 % of the work',
+    },
+    inv: {
+      layers: [
+        ['in', 'input', 64, 0],
+        ['k1', '1×1 conv (expand ×6)', 384, 24576],
+        ['dw', '3×3 depthwise', 384, 3456],
+        ['k1', '1×1 conv (project)', 64, 24576],
+        ['add', 'add the input', 64, 0],
+        ['out', 'output', 64, 0],
+      ],
+      skip: true,
+      note: 'thin in and out (64), wide inside (384); the projection has no ReLU (a linear bottleneck)',
+    },
+  };
+  const COL: Record<Kind, string> = {
+    in: 'rgba(251,188,5,0.15)',
+    k3: 'rgba(66,133,244,0.55)',
+    k1: 'rgba(52,168,83,0.5)',
+    dw: 'rgba(251,188,5,0.55)',
+    add: 'rgba(52,168,83,0.15)',
+    out: 'rgba(251,188,5,0.15)',
+  };
+  const RH = 30;
+  const X0 = 40;
+  const fmt = (n: number) => n.toLocaleString('en-US');
+
+  class BlockAnatomy extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-b]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const b = BLOCKS[this.querySelector<HTMLInputElement>('[data-b]')!.value];
+      const top = 22;
+      this.querySelector('[data-svg]')!.setAttribute('viewBox', `0 0 400 ${top + b.layers.length * RH + 4}`);
+      let html = `<text x="${X0}" y="12" class="ba-head">channels</text><text x="200" y="12" class="ba-head">layer</text><text x="395" y="12" class="ba-head" text-anchor="end">mult-adds / pixel</text>`;
+      let total = 0;
+      b.layers.forEach(([kind, label, ch, cost], i) => {
+        const y = top + i * RH;
+        const w = 30 + (ch / 384) * 120;
+        total += cost;
+        html += `<rect x="${X0}" y="${y}" width="${w.toFixed(1)}" height="${RH - 8}" rx="4" style="fill:${COL[kind]};stroke:var(--border)"></rect>`;
+        html += `<text x="${X0 + 6}" y="${y + (RH - 8) / 2}" class="ba-ch">${ch}</text>`;
+        html += `<text x="200" y="${y + (RH - 8) / 2}" class="ba-lab">${label}</text>`;
+        if (cost) html += `<text x="395" y="${y + (RH - 8) / 2}" class="ba-cost">${fmt(cost)}</text>`;
+      });
+      if (b.skip) {
+        const yTop = top + (RH - 8) / 2;
+        const yBot = top + (b.layers.length - 2) * RH + (RH - 8) / 2;
+        html += `<path d="M${X0},${yTop} C${X0 - 34},${yTop} ${X0 - 34},${yBot} ${X0},${yBot}" class="ba-skip"></path>`;
+      }
+      this.querySelector('[data-rows]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        `${fmt(total)} multiply-adds per pixel (${((total / 589824) * 100).toFixed(0)} % of a standard 3 × 3 on 256 channels) · ${b.note}`;
+    }
+  }
+  customElements.define('block-anatomy', BlockAnatomy);
+</script>

@@ -1,0 +1,99 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Compound scaling grows depth, width and resolution together"
+  caption="Drag φ. The network is drawn as a stack of layers: more layers is depth (×1.2 per step), thicker layers is width (×1.1 per step), and the input square is the resolution (×1.15 per step, from 224 pixels). FLOPs grow about 1.92× per step. Pick a single dimension to see the alternative EfficientNet compared against: the same FLOPs spent on one dimension only."
+>
+  <compound-scaling>
+    <div class="cs2-ctl">
+      <input type="hidden" data-mode value="compound" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="compound" aria-pressed="true">compound</button>
+        <button type="button" class="btn" data-choice="depth" aria-pressed="false">depth only</button>
+        <button type="button" class="btn" data-choice="width" aria-pressed="false">width only</button>
+        <button type="button" class="btn" data-choice="res" aria-pressed="false">resolution only</button>
+      </span>
+    </div>
+    <label class="cs2-lbl">φ <input type="range" min="0" max="7" step="1" value="3" data-phi /> <b data-pv>3</b></label>
+    <svg class="cs2-svg" viewBox="0 0 400 220" role="img" aria-label="Schematic of a network scaled in depth, width and input resolution">
+      <g data-draw></g>
+    </svg>
+    <p class="cs2-stat" data-stat></p>
+  </compound-scaling>
+</Figure>
+
+<style>
+  .cs2-ctl {
+    margin-bottom: 10px;
+  }
+  .cs2-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cs2-lbl input[type='range'] {
+    flex: 1;
+  }
+  .cs2-svg {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .cs2-svg :global(.cs2-t) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .cs2-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const A = 1.2;
+  const B = 1.1;
+  const G = 1.15;
+  const FLOPS = A * B * B * G * G;
+
+  class CompoundScaling extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-phi]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!.value;
+      const phi = +this.querySelector<HTMLInputElement>('[data-phi]')!.value;
+      this.querySelector('[data-pv]')!.textContent = `${phi}`;
+      const f = FLOPS ** phi;
+      // single-dimension modes spend the same FLOPs factor f on one dimension
+      const [d, w, r] =
+        mode === 'compound' ? [A ** phi, B ** phi, G ** phi] : mode === 'depth' ? [f, 1, 1] : mode === 'width' ? [1, Math.sqrt(f), 1] : [1, 1, Math.sqrt(f)];
+      const layers = Math.round(6 * d);
+      const thick = Math.min(14, 5 * w);
+      const side = Math.min(150, 50 * r);
+      let html = `<rect x="${(85 - side / 2).toFixed(1)}" y="${(105 - side / 2).toFixed(1)}" width="${side.toFixed(1)}" height="${side.toFixed(1)}" style="fill:rgba(251,188,5,0.25);stroke:var(--g-yellow)"></rect>`;
+      html += `<text x="85" y="205" class="cs2-t">input ${Math.round(224 * r)} px</text>`;
+      const shown = Math.min(layers, 40);
+      const gap = Math.min(10, 210 / shown);
+      for (let i = 0; i < shown; i++) {
+        const x = 175 + i * gap;
+        html += `<rect x="${x.toFixed(1)}" y="${(105 - 60).toFixed(1)}" width="${Math.min(thick, gap - 1).toFixed(1)}" height="120" style="fill:rgba(66,133,244,0.5);stroke:var(--g-blue)"></rect>`;
+      }
+      html += `<text x="280" y="205" class="cs2-t">${layers} layers${layers > shown ? ` (first ${shown} drawn)` : ''}, width ×${w.toFixed(2)}</text>`;
+      this.querySelector('[data-draw]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        `φ = ${phi} · depth ×${d.toFixed(2)} · width ×${w.toFixed(2)} · resolution ×${r.toFixed(2)} · FLOPs ×${f.toFixed(1)}`;
+    }
+  }
+  customElements.define('compound-scaling', CompoundScaling);
+</script>

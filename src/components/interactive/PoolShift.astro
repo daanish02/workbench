@@ -1,0 +1,120 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Max pooling only ignores shifts inside a window"
+  caption="An 8 × 8 feature map with one active feature (blue). Max pooling with the chosen window (yellow outlines) gives the small map on the right. Drag the feature sideways: while it stays inside the same window the pooled map does not change (green); as soon as it crosses a window boundary the pooled map changes (red). Larger windows tolerate larger shifts but keep less detail about position."
+>
+  <pool-shift>
+    <div class="ps-ctl">
+      <input type="hidden" data-size value="2" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="2" aria-pressed="true">2 × 2 window</button>
+        <button type="button" class="btn" data-choice="4" aria-pressed="false">4 × 4 window</button>
+      </span>
+    </div>
+    <label class="ps-lbl">feature column <input type="range" min="0" max="7" step="1" value="2" data-c /> <b data-cv>2</b></label>
+    <svg class="ps-svg" viewBox="0 0 400 200" role="img" aria-label="Input feature map and its max-pooled output">
+      <g data-in></g>
+      <g data-out></g>
+      <text x="100" y="196" class="ps-cap">input 8 × 8</text>
+      <text x="320" y="196" class="ps-cap">max-pooled</text>
+    </svg>
+    <p class="ps-stat" data-stat></p>
+  </pool-shift>
+</Figure>
+
+<style>
+  .ps-ctl {
+    margin-bottom: 10px;
+  }
+  .ps-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ps-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ps-svg {
+    display: block;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+  .ps-svg :global(.ps-cell) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .ps-svg :global(.ps-on) {
+    fill: var(--g-blue);
+  }
+  .ps-svg :global(.ps-win) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+  }
+  .ps-svg :global(.ps-same) {
+    fill: rgba(52, 168, 83, 0.7);
+  }
+  .ps-svg :global(.ps-diff) {
+    fill: rgba(234, 67, 53, 0.7);
+  }
+  .ps-cap {
+    fill: var(--text-muted);
+    font: 500 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ps-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const ROW = 3;
+  const CELL = 22;
+  const START = 2;
+
+  class PoolShift extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-size]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-c]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const s = +this.querySelector<HTMLInputElement>('[data-size]')!.value;
+      const c = +this.querySelector<HTMLInputElement>('[data-c]')!.value;
+      this.querySelector('[data-cv]')!.textContent = `${c}`;
+      let inp = '';
+      for (let i = 0; i < 8; i++)
+        for (let j = 0; j < 8; j++)
+          inp += `<rect x="${12 + j * CELL}" y="${4 + i * CELL}" width="${CELL}" height="${CELL}" class="ps-cell${i === ROW && j === c ? ' ps-on' : ''}"></rect>`;
+      for (let i = 0; i < 8; i += s)
+        for (let j = 0; j < 8; j += s)
+          inp += `<rect x="${12 + j * CELL}" y="${4 + i * CELL}" width="${s * CELL}" height="${s * CELL}" class="ps-win"></rect>`;
+      this.querySelector('[data-in]')!.innerHTML = inp;
+
+      // compare with the pooled map of the starting position
+      const m = 8 / s;
+      const oc = 176 / m;
+      const same = Math.floor(c / s) === Math.floor(START / s);
+      let out = '';
+      for (let i = 0; i < m; i++)
+        for (let j = 0; j < m; j++) {
+          const on = Math.floor(ROW / s) === i && Math.floor(c / s) === j;
+          out += `<rect x="${232 + j * oc}" y="${4 + i * oc}" width="${oc}" height="${oc}" class="ps-cell${on ? (same ? ' ps-same' : ' ps-diff') : ''}"></rect>`;
+        }
+      this.querySelector('[data-out]')!.innerHTML = out;
+      this.querySelector('[data-stat]')!.textContent =
+        `shift ${c - START >= 0 ? '+' : ''}${c - START} columns from column ${START} · pooled map ${same ? 'unchanged' : 'changed'} · ${s} × ${s} windows`;
+    }
+  }
+  customElements.define('pool-shift', PoolShift);
+</script>

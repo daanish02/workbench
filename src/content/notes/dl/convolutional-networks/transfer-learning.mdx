@@ -3,6 +3,111 @@ title: "Transfer Learning"
 description: "Fine-tuning a pretrained CNN on a new task, and why it needs less data."
 order: 6
 tier: core
+takeaways:
+  - "**Transfer learning** reuses a network trained on a large source dataset (often ImageNet) as the starting point for a new target task, replacing only the final classifier layer."
+  - "It works because early and middle layers learn general features (edges, textures, parts) that many tasks share. In the note's simulation, with 40 labelled examples, training from scratch reaches 78.8 % test accuracy and reusing pretrained features 88.6 %."
+  - "Two modes: a **linear probe** (feature extraction) freezes the pretrained body and trains only a new head; **fine-tuning** also updates the body, with a smaller learning rate, usually starting from the probe's head."
+  - "With little target data or a target close to the source, freeze more; with more data or a distant domain (medical scans, satellite images), fine-tune more layers."
+  - "Use the same input preprocessing as the pretrained model (resolution, mean and standard deviation normalisation), and keep batch norm layers in eval mode when fine-tuning with small batches."
+resources:
+  - title: "How transferable are features in deep neural networks? (Yosinski et al.)"
+    url: "https://arxiv.org/abs/1411.1792"
+    note: "Measures layer by layer how general the features are and how transfer degrades as source and target tasks diverge."
+  - title: "Do Better ImageNet Models Transfer Better? (Kornblith, Shlens, Le)"
+    url: "https://arxiv.org/abs/1805.08974"
+    note: "Across 12 datasets, ImageNet accuracy predicts transfer accuracy well for fine-tuning, less so for frozen features."
+  - title: "Transfer Learning for Computer Vision Tutorial (PyTorch)"
+    url: "https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial.html"
+    note: "Fine-tuning versus fixed feature extraction with a pretrained ResNet, in runnable code."
 ---
 
-_Placeholder. Content not written yet._
+Training a ResNet from scratch takes about 1.3 million labelled ImageNet images. Most real projects have a few hundred or a few thousand labelled examples of their own: defects on a production line, species in camera-trap photos, tumours in scans. **Transfer learning** closes that gap: start from a network already trained on a large dataset, keep what it learned, and adapt only what the new task needs. It is the default way to build a vision model, and the same idea, at larger scale, is behind pretrained language models. This note explains why features transfer, compares training from scratch, a linear probe and fine-tuning in a controlled simulation, and gives the practical recipe. It builds on the architectures in [CNN Architectures](../cnn-architectures-as-a-narrative/). Run the code with `uv run --with numpy`.
+
+## Why features transfer
+
+A trained CNN computes a hierarchy of features (see [Convolution Operation](../the-convolution-operation/)): edges and colour blobs in the first layer, textures and simple motifs in the middle, object parts and whole objects near the top. Yosinski et al. (2014) measured how general each layer is by transplanting it between networks trained on different halves of ImageNet: the first layers transfer almost perfectly, and transferability falls in the top layers, which specialise to the source classes. The features a network learns to tell 1000 classes apart are a good description of images in general, so a new task needs to learn mostly how to combine them, not how to see.
+
+## Probe or fine-tune
+
+Given a pretrained network, remove its final classification layer and add a new **head** with one output per target class. Then either:
+
+- **Linear probe** (feature extraction): freeze the body and train only the head. Fast, needs very little data, and cannot damage the pretrained features.
+- **Fine-tuning**: train the head and also update some or all of the body, with a learning rate about 10 times smaller than for training from scratch, so the features adapt without being destroyed.
+
+The simulation below has inputs whose labels depend on 16 hidden features shared across tasks. A network is pretrained on 30 different labelling tasks with 5000 examples (playing the role of ImageNet's many classes), then reused for a new task with only 40 labelled examples.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+d, k, n_src = 20, 16, 30
+U = rng.normal(size=(d, k))                       # hidden "true" features shared by all tasks
+feat = lambda X: np.maximum(X @ U, 0)
+
+def labels(X, V):                                 # one binary task per column of V
+    s = feat(X) @ V
+    return (s > np.median(s, axis=0)).astype(float)
+
+VA = rng.normal(size=(k, n_src))                  # source: 30 tasks, like many classes
+vB = rng.normal(size=(k, 1))                      # target: a new task on the same features
+XA = rng.normal(size=(5000, d)); YA = labels(XA, VA)
+XB = rng.normal(size=(40, d)); YB = labels(XB, vB)   # only 40 labelled examples
+XT = rng.normal(size=(5000, d)); YT = labels(XT, vB)
+
+def fit(X, Y, W1, W2, steps, lr, train_body=True):
+    W1, W2 = W1.copy(), W2.copy()
+    for _ in range(steps):
+        H = np.maximum(X @ W1, 0)
+        G = (1 / (1 + np.exp(-(H @ W2))) - Y) / len(Y)
+        if train_body:
+            W1 -= lr * X.T @ ((G @ W2.T) * (H > 0))
+        W2 -= lr * H.T @ G
+    return W1, W2
+
+acc = lambda W1, W2, X, Y: np.mean(((np.maximum(X @ W1, 0) @ W2) > 0) == Y)
+W1_init = rng.normal(size=(d, 64)) * np.sqrt(2 / d)
+
+W1_pre, W2_src = fit(XA, YA, W1_init, np.zeros((64, n_src)), steps=3000, lr=0.5)
+print(f"source tasks, mean accuracy after pretraining: {acc(W1_pre, W2_src, XA, YA):.3f}")
+
+head = np.zeros((64, 1))                          # a new head for the new task
+scratch = fit(XB, YB, W1_init, head, steps=2000, lr=0.5)
+probe = fit(XB, YB, W1_pre, head, steps=2000, lr=0.5, train_body=False)
+finetune = fit(XB, YB, W1_pre, probe[1], steps=300, lr=0.05)   # start from the probe's head
+for name, (W1, W2) in [("from scratch", scratch), ("linear probe (frozen)", probe), ("fine-tune all", finetune)]:
+    print(f"target task, 40 examples, {name:21s} test accuracy {acc(W1, W2, XT, YT):.3f}")
+# source tasks, mean accuracy after pretraining: 0.976
+# target task, 40 examples, from scratch          test accuracy 0.788
+# target task, 40 examples, linear probe (frozen) test accuracy 0.886
+# target task, 40 examples, fine-tune all         test accuracy 0.886
+```
+
+In words: pretraining on the 30 source tasks reaches 97.6 % accuracy, which means the hidden layer has learned the shared features. On the new task with 40 examples, the network trained from scratch reaches 78.8 % test accuracy: it has to learn both the features and the task from 40 points. Reusing the pretrained body reaches 88.6 %, whether the body is frozen or fine-tuned gently from the probe's head. With so little target data and a target built on exactly the source's features, the probe captures all the benefit; fine-tuning pays off when the target domain differs from the source or when there is more target data.
+
+<FreezeLayers />
+
+<Callout type="pitfall">
+Fine-tuning with a fresh, randomly initialised head and a large learning rate sends large, random gradients into the pretrained body on the first steps and can wreck the features before the head has learned anything. Train the head first with the body frozen (a linear probe), then unfreeze and fine-tune with a small learning rate, or use a much smaller rate for the body than for the head.
+</Callout>
+
+## A practical recipe
+
+| Target data | Similar to source (natural photos) | Different domain (X-rays, satellite, microscopy) |
+|---|---|---|
+| Small (hundreds) | Linear probe, or fine-tune only the last block | Fine-tune the top blocks; augment heavily |
+| Large (tens of thousands or more) | Fine-tune everything with a small learning rate | Fine-tune everything; pretraining still speeds convergence |
+
+Details that decide whether it works:
+
+- **Preprocessing must match.** Resize to the resolution the network was trained on (or close to it) and normalise with the same per-channel mean and standard deviation (for ImageNet models, mean $(0.485, 0.456, 0.406)$ and std $(0.229, 0.224, 0.225)$ on a 0 to 1 scale). Mismatched normalisation silently costs accuracy.
+- **Layer-wise learning rates.** Lower layers hold the most general features, so they can use smaller learning rates than upper layers (discriminative fine-tuning), or stay frozen.
+- **Batch norm.** With small fine-tuning batches, the batch statistics are noisy and overwrite good running averages. Keep batch norm layers in eval mode (frozen statistics) while fine-tuning; see [Batch Normalization](../../training-optimization/batch-normalization/).
+- **Pick a strong source model.** Kornblith et al. found that ImageNet accuracy predicts fine-tuned transfer accuracy closely across a dozen datasets. Larger and better pretrained models usually transfer better.
+
+## Beyond ImageNet
+
+Supervised ImageNet pretraining was the standard until about 2020. Since then most pretrained vision backbones come from self-supervised or image-text pretraining on far larger data (contrastive learning, masked image modelling, CLIP), see [Self-Supervised Objectives](../../representation-learning/self-supervised-objectives/). Language models follow the same pattern at a larger scale: pretrain once on huge unlabelled text, then adapt with fine-tuning, parameter-efficient methods such as LoRA, or prompting. The recipe of this note, reuse general features and adapt the top, is the same.
+
+<Callout type="key">
+Start from a pretrained network, replace the head, and train the head first. Freeze the body for tiny datasets or similar domains; fine-tune with a small learning rate when there is more data or a different domain. Match the original preprocessing.
+</Callout>

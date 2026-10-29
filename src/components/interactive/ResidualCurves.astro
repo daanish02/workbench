@@ -1,0 +1,98 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Deeper plain networks train worse; residual ones do not"
+  caption="Training loss of the same small classifier from the note's code, 600 full-batch steps, sampled every 10 steps. With 4 layers, plain and residual train alike. With 30 layers the plain network stalls near 0.5, worse than its own 4-layer version, while the residual network trains like the shallow one. Toggle the curves to compare."
+>
+  <residual-curves>
+    <div class="rc-ctl">
+      <input type="checkbox" hidden data-shallow checked />
+      <button type="button" class="btn" data-toggle aria-pressed="true">Show 4-layer curves</button>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">training loss</span>
+      <svg class="rc-svg" viewBox="0 0 400 220" data-grid='{"box":[40,10,390,190],"x":[0,600],"y":[0.2,0.75]}' role="img" aria-label="Training loss curves for 4-layer and 30-layer plain and residual networks">
+        <path data-c="4p" class="rc-line rc-shallow rc-plain"></path>
+        <path data-c="4r" class="rc-line rc-shallow rc-res"></path>
+        <path data-c="30p" class="rc-line rc-plain"></path>
+        <path data-c="30r" class="rc-line rc-res"></path>
+        <text x="40" y="206" class="ax-tick">0</text>
+        <text x="390" y="206" class="ax-tick rc-end">600</text>
+        <text x="34" y="14" class="ax-tick rc-end">0.75</text>
+        <text x="34" y="192" class="ax-tick rc-end">0.2</text>
+      </svg>
+      <span class="ax-x">training step</span>
+    </div>
+    <p class="rc-stat" data-stat></p>
+  </residual-curves>
+</Figure>
+
+<style>
+  .rc-ctl {
+    margin-bottom: 10px;
+  }
+  .rc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .rc-line {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .rc-plain {
+    stroke: var(--g-red);
+  }
+  .rc-res {
+    stroke: var(--g-green);
+  }
+  .rc-shallow {
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    opacity: 0.8;
+  }
+  .rc-shallow.rc-plain {
+    stroke: var(--g-red-l);
+  }
+  .rc-shallow.rc-res {
+    stroke: var(--g-green-l);
+  }
+  .rc-end {
+    text-anchor: end;
+  }
+  .rc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Losses printed by the note's training code (every 10th step, then step 599).
+  const CURVES: Record<string, number[]> = {"4p": [0.687, 0.541, 0.398, 0.348, 0.329, 0.32, 0.315, 0.311, 0.308, 0.306, 0.305, 0.307, 0.307, 0.306, 0.305, 0.305, 0.303, 0.302, 0.301, 0.3, 0.3, 0.3, 0.297, 0.297, 0.296, 0.295, 0.294, 0.295, 0.294, 0.294, 0.293, 0.294, 0.292, 0.293, 0.293, 0.291, 0.292, 0.291, 0.291, 0.29, 0.29, 0.289, 0.288, 0.288, 0.288, 0.287, 0.287, 0.286, 0.286, 0.286, 0.285, 0.285, 0.284, 0.284, 0.284, 0.284, 0.283, 0.283, 0.283, 0.283, 0.281], "4r": [0.702, 0.376, 0.337, 0.321, 0.311, 0.306, 0.303, 0.3, 0.298, 0.297, 0.296, 0.295, 0.294, 0.294, 0.293, 0.293, 0.292, 0.292, 0.291, 0.291, 0.291, 0.29, 0.29, 0.29, 0.289, 0.289, 0.289, 0.289, 0.288, 0.288, 0.288, 0.288, 0.287, 0.287, 0.287, 0.287, 0.287, 0.286, 0.286, 0.286, 0.286, 0.286, 0.285, 0.285, 0.285, 0.285, 0.285, 0.284, 0.284, 0.284, 0.284, 0.283, 0.283, 0.283, 0.283, 0.283, 0.283, 0.283, 0.283, 0.282, 0.282], "30p": [0.693, 0.689, 0.661, 0.653, 0.607, 0.565, 0.547, 0.552, 0.549, 0.545, 0.543, 0.537, 0.546, 0.545, 0.549, 0.549, 0.544, 0.542, 0.534, 0.523, 0.522, 0.521, 0.521, 0.537, 0.521, 0.532, 0.521, 0.523, 0.524, 0.522, 0.519, 0.534, 0.515, 0.517, 0.517, 0.517, 0.514, 0.513, 0.514, 0.519, 0.513, 0.515, 0.515, 0.511, 0.512, 0.509, 0.51, 0.514, 0.509, 0.508, 0.517, 0.51, 0.51, 0.509, 0.507, 0.513, 0.508, 0.506, 0.506, 0.515, 0.505], "30r": [0.664, 0.486, 0.398, 0.363, 0.345, 0.332, 0.323, 0.315, 0.309, 0.305, 0.301, 0.298, 0.296, 0.294, 0.293, 0.291, 0.29, 0.289, 0.289, 0.288, 0.287, 0.287, 0.286, 0.286, 0.285, 0.285, 0.285, 0.284, 0.284, 0.283, 0.283, 0.283, 0.282, 0.282, 0.282, 0.281, 0.281, 0.281, 0.281, 0.281, 0.28, 0.28, 0.28, 0.28, 0.28, 0.279, 0.279, 0.279, 0.279, 0.279, 0.279, 0.279, 0.278, 0.278, 0.278, 0.278, 0.278, 0.278, 0.278, 0.277, 0.277]};
+  const px = (i: number, n: number) => 40 + (Math.min(i * 10, 599) / 600) * 350;
+  const py = (v: number) => 190 - ((Math.min(0.75, Math.max(0.2, v)) - 0.2) / 0.55) * 180;
+
+  class ResidualCurves extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-shallow]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const shallow = this.querySelector<HTMLInputElement>('[data-shallow]')!.checked;
+      for (const [key, vals] of Object.entries(CURVES)) {
+        const path = this.querySelector(`[data-c="${key}"]`)!;
+        const d = vals.map((v, i) => `${i ? 'L' : 'M'}${px(i, vals.length).toFixed(1)},${py(v).toFixed(1)}`).join('');
+        path.setAttribute('d', d);
+        path.setAttribute('visibility', key.startsWith('4') && !shallow ? 'hidden' : 'visible');
+      }
+      const last = (k: string) => CURVES[k][CURVES[k].length - 1].toFixed(3);
+      this.querySelector('[data-stat]')!.textContent =
+        `final loss · 30 plain ${last('30p')} · 30 residual ${last('30r')} · 4 plain ${last('4p')} · 4 residual ${last('4r')}`;
+    }
+  }
+  customElements.define('residual-curves', ResidualCurves);
+</script>

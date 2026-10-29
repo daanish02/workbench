@@ -2,7 +2,109 @@
 title: "Architecture Scaling"
 description: "EfficientNet-style compound scaling, the idea of scaling depth/width/resolution together."
 order: 7
-tier: core
+tier: advanced
+takeaways:
+  - "A CNN can be made bigger in three ways: **depth** (more layers), **width** (more channels) and input **resolution**. Compute grows like depth × width² × resolution², and scaling any one alone gives quickly diminishing returns."
+  - "**Compound scaling** (EfficientNet) grows all three together with fixed ratios: depth $\\alpha^{\\phi}$, width $\\beta^{\\phi}$, resolution $\\gamma^{\\phi}$, with $\\alpha \\beta^{2} \\gamma^{2} \\approx 2$ so each step of $\\phi$ roughly doubles FLOPs. EfficientNet used $\\alpha = 1.2$, $\\beta = 1.1$, $\\gamma = 1.15$."
+  - "EfficientNet-B0 to B7 went from 77.1 % to 84.3 % ImageNet top-1 as compute grew from 0.39 to 37 GFLOPs; B7 matched the previous best model with 8.4 times fewer parameters."
+  - "Accuracy against compute follows a rough power law: fitting B0 to B7 gives error ≈ 20.1 × GFLOPs$^{-0.081}$, so each 10× more compute cuts the error by about 17 %."
+  - "Scaling laws, not hand-tuned architectures, now guide how large models are sized; but FLOPs, parameters and latency are different costs, and the best choice depends on which one is the constraint."
+resources:
+  - title: "EfficientNet: Rethinking Model Scaling for CNNs (Tan and Le)"
+    url: "https://arxiv.org/abs/1905.11946"
+    note: "The compound scaling rule, the experiments scaling one dimension at a time, and the B0 to B7 family."
+  - title: "Designing Network Design Spaces (Radosavovic et al.)"
+    url: "https://arxiv.org/abs/2003.13678"
+    note: "RegNet: finds simple rules for good networks by studying populations of models instead of single designs."
+  - title: "Scaling Laws for Neural Language Models (Kaplan et al.)"
+    url: "https://arxiv.org/abs/2001.08361"
+    note: "Power laws of loss against parameters, data and compute; the language-model counterpart of this note."
 ---
 
-_Placeholder. Content not written yet._
+Once a good architecture exists, the cheapest way to improve accuracy is usually to make it bigger. The question is how: ResNet grew deeper (18 to 152 layers), Wide ResNet grew wider, and other work trained at higher resolution. Each dimension helps for a while and then saturates, and they interact: a higher-resolution image needs more layers to see across it and more channels to capture its finer patterns. **Compound scaling** grows them together by a fixed rule. This note covers how each dimension affects cost, the EfficientNet rule and its results, and what a power-law fit to those results says about returns on compute. It continues [CNN Architectures](../cnn-architectures-as-a-narrative/) and uses the blocks from [Efficient Convolutions](../efficient-convolutions/). Run the code with `uv run --with numpy`.
+
+## Three ways to grow
+
+For a convolutional network, the compute (FLOPs) of a layer is proportional to (output pixels) × (input channels) × (output channels) × $k^{2}$. So:
+
+| Scale by $\times 2$ | FLOPs | Effect |
+|---|---|---|
+| Depth (layers) | $\times 2$ | Larger receptive field, more levels of abstraction; very deep nets need residual connections and gain little past a point |
+| Width (channels) | $\times 4$ | More features per layer, finer patterns; very wide shallow nets miss high-level features |
+| Resolution (pixels per side) | $\times 4$ | More detail visible; needs more depth to cover the larger image and more width to use the detail |
+
+Tan and Le (2019) scaled one dimension at a time on the same base network and found each one's accuracy curve flattening out, at around 80 % ImageNet top-1, well before the compute was spent. Scaling depth and resolution together, or width and resolution together, went further for the same FLOPs.
+
+## Compound scaling
+
+The **compound scaling** rule ties the three dimensions to one coefficient $\phi$:
+
+$$
+\text{depth} = \alpha^{\phi}, \quad \text{width} = \beta^{\phi}, \quad \text{resolution} = \gamma^{\phi}, \qquad \text{with } \alpha \cdot \beta^{2} \cdot \gamma^{2} \approx 2, \; \alpha, \beta, \gamma \ge 1.
+
+$$
+
+In words: choose how much of each increase goes to depth, width and resolution once, by a small grid search on the base model, then grow all three together. Width and resolution enter squared in the constraint because FLOPs grow with their squares, so each unit step in $\phi$ about doubles the compute.
+
+```python
+# FLOPs of a conv net grow like depth * width^2 * resolution^2
+alpha, beta, gamma = 1.2, 1.1, 1.15            # EfficientNet's grid-searched coefficients
+print(f"alpha * beta^2 * gamma^2 = {alpha * beta**2 * gamma**2:.3f}  (target 2: FLOPs double per step)")
+for phi in [1, 2, 4, 7]:
+    d, w, r = alpha**phi, beta**phi, gamma**phi
+    print(f"phi {phi}: depth x{d:.2f}  width x{w:.2f}  resolution x{r:.2f} ({224 * r:.0f} px)  FLOPs x{d * w**2 * r**2:.1f}")
+# alpha * beta^2 * gamma^2 = 1.920  (target 2: FLOPs double per step)
+# phi 1: depth x1.20  width x1.10  resolution x1.15 (258 px)  FLOPs x1.9
+# phi 2: depth x1.44  width x1.21  resolution x1.32 (296 px)  FLOPs x3.7
+# phi 4: depth x2.07  width x1.46  resolution x1.75 (392 px)  FLOPs x13.6
+# phi 7: depth x3.58  width x1.95  resolution x2.66 (596 px)  FLOPs x96.3
+```
+
+In words: EfficientNet's coefficients give $1.2 \times 1.1^{2} \times 1.15^{2} = 1.92$, so each step multiplies FLOPs by about 1.9. At $\phi = 7$ the network is 3.6 times deeper, about twice as wide and sees 596-pixel images instead of 224, for 96 times the compute. The published EfficientNet-B7 uses 600-pixel inputs, with depth and width rounded to whole layers and channel counts. Most of the budget goes to depth and resolution, little to width.
+
+<CompoundScaling />
+
+## The EfficientNet family
+
+EfficientNet-B0, the base, was found by **neural architecture search** optimising accuracy and FLOPs together; it is built from MobileNetV2 inverted residual blocks with squeeze-and-excitation. B1 to B7 are B0 scaled with the rule above. Its published results trace accuracy against compute, and a straight-line fit in log-log space gives a power law.
+
+```python
+import numpy as np
+
+# published EfficientNet-B0..B7 results (Tan and Le, 2019): ImageNet top-1 and FLOPs
+top1 = np.array([77.1, 79.1, 80.1, 81.6, 82.9, 83.6, 84.0, 84.3])
+gflops = np.array([0.39, 0.70, 1.0, 1.8, 4.2, 9.9, 19, 37])
+err = 100 - top1
+slope, intercept = np.polyfit(np.log(gflops), np.log(err), 1)   # error = a * FLOPs^slope
+print(f"fit: error ~ {np.exp(intercept):.1f} * GFLOPs^{slope:.3f}")
+for f in [0.39, 4.2, 37, 370]:
+    print(f"  {f:6.2f} GFLOPs -> predicted top-1 error {np.exp(intercept) * f**slope:.1f} %")
+print(f"each 10x compute cuts the error by {1 - 10**slope:.0%}")
+# fit: error ~ 20.1 * GFLOPs^-0.081
+#     0.39 GFLOPs -> predicted top-1 error 21.7 %
+#     4.20 GFLOPs -> predicted top-1 error 17.9 %
+#    37.00 GFLOPs -> predicted top-1 error 15.0 %
+#   370.00 GFLOPs -> predicted top-1 error 12.5 %
+# each 10x compute cuts the error by 17%
+```
+
+In words: across the family, top-1 error falls from 22.9 % at 0.39 GFLOPs (B0) to 15.7 % at 37 GFLOPs (B7), and the fit error ≈ 20.1 × GFLOPs$^{-0.081}$ tracks it within about a point. Each tenfold increase in compute removes about 17 % of the remaining error. The last line, 12.5 % at 370 GFLOPs, is an extrapolation ten times beyond the data, which power laws invite and which often fails when a new bottleneck such as dataset size appears. B7 matched the best ImageNet accuracy of the time, GPipe's 84.3 %, with 66 million parameters against 557 million.
+
+<EfficientNetFit />
+
+<Callout type="pitfall">
+FLOPs, parameters and latency are three different costs. EfficientNets have few FLOPs and parameters but run slower on GPUs than their FLOPs suggest, because depthwise convolutions are memory-bound and high-resolution activations take a lot of memory during training. EfficientNetV2 and RegNet were partly motivated by this: choose the scaling and the blocks for the cost that actually limits you, and measure it on the real hardware.
+</Callout>
+
+## Scaling as a design method
+
+Two later lines of work generalised the idea:
+
+- **Design spaces instead of single designs.** RegNet (2020) studied large populations of randomly sampled networks and extracted simple rules, such as widths that grow roughly linearly across stages, giving families that scale well and run fast on GPUs.
+- **Scaling laws.** For language models, Kaplan et al. (2020) found smooth power laws of loss against parameters, data and compute over many orders of magnitude, and Hoffmann et al. (2022, "Chinchilla") showed that parameters and training tokens should grow in roughly equal proportion. Model size is now planned from such fits before training, the same logic as the power-law fit above at much larger scale.
+
+Training recipe also scales: larger models need more regularization and augmentation, and EfficientNet raised dropout from 0.2 for B0 to 0.5 for B7. Comparisons between architectures are only fair at matched compute and matched training recipes.
+
+<Callout type="key">
+Grow depth, width and resolution together: compute scales like depth × width² × resolution², and a fixed compound rule ($\alpha \beta^{2} \gamma^{2} \approx 2$) spends a doubled budget better than any single dimension. Returns on compute follow a power law, and the real cost to optimise may be latency or memory rather than FLOPs.
+</Callout>

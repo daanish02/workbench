@@ -3,6 +3,138 @@ title: "Efficient Convolutions"
 description: "Depthwise separable and 1x1 convolutions, and how MobileNet-style networks cut compute."
 order: 5
 tier: core
+takeaways:
+  - "A standard $k \\times k$ convolution does two jobs at once: it filters each location spatially and mixes channels. Separating the two jobs is the basis of every efficient CNN."
+  - "A **1 × 1 convolution** is a dense layer applied at every pixel: it mixes or reduces channels with no spatial extent. A 1 × 1 → 3 × 3 → 1 × 1 **bottleneck** costs 12 % of a direct 3 × 3 on 256 channels."
+  - "A **depthwise separable** convolution is a per-channel $k \\times k$ filter (depthwise) followed by a 1 × 1 convolution (pointwise). Its cost relative to a standard one is $1/C_{\\text{out}} + 1/k^{2}$: 0.115 for 3 × 3 with 256 channels, almost 9 times cheaper."
+  - "It equals a full convolution whose kernel is restricted to the factorised form $w_{oc} = p_{oc} \\, d_c$, so it is a constrained, not a different, layer. **Grouped** convolutions sit between the two."
+  - "MobileNet reached 70.6 % ImageNet accuracy with 569 million multiply-adds and 4.2 million parameters, against VGG-16's 71.5 % with 15.3 billion and 138 million. Fewer FLOPs is not always lower latency: depthwise layers are memory-bound."
+resources:
+  - title: "MobileNets (Howard et al.)"
+    url: "https://arxiv.org/abs/1704.04861"
+    note: "Depthwise separable convolutions throughout a network, with the cost analysis and width and resolution multipliers."
+  - title: "MobileNetV2: Inverted Residuals and Linear Bottlenecks (Sandler et al.)"
+    url: "https://arxiv.org/abs/1801.04381"
+    note: "The inverted residual block used by most mobile and efficient vision models since."
+  - title: "Xception (François Chollet)"
+    url: "https://arxiv.org/abs/1610.02357"
+    note: "Argues that inception modules are a step towards fully separating spatial and channel correlations, and takes it all the way."
 ---
 
-_Placeholder. Content not written yet._
+A 3 × 3 convolution with 256 input and 256 output channels has 589,824 weights and, on a 56 × 56 feature map, costs almost two billion multiply-adds. That is fine on a data-centre GPU and too much for a phone, a camera or a car. The fix is to notice that a standard [convolution](../the-convolution-operation/) does two jobs at once: it looks at a spatial neighbourhood, and it mixes information across channels. Doing the two jobs with separate, cheaper layers loses little accuracy and saves most of the compute. This note covers 1 × 1 convolutions, bottlenecks, depthwise separable and grouped convolutions, and the networks built from them, continuing the parameter story of [CNN Architectures](../cnn-architectures-as-a-narrative/). Run the code with `uv run --with numpy`.
+
+## 1 × 1 convolutions
+
+A **1 × 1 convolution** has a kernel of shape $(C_{\text{out}}, C_{\text{in}}, 1, 1)$: at each pixel it computes a weighted sum of that pixel's $C_{\text{in}}$ channel values, once per output channel. It is exactly a dense layer from $C_{\text{in}}$ to $C_{\text{out}}$ applied independently at every position, with no spatial context. Its main uses are changing the number of channels cheaply and adding a nonlinearity between channels.
+
+The **bottleneck** of GoogLeNet and ResNet uses it to make an expensive 3 × 3 convolution cheap: reduce the channels with a 1 × 1, do the 3 × 3 on fewer channels, expand back with another 1 × 1.
+
+```python
+c, H, W, mid = 256, 56, 56, 64
+direct = 3 * 3 * c * c
+bottleneck = c * mid + 3 * 3 * mid * mid + mid * c   # 1x1 down, 3x3, 1x1 up
+print(f"3x3 on 256 channels:        {direct:,} weights, {direct * H * W / 1e9:.2f} G multiply-adds")
+print(f"1x1 -> 3x3 on 64 -> 1x1:    {bottleneck:,} weights, {bottleneck * H * W / 1e9:.2f} G multiply-adds")
+print(f"bottleneck cost: {bottleneck / direct:.0%} of the direct 3x3")
+# 3x3 on 256 channels:        589,824 weights, 1.85 G multiply-adds
+# 1x1 -> 3x3 on 64 -> 1x1:    69,632 weights, 0.22 G multiply-adds
+# bottleneck cost: 12% of the direct 3x3
+```
+
+In words: on 256 channels at 56 × 56, a direct 3 × 3 costs 1.85 billion multiply-adds; reducing to 64 channels first, doing the 3 × 3 there and expanding back costs 0.22 billion, 12 % as much, while still mapping 256 channels to 256 with a 3 × 3 receptive field. This is the block in ResNet-50 and deeper ResNets.
+
+## Depthwise separable
+
+A **depthwise separable convolution** splits the standard convolution completely:
+
+1. **Depthwise**: one $k \times k$ filter per input channel, each applied to its own channel only. Spatial filtering, no channel mixing. Cost $k^{2} C_{\text{in}}$ per pixel.
+2. **Pointwise**: a 1 × 1 convolution from $C_{\text{in}}$ to $C_{\text{out}}$. Channel mixing, no spatial extent. Cost $C_{\text{in}} C_{\text{out}}$ per pixel.
+
+Relative to a standard convolution, which costs $k^{2} C_{\text{in}} C_{\text{out}}$ per pixel,
+
+$$
+\frac{k^{2} C_{\text{in}} + C_{\text{in}} C_{\text{out}}}{k^{2} C_{\text{in}} C_{\text{out}}} = \frac{1}{C_{\text{out}}} + \frac{1}{k^{2}}.
+
+$$
+
+In words: with many output channels the first term vanishes and the cost is about $1/k^{2}$ of a standard convolution, a ninth for 3 × 3 kernels. Most of the remaining compute is in the cheap-to-run 1 × 1 layer.
+
+```python
+H = W = 56
+c_in = c_out = 256
+k = 3
+
+standard = k * k * c_in * c_out
+depthwise = k * k * c_in              # one k x k filter per channel
+pointwise = c_in * c_out              # 1 x 1 convolution mixes channels
+separable = depthwise + pointwise
+groups = 32
+grouped = k * k * (c_in // groups) * c_out   # each output sees c_in / groups channels
+
+for name, p in [("standard 3x3", standard), ("depthwise separable", separable), (f"grouped, {groups} groups", grouped)]:
+    print(f"{name:22s} {p:>8,} weights  {p * H * W / 1e6:7.1f} M multiply-adds at 56x56")
+print(f"separable / standard = {separable / standard:.3f}  (1/c_out + 1/k^2 = {1 / c_out + 1 / k**2:.3f})")
+# standard 3x3            589,824 weights   1849.7 M multiply-adds at 56x56
+# depthwise separable      67,840 weights    212.7 M multiply-adds at 56x56
+# grouped, 32 groups       18,432 weights     57.8 M multiply-adds at 56x56
+# separable / standard = 0.115  (1/c_out + 1/k^2 = 0.115)
+```
+
+In words: the separable version needs 67,840 weights and 212.7 million multiply-adds instead of 589,824 and 1849.7 million, a ratio of 0.115, exactly $1/256 + 1/9$. A **grouped convolution** splits the channels into $G$ groups and convolves each group separately; with 32 groups it costs 1/32 of the standard layer. Depthwise is the extreme case $G = C_{\text{in}}$, and ResNeXt uses grouped 3 × 3 convolutions inside its bottlenecks.
+
+<SeparableCost />
+
+## A constrained convolution
+
+A depthwise separable layer is not a new kind of operation: it is a standard convolution whose kernel is forced into a factorised form, $w_{o,c,a,b} = p_{o,c} \, d_{c,a,b}$, a pointwise weight for each output-input channel pair times one spatial filter per input channel.
+
+```python
+import numpy as np
+
+def conv_full(x, w):                   # w: (c_out, c_in, k, k), valid padding
+    c_out, c_in, k, _ = w.shape
+    H, W = x.shape[1] - k + 1, x.shape[2] - k + 1
+    cols = np.stack([x[:, i:i + k, j:j + k].ravel() for i in range(H) for j in range(W)])
+    return (cols @ w.reshape(c_out, -1).T).T.reshape(c_out, H, W)
+
+def depthwise_separable(x, dw, pw):    # dw: (c_in, k, k), pw: (c_out, c_in)
+    c_in, k, _ = dw.shape
+    H, W = x.shape[1] - k + 1, x.shape[2] - k + 1
+    spatial = np.zeros((c_in, H, W))
+    for c in range(c_in):              # each channel filtered on its own
+        for i in range(H):
+            for j in range(W):
+                spatial[c, i, j] = np.sum(x[c, i:i + k, j:j + k] * dw[c])
+    return np.einsum("oc,chw->ohw", pw, spatial)   # 1x1 conv: mix channels per pixel
+
+rng = np.random.default_rng(0)
+x = rng.normal(size=(4, 9, 9))
+dw = rng.normal(size=(4, 3, 3))
+pw = rng.normal(size=(6, 4))
+# the same layer as a full convolution whose kernel factorises: w[o, c] = pw[o, c] * dw[c]
+w_full = pw[:, :, None, None] * dw[None, :, :, :]
+print("separable equals the factorised full conv:",
+      np.allclose(depthwise_separable(x, dw, pw), conv_full(x, w_full)))
+print("weights: separable", dw.size + pw.size, " full", w_full.size)
+# separable equals the factorised full conv: True
+# weights: separable 60  full 216
+```
+
+In words: the two-step layer and a full convolution with the factorised kernel give identical outputs, but the separable form stores 60 weights instead of 216 for 4 input and 6 output channels. The restriction is the assumption that the same spatial pattern per input channel serves every output channel. In practice that assumption costs a little accuracy per layer, which networks recover by being deeper or wider for the same budget.
+
+<Callout type="pitfall">
+Multiply-adds are not latency. A depthwise convolution does very little arithmetic per value it reads, so it is limited by memory bandwidth rather than compute, and GPUs run it far below their peak. A network with four times fewer FLOPs can be only slightly faster, or even slower, on a GPU. Measure latency on the target hardware; mobile accelerators are designed around these layers, data-centre GPUs much less so.
+</Callout>
+
+<BlockAnatomy />
+
+## Networks built from them
+
+- **MobileNet** (2017) built a whole network from depthwise separable layers: 70.6 % ImageNet top-1 accuracy with 4.2 million parameters and 569 million multiply-adds, against VGG-16's 71.5 % with 138 million parameters and 15.3 billion multiply-adds. Width and resolution multipliers trade accuracy for cost smoothly.
+- **MobileNetV2** (2018) introduced the **inverted residual**: expand channels with a 1 × 1 (by about 6), filter with a depthwise 3 × 3, project back down with a linear 1 × 1, and put the skip connection between the thin ends. It is the building block of most efficient vision models since, including EfficientNet.
+- **Xception** (2017) pushed the separation through an Inception-style network, and **ResNeXt** (2017) used grouped convolutions in ResNet bottlenecks to get better accuracy at the same cost.
+- **ConvNeXt** (2022) uses large 7 × 7 depthwise convolutions: because depthwise filtering is so cheap, a large spatial kernel adds little cost.
+
+<Callout type="key">
+Split spatial filtering from channel mixing: 1 × 1 convolutions mix channels and form bottlenecks, depthwise convolutions filter each channel alone, and together they cost about $1/k^{2}$ of a standard convolution. Check real latency, not just FLOPs.
+</Callout>

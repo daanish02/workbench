@@ -3,6 +3,168 @@ title: "Convolution Operation"
 description: "Kernels, feature maps, and sliding windows over an input."
 order: 1
 tier: core
+takeaways:
+  - "A **convolutional layer** slides a small **kernel** (for example 3 × 3) over the input and at each position takes the sum of elementwise products, producing a **feature map** that says where the kernel's pattern occurs."
+  - "Two ideas make it efficient for images: **local connectivity** (each output looks at a small window) and **weight sharing** (the same kernel everywhere). A 3 × 3 layer from 3 to 16 channels on 32 × 32 images has 448 parameters; a dense layer with the same shapes has 50 million."
+  - "Output size: $\\lfloor (n + 2p - k)/s \\rfloor + 1$ for input size $n$, kernel $k$, padding $p$ and stride $s$. Padding $p = (k-1)/2$ with stride 1 keeps the size ('same')."
+  - "With several channels, each output channel has one kernel of shape $k \\times k \\times C_{\\text{in}}$; the layer's weights have shape $(C_{\\text{out}}, C_{\\text{in}}, k, k)$. Frameworks compute it as one matrix multiply (im2col) or with specialised algorithms."
+  - "Convolution is **translation equivariant**: shifting the input shifts the feature map by the same amount, so a pattern is detected wherever it appears."
+resources:
+  - title: "CNN Explainer (Polo Club, Georgia Tech)"
+    url: "https://poloclub.github.io/cnn-explainer/"
+    note: "An interactive tour of a small CNN in the browser: every kernel, feature map and activation."
+  - title: "Convolutional Neural Networks (Stanford CS231n)"
+    url: "https://cs231n.github.io/convolutional-networks/"
+    note: "Layer shapes, parameter counts, padding and stride, and how conv layers are implemented as matrix multiplies."
+  - title: "A guide to convolution arithmetic for deep learning (Dumoulin and Visin)"
+    url: "https://arxiv.org/abs/1603.07285"
+    note: "Output-size formulas for every padding and stride case, with diagrams, including transposed and dilated convolutions."
 ---
 
-_Placeholder. Content not written yet._
+A fully connected layer treats an image as a flat list of numbers, so it has to learn separately that an edge in the top-left corner and an edge in the bottom-right are the same thing, and it needs a weight for every pixel-to-unit pair. The **convolutional layer** builds two facts about images into the architecture: useful patterns are local (an edge involves neighbouring pixels), and the same pattern can appear anywhere. It slides one small set of weights, a **kernel**, across the whole image. This note defines the operation in 2D, works out output sizes and parameter counts, extends it to many channels, and shows how frameworks compute it. The one-dimensional version, and the signal-processing view of it, is in [Convolution](../../../math/signals-fourier/convolution/); the layer replaces the dense layers of the [multi-layer perceptron](../../../ml/shallow-neural-networks/multi-layer-perceptrons/). Run the code with `uv run --with numpy`.
+
+## Sliding a kernel
+
+For a 2D input $x$ and a $k \times k$ kernel $w$, the output at position $(i, j)$ is
+
+$$
+y_{ij} = \sum_{a=0}^{k-1} \sum_{b=0}^{k-1} w_{ab} \, x_{i+a, \, j+b} + \text{bias}.
+
+$$
+
+In words: lay the kernel over the window of the input whose top-left corner is $(i, j)$, multiply each kernel weight by the pixel under it, and add the nine products (for $k = 3$). Doing this at every position gives the **feature map**: a large value means the window looks like the kernel. Strictly, this is **cross-correlation**; a mathematical convolution flips the kernel first. Deep learning frameworks compute cross-correlation and call it convolution, which makes no difference because the kernel is learned either way.
+
+```python
+import numpy as np
+
+def conv2d(x, k):
+    """'Valid' cross-correlation: slide k over x, sum of elementwise products."""
+    kh, kw = k.shape
+    out = np.zeros((x.shape[0] - kh + 1, x.shape[1] - kw + 1))
+    for i in range(out.shape[0]):
+        for j in range(out.shape[1]):
+            out[i, j] = np.sum(x[i:i + kh, j:j + kw] * k)
+    return out
+
+x = np.zeros((6, 6))
+x[:, 3:] = 1.0                       # dark left half, bright right half
+k = np.array([[-1, 0, 1],
+              [-1, 0, 1],
+              [-1, 0, 1]], float)    # responds to left-to-right increases
+print(x.astype(int))
+print(conv2d(x, k).astype(int))
+# [[0 0 0 1 1 1]
+#  [0 0 0 1 1 1]
+#  [0 0 0 1 1 1]
+#  [0 0 0 1 1 1]
+#  [0 0 0 1 1 1]
+#  [0 0 0 1 1 1]]
+# [[0 3 3 0]
+#  [0 3 3 0]
+#  [0 3 3 0]
+#  [0 3 3 0]]
+```
+
+In words: the kernel subtracts the left column of each window from the right column. Over flat regions, all dark or all bright, the result is 0; over the vertical boundary it is 3, the three bright pixels on the right minus nothing on the left. The 6 × 6 image gives a 4 × 4 map that lights up exactly along the edge. A trained network learns kernels like this one in its first layer, and many others.
+
+<Conv2dStepper />
+
+## Size, padding and stride
+
+Without padding, a $k \times k$ kernel fits in $n - k + 1$ positions along a side of length $n$, so each layer shrinks the image. **Padding** adds $p$ rows and columns of zeros around the border; **stride** $s$ moves the kernel $s$ pixels at a time. The output side is
+
+$$
+n_{\text{out}} = \left\lfloor \frac{n + 2p - k}{s} \right\rfloor + 1.
+
+$$
+
+In words: the padded width minus the kernel width gives the room to slide, dividing by the stride counts the steps, and the $+1$ counts the first position.
+
+```python
+def out_size(n, k, p=0, s=1):
+    return (n + 2 * p - k) // s + 1
+
+for n, k, p, s, note in [(32, 3, 0, 1, "valid"), (32, 3, 1, 1, "same"), (32, 3, 1, 2, "stride 2"),
+                         (224, 7, 3, 2, "ResNet stem"), (32, 5, 2, 1, "same, 5x5")]:
+    print(f"n={n:3d} k={k} p={p} s={s}: output {out_size(n, k, p, s):3d}  ({note})")
+# n= 32 k=3 p=0 s=1: output  30  (valid)
+# n= 32 k=3 p=1 s=1: output  32  (same)
+# n= 32 k=3 p=1 s=2: output  16  (stride 2)
+# n=224 k=7 p=3 s=2: output 112  (ResNet stem)
+# n= 32 k=5 p=2 s=1: output  32  (same, 5x5)
+```
+
+In words: a 3 × 3 kernel with no padding turns 32 into 30; padding 1 keeps 32 ("same" padding is $p = (k-1)/2$ for odd $k$); adding stride 2 halves it to 16. ResNet's first layer, a 7 × 7 kernel with stride 2 and padding 3, takes a 224-pixel image to 112. Stride is one of the two standard ways to shrink feature maps; the other is [Pooling](../pooling/).
+
+## Channels
+
+Real inputs have **channels**: 3 for an RGB image, and dozens to thousands in hidden layers. A kernel spans all input channels, so it has shape $k \times k \times C_{\text{in}}$ and produces one output channel; a layer with $C_{\text{out}}$ output channels has $C_{\text{out}}$ such kernels plus one bias each. Its weights form a tensor of shape $(C_{\text{out}}, C_{\text{in}}, k, k)$, and its parameter count does not depend on the image size at all.
+
+```python
+h, w, c_in, c_out, k = 32, 32, 3, 16, 3
+
+conv = k * k * c_in * c_out + c_out           # one 3x3x3 kernel per output channel, plus bias
+dense = (h * w * c_in) * (h * w * c_out) + h * w * c_out
+print(f"conv layer:  {conv:,} parameters")
+print(f"dense layer: {dense:,} parameters for the same input and output shape")
+print(f"ratio: {dense / conv:,.0f}x")
+# conv layer:  448 parameters
+# dense layer: 50,348,032 parameters for the same input and output shape
+# ratio: 112,384x
+```
+
+In words: mapping a 32 × 32 RGB image to 16 feature maps of the same size takes 448 parameters with 3 × 3 kernels and over 50 million with a dense layer, 112,384 times more. The saving comes from **local connectivity**, each output depends on 27 inputs instead of 3072, and **weight sharing**, the same 27 weights are used at all 1024 positions. Fewer parameters means less data needed and less overfitting, and the assumption behind it, that the same local pattern matters everywhere, holds for images.
+
+<Callout type="pitfall">
+Frameworks disagree on layout. PyTorch stores images as $(N, C, H, W)$ and weights as $(C_{\text{out}}, C_{\text{in}}, k, k)$; TensorFlow and JAX default to $(N, H, W, C)$. Feeding an $(H, W, C)$ image from an image library straight into a PyTorch model without `permute(2, 0, 1)` either errors or, when the sizes happen to fit, silently treats rows as channels.
+</Callout>
+
+## How it is computed
+
+Six nested loops are far too slow. The standard trick, **im2col**, copies every $k \times k \times C_{\text{in}}$ window into a row of a matrix; the whole convolution is then one matrix multiply with the kernels flattened into columns, which runs at full speed on GPUs. Libraries such as cuDNN choose between im2col, FFT-based and Winograd algorithms per layer shape.
+
+```python
+import numpy as np
+
+def conv_loops(x, w, b):
+    c_out, c_in, k, _ = w.shape
+    H, W = x.shape[1] - k + 1, x.shape[2] - k + 1
+    out = np.zeros((c_out, H, W))
+    for o in range(c_out):
+        for i in range(H):
+            for j in range(W):
+                out[o, i, j] = np.sum(x[:, i:i + k, j:j + k] * w[o]) + b[o]
+    return out
+
+def conv_im2col(x, w, b):
+    c_out, c_in, k, _ = w.shape
+    H, W = x.shape[1] - k + 1, x.shape[2] - k + 1
+    # every k x k x c_in patch becomes one row: the convolution is one matrix multiply
+    cols = np.stack([x[:, i:i + k, j:j + k].ravel() for i in range(H) for j in range(W)])
+    return (cols @ w.reshape(c_out, -1).T + b).T.reshape(c_out, H, W)
+
+rng = np.random.default_rng(0)
+x = rng.normal(size=(3, 8, 8))                 # channels, height, width
+w = rng.normal(size=(4, 3, 3, 3))              # out channels, in channels, kh, kw
+b = rng.normal(size=4)
+print("output shape:", conv_loops(x, w, b).shape)
+print("im2col matches loops:", np.allclose(conv_loops(x, w, b), conv_im2col(x, w, b)))
+
+# translation equivariance: shift the input, the output shifts the same way
+x_shift = np.roll(x, 1, axis=2)
+same = np.allclose(conv_loops(x_shift, w, b)[:, :, 1:], conv_loops(x, w, b)[:, :, :-1])
+print("shifted input gives shifted output:", same)
+# output shape: (4, 6, 6)
+# im2col matches loops: True
+# shifted input gives shifted output: True
+```
+
+In words: a 3-channel 8 × 8 input and 4 kernels of 3 × 3 × 3 give a 4-channel 6 × 6 output, and the matrix-multiply version agrees with the loops exactly. The last line checks **translation equivariance**: shifting the input one pixel to the right shifts every feature map one pixel to the right. The layer detects a pattern the same way wherever it is; turning "where" into "whether", translation invariance, is the job of pooling and the layers after it.
+
+## What the layers learn
+
+Stacking convolutional layers grows the **receptive field**, the region of the input that one output depends on: two 3 × 3 layers see 5 × 5, three see 7 × 7, and downsampling between layers grows it much faster. Trained networks use that hierarchy. First-layer kernels look like edge and colour detectors, much like the hand-made kernel above; middle layers respond to textures and simple parts; late layers respond to object parts and whole objects. [Feature visualization](https://distill.pub/2017/feature-visualization/) makes this concrete by optimising images that excite each unit.
+
+<Callout type="key">
+A convolution slides one small kernel over the input and takes a sum of products at every position. Local windows and shared weights cut parameters by orders of magnitude and make detection translation equivariant. Track shapes with $\lfloor (n + 2p - k)/s \rfloor + 1$ and $(C_{\text{out}}, C_{\text{in}}, k, k)$.
+</Callout>

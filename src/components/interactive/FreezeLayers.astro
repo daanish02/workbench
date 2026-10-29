@@ -1,0 +1,103 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What each transfer strategy trains in a ResNet-50"
+  caption="The stages of a pretrained ResNet-50, with their parameter counts, and a new 10-class head. Pick a strategy: frozen blocks (blue) keep their ImageNet weights, trained blocks (green) are updated, the new head (yellow) always trains. Bar lengths are proportional to the square root of the parameter count so the small early stages stay visible."
+>
+  <freeze-layers>
+    <div class="fl-ctl">
+      <input type="hidden" data-s value="probe" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="probe" aria-pressed="true">linear probe</button>
+        <button type="button" class="btn" data-choice="top" aria-pressed="false">fine-tune last stage</button>
+        <button type="button" class="btn" data-choice="all" aria-pressed="false">fine-tune all</button>
+        <button type="button" class="btn" data-choice="scratch" aria-pressed="false">from scratch</button>
+      </span>
+    </div>
+    <svg class="fl-svg" viewBox="0 0 400 190" role="img" aria-label="ResNet-50 stages shown as blocks coloured by whether they train">
+      <g data-blocks></g>
+    </svg>
+    <p class="fl-stat" data-stat></p>
+  </freeze-layers>
+</Figure>
+
+<style>
+  .fl-ctl {
+    margin-bottom: 10px;
+  }
+  .fl-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .fl-svg :global(.fl-name) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: end;
+    dominant-baseline: central;
+  }
+  .fl-svg :global(.fl-n) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .fl-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Parameter counts of torchvision's ResNet-50 by stage, with a 10-class head.
+  const STAGES: [string, number][] = [
+    ['stem', 9536],
+    ['stage 1', 215808],
+    ['stage 2', 1219584],
+    ['stage 3', 7098368],
+    ['stage 4', 14964736],
+    ['head', 20490],
+  ];
+  const TRAIN: Record<string, (i: number) => 'frozen' | 'train' | 'new'> = {
+    probe: (i) => (i === 5 ? 'new' : 'frozen'),
+    top: (i) => (i === 5 ? 'new' : i === 4 ? 'train' : 'frozen'),
+    all: (i) => (i === 5 ? 'new' : 'train'),
+    scratch: (i) => (i === 5 ? 'new' : 'train'),
+  };
+  const COL = { frozen: 'rgba(66,133,244,0.35)', train: 'rgba(52,168,83,0.6)', new: 'rgba(251,188,5,0.7)' };
+  const fmt = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : `${(n / 1e3).toFixed(1)} k`);
+
+  class FreezeLayers extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-s]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const s = this.querySelector<HTMLInputElement>('[data-s]')!.value;
+      const total = STAGES.reduce((a, [, n]) => a + n, 0);
+      const maxRoot = Math.sqrt(Math.max(...STAGES.map(([, n]) => n)));
+      let trained = 0;
+      let html = '';
+      // one row per stage, so labels never collide at any width
+      STAGES.forEach(([name, n], i) => {
+        const y = 8 + i * 30;
+        const w = Math.max(4, (Math.sqrt(n) / maxRoot) * 190);
+        const state = TRAIN[s](i);
+        if (state !== 'frozen') trained += n;
+        const label = state === 'frozen' ? 'frozen' : state === 'new' ? 'new head' : s === 'scratch' ? 'random init' : 'fine-tune';
+        html += `<text x="72" y="${y + 11}" class="fl-name">${name}</text>`;
+        html += `<rect x="80" y="${y}" width="${w.toFixed(1)}" height="22" rx="3" style="fill:${COL[state]};stroke:var(--border)"></rect>`;
+        html += `<text x="${(86 + w).toFixed(1)}" y="${y + 11}" class="fl-n">${fmt(n)} · ${label}</text>`;
+      });
+      this.querySelector('[data-blocks]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        `${fmt(trained)} of ${fmt(total)} parameters trained (${((trained / total) * 100).toFixed(1)} %)` +
+        (s === 'scratch' ? ' · starting from random weights, not ImageNet' : '');
+    }
+  }
+  customElements.define('freeze-layers', FreezeLayers);
+</script>

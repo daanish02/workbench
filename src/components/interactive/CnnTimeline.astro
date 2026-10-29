@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Five CNNs, three ways of measuring them"
+  caption="Pick a measure. ImageNet top-5 error fell from 15.3 % to 3.57 % in four years, while parameters rose and then fell: VGG-16's 138 million were cut to about 7 million by GoogLeNet and 60 million by a 152-layer ResNet. Depth is counted in weight layers. LeNet-5 was evaluated on digits, not ImageNet, so it has no error bar."
+>
+  <cnn-timeline>
+    <div class="ct-ctl">
+      <input type="hidden" data-m value="err" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="err" aria-pressed="true">top-5 error</button>
+        <button type="button" class="btn" data-choice="params" aria-pressed="false">parameters</button>
+        <button type="button" class="btn" data-choice="depth" aria-pressed="false">depth</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y" data-ylab>top-5 error (%)</span>
+      <svg class="ct-svg" viewBox="0 0 400 210" role="img" aria-label="Bar chart comparing LeNet, AlexNet, VGG, GoogLeNet and ResNet">
+        <g data-bars></g>
+      </svg>
+      <span class="ax-x">model and year</span>
+    </div>
+    <p class="ct-stat" data-stat></p>
+  </cnn-timeline>
+</Figure>
+
+<style>
+  .ct-ctl {
+    margin-bottom: 10px;
+  }
+  .ct-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ct-svg :global(.ct-bar) {
+    fill: var(--g-blue);
+  }
+  .ct-svg :global(.ct-best) {
+    fill: var(--g-green);
+  }
+  .ct-svg :global(.ct-name) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ct-svg :global(.ct-val) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ct-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type M = { name: string; year: number; err: number | null; params: number; depth: number };
+  const MODELS: M[] = [
+    { name: 'LeNet-5', year: 1998, err: null, params: 61706, depth: 5 },
+    { name: 'AlexNet', year: 2012, err: 15.3, params: 62.4e6, depth: 8 },
+    { name: 'VGG-16', year: 2014, err: 7.3, params: 138.4e6, depth: 16 },
+    { name: 'GoogLeNet', year: 2014, err: 6.7, params: 7e6, depth: 22 },
+    { name: 'ResNet-152', year: 2015, err: 3.57, params: 60.2e6, depth: 152 },
+  ];
+  const LABEL: Record<string, string> = { err: 'top-5 error (%)', params: 'parameters (log scale)', depth: 'weight layers (log scale)' };
+  const fmtP = (p: number) => (p >= 1e6 ? `${(p / 1e6).toFixed(1)} M` : `${(p / 1e3).toFixed(1)} k`);
+
+  class CnnTimeline extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const m = this.querySelector<HTMLInputElement>('[data-m]')!.value as 'err' | 'params' | 'depth';
+      this.querySelector('[data-ylab]')!.textContent = LABEL[m];
+      // error on a linear scale up to 16 %; parameters and depth on log scales
+      const h = (v: number) =>
+        m === 'err' ? (v / 16) * 160 : m === 'params' ? ((Math.log10(v) - 4) / 5) * 160 : ((Math.log10(v) - 0.5) / 2) * 160;
+      const vals = MODELS.map((x) => x[m]);
+      const good = m === 'err' ? Math.min(...(vals.filter((v) => v !== null) as number[])) : null;
+      let html = '';
+      MODELS.forEach((x, i) => {
+        const cx = 50 + i * 75;
+        const v = x[m];
+        if (v !== null) {
+          const hh = Math.max(2, h(v));
+          html += `<rect x="${cx - 22}" y="${(180 - hh).toFixed(1)}" width="44" height="${hh.toFixed(1)}" class="${v === good ? 'ct-best' : 'ct-bar'}"></rect>`;
+          html += `<text x="${cx}" y="${(174 - hh).toFixed(1)}" class="ct-val">${m === 'err' ? `${v} %` : m === 'params' ? fmtP(v) : v}</text>`;
+        } else html += `<text x="${cx}" y="172" class="ct-val">n/a</text>`;
+        html += `<text x="${cx}" y="194" class="ct-name">${x.name}</text><text x="${cx}" y="206" class="ct-name">${x.year}</text>`;
+      });
+      this.querySelector('[data-bars]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        m === 'err'
+          ? 'AlexNet 15.3 % → ResNet ensemble 3.57 %: error cut by 77 % in three years'
+          : m === 'params'
+            ? 'VGG-16 has 2,242 × the parameters of LeNet-5; GoogLeNet uses 1/20 of VGG-16'
+            : 'ResNet-152 is 19 × deeper than AlexNet, trainable because of residual connections';
+    }
+  }
+  customElements.define('cnn-timeline', CnnTimeline);
+</script>

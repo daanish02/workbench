@@ -3,6 +3,119 @@ title: "Residual Connections"
 description: "Why skip connections are what actually made very deep networks trainable."
 order: 4
 tier: core
+takeaways:
+  - "A **residual block** outputs $x + F(x)$: the input passes through unchanged on a **skip connection** and the layers learn only a correction $F$."
+  - "Plain networks suffer **degradation**: past some depth, adding layers raises the *training* loss. In the note's experiment a 30-layer plain network ends at 0.505, worse than a 4-layer one at 0.281; the 30-layer residual network reaches 0.277."
+  - "The skip path gives the gradient an identity route: $\\partial h_L / \\partial h_\\ell$ contains a term equal to the identity, so early layers always receive a signal from the loss."
+  - "Doing nothing is easy for a residual block (set $F = 0$), so extra blocks cannot make the best reachable solution worse; initialising the last layer of each branch at zero starts the network as an identity map."
+  - "When a block changes the shape (stride 2 or more channels), the skip uses a **projection**, a 1 × 1 convolution. The same idea is in every transformer block, U-Net and diffusion model."
+resources:
+  - title: "Deep Residual Learning for Image Recognition (He, Zhang, Ren, Sun)"
+    url: "https://arxiv.org/abs/1512.03385"
+    note: "The ResNet paper: the degradation experiment, identity and projection shortcuts, and bottleneck blocks."
+  - title: "Identity Mappings in Deep Residual Networks (He et al.)"
+    url: "https://arxiv.org/abs/1603.05027"
+    note: "Why a clean identity path matters, the pre-activation block, and training a 1001-layer ResNet."
+  - title: "Visualizing the Loss Landscape of Neural Nets (Li et al.)"
+    url: "https://arxiv.org/abs/1712.09913"
+    note: "Pictures of how skip connections turn a chaotic loss surface into a smooth, nearly convex one."
 ---
 
-_Placeholder. Content not written yet._
+[CNN Architectures](../cnn-architectures-as-a-narrative/) ended with a puzzle: a 56-layer plain network had higher training error than a 20-layer one. A deeper network can represent everything the shallower one can, by copying it and making the extra layers compute the identity, so the problem is not capacity but optimisation. **Residual connections** fix it by making the identity the starting point. This note runs the degradation experiment, explains with the backward pass why the fix works, and covers the design details: zero-initialised branches, projection shortcuts and pre-activation blocks. It continues [Unstable Gradients](../../training-optimization/vanishing-and-exploding-gradients/), which introduced the skip path for gradient flow. Run the code with `uv run --with numpy`.
+
+## The degradation problem
+
+Two networks of each depth, 4 and 30 ReLU layers of width 32, trained for 600 full-batch steps on the half-moons data with the same learning rate, He initialization and the same seed. The residual version adds each layer's output to its input, with the branch scaled by $1/\sqrt{\text{depth}}$.
+
+```python
+import numpy as np
+
+def moons(rng, n=256):
+    t = rng.uniform(0, np.pi, n)
+    X = np.vstack([np.c_[np.cos(t[:n // 2]), np.sin(t[:n // 2])],
+                   np.c_[1 - np.cos(t[n // 2:]), 0.5 - np.sin(t[n // 2:])]])
+    return X + rng.normal(scale=0.2, size=X.shape), np.r_[np.zeros(n // 2, int), np.ones(n // 2, int)]
+
+def train(residual, depth, width=32, steps=600, lr=0.05):
+    rng = np.random.default_rng(0)
+    X, y = moons(rng)
+    Win = rng.normal(size=(2, width)) * np.sqrt(2 / 2)
+    Ws = [rng.normal(size=(width, width)) * np.sqrt(2 / width) for _ in range(depth)]
+    Wout = rng.normal(size=(width, 2)) * 0.01
+    curve = []
+    for step in range(steps):
+        h = np.maximum(X @ Win, 0)
+        hs, zs = [h], []
+        for W in Ws:
+            z = h @ W
+            zs.append(z)
+            f = np.maximum(z, 0)
+            h = h + f / np.sqrt(depth) if residual else f   # scaled residual branch
+            hs.append(h)
+        Z = h @ Wout
+        P = np.exp(Z - Z.max(1, keepdims=True))
+        P /= P.sum(1, keepdims=True)
+        curve.append(-np.mean(np.log(P[np.arange(len(y)), y] + 1e-12)))
+        d = (P - np.eye(2)[y]) / len(y)
+        dWout = h.T @ d
+        g = d @ Wout.T
+        for i in range(depth - 1, -1, -1):
+            gb = g / np.sqrt(depth) if residual else g
+            dz = gb * (zs[i] > 0)
+            dW = hs[i].T @ dz
+            g = (g if residual else 0) + dz @ Ws[i].T
+            Ws[i] -= lr * dW
+        Win -= lr * X.T @ (g * (X @ Win > 0))
+        Wout -= lr * dWout
+    return curve
+
+for depth in [4, 30]:
+    for residual in [False, True]:
+        c = train(residual, depth)
+        name = f"{depth:2d} layers {'residual' if residual else 'plain   '}"
+        print(f"{name}: loss at step 0 {c[0]:.3f}, 100 {c[100]:.3f}, 300 {c[300]:.3f}, 599 {c[599]:.3f}")
+#  4 layers plain   : loss at step 0 0.687, 100 0.305, 300 0.293, 599 0.281
+#  4 layers residual: loss at step 0 0.702, 100 0.296, 300 0.288, 599 0.282
+# 30 layers plain   : loss at step 0 0.693, 100 0.543, 300 0.519, 599 0.505
+# 30 layers residual: loss at step 0 0.664, 100 0.301, 300 0.283, 599 0.277
+```
+
+In words: at 4 layers, plain and residual behave the same, ending at 0.281 and 0.282. At 30 layers the plain network learns slowly and ends at 0.505, far *worse than the 4-layer plain network on its own training data*: that is degradation, not overfitting. The 30-layer residual network ends at 0.277, slightly better than either shallow one. The only difference between the two 30-layer networks is the `h +` on the forward line and the matching `g +` on the backward line.
+
+<ResidualCurves />
+
+## Why it works
+
+**Gradient path.** For $h_{\ell} = h_{\ell - 1} + F_\ell(h_{\ell - 1})$, the Jacobian of one block is $I + \partial F_\ell / \partial h_{\ell - 1}$, and over many blocks
+
+$$
+\frac{\partial h_L}{\partial h_\ell} = \prod_{j = \ell + 1}^{L} \left( I + \frac{\partial F_j}{\partial h_{j - 1}} \right) = I + \sum_{j} \frac{\partial F_j}{\partial h_{j-1}} + \dots
+
+$$
+
+In words: expanding the product gives the identity plus terms through one block, plus terms through two blocks, and so on. The identity term means the gradient from the loss always reaches layer $\ell$ undiminished, however small the branch derivatives are; in a plain network the gradient is only the product of the branch Jacobians, which shrinks or grows exponentially with depth.
+
+**Easy identity.** A plain layer that should do nothing has to learn $\operatorname{relu}(h W) = h$, a specific and awkward weight setting. A residual block does nothing when $F = 0$, which weight decay and small initialization already push towards. Adding a block therefore starts from "no change" instead of "random change", and the optimiser only has to find useful corrections.
+
+**Smoother loss surface.** Li et al. (2018) plotted loss landscapes along random directions: deep plain networks have chaotic, highly non-convex surfaces, while the same networks with skip connections have smooth, nearly convex basins around their minima. Veit et al. (2016) offered another view: unrolling $L$ blocks gives $2^{L}$ paths of different lengths, most of the gradient flows through the short ones, and a ResNet behaves somewhat like an ensemble of shallower networks, which is why deleting one block from a trained ResNet hurts it only a little.
+
+## Block design
+
+| Detail | Choice and reason |
+|---|---|
+| Branch | Two 3 × 3 convolutions (basic block) or 1 × 1, 3 × 3, 1 × 1 (bottleneck), each followed by batch norm |
+| Shape change | When a block halves the resolution or changes the channel count, the skip uses a 1 × 1 convolution with matching stride (a **projection**) so the two can be added |
+| Initialization | Setting the last batch-norm scale $\gamma$ of each branch to 0 makes every block start as the identity; it speeds up training of deep ResNets |
+| Order | The original block adds, then applies ReLU. The **pre-activation** block (BN, ReLU, conv inside the branch, nothing after the addition) keeps the skip path a pure identity and trained a 1001-layer ResNet |
+
+<Callout type="pitfall">
+Anything placed on the skip path itself, such as a ReLU after the addition, dropout or a scaling, breaks the clean identity and brings back some of the degradation at large depth. Keep the skip path an identity (or a projection only where shapes must change) and put every operation inside the branch.
+</Callout>
+
+## Beyond CNNs
+
+Residual connections are now part of almost every deep architecture. Every transformer block wraps both attention and the feed-forward layer as $x + \operatorname{Sublayer}(\operatorname{Norm}(x))$, and a large language model is a stack of dozens of such blocks along one **residual stream**. U-Nets for segmentation and diffusion models use long skip connections between matching resolutions. DenseNet goes further and concatenates every earlier feature map instead of adding. The idea that each layer refines a running representation rather than replacing it is one of the few design decisions that every modern architecture shares.
+
+<Callout type="key">
+A residual block computes $x + F(x)$. The identity path carries the gradient back unchanged and makes "do nothing" the default for each block, so depth stops hurting optimisation. Keep the skip path clean, project only when shapes change, and start branches near zero.
+</Callout>
