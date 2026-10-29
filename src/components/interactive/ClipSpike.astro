@@ -1,0 +1,79 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One bad batch, with and without clipping"
+  caption="The clean-data loss of the note's linear regression after each SGD step (log scale). Step 1 contains the corrupted label. Without clipping (red) the loss jumps from 11 to 14,260 and takes the rest of the run to recover; clipped at norm 10 (green), the bad step is an ordinary step and the loss keeps falling, ending 15 times lower."
+>
+  <clip-spike>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">clean loss (log scale)</span>
+      <svg class="sp-svg" viewBox="0 0 400 210" data-grid='{"box":[40,10,390,190],"x":[0,60,"major"],"y":[0.001,100000,"log"]}' role="img" aria-label="Loss per step for training without and with gradient clipping">
+        <path data-none class="sp-none"></path>
+        <path data-clip class="sp-clip"></path>
+        <line data-bad x1="0" x2="0" y1="10" y2="190" class="sp-bad"></line>
+        <text x="40" y="205" class="ax-tick">0</text>
+        <text x="390" y="205" class="ax-tick sp-end">60</text>
+        <text x="34" y="14" class="ax-tick sp-end">10⁵</text>
+        <text x="34" y="192" class="ax-tick sp-end">10⁻³</text>
+        <text x="300" y="30" class="sp-name sp-n">no clipping</text>
+        <text x="300" y="46" class="sp-name sp-c">clip at 10</text>
+      </svg>
+      <span class="ax-x">SGD step</span>
+    </div>
+  </clip-spike>
+</Figure>
+
+<style>
+  .sp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .sp-none,
+  .sp-clip {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .sp-none {
+    stroke: var(--g-red);
+  }
+  .sp-clip {
+    stroke: var(--g-green);
+  }
+  .sp-bad {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .sp-name {
+    font: 0.75rem var(--font-mono);
+  }
+  .sp-n {
+    fill: var(--g-red-l);
+  }
+  .sp-c {
+    fill: var(--g-green-l);
+  }
+  .sp-end {
+    text-anchor: end;
+  }
+</style>
+
+<script>
+  // Clean loss before training and after each of 60 steps, printed by the note's code.
+  const DATA: Record<string, number[]> = {"none": [13.3715, 11.1339, 14260.1803, 10610.8031, 9291.695, 6786.3737, 5166.0571, 4079.0491, 3511.9904, 2615.6371, 2335.4963, 1940.8917, 1727.3229, 1576.0157, 1343.7533, 1084.1874, 623.2795, 557.6161, 456.3464, 385.8106, 280.9983, 254.9965, 138.27, 120.1436, 103.425, 93.2068, 77.8413, 63.6059, 44.0224, 36.8754, 30.7756, 23.8416, 15.7927, 12.6229, 10.4977, 9.7471, 7.6706, 6.8574, 5.2972, 3.9149, 3.2667, 2.8057, 2.2986, 2.1078, 1.6575, 1.4461, 1.1555, 1.0822, 0.9455, 0.9225, 0.7657, 0.6272, 0.4965, 0.4284, 0.3797, 0.3054, 0.2524, 0.2345, 0.2047, 0.1803, 0.148], "clip": [13.3715, 11.1339, 9.5485, 8.7763, 6.6753, 4.9165, 3.8927, 3.3489, 2.7466, 2.2593, 1.9524, 1.741, 1.6418, 1.4026, 1.1916, 1.0935, 0.9926, 0.9128, 0.7657, 0.6607, 0.5372, 0.4991, 0.3859, 0.3315, 0.3118, 0.2687, 0.2542, 0.2153, 0.1346, 0.097, 0.0849, 0.0745, 0.0529, 0.0464, 0.0374, 0.0342, 0.0291, 0.0238, 0.0185, 0.0168, 0.0143, 0.0136, 0.0133, 0.0129, 0.0122, 0.0119, 0.0114, 0.0111, 0.0111, 0.0109, 0.0106, 0.0104, 0.0103, 0.0103, 0.0105, 0.0106, 0.0103, 0.0103, 0.0102, 0.01, 0.0099]};
+  const px = (i: number) => 40 + (i / 60) * 350;
+  const py = (v: number) => 190 - ((Math.log10(v) + 3) / 8) * 180;
+
+  class ClipSpike extends HTMLElement {
+    connectedCallback() {
+      for (const key of ['none', 'clip'])
+        this.querySelector(`[data-${key}]`)!.setAttribute('d', DATA[key].map((v, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(''));
+      const bad = this.querySelector('[data-bad]')!;
+      bad.setAttribute('x1', px(2).toFixed(1));
+      bad.setAttribute('x2', px(2).toFixed(1));
+    }
+  }
+  customElements.define('clip-spike', ClipSpike);
+</script>

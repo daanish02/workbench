@@ -1,0 +1,144 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Every training step uses a different thinned network"
+  caption="A network with two hidden layers of 8 units. In training mode each hidden unit is dropped (red cross) with probability p on every step, and the survivors' outputs are multiplied by 1/(1 − p). Resample to draw the next step's mask: each draw is one of 2¹⁶ thinned networks sharing the same weights. In eval mode every unit is present and nothing is scaled."
+>
+  <dropout-mask>
+    <div class="dm-ctl">
+      <label class="dm-lbl">p <input type="range" min="0" max="0.9" step="0.05" value="0.5" data-p /> <b data-pv>0.50</b></label>
+      <button type="button" class="btn" data-resample>Resample mask</button>
+      <input type="checkbox" hidden data-eval />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Eval mode</button>
+    </div>
+    <svg class="dm-svg" viewBox="0 0 400 230" role="img" aria-label="Network diagram with dropped units crossed out">
+      <g data-edges></g>
+      <g data-nodes></g>
+    </svg>
+    <p class="dm-stat" data-stat></p>
+  </dropout-mask>
+</Figure>
+
+<style>
+  .dm-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .dm-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 200px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .dm-lbl input[type='range'] {
+    flex: 1;
+  }
+  .dm-svg {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .dm-svg :global(.dm-e) {
+    stroke: var(--g-blue);
+    stroke-width: 1;
+    opacity: 0.35;
+  }
+  .dm-svg :global(.dm-n) {
+    fill: rgba(66, 133, 244, 0.25);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .dm-svg :global(.dm-n.io) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .dm-svg :global(.dm-n.off) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .dm-svg :global(.dm-x) {
+    stroke: var(--g-red);
+    stroke-width: 2;
+  }
+  .dm-svg :global(.dm-s) {
+    fill: var(--g-yellow-l);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .dm-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const LAYERS = [4, 8, 8, 2];
+  const XS = [50, 160, 270, 360];
+  const pos = (l: number, i: number) => [XS[l], 115 + (i - (LAYERS[l] - 1) / 2) * 25] as const;
+
+  class DropoutMask extends HTMLElement {
+    mask: boolean[][] = [];
+    seed = 1;
+    connectedCallback() {
+      this.querySelector('[data-resample]')!.addEventListener('click', () => {
+        this.seed++;
+        this.sample();
+      });
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.sample());
+      this.querySelector('[data-eval]')!.addEventListener('input', () => this.draw());
+      this.sample();
+    }
+    sample() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      let s = Math.imul(this.seed, 2654435761) >>> 0;
+      const u = () => ((s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296);
+      // a fixed sequence per seed, so dragging p shows more or fewer of the same draws dropped
+      this.mask = LAYERS.map((n, l) => Array.from({ length: n }, () => (l === 0 || l === 3 ? true : u() >= p)));
+      this.draw();
+    }
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const ev = this.querySelector<HTMLInputElement>('[data-eval]')!.checked;
+      this.querySelector('[data-pv]')!.textContent = p.toFixed(2);
+      const on = (l: number, i: number) => ev || this.mask[l][i];
+      let e = '';
+      for (let l = 0; l < 3; l++)
+        for (let i = 0; i < LAYERS[l]; i++)
+          for (let j = 0; j < LAYERS[l + 1]; j++)
+            if (on(l, i) && on(l + 1, j)) {
+              const [x1, y1] = pos(l, i);
+              const [x2, y2] = pos(l + 1, j);
+              e += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="dm-e"></line>`;
+            }
+      this.querySelector('[data-edges]')!.innerHTML = e;
+      let n = '';
+      let kept = 0;
+      for (let l = 0; l < 4; l++)
+        for (let i = 0; i < LAYERS[l]; i++) {
+          const [x, y] = pos(l, i);
+          const io = l === 0 || l === 3;
+          const alive = on(l, i);
+          if (!io && alive) kept++;
+          n += `<circle cx="${x}" cy="${y}" r="9" class="dm-n${io ? ' io' : ''}${alive ? '' : ' off'}"></circle>`;
+          if (!alive) n += `<path d="M${x - 6},${y - 6}L${x + 6},${y + 6}M${x + 6},${y - 6}L${x - 6},${y + 6}" class="dm-x"></path>`;
+          else if (!io && !ev && p > 0) n += `<text x="${x + 20}" y="${y}" class="dm-s">×${(1 / (1 - p)).toFixed(1)}</text>`;
+        }
+      this.querySelector('[data-nodes]')!.innerHTML = n;
+      this.querySelector('[data-stat]')!.textContent = ev
+        ? 'eval mode · all 16 hidden units active · no scaling'
+        : `training · ${kept} of 16 hidden units kept (expected ${(16 * (1 - p)).toFixed(1)}) · survivors scaled ×${p < 1 ? (1 / (1 - p)).toFixed(2) : '∞'}`;
+    }
+  }
+  customElements.define('dropout-mask', DropoutMask);
+</script>

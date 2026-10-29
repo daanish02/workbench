@@ -121,6 +121,8 @@ for t in range(1, 6):
 
 In words: with a constant gradient the ideal normalised step is exactly 1 (times $\eta$). Without correction the first step is 3.162 and the step keeps growing, to 5.797 by step 5, because $s$ with $\beta_2 = 0.999$ warms up far more slowly than $m$. The raw ratio $(1 - \beta_1^{t}) / \sqrt{1 - \beta_2^{t}}$ peaks at 6.57 at step 12 and is still 1.26 at step 1000. With correction every step is 1.000. The bias correction is not a detail: without it the start of training takes steps several times larger than the learning rate says.
 
+<AdamBiasCorrection />
+
 ## The memory bill
 
 Each piece of per-parameter state is a full copy of the model's size.
@@ -140,6 +142,8 @@ for name, b in bytes_per.items():
 ```
 
 In words: training a 7-billion-parameter model with Adam in fp32 needs 104.3 GiB just for weights, gradients and the two moments, before a single activation is stored, more than one 80 GB GPU holds. That is why large-model training shards optimizer state across GPUs (ZeRO, FSDP) and why memory-light optimizers such as Adafactor, which stores factored second moments, and 8-bit Adam exist. Mixed-precision training keeps the same 16 bytes per parameter in a different split: 2-byte weights and gradients plus a 4-byte master copy and the two 4-byte moments.
+
+<OptimizerMemory />
 
 ## AdamW and weight decay
 

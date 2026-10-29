@@ -1,0 +1,121 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Training memory before a single activation"
+  caption="Bytes per parameter in fp32 training: weights (blue), gradients (green), momentum (yellow) and Adam's second moment (red). Drag the model size. The dashed line is one 80 GB GPU; for 7B parameters, Adam's 16 bytes per parameter already need 104 GiB."
+>
+  <optimizer-memory>
+    <label class="om-lbl">parameters <input type="range" min="7" max="11" step="0.05" value="9.845" data-p /> <b data-pv>7.0 B</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">memory (GiB)</span>
+      <svg class="om-svg" viewBox="0 0 400 200" role="img" aria-label="Stacked bars of training memory for SGD, SGD with momentum and Adam">
+        <g data-bars></g>
+        <line data-gpu x1="110" x2="390" class="om-gpu"></line>
+        <text data-gpul x="392" class="om-gpul">80 GB</text>
+      </svg>
+      <span class="ax-x">memory per optimizer</span>
+    </div>
+    <p class="om-stat" data-stat></p>
+  </optimizer-memory>
+</Figure>
+
+<style>
+  .om-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .om-lbl input[type='range'] {
+    flex: 1;
+  }
+  .om-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .om-gpu {
+    stroke: var(--text-muted);
+    stroke-dasharray: 5 4;
+  }
+  .om-gpul {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: end;
+  }
+  .om-svg :global(.om-name) {
+    fill: var(--text-muted);
+    font: 11px var(--font-mono);
+    text-anchor: end;
+    dominant-baseline: central;
+  }
+  .om-svg :global(.om-val) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: central;
+  }
+  .om-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const PARTS = [
+    ['weights', 'var(--g-blue)'],
+    ['gradients', 'var(--g-green)'],
+    ['momentum', 'var(--g-yellow)'],
+    ['2nd moment', 'var(--g-red)'],
+  ] as const;
+  const OPTS: [string, number][] = [
+    ['SGD', 2],
+    ['SGD + mom.', 3],
+    ['Adam', 4],
+  ];
+  const GIB = 2 ** 30;
+
+  class OptimizerMemory extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const n = 10 ** +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      this.querySelector('[data-pv]')!.textContent = n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : `${(n / 1e6).toFixed(0)} M`;
+      const per = (4 * n) / GIB;               // GiB for one fp32 copy
+      const max = Math.max(per * 4, 80e9 / GIB) * 1.1;
+      const sx = (g: number) => 110 + (g / max) * 270;
+      let html = '';
+      OPTS.forEach(([name, parts], i) => {
+        const y = 25 + i * 55;
+        let x = 110;
+        for (let k = 0; k < parts; k++) {
+          const w = sx(per) - 110;
+          html += `<rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="32" style="fill:${PARTS[k][1]};opacity:0.8"></rect>`;
+          x += w;
+        }
+        html += `<text x="102" y="${y + 16}" class="om-name">${name}</text>`;
+        html += `<text x="${Math.min(x + 4, 330).toFixed(1)}" y="${y + 16}" class="om-val">${(per * parts).toFixed(1)} GiB</text>`;
+      });
+      this.querySelector('[data-bars]')!.innerHTML = html;
+      const gx = sx(80e9 / GIB);
+      const gpu = this.querySelector('[data-gpu]')!;
+      gpu.setAttribute('x1', gx.toFixed(1));
+      gpu.setAttribute('x2', gx.toFixed(1));
+      gpu.setAttribute('y1', '12');
+      gpu.setAttribute('y2', '190');
+      const gl = this.querySelector('[data-gpul]')!;
+      gl.setAttribute('x', (gx - 3).toFixed(1));
+      gl.setAttribute('y', '12');
+      this.querySelector('[data-stat]')!.textContent =
+        `weights ${per.toFixed(1)} GiB · Adam total ${(per * 4).toFixed(1)} GiB · GPUs of 80 GB needed just for this: ${Math.ceil((per * 4 * GIB) / 80e9)}`;
+    }
+  }
+  customElements.define('optimizer-memory', OptimizerMemory);
+</script>

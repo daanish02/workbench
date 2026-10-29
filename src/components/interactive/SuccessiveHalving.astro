@@ -1,0 +1,140 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Successive halving spends the budget on the survivors"
+  caption="81 configurations, each a dot at its observed validation loss. Every round trains the survivors 3 times longer, which makes the observed loss less noisy, and keeps the best third (green); the rest are stopped (red). The yellow ring marks the configuration that is truly best. Step through the five rounds and watch the total budget."
+>
+  <successive-halving>
+    <div class="sh-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">observed loss (lower is better)</span>
+      <svg class="sh-svg" viewBox="0 0 400 220" role="img" aria-label="Observed losses of configurations across rounds of successive halving">
+        <g data-cols></g>
+        <g data-pts></g>
+      </svg>
+      <span class="ax-x">round (epochs per configuration)</span>
+    </div>
+    <p class="sh-stat" data-stat></p>
+  </successive-halving>
+</Figure>
+
+<style>
+  .sh-ctl {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sh-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .sh-svg :global(.sh-col) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .sh-svg :global(.sh-keep) {
+    fill: var(--g-green);
+  }
+  .sh-svg :global(.sh-cut) {
+    fill: var(--g-red);
+    opacity: 0.55;
+  }
+  .sh-svg :global(.sh-wait) {
+    fill: var(--g-blue);
+  }
+  .sh-svg :global(.sh-true) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .sh-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const EPOCHS = [1, 3, 9, 27, 81];
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    const u = () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return () => Math.sqrt(-2 * Math.log(u() + 1e-12)) * Math.cos(2 * Math.PI * u());
+  }
+  // Same simulation as the note: true quality ~ N(0, 1), observed = quality + noise / sqrt(epochs).
+  const g = rng(2);
+  const Q = Array.from({ length: 81 }, () => g());
+  const TRUE_BEST = Q.indexOf(Math.min(...Q));
+  type Round = { alive: number[]; seen: number[]; keep: Set<number> };
+  const ROUNDS: Round[] = [];
+  let alive = Q.map((_, i) => i);
+  for (const e of EPOCHS) {
+    const seen = alive.map((i) => Q[i] + g() / Math.sqrt(e));
+    const order = alive.map((_, k) => k).sort((a, b) => seen[a] - seen[b]);
+    const keep = new Set(order.slice(0, Math.max(1, Math.floor(alive.length / 3))).map((k) => alive[k]));
+    ROUNDS.push({ alive, seen, keep });
+    alive = alive.filter((i) => keep.has(i));
+  }
+
+  const cx = (r: number) => 55 + r * 75;
+  const py = (v: number) => 195 - ((Math.max(-4, Math.min(4, v)) + 4) / 8) * 180;
+
+  class SuccessiveHalving extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-cols]')!.innerHTML = EPOCHS.map(
+        (e, r) => `<text x="${cx(r)}" y="214" class="sh-col">${ROUNDS[r].alive.length} × ${e}</text>`,
+      ).join('');
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      if (this.i >= ROUNDS.length) return;
+      this.i++;
+      this.draw();
+      if (this.i >= ROUNDS.length) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      let html = '';
+      let budget = 0;
+      for (let r = 0; r < this.i; r++) {
+        const { alive, seen, keep } = ROUNDS[r];
+        budget += alive.length * EPOCHS[r];
+        alive.forEach((id, k) => {
+          // spread the dots horizontally so they do not stack
+          const x = cx(r) + ((k % 9) - 4) * 3.2;
+          const cls = r === ROUNDS.length - 1 ? 'sh-keep' : keep.has(id) ? 'sh-keep' : 'sh-cut';
+          html += `<circle cx="${x.toFixed(1)}" cy="${py(seen[k]).toFixed(1)}" r="3" class="${cls}"></circle>`;
+          if (id === TRUE_BEST) html += `<circle cx="${x.toFixed(1)}" cy="${py(seen[k]).toFixed(1)}" r="6.5" class="sh-true"></circle>`;
+        });
+      }
+      this.querySelector('[data-pts]')!.innerHTML = html;
+      const last = this.i ? ROUNDS[this.i - 1] : null;
+      this.querySelector('[data-stat]')!.textContent = !last
+        ? 'Press Step to train all 81 configurations for 1 epoch.'
+        : `round ${this.i}: ${last.alive.length} configs × ${EPOCHS[this.i - 1]} epochs · budget so far ${budget} epochs (all 81 to the end: 6561) · true best still running: ${last.alive.includes(TRUE_BEST) ? 'yes' : 'no'}`;
+    }
+  }
+  customElements.define('successive-halving', SuccessiveHalving);
+</script>

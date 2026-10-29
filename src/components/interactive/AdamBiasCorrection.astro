@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="What Adam's steps look like without bias correction"
+  caption="With a constant gradient, the ideal normalised Adam step is exactly 1 (green). Without bias correction the step is (1 − β₁ᵗ) / √(1 − β₂ᵗ) (red): too large from the first step, peaking at 6.57 near step 12 for β₂ = 0.999, and only settling after thousands of steps. A larger β₂ makes the overshoot bigger and longer."
+>
+  <adam-bias>
+    <div class="ab-ctl">
+      <input type="hidden" data-b2 value="0.999" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="0.99" aria-pressed="false">β₂ = 0.99</button>
+        <button type="button" class="btn" data-choice="0.999" aria-pressed="true">β₂ = 0.999</button>
+        <button type="button" class="btn" data-choice="0.9999" aria-pressed="false">β₂ = 0.9999</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">step size (× learning rate)</span>
+      <svg class="ab-svg" viewBox="0 0 400 210" data-grid='{"box":[40,10,390,190],"x":[1,10000,"log"],"y":[0,25]}' role="img" aria-label="Adam step size with and without bias correction against step number">
+        <path data-raw class="ab-raw"></path>
+        <line x1="40" x2="390" class="ab-fix" data-fix></line>
+        <circle data-peak r="4" class="ab-peak"></circle>
+        <text x="40" y="205" class="ax-tick">1</text>
+        <text x="390" y="205" class="ax-tick ab-end">10⁴</text>
+        <text x="34" y="14" class="ax-tick ab-end">25</text>
+        <text x="34" y="192" class="ax-tick ab-end">0</text>
+      </svg>
+      <span class="ax-x">training step (log scale)</span>
+    </div>
+    <p class="ab-stat" data-stat></p>
+  </adam-bias>
+</Figure>
+
+<style>
+  .ab-ctl {
+    margin-bottom: 10px;
+  }
+  .ab-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ab-raw {
+    fill: none;
+    stroke: var(--g-red);
+    stroke-width: 2.5;
+  }
+  .ab-fix {
+    stroke: var(--g-green);
+    stroke-width: 2.5;
+  }
+  .ab-peak {
+    fill: var(--g-yellow);
+  }
+  .ab-end {
+    text-anchor: end;
+  }
+  .ab-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const B1 = 0.9;
+  const px = (t: number) => 40 + (Math.log10(t) / 4) * 350;
+  const py = (v: number) => 190 - (Math.min(v, 25) / 25) * 180;
+
+  class AdamBias extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-b2]')!.addEventListener('input', () => this.draw());
+      const fix = this.querySelector('[data-fix]')!;
+      fix.setAttribute('y1', py(1).toFixed(1));
+      fix.setAttribute('y2', py(1).toFixed(1));
+      this.draw();
+    }
+    draw() {
+      const b2 = +this.querySelector<HTMLInputElement>('[data-b2]')!.value;
+      const raw = (t: number) => (1 - B1 ** t) / Math.sqrt(1 - b2 ** t);
+      let d = '';
+      let peak = 1;
+      let pv = 0;
+      let settle = 0;
+      for (let i = 0; i <= 400; i++) {
+        const t = 10 ** ((i / 400) * 4);
+        d += `${i ? 'L' : 'M'}${px(t).toFixed(1)},${py(raw(t)).toFixed(1)}`;
+      }
+      for (let t = 1; t <= 10000; t++) {
+        const v = raw(t);
+        if (v > pv) {
+          pv = v;
+          peak = t;
+        }
+        if (!settle && t > peak && v < 1.1) settle = t;
+      }
+      this.querySelector('[data-raw]')!.setAttribute('d', d);
+      const c = this.querySelector('[data-peak]')!;
+      c.setAttribute('cx', px(peak).toFixed(1));
+      c.setAttribute('cy', py(pv).toFixed(1));
+      this.querySelector('[data-stat]')!.textContent =
+        `β₂ = ${b2} · step 1: ${raw(1).toFixed(2)}× · peak ${pv.toFixed(2)}× at step ${peak} · within 10 % of 1 after step ${settle || '> 10,000'}`;
+    }
+  }
+  customElements.define('adam-bias', AdamBias);
+</script>
