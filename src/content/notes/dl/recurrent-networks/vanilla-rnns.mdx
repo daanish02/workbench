@@ -3,6 +3,190 @@ title: "Vanilla RNNs"
 description: "The recurrence relation and backpropagation through time."
 order: 2
 tier: core
+takeaways:
+  - "A vanilla RNN updates its hidden state with $h_t = \\tanh(x_t W_x + h_{t-1} W_h + b)$ and reads outputs from it with $y_t = h_t W_y$. The same $W_x$, $W_h$, $W_y$ are used at every step."
+  - "Unrolling the loop over $T$ steps gives an ordinary deep network with tied weights, $T$ layers deep. **Backpropagation through time** (BPTT) is backpropagation on that unrolled graph."
+  - "Because $W_h$ is used at every step, its gradient is a **sum over time**: $\\bar W_h = \\sum_t h_{t-1}^\\top \\bar z_t$. The gradient flowing back multiplies by $W_h^\\top$ and the tanh slope at every step."
+  - "**Truncated BPTT** backpropagates through only the last $k$ steps (13 characters in the note's example) while carrying the state forward, which bounds memory and compute on long streams."
+  - "A 32-unit character RNN trained this way learns to write 'hello world. hello world.' from 520 characters of text."
+resources:
+  - title: "Minimal character-level RNN in numpy (Andrej Karpathy)"
+    url: "https://gist.github.com/karpathy/d4dee566867f8291f086"
+    note: "About 100 lines: forward pass, BPTT, Adagrad and sampling, the model this note's last example follows."
+  - title: "Backpropagation Through Time (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_recurrent-neural-networks/bptt.html"
+    note: "The BPTT derivation with full, truncated and randomised truncation, and why gradients explode or vanish."
+  - title: "The Unreasonable Effectiveness of Recurrent Neural Networks (Andrej Karpathy)"
+    url: "http://karpathy.github.io/2015/05/21/rnn-effectiveness/"
+    note: "What character RNNs learn on real text, including individual units that track quotes and line length."
 ---
 
-_Placeholder. Content not written yet._
+[Why Sequence Models](../why-sequences-need-different-architectures/) introduced the idea of a hidden state carried from step to step. The **vanilla RNN** (or Elman network) is its simplest form: one dense layer with a tanh, whose input is the current element plus the previous state. This note defines it, unrolls it into a feed-forward graph, derives **backpropagation through time** from the [computational graph](../../nn-foundations/computational-graphs/) rules, checks the derivation numerically, and trains a character-level language model with it. Run the code with `uv run --with numpy`.
+
+## The recurrence
+
+With input vectors $x_t$ of size $d$ and a hidden state of size $h$, the vanilla RNN computes, for $t = 1, \dots, T$,
+
+$$
+\begin{aligned}
+h_t &= \tanh(x_t W_x + h_{t-1} W_h + b), \\
+y_t &= h_t W_y + c,
+\end{aligned}
+
+$$
+
+starting from $h_0 = 0$. In words: the new state mixes the current input (through $W_x$, size $d \times h$) with the previous state (through $W_h$, size $h \times h$), and tanh keeps it in $(-1, 1)$. An output, such as scores over the next character, is read from the state through $W_y$. The parameters do not depend on $t$.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+d, h, T = 3, 4, 5
+Wx, Wh, b = rng.normal(size=(d, h)) * 0.5, rng.normal(size=(h, h)) * 0.5, np.zeros(h)
+xs = rng.normal(size=(T, d))
+
+s = np.zeros(h)
+for t, x in enumerate(xs):
+    s = np.tanh(x @ Wx + s @ Wh + b)      # h_t = tanh(x_t Wx + h_{t-1} Wh + b)
+    print(f"t={t}: h = {np.round(s, 3)}")
+# t=0: h = [0.261 0.61  0.302 0.059]
+# t=1: h = [-0.553 -0.267 -0.461  0.171]
+# t=2: h = [0.749 0.254 0.708 0.07 ]
+# t=3: h = [-0.935 -0.405 -0.586  0.332]
+# t=4: h = [ 0.403 -0.613  0.626  0.503]
+```
+
+In words: a 4-unit state evolves over 5 random inputs, every value staying between −1 and 1. The state after step 4 depends on all five inputs, through four applications of $W_h$.
+
+## Unrolling
+
+Writing out the loop for a fixed $T$ gives a feed-forward graph with $T$ copies of the cell, each passing its state to the next. It is a deep network, $T$ layers deep, with one twist: all layers share the same weights. Everything from [Backpropagation Derived](../../nn-foundations/backpropagation-fully-derived/) applies, plus the rule that a weight used in several places collects the sum of the gradients from all of them.
+
+<RnnUnroll />
+
+## Backpropagation through time
+
+Let the total loss be $L = \sum_t \ell_t$, one term per output, and write $z_t = x_t W_x + h_{t-1} W_h + b$ so that $h_t = \tanh(z_t)$. The state $h_t$ affects the loss in two ways: through its own output $y_t$, and through the next state $h_{t+1}$. Its gradient therefore has two parts, and the backward pass runs from $t = T$ down to 1:
+
+$$
+\begin{aligned}
+\bar h_t &= \bar y_t W_y^\top + \bar z_{t+1} W_h^\top, \\
+\bar z_t &= \bar h_t \odot (1 - h_t^{2}), \\
+\bar W_h &= \sum_{t=1}^{T} h_{t-1}^\top \bar z_t, \qquad \bar W_x = \sum_{t=1}^{T} x_t^\top \bar z_t.
+\end{aligned}
+
+$$
+
+In words: the gradient at step $t$ is what its own output sends back plus what arrives from the future; it passes through the tanh slope; and each weight's gradient is a sum over all the steps that used it. The term $\bar z_{t+1} W_h^\top$ is what carries information about later losses back to early steps, multiplied by $W_h^\top$ and a slope once per step.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(1)
+d, h, T = 3, 5, 6
+Wx, Wh = rng.normal(size=(d, h)) * 0.5, rng.normal(size=(h, h)) * 0.5
+Wy = rng.normal(size=(h, 1)) * 0.5
+xs, ys = rng.normal(size=(T, d)), rng.normal(size=(T, 1))
+
+def loss_and_grads(Wx, Wh, Wy):
+    hs, L = [np.zeros(h)], 0.0
+    for x, y in zip(xs, ys):                      # forward through time
+        hs.append(np.tanh(x @ Wx + hs[-1] @ Wh))
+        L += 0.5 * np.sum((hs[-1] @ Wy - y) ** 2)
+    dWx, dWh, dWy = np.zeros_like(Wx), np.zeros_like(Wh), np.zeros_like(Wy)
+    dh_next = np.zeros(h)                         # gradient arriving from step t+1
+    for t in range(T - 1, -1, -1):                # backward through time
+        e = hs[t + 1] @ Wy - ys[t]
+        dWy += np.outer(hs[t + 1], e)
+        dh = e @ Wy.T + dh_next                   # from this step's loss and from the future
+        dz = dh * (1 - hs[t + 1] ** 2)
+        dWx += np.outer(xs[t], dz)
+        dWh += np.outer(hs[t], dz)                # the same Wh at every step: gradients add
+        dh_next = dz @ Wh.T
+    return L, dWx, dWh, dWy
+
+L, dWx, dWh, dWy = loss_and_grads(Wx, Wh, Wy)
+num = np.zeros_like(Wh)
+for i in np.ndindex(Wh.shape):
+    E = np.zeros_like(Wh); E[i] = 1e-6
+    num[i] = (loss_and_grads(Wx, Wh + E, Wy)[0] - loss_and_grads(Wx, Wh - E, Wy)[0]) / 2e-6
+print("loss:", round(L, 4))
+print("BPTT gradient for Wh matches finite differences:", np.allclose(num, dWh, atol=1e-6))
+# loss: 3.1451
+# BPTT gradient for Wh matches finite differences: True
+```
+
+In words: a 5-unit RNN with a squared-error output at each of 6 steps has loss 3.1451, and the hand-derived BPTT gradient for $W_h$ matches a finite-difference check on all 25 entries. The two lines that make it BPTT are `dh = e @ Wy.T + dh_next`, which adds the gradient from the future, and the `+=` on every weight gradient.
+
+<Callout type="pitfall">
+When training on a long stream in chunks, the state is carried from one chunk to the next, but the gradient must not be: in PyTorch, call `h = h.detach()` between chunks. Without it, the graph grows across chunks, memory climbs every step, and the second `backward()` fails or backpropagates through the entire history.
+</Callout>
+
+## Truncated BPTT
+
+Backpropagating through a whole book at once is impossible: the forward pass would have to store a state for every character. **Truncated BPTT** splits the stream into chunks of $k$ steps. The forward pass carries the state across chunk boundaries, so the model still sees long context, but the backward pass stops at the start of each chunk, so gradients only teach dependencies up to $k$ steps long. Memory and compute per update are then proportional to $k$, not to the stream length.
+
+The code trains a 32-unit character RNN on 520 characters of "hello world. hello world. …" with chunks of 13 characters, softmax cross-entropy at every step, gradient clipping at ±5 and the Adagrad optimizer, then generates text by repeatedly feeding back its most likely next character.
+
+```python
+import numpy as np
+
+text = "hello world. " * 40
+chars = sorted(set(text))
+ix = {c: i for i, c in enumerate(chars)}
+V, H, T, lr = len(chars), 32, 13, 0.5
+rng = np.random.default_rng(0)
+Wx, Wh, Wy = rng.normal(size=(V, H)) * 0.1, rng.normal(size=(H, H)) * 0.1, rng.normal(size=(H, V)) * 0.1
+bh, by = np.zeros(H), np.zeros(V)
+params = [Wx, Wh, Wy, bh, by]
+mem = [np.zeros_like(p) for p in params]          # Adagrad memory
+
+def step(inp, tgt, h):
+    hs, ps, loss = {-1: h}, {}, 0.0
+    for t in range(len(inp)):
+        hs[t] = np.tanh(Wx[inp[t]] + hs[t - 1] @ Wh + bh)
+        z = hs[t] @ Wy + by
+        ps[t] = np.exp(z - z.max()); ps[t] /= ps[t].sum()
+        loss -= np.log(ps[t][tgt[t]])
+    g = [np.zeros_like(p) for p in params]
+    dh_next = np.zeros(H)
+    for t in reversed(range(len(inp))):           # backpropagation through time
+        dz = ps[t].copy(); dz[tgt[t]] -= 1
+        g[2] += np.outer(hs[t], dz); g[4] += dz
+        da = (dz @ Wy.T + dh_next) * (1 - hs[t] ** 2)
+        g[0][inp[t]] += da; g[1] += np.outer(hs[t - 1], da); g[3] += da
+        dh_next = da @ Wh.T
+    return loss / len(inp), g, hs[len(inp) - 1]
+
+data = [ix[c] for c in text]
+h = np.zeros(H)
+for it in range(1201):
+    p = (it * T) % (len(data) - T - 1)
+    if p == 0:
+        h = np.zeros(H)
+    loss, g, h = step(data[p:p + T], data[p + 1:p + T + 1], h)  # truncated BPTT over 13 chars
+    for w, gw, m in zip(params, g, mem):
+        np.clip(gw, -5, 5, out=gw)
+        m += gw * gw
+        w -= lr * gw / np.sqrt(m + 1e-8)
+    if it % 400 == 0:
+        print(f"step {it:4d}  loss per char {loss:.3f}")
+
+h, c, out = np.zeros(H), ix["h"], "h"
+for _ in range(30):                               # sample greedily from the trained model
+    h = np.tanh(Wx[c] + h @ Wh + bh)
+    c = int(np.argmax(h @ Wy + by))
+    out += chars[c]
+print("generated:", repr(out))
+# step    0  loss per char 2.204
+# step  400  loss per char 0.014
+# step  800  loss per char 0.007
+# step 1200  loss per char 0.007
+# generated: 'hello world. hello world. hello'
+```
+
+In words: the loss starts at 2.204 nats per character, close to $\ln 9 = 2.197$ for a uniform guess over the 9 distinct characters, and falls to 0.007 within 800 steps. Started from "h", the model writes "hello world. hello world. hello". To get the second "l" right after "hel", and to know after "world" that a period comes next, the state must encode where in the phrase it is, which is exactly what the recurrence provides. Multiplying a one-hot input by $W_x$ is just selecting a row, `Wx[c]`, which is how embedding layers work too.
+
+<Callout type="key">
+A vanilla RNN is one tanh layer applied at every step to the input and the previous state. Unrolled, it is a deep network with tied weights; BPTT is ordinary backpropagation on that graph, with weight gradients summed over time. Truncate it to bound the cost on long streams, and detach the carried state between chunks.
+</Callout>

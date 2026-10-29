@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The GRU update is an interpolation"
+  caption="Six units of a GRU state. The new state is h_t = (1 − z) ⊙ h_{t−1} + z ⊙ ñ: blue bars are the old state, green bars the candidate ñ, and the yellow outlines the result. Drag the update gate z: at 0 the old state passes through untouched (memory kept, gradient path open), at 1 it is replaced by the candidate. The reset gate r controls how much of the old state the candidate may look at; at r = 0 the candidate is computed from the input alone."
+>
+  <gru-mix>
+    <label class="gm-lbl">update z <input type="range" min="0" max="1" step="0.01" value="0.3" data-z /> <b data-zv>0.30</b></label>
+    <label class="gm-lbl">reset r <input type="range" min="0" max="1" step="0.01" value="1" data-r /> <b data-rv>1.00</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">value</span>
+      <svg class="gm-svg" viewBox="0 0 400 200" data-grid='{"box":[30,10,390,190],"y":[-1,1]}' role="img" aria-label="Old state, candidate and new state of six GRU units">
+        <line x1="30" x2="390" y1="100" y2="100" class="gm-axis"></line>
+        <g data-bars></g>
+      </svg>
+      <span class="ax-x">unit</span>
+    </div>
+    <p class="gm-stat" data-stat></p>
+  </gru-mix>
+</Figure>
+
+<style>
+  .gm-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .gm-lbl input[type='range'] {
+    flex: 1;
+  }
+  .gm-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .gm-axis {
+    stroke: var(--text-faint);
+  }
+  .gm-svg :global(.gm-old) {
+    fill: var(--g-blue);
+    opacity: 0.75;
+  }
+  .gm-svg :global(.gm-cand) {
+    fill: var(--g-green);
+    opacity: 0.75;
+  }
+  .gm-svg :global(.gm-new) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .gm-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const OLD = [0.8, -0.5, 0.3, 0.9, -0.2, -0.7];
+  const XPART = [-0.6, 0.7, 0.4, -0.9, 0.5, 0.2];
+  const UMIX = [0.9, -0.6, 0.5, 0.4, -0.8, -0.3];
+  const py = (v: number) => 100 - v * 90;
+
+  class GruMix extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-z]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-r]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const z = +this.querySelector<HTMLInputElement>('[data-z]')!.value;
+      const r = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      this.querySelector('[data-zv]')!.textContent = z.toFixed(2);
+      this.querySelector('[data-rv]')!.textContent = r.toFixed(2);
+      // candidate from the input plus the reset-scaled old state, one weight per unit for illustration
+      const cand = OLD.map((h, k) => Math.tanh(XPART[k] + r * UMIX[k] * h * 1.5));
+      const neu = OLD.map((h, k) => (1 - z) * h + z * cand[k]);
+      let html = '';
+      const bar = (x: number, v: number, cls: string) => {
+        const y0 = py(Math.max(v, 0));
+        const hh = Math.abs(py(v) - py(0));
+        return `<rect x="${x.toFixed(1)}" y="${y0.toFixed(1)}" width="16" height="${Math.max(hh, 1).toFixed(1)}" class="${cls}"></rect>`;
+      };
+      OLD.forEach((h, k) => {
+        const x = 45 + k * 58;
+        html += bar(x, h, 'gm-old') + bar(x + 18, cand[k], 'gm-cand') + bar(x + 9, neu[k], 'gm-new');
+      });
+      this.querySelector('[data-bars]')!.innerHTML = html;
+      const kept = 1 - z;
+      this.querySelector('[data-stat]')!.textContent =
+        `keep ${(kept * 100).toFixed(0)} % of the old state, take ${(z * 100).toFixed(0)} % of the candidate · over 100 steps at this z the old state keeps ${kept ** 100 < 1e-3 ? (kept ** 100).toExponential(1) : (kept ** 100).toFixed(3)} of itself`;
+    }
+  }
+  customElements.define('gru-mix', GruMix);
+</script>

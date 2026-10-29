@@ -3,6 +3,130 @@ title: "Seq2Seq Models"
 description: "Encoder-decoder architecture, directly setting up the bottleneck that attention solves next."
 order: 6
 tier: core
+takeaways:
+  - "A **sequence-to-sequence** (seq2seq) model maps an input sequence to an output sequence of a different length: an **encoder** RNN reads the input into a **context vector**, and a **decoder** RNN generates the output one token at a time from it."
+  - "Training uses **teacher forcing**: the decoder gets the correct previous token as input. At inference it gets its own previous output, so early mistakes compound (exposure bias)."
+  - "Decoding picks tokens from the decoder's distributions. **Greedy** takes the best token each step; **beam search** keeps the $k$ best partial outputs. In the note's toy model greedy finds a sequence of probability 0.2, beam width 2 finds 0.36."
+  - "The whole input must pass through one fixed-size vector. Compressing random 10-token-vocabulary sequences into 32 numbers recovers 99.8 % of tokens at length 4 but 55 % at length 16 and 27 % at length 64."
+  - "That **bottleneck** is why translation quality of plain seq2seq fell on long sentences, and why attention, which lets the decoder look at every encoder state, replaced it."
+resources:
+  - title: "Sequence to Sequence Learning with Neural Networks (Sutskever, Vinyals, Le)"
+    url: "https://arxiv.org/abs/1409.3215"
+    note: "Deep LSTM encoder-decoder for English to French, including the trick of reversing the source sentence."
+  - title: "Learning Phrase Representations using RNN Encoder-Decoder (Cho et al.)"
+    url: "https://arxiv.org/abs/1406.1078"
+    note: "The RNN encoder-decoder with a GRU, and an analysis of the learned phrase representations."
+  - title: "Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau, Cho, Bengio)"
+    url: "https://arxiv.org/abs/1409.0473"
+    note: "Shows the fixed-vector model degrading on long sentences and introduces attention to fix it."
 ---
 
-_Placeholder. Content not written yet._
+Many sequence tasks have an output whose length and order differ from the input's: translation ("I like green tea" has four words, "j'aime le thé vert" four different ones in a different order), summarisation, speech recognition, question answering. A single RNN that emits one output per input step cannot express that. The **sequence-to-sequence** model, introduced in 2014 by Sutskever, Vinyals and Le and by Cho and colleagues, splits the job between two recurrent networks: one reads, one writes. This note covers the architecture, how it is trained, how outputs are decoded, and the limitation that motivated attention. The building blocks are the [LSTM](../lstms/) and [GRU](../grus/) cells; run the code with `uv run --with numpy` where it imports numpy.
+
+## Encoder and decoder
+
+The **encoder** is an RNN that reads the source $x_1, \dots, x_S$ and produces states $h_1, \dots, h_S$; its last state is the **context vector** $c = h_S$. The **decoder** is a second RNN, with its own weights, whose state starts from $c$. At each step it takes the previous output token $y_{t-1}$, updates its state, and outputs a probability distribution over the vocabulary for the next token:
+
+$$
+s_t = \operatorname{RNN}_{\text{dec}}(s_{t-1}, y_{t-1}), \quad s_0 = c, \qquad p(y_t \mid y_{<t}, x) = \operatorname{softmax}(s_t W_o).
+
+$$
+
+In words: the decoder writes one token at a time, each conditioned on everything it has written and, through $c$, on the source. Generation starts from a special start token and stops when the decoder emits an end token, so the output length is decided by the model. Sutskever et al. used 4-layer LSTMs with 1000 units each and found that feeding the source sentence in reverse order helped, because it put the first source words close to the first target words.
+
+<Seq2SeqFlow />
+
+## Training with teacher forcing
+
+The model is trained to maximise the probability of the correct target sequence, which factorises into one [cross-entropy](../../nn-foundations/loss-functions-for-deep-learning/) term per output token. During training the decoder's input at step $t$ is the **correct** previous token $y_{t-1}$ from the data, not the token the decoder itself predicted. This is **teacher forcing**: it makes every step's loss independent of earlier mistakes and lets all decoder steps be computed from known inputs.
+
+At inference no correct tokens exist, and the decoder must consume its own predictions. A wrong word early in the output puts the decoder in a state it never saw in training, and errors compound. This train-test mismatch is called **exposure bias**. Remedies include scheduled sampling (gradually replacing correct inputs with the model's own predictions during training) and sequence-level training objectives, but teacher forcing remains the standard because it is simple and parallel over time steps.
+
+## Decoding: greedy and beam
+
+The decoder defines a distribution over whole sequences, $p(y \mid x) = \prod_t p(y_t \mid y_{<t}, x)$, and inference wants a sequence with high probability. Finding the best one exactly is intractable, since the number of sequences grows exponentially with length. **Greedy decoding** takes the most likely token at every step. **Beam search** keeps the $k$ most probable partial sequences (the beam), extends each by every possible next token, and keeps the best $k$ again.
+
+```python
+import math
+
+# next-token probabilities of a tiny decoder, given the prefix so far
+P = {
+    (): {"the": 0.5, "a": 0.4, "an": 0.1},
+    ("the",): {"cat": 0.3, "dog": 0.3, "mat": 0.4},
+    ("a",): {"cat": 0.9, "dog": 0.1},
+    ("an",): {"owl": 1.0},
+}
+
+def greedy():
+    seq, logp = (), 0.0
+    while seq in P:
+        tok, p = max(P[seq].items(), key=lambda kv: kv[1])
+        seq, logp = seq + (tok,), logp + math.log(p)
+    return seq, math.exp(logp)
+
+def beam(width):
+    beams = [((), 0.0)]
+    while any(s in P for s, _ in beams):
+        cand = [(s + (t,), lp + math.log(p)) for s, lp in beams if s in P for t, p in P[s].items()]
+        cand += [(s, lp) for s, lp in beams if s not in P]           # finished ones stay
+        beams = sorted(cand, key=lambda b: -b[1])[:width]
+    s, lp = beams[0]
+    return s, math.exp(lp)
+
+s, p = greedy()
+print("greedy:      ", s, round(p, 3))
+s, p = beam(2)
+print("beam width 2:", s, round(p, 3))
+# greedy:       ('the', 'mat') 0.2
+# beam width 2: ('a', 'cat') 0.36
+```
+
+In words: greedy picks "the" (0.5 against 0.4 for "a"), and every continuation of "the" is mediocre, so its best sequence is "the mat" with probability $0.5 \times 0.4 = 0.2$. Beam search with width 2 keeps "a" alive, finds that "a cat" has probability $0.4 \times 0.9 = 0.36$, and returns it. Beam widths of 4 to 10 were standard in neural translation. Beam search favours short outputs, because every extra token multiplies in a probability below 1, so scores are usually normalised by length.
+
+<Callout type="pitfall">
+A larger beam is not always better. Beyond a width of about 10, translation quality often drops, because the highest-probability sequences under the model tend to be short or repetitive (in the extreme, the empty sequence). For open-ended generation such as dialogue or stories, beam search produces bland, repetitive text, and sampling methods (temperature, top-k, top-p) are used instead.
+</Callout>
+
+## The bottleneck
+
+Every fact about the source sentence that the decoder needs, word choices, order, names, numbers, must fit into the context vector $c$, whose size is fixed whatever the sentence length. The experiment below measures what a fixed-size summary can hold. It encodes random sequences over a 10-token vocabulary (one-hot, so length $L$ means $10L$ numbers) into $k = 32$ numbers with the best possible linear encoder, principal component analysis (see [PCA](../../../math/linear-algebra/principal-component-analysis-pca/)), decodes them back, and counts the tokens recovered.
+
+```python
+import numpy as np
+
+# squeeze whole sequences into a fixed-size vector, then rebuild them from it
+rng = np.random.default_rng(0)
+V, k = 10, 32                                    # vocabulary size, size of the "context vector"
+
+def onehot(seqs):
+    return np.eye(V)[seqs].reshape(len(seqs), -1)
+
+for L in [2, 4, 8, 16, 32, 64]:
+    train = onehot(rng.integers(0, V, size=(5000, L)))
+    test_seqs = rng.integers(0, V, size=(1000, L))
+    mu = train.mean(0)
+    _, _, Vt = np.linalg.svd(train - mu, full_matrices=False)
+    P = Vt[:k]                                   # best linear code of size k (PCA)
+    code = (onehot(test_seqs) - mu) @ P.T        # encoder: sequence -> k numbers
+    back = code @ P + mu                         # decoder: k numbers -> sequence scores
+    pred = back.reshape(1000, L, V).argmax(-1)
+    print(f"length {L:2d} ({L * V:3d} one-hot numbers) -> {k} numbers: tokens recovered {np.mean(pred == test_seqs):.3f}")
+# length  2 ( 20 one-hot numbers) -> 32 numbers: tokens recovered 1.000
+# length  4 ( 40 one-hot numbers) -> 32 numbers: tokens recovered 0.995
+# length  8 ( 80 one-hot numbers) -> 32 numbers: tokens recovered 0.828
+# length 16 (160 one-hot numbers) -> 32 numbers: tokens recovered 0.551
+# length 32 (320 one-hot numbers) -> 32 numbers: tokens recovered 0.369
+# length 64 (640 one-hot numbers) -> 32 numbers: tokens recovered 0.266
+```
+
+In words: while the sequence fits in the 32 numbers, recovery is perfect (1.000 at length 2, 0.995 at length 4). Beyond that it degrades steadily: 0.828 at length 8, 0.551 at 16 and 0.266 at 64, against 0.1 for guessing. An RNN encoder is nonlinear and real sentences are far from random, so it does better than this linear code, but the trend is the same: a fixed-size vector holds a fixed amount of information. Bahdanau, Cho and Bengio (2014) measured exactly this in translation: the fixed-vector model's quality fell sharply for sentences longer than about 20 to 30 words.
+
+<BottleneckCurve />
+
+## Where it led
+
+The fix Bahdanau and colleagues proposed was **attention**: keep all the encoder states $h_1, \dots, h_S$, and at every decoder step compute a weighted average of them, with weights chosen by how relevant each source position is to the word being written. The decoder no longer needs to squeeze the sentence into one vector; it looks back at the part it needs. Attention made seq2seq translation work on long sentences, and in 2017 the transformer removed the recurrence altogether and kept only attention, see [The Attention Mechanism](../../attention-transformers/the-attention-mechanism/). The encoder-decoder split itself survives in models such as T5 and in speech recognisers like Whisper.
+
+<Callout type="key">
+Seq2seq splits a sequence task into an encoder that reads the input into a context vector and a decoder that writes the output token by token, trained with teacher forcing and decoded with greedy or beam search. Its weakness is the single fixed-size context vector, which loses information as inputs grow; attention removes that bottleneck.
+</Callout>

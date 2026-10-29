@@ -1,0 +1,158 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How much gradient survives each step back in time"
+  caption="The size of ∂h_T/∂h_t, the factor by which a gradient at the last step reaches step t, for a 32-unit RNN on random inputs (log scale). Drag the spectral radius of W_h. With a linear recurrence it falls or grows like radiusᵏ; with tanh, saturation pulls every curve down, so even a radius of 1.5 eventually vanishes. Only a narrow band carries gradient across 60 steps."
+>
+  <grad-time>
+    <div class="gt-ctl">
+      <input type="hidden" data-act value="tanh" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="tanh" aria-pressed="true">tanh RNN</button>
+        <button type="button" class="btn" data-choice="linear" aria-pressed="false">linear recurrence</button>
+      </span>
+    </div>
+    <label class="gt-lbl">spectral radius <input type="range" min="0.5" max="1.8" step="0.05" value="1" data-r /> <b data-rv>1.00</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">‖∂h_T/∂h_t‖ (log scale)</span>
+      <svg class="gt-svg" viewBox="0 0 400 210" data-grid='{"box":[40,10,390,190],"x":[0,60],"y":[1e-12,1e6,"log"]}' role="img" aria-label="Gradient norm against number of steps back">
+        <line x1="40" x2="390" data-one class="gt-one"></line>
+        <path data-line class="gt-line"></path>
+        <text x="40" y="205" class="ax-tick">0</text>
+        <text x="390" y="205" class="ax-tick gt-end">60</text>
+        <text x="34" y="14" class="ax-tick gt-end">10⁶</text>
+        <text x="34" y="192" class="ax-tick gt-end">10⁻¹²</text>
+      </svg>
+      <span class="ax-x">steps back in time (T − t)</span>
+    </div>
+    <p class="gt-stat" data-stat></p>
+  </grad-time>
+</Figure>
+
+<style>
+  .gt-ctl {
+    margin-bottom: 10px;
+  }
+  .gt-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .gt-lbl input[type='range'] {
+    flex: 1;
+  }
+  .gt-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .gt-line {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .gt-one {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .gt-end {
+    text-anchor: end;
+  }
+  .gt-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const H = 32;
+  const T = 60;
+  const LO = -12;
+  const HI = 6;
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    const u = () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return () => Math.sqrt(-2 * Math.log(u() + 1e-12)) * Math.cos(2 * Math.PI * u());
+  }
+  const g = rng(1);
+  // a random matrix rescaled so its spectral radius (estimated by power iteration on W W) is 1
+  const W0 = Array.from({ length: H }, () => Array.from({ length: H }, () => g() / Math.sqrt(H)));
+  const XS = Array.from({ length: T }, () => Array.from({ length: H }, () => g() * 0.5));
+  const mv = (M: number[][], v: number[]) => v.map((_, j) => v.reduce((a, x, i) => a + x * M[i][j], 0));
+  function radius(M: number[][]): number {
+    // spectral radius ≈ ‖M^k v‖^(1/k) for large k
+    let v = Array.from({ length: H }, () => 1);
+    let logn = 0;
+    const K = 200;
+    for (let k = 0; k < K; k++) {
+      v = mv(M, v);
+      const n = Math.hypot(...v);
+      logn += Math.log(n);
+      v = v.map((x) => x / n);
+    }
+    return Math.exp(logn / K);
+  }
+  const R0 = radius(W0);
+
+  class GradTime extends HTMLElement {
+    connectedCallback() {
+      const one = this.querySelector('[data-one]')!;
+      const y1 = 190 - ((0 - LO) / (HI - LO)) * 180;
+      one.setAttribute('y1', y1.toFixed(1));
+      one.setAttribute('y2', y1.toFixed(1));
+      this.querySelector('[data-act]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-r]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const lin = this.querySelector<HTMLInputElement>('[data-act]')!.value === 'linear';
+      const rho = +this.querySelector<HTMLInputElement>('[data-r]')!.value;
+      this.querySelector('[data-rv]')!.textContent = rho.toFixed(2);
+      const W = W0.map((row) => row.map((x) => (x * rho) / R0));
+      const hs: number[][] = [new Array(H).fill(0)];
+      for (const x of XS) {
+        const z = mv(W, hs[hs.length - 1]).map((v, j) => v + x[j]);
+        hs.push(lin ? z : z.map(Math.tanh));
+      }
+      // propagate a random unit vector backwards: v ← (v ⊙ slope) Wᵀ, track its norm
+      const gv = rng(5); // the same starting direction on every redraw
+      let v = Array.from({ length: H }, () => gv());
+      const n0 = Math.hypot(...v);
+      v = v.map((x) => x / n0);
+      const pts: [number, number][] = [[0, 1]];
+      let logn = 0;
+      for (let k = 1; k <= T; k++) {
+        const h = hs[T - k + 1];
+        const dz = v.map((x, j) => x * (lin ? 1 : 1 - h[j] * h[j]));
+        v = W.map((row) => row.reduce((a, w, j) => a + w * dz[j], 0));
+        const n = Math.hypot(...v) || 1e-300;
+        logn += Math.log10(n);
+        v = v.map((x) => x / n);
+        pts.push([k, logn]);
+      }
+      const px = (k: number) => 40 + (k / T) * 350;
+      const py = (l: number) => 190 - ((Math.max(LO, Math.min(HI, l)) - LO) / (HI - LO)) * 180;
+      this.querySelector('[data-line]')!.setAttribute(
+        'd',
+        pts.map(([k, l], i) => `${i ? 'L' : 'M'}${px(k).toFixed(1)},${py(i ? l : 0).toFixed(1)}`).join(''),
+      );
+      const at = (k: number) => `10^${pts[k][1].toFixed(1)}`;
+      this.querySelector('[data-stat]')!.textContent =
+        `${lin ? 'linear' : 'tanh'} · radius ${rho.toFixed(2)} · after 10 steps ${at(10)} · after 30 ${at(30)} · after 60 ${at(60)}`;
+    }
+  }
+  customElements.define('grad-time', GradTime);
+</script>

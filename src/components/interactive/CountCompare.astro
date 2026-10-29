@@ -1,0 +1,105 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An LSTM can count; a GRU state saturates"
+  caption="Both cells see a stream of identical inputs and try to count them, using the settings from the note's code. The LSTM cell (blue) adds tanh(2) = 0.964 each step with its forget gate at 1, so it grows without limit and 20 ones give 19.28. The GRU (green) can only average its old state with a candidate in (−1, 1), so its state approaches 0.964 and stays there: after a few steps every count looks the same. Drag the GRU's update gate to see that no value fixes it."
+>
+  <count-compare>
+    <label class="cc-lbl">GRU update gate z <input type="range" min="0.05" max="1" step="0.05" value="0.5" data-z /> <b data-zv>0.50</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">state value</span>
+      <svg class="cc-svg" viewBox="0 0 400 200" data-grid='{"box":[30,10,390,180],"x":[0,20],"y":[0,20]}' role="img" aria-label="LSTM cell and GRU state while counting a stream of ones">
+        <path data-lstm class="cc-lstm"></path>
+        <path data-gru class="cc-gru"></path>
+        <text x="30" y="196" class="ax-tick">0</text>
+        <text x="390" y="196" class="ax-tick cc-end">20</text>
+        <text x="24" y="14" class="ax-tick cc-end">20</text>
+        <text x="270" y="40" class="cc-name cc-l">LSTM cell</text>
+        <text x="270" y="160" class="cc-name cc-g">GRU state</text>
+      </svg>
+      <span class="ax-x">ones seen so far</span>
+    </div>
+    <p class="cc-stat" data-stat></p>
+  </count-compare>
+</Figure>
+
+<style>
+  .cc-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cc-lbl input[type='range'] {
+    flex: 1;
+  }
+  .cc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .cc-lstm,
+  .cc-gru {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .cc-lstm {
+    stroke: var(--g-blue);
+  }
+  .cc-gru {
+    stroke: var(--g-green);
+  }
+  .cc-name {
+    font: 0.75rem var(--font-mono);
+  }
+  .cc-l {
+    fill: var(--g-blue-l);
+  }
+  .cc-g {
+    fill: var(--g-green-l);
+  }
+  .cc-end {
+    text-anchor: end;
+  }
+  .cc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const G = Math.tanh(2);
+  const px = (t: number) => 30 + (t / 20) * 360;
+  const py = (v: number) => 180 - (v / 20) * 170;
+
+  class CountCompare extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-z]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const z = +this.querySelector<HTMLInputElement>('[data-z]')!.value;
+      this.querySelector('[data-zv]')!.textContent = z.toFixed(2);
+      let c = 0;
+      let h = 0;
+      let dl = `M${px(0)},${py(0)}`;
+      let dg = dl;
+      for (let t = 1; t <= 20; t++) {
+        c = c + G;
+        h = (1 - z) * h + z * G;
+        dl += `L${px(t).toFixed(1)},${py(c).toFixed(1)}`;
+        dg += `L${px(t).toFixed(1)},${py(h).toFixed(1)}`;
+      }
+      this.querySelector('[data-lstm]')!.setAttribute('d', dl);
+      this.querySelector('[data-gru]')!.setAttribute('d', dg);
+      this.querySelector('[data-stat]')!.textContent = `after 20 ones · LSTM cell ${c.toFixed(2)} · GRU state ${h.toFixed(3)} (z = ${z.toFixed(2)})`;
+    }
+  }
+  customElements.define('count-compare', CountCompare);
+</script>

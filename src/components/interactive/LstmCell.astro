@@ -1,0 +1,143 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  kind="Diagram"
+  title="Inside one LSTM cell"
+  caption="The cell state c runs along the top, changed only by a multiplication (forget gate) and an addition (input gate × candidate); that additive highway is what lets gradients cross many steps. The three gates are sigmoid layers of the input x_t and the previous output h_{t−1}. Pick a part to highlight its path."
+>
+  <lstm-cell>
+    <div class="lc-ctl">
+      <input type="hidden" data-p value="cell" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="cell" aria-pressed="true">cell highway</button>
+        <button type="button" class="btn" data-choice="forget" aria-pressed="false">forget gate</button>
+        <button type="button" class="btn" data-choice="input" aria-pressed="false">input gate</button>
+        <button type="button" class="btn" data-choice="output" aria-pressed="false">output gate</button>
+      </span>
+    </div>
+    <svg class="lc-svg" viewBox="0 0 400 220" role="img" aria-label="Diagram of an LSTM cell with its gates">
+      <g data-g></g>
+    </svg>
+    <p class="lc-stat" data-stat></p>
+  </lstm-cell>
+</Figure>
+
+<style>
+  .lc-ctl {
+    margin-bottom: 10px;
+  }
+  .lc-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .lc-svg :global(.lc-p) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .lc-svg :global(.lc-p.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 3;
+  }
+  .lc-svg :global(.lc-op) {
+    fill: var(--bg);
+    stroke: var(--text-muted);
+  }
+  .lc-svg :global(.lc-op.on) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .lc-svg :global(.lc-gate) {
+    fill: rgba(52, 168, 83, 0.25);
+    stroke: var(--g-green);
+  }
+  .lc-svg :global(.lc-gate.on) {
+    fill: rgba(251, 188, 5, 0.35);
+    stroke: var(--g-yellow);
+  }
+  .lc-svg :global(.lc-t) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .lc-svg :global(.lc-l) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .lc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Paths and parts, each tagged with the highlights it belongs to.
+  const PATHS: [string, string[]][] = [
+    ['M30,40 H392', ['cell']],
+    ['M20,180 H40 V150', ['forget', 'input', 'output']],
+    ['M40,150 H290', ['forget', 'input', 'output']],
+    ['M70,150 V125', ['forget']],
+    ['M70,95 V51', ['forget']],
+    ['M140,150 V125', ['input']],
+    ['M140,95 V78 H164', ['input']],
+    ['M210,150 V125', ['input']],
+    ['M210,95 V78 H186', ['input']],
+    ['M175,67 V51', ['input']],
+    ['M290,150 V125', ['output']],
+    ['M310,110 H339', ['output']],
+    ['M350,40 V55', ['output']],
+    ['M350,85 V99', ['output']],
+    ['M361,110 H392', ['output']],
+  ];
+  const GATES: [number, string, string, string][] = [
+    [70, 'σ', 'forget', 'f'],
+    [140, 'σ', 'input', 'i'],
+    [210, 'tanh', 'input', 'g'],
+    [290, 'σ', 'output', 'o'],
+  ];
+  const OPS: [number, number, string, string[]][] = [
+    [70, 40, '×', ['cell', 'forget']],
+    [175, 40, '+', ['cell', 'input']],
+    [175, 78, '×', ['input']],
+    [350, 70, 'tanh', ['output']],
+    [350, 110, '×', ['output']],
+  ];
+  const TEXT: Record<string, string> = {
+    cell: 'c_t = f ⊙ c_{t−1} + i ⊙ g: one multiply and one add per step, no squashing, so ∂c_t/∂c_{t−1} = f',
+    forget: 'f = σ(x W_f + h U_f + b_f): near 1 keeps the memory, near 0 erases it',
+    input: 'i = σ(·) decides how much of the candidate g = tanh(·) is written into the cell',
+    output: 'o = σ(·) decides how much of tanh(c) becomes the output h_t = o ⊙ tanh(c_t)',
+  };
+
+  class LstmCell extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const p = this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      let html = PATHS.map(([d, tags]) => `<path d="${d}" class="lc-p${tags.includes(p) ? ' on' : ''}"></path>`).join('');
+      html += GATES.map(
+        ([x, label, tag, name]) =>
+          `<rect x="${x - 20}" y="95" width="40" height="30" rx="5" class="lc-gate${tag === p ? ' on' : ''}"></rect><text x="${x}" y="110" class="lc-t">${label}</text><text x="${x + 14}" y="91" class="lc-l">${name}</text>`,
+      ).join('');
+      html += OPS.map(
+        ([x, y, op, tags]) =>
+          `<circle cx="${x}" cy="${y}" r="${op === 'tanh' ? 15 : 11}" class="lc-op${tags.includes(p) ? ' on' : ''}"></circle><text x="${x}" y="${y}" class="lc-t">${op}</text>`,
+      ).join('');
+      html += `<text x="4" y="28" class="lc-l" style="text-anchor:start">c_{t−1}</text><text x="380" y="28" class="lc-l">c_t</text>`;
+      html += `<text x="4" y="200" class="lc-l" style="text-anchor:start">h_{t−1}, x_t</text><text x="380" y="130" class="lc-l">h_t</text>`;
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = TEXT[p];
+    }
+  }
+  customElements.define('lstm-cell', LstmCell);
+</script>

@@ -3,6 +3,123 @@ title: "RNN Gradient Problems"
 description: "Why it's especially severe here, distinct from the general deep-net version in Section 2."
 order: 3
 tier: core
+takeaways:
+  - "The gradient from step $T$ back to step $t$ is a product of $T - t$ Jacobians, each the **same** matrix $W_h$ times the tanh slopes: $\\partial h_T / \\partial h_t = \\prod_k W_h \\operatorname{diag}(1 - h_k^2)$."
+  - "Repeating one matrix is worse than a deep feed-forward stack: the product behaves like a power of $W_h$, so its size goes roughly as (spectral radius)$^{T-t}$, and sequences are hundreds of steps long, not tens of layers."
+  - "In a randomly initialised 32-unit tanh RNN, the gradient reaching the first input is $6 \\times 10^{-2}$ of the last input's after 5 steps and $3.4 \\times 10^{-10}$ after 100: the network cannot learn what the early input meant."
+  - "tanh saturation shrinks the product further, so even a spectral radius of 1.5 vanishes over long spans; near the boundary the loss has **cliffs** where the gradient explodes."
+  - "Exploding gradients are fixed with gradient clipping; vanishing ones need a different architecture: gated cells (LSTM, GRU) with an additive memory path, or attention."
+resources:
+  - title: "On the difficulty of training Recurrent Neural Networks (Pascanu, Mikolov, Bengio)"
+    url: "https://arxiv.org/abs/1211.5063"
+    note: "The spectral-radius analysis, the cliff picture of the loss surface and norm clipping."
+  - title: "Backpropagation Through Time (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_recurrent-neural-networks/bptt.html"
+    note: "Where the product of Jacobians comes from, and how truncation trades bias for stability."
+  - title: "Understanding LSTM Networks (Christopher Olah)"
+    url: "https://colah.github.io/posts/2015-08-Understanding-LSTMs/"
+    note: "Why long-term dependencies fail in plain RNNs, leading into the gated fix."
 ---
 
-_Placeholder. Content not written yet._
+[Unstable Gradients](../../training-optimization/vanishing-and-exploding-gradients/) showed that gradients through a deep feed-forward network are products of one factor per layer. A recurrent network unrolled over $T$ steps is such a product too, and [Vanilla RNNs](../vanilla-rnns/) derived it as the $\bar z_{t+1} W_h^\top$ term of backpropagation through time. Three things make the recurrent case harder: every factor contains the **same** matrix, the products are as long as the sequence, and the tools that rescue deep feed-forward networks, per-layer initialization and normalization, do not separate the time steps. This note measures how fast gradients die over time, shows the cliff where they explode instead, and explains why the cure is architectural. Run the code with `uv run --with numpy`.
+
+## A product of the same matrix
+
+With $h_k = \tanh(x_k W_x + h_{k-1} W_h)$ and states as row vectors, one step back multiplies by $W_h$ and the tanh slopes, so across many steps
+
+$$
+\frac{\partial h_T}{\partial h_t} = \prod_{k = t + 1}^{T} W_h \operatorname{diag}\left(1 - h_k^{2}\right).
+
+$$
+
+In words: to see how the state at step $t$ affects the state at step $T$, multiply $T - t$ factors, each the recurrent matrix followed by the tanh slopes at that step. In a feed-forward network each layer has its own weight matrix and the factors vary; here the same $W_h$ repeats, so the product behaves like the power $W_h^{T - t}$, scaled by slopes that are at most 1. Its size is governed by the **spectral radius** of $W_h$, the largest absolute eigenvalue: below 1 the product shrinks exponentially, above 1 it can grow exponentially, until tanh saturation intervenes.
+
+```python
+import numpy as np
+
+H, T = 32, 60
+rng = np.random.default_rng(0)
+xs = rng.normal(size=(T, H)) * 0.5
+W0 = rng.normal(size=(H, H)) / np.sqrt(H)
+W0 /= np.max(np.abs(np.linalg.eigvals(W0)))          # spectral radius exactly 1
+
+for rho in [0.8, 1.0, 1.5]:
+    W = rho * W0
+    hs = [np.zeros(H)]
+    for x in xs:
+        hs.append(np.tanh(x + hs[-1] @ W))
+    J = np.eye(H)                                     # d h_T / d h_t, built backwards
+    norms = {}
+    for t in range(T, 0, -1):
+        J = (W * (1 - hs[t] ** 2)) @ J               # one step: W times the tanh slopes
+        norms[T - t + 1] = np.linalg.norm(J, 2)
+    print(f"spectral radius {rho}: " + "  ".join(f"{k} steps {norms[k]:.1e}" for k in [1, 10, 30, 60]))
+# spectral radius 0.8: 1 steps 1.2e+00  10 steps 2.6e-02  30 steps 3.6e-06  60 steps 8.6e-13
+# spectral radius 1.0: 1 steps 1.4e+00  10 steps 1.4e-01  30 steps 6.5e-04  60 steps 4.1e-08
+# spectral radius 1.5: 1 steps 2.0e+00  10 steps 1.9e+00  30 steps 8.4e-01  60 steps 7.1e-02
+```
+
+In words: with spectral radius 0.8 the Jacobian's size falls to $2.6 \times 10^{-2}$ after 10 steps and $8.6 \times 10^{-13}$ after 60. A radius of exactly 1 is not enough, because the tanh slopes are below 1: $4.1 \times 10^{-8}$ after 60 steps. A radius of 1.5 keeps the gradient alive longer, $7.1 \times 10^{-2}$ after 60 steps, but it does not explode here: large weights push the units into saturation, where tanh's slope is near 0. There is no setting that keeps the product near 1 for long spans on generic inputs.
+
+<GradThroughTime />
+
+## What it costs in practice
+
+The consequence is that the loss at the end of a sequence sends almost no learning signal to early inputs. The code measures, in a randomly initialised 32-unit RNN, how large the gradient of the final output is with respect to the first input compared with the last input, for several sequence lengths.
+
+```python
+import numpy as np
+
+H = 32
+rng = np.random.default_rng(0)
+Wx = rng.normal(size=(2, H)) * 0.5
+Wh = rng.normal(size=(H, H)) / np.sqrt(H)      # a standard random initialization
+w = rng.normal(size=H) / np.sqrt(H)            # read-out at the last step
+
+for delay in [5, 10, 25, 50, 100]:
+    X = rng.normal(size=(delay + 1, 256, 2))   # step 0 holds the signal, the rest is noise
+    hs = [np.zeros((256, H))]
+    for x in X:
+        hs.append(np.tanh(x @ Wx + hs[-1] @ Wh))
+    dh = np.tile(w, (256, 1))                  # d(output)/d(h_T)
+    grads = []
+    for t in range(len(X), 0, -1):
+        dz = dh * (1 - hs[t] ** 2)
+        grads.append(np.linalg.norm(dz @ Wx.T, axis=1).mean())   # d(output)/d(x at step t-1)
+        dh = dz @ Wh.T
+    print(f"delay {delay:3d}: gradient on the first input is {grads[-1] / grads[0]:.1e} x the last input's")
+# delay   5: gradient on the first input is 6.2e-02 x the last input's
+# delay  10: gradient on the first input is 1.5e-02 x the last input's
+# delay  25: gradient on the first input is 4.3e-04 x the last input's
+# delay  50: gradient on the first input is 4.6e-06 x the last input's
+# delay 100: gradient on the first input is 3.4e-10 x the last input's
+```
+
+In words: five steps back, the first input gets 6 % of the gradient the last input gets; 25 steps back, 0.04 %; 100 steps back, $3.4 \times 10^{-10}$. If the correct output depends on the first input, as in "remember the first token", the gradient that would teach the network to keep it is buried under the gradients of the recent noise inputs. The network learns short-range patterns first and often never discovers the long-range one. This is why plain RNNs rarely use more than about 10 to 20 steps of context in practice.
+
+<Callout type="pitfall">
+A recurrent model that trains well and generalizes poorly on long inputs may simply be ignoring everything but the last few steps. Probe it: feed sequences that differ only in an early token and check whether the output changes. A model that cannot tell them apart has not learned the long-range dependency, whatever its training loss.
+</Callout>
+
+## Cliffs and explosions
+
+Exploding gradients appear in a different form in RNNs. Consider one tanh unit, $h_t = \tanh(w h_{t-1})$, started at $h_0 = 0.5$. For $w < 1$ the state decays towards 0; for $w > 1$ it settles at a nonzero fixed point. After $T$ steps the final state as a function of $w$ is a smoothed step at $w = 1$, and the step gets sharper as $T$ grows. The loss surface therefore has a **cliff**: nearly flat on both sides, with an enormous gradient on the edge. A gradient step taken on the edge throws the weights far away.
+
+<RnnCliff />
+
+That is the case [Gradient Clipping](../../training-optimization/gradient-clipping/) handles: capping the step's length keeps the update on the cliff edge to a sensible size, and it is standard in every recurrent training recipe. Clipping does nothing for vanishing gradients, though: a tiny gradient stays tiny.
+
+## The fixes
+
+| Problem | Fix | Idea |
+|---|---|---|
+| Exploding | Gradient clipping | Cap the update's norm, typically at 1 to 5 |
+| Vanishing at the start of training | Orthogonal or identity initialization of $W_h$, ReLU RNNs | Start with every singular value at 1 (the IRNN uses an identity $W_h$ with ReLU) |
+| Vanishing in general | **Gated cells**: [LSTMs](../lstms/), [GRUs](../grus/) | Keep a memory updated by addition, with a learned gate deciding what to keep; the gradient through it is a product of gate values that can stay near 1 |
+| Long range at any distance | Attention | Connect every step directly to every other, so the path length is 1 |
+
+The LSTM's insight is the important one. Instead of rewriting the whole state at every step through a squashing nonlinearity, it keeps a **cell state** that is changed by adding to it, scaled by a forget gate. When the gate is near 1, the gradient passes back through that path almost unchanged, the same trick as the identity path of a [residual connection](../../convolutional-networks/residual-connections/), but along time.
+
+<Callout type="key">
+The gradient across $T - t$ time steps is a product of the same recurrent matrix and tanh slopes, so it vanishes or explodes exponentially with distance, and tanh saturation pushes it towards vanishing. Clip to handle explosions; use gated cells or attention, which give the gradient an additive path, to handle vanishing.
+</Callout>

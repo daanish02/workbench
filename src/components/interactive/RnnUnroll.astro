@@ -1,0 +1,156 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An RNN unrolled through time"
+  caption="One RNN cell (the same weights) copied once per word. Forward: each step mixes the new word with the previous hidden state; the four coloured squares are the state's values (blue positive, red negative). Backward: the loss at the last step sends a gradient back through every copy; the green bar under each step is the size of the gradient that reaches it. It shrinks as it travels, because each step multiplies it by the cell's Jacobian."
+>
+  <rnn-unroll>
+    <div class="ru-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="ru-svg" viewBox="0 0 400 170" role="img" aria-label="Unrolled RNN with hidden states and gradient sizes per step">
+      <g data-g></g>
+    </svg>
+    <p class="ru-stat" data-stat aria-live="polite"></p>
+  </rnn-unroll>
+</Figure>
+
+<style>
+  .ru-ctl {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .ru-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .ru-svg :global(.ru-cell) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .ru-svg :global(.ru-cell.now) {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .ru-svg :global(.ru-w) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ru-svg :global(.ru-arrow) {
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .ru-svg :global(.ru-g) {
+    fill: var(--g-green);
+  }
+  .ru-svg :global(.ru-gt) {
+    fill: var(--g-green-l);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+  }
+  .ru-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  const WORDS = ['the', 'cat', 'sat', 'on', 'the', 'mat'];
+  const T = WORDS.length;
+  const H = 4;
+  // A small fixed RNN: each word has a 4-d embedding; weights drawn once from a seeded generator.
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1;
+    };
+  }
+  const r = rng(9);
+  const EMB: Record<string, number[]> = {};
+  for (const w of WORDS) EMB[w] ??= Array.from({ length: H }, () => r());
+  const Wh = Array.from({ length: H }, () => Array.from({ length: H }, () => r() * 0.9));
+  const STATES: number[][] = [];
+  let s = new Array(H).fill(0);
+  for (const w of WORDS) {
+    s = s.map((_, j) => Math.tanh(EMB[w][j] + s.reduce((a, v, i) => a + v * Wh[i][j], 0)));
+    STATES.push(s);
+  }
+  // Backward: dL/dh_T = all ones; dL/dh_{t-1} = (g ⊙ (1 − h_t²)) Whᵀ.
+  const GRADS: number[] = new Array(T).fill(0);
+  let g = new Array(H).fill(1);
+  for (let t = T - 1; t >= 0; t--) {
+    GRADS[t] = Math.hypot(...g);
+    const dz = g.map((v, j) => v * (1 - STATES[t][j] ** 2));
+    g = Array.from({ length: H }, (_, i) => dz.reduce((a, v, j) => a + v * Wh[i][j], 0));
+  }
+
+  const CX = (t: number) => 38 + t * 65;
+
+  class RnnUnroll extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      if (this.i >= 2 * T) return;
+      this.i++;
+      this.draw();
+      if (this.i >= 2 * T) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const fwd = Math.min(this.i, T);
+      const back = Math.max(0, this.i - T);
+      const now = this.i <= T ? this.i - 1 : 2 * T - this.i;
+      let html = '';
+      for (let t = 0; t < T; t++) {
+        const x = CX(t);
+        if (t > 0) html += `<line x1="${x - 41}" y1="70" x2="${x - 24}" y2="70" class="ru-arrow"></line>`;
+        html += `<line x1="${x}" y1="122" x2="${x}" y2="96" class="ru-arrow"></line>`;
+        html += `<rect x="${x - 24}" y="44" width="48" height="52" rx="6" class="ru-cell${t === now ? ' now' : ''}"></rect>`;
+        html += `<text x="${x}" y="138" class="ru-w">${WORDS[t]}</text>`;
+        if (t < fwd)
+          STATES[t].forEach((v, j) => {
+            const a = Math.min(1, Math.abs(v)) * 0.85 + 0.1;
+            html += `<rect x="${x - 20 + j * 10}" y="62" width="9" height="16" style="fill:${v > 0 ? `rgba(66,133,244,${a})` : `rgba(234,67,53,${a})`}"></rect>`;
+          });
+        if (t >= T - back) {
+          const w = Math.max(2, (GRADS[t] / GRADS[T - 1]) * 44);
+          html += `<rect x="${x - 22}" y="148" width="${w.toFixed(1)}" height="8" class="ru-g"></rect>`;
+          html += `<text x="${x}" y="168" class="ru-gt">${GRADS[t].toFixed(2)}</text>`;
+        }
+      }
+      html += `<text x="${CX(T - 1)}" y="30" class="ru-w">loss</text><line x1="${CX(T - 1)}" y1="44" x2="${CX(T - 1)}" y2="34" class="ru-arrow"></line>`;
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const msg =
+        this.i === 0
+          ? 'Press Step to feed the first word.'
+          : this.i <= T
+            ? `forward step ${this.i}: h${this.i} = tanh(x("${WORDS[this.i - 1]}") + h${this.i - 1} Wh), the same weights as every other step`
+            : `backward: the gradient reaching step ${now + 1} has size ${GRADS[now].toFixed(2)} (it started at ${GRADS[T - 1].toFixed(2)} at the last step)`;
+      this.querySelector('[data-stat]')!.textContent = msg;
+    }
+  }
+  customElements.define('rnn-unroll', RnnUnroll);
+</script>

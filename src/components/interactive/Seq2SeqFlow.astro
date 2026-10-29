@@ -1,0 +1,114 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Encoder, context vector, decoder"
+  caption="The encoder (blue) reads the source sentence one word at a time; its final state is the single context vector (yellow) that the decoder receives. The decoder (green) then writes the target one word at a time, feeding each word it produced back in as the next input, until it emits an end token. Everything the decoder knows about the source has to pass through that one vector."
+>
+  <seq2seq-flow>
+    <div class="sf-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="sf-svg" viewBox="0 0 400 170" role="img" aria-label="Encoder-decoder unrolled over a short translation">
+      <g data-g></g>
+    </svg>
+    <p class="sf-stat" data-stat aria-live="polite"></p>
+  </seq2seq-flow>
+</Figure>
+
+<style>
+  .sf-ctl {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sf-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .sf-svg :global(.sf-t) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .sf-svg :global(.sf-a) {
+    stroke: var(--text-faint);
+    stroke-width: 1.2;
+  }
+  .sf-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  const SRC = ['I', 'like', 'green', 'tea'];
+  const TGT = ["j'aime", 'le', 'thé', 'vert', '⟨end⟩'];
+  const EX = (i: number) => 22 + i * 38;
+  const CX = 186;
+  const DX = (i: number) => 228 + i * 38;
+  const STEPS = SRC.length + 1 + TGT.length;
+
+  class Seq2SeqFlow extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      if (this.i >= STEPS) return;
+      this.i++;
+      this.draw();
+      if (this.i >= STEPS) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const enc = Math.min(this.i, SRC.length);
+      const ctx = this.i > SRC.length;
+      const dec = Math.max(0, this.i - SRC.length - 1);
+      let html = '';
+      SRC.forEach((w, i) => {
+        const on = i < enc;
+        html += `<rect x="${EX(i) - 15}" y="60" width="30" height="30" rx="5" style="fill:${on ? 'rgba(66,133,244,0.5)' : 'var(--bg)'};stroke:${i === enc - 1 && !ctx ? 'var(--g-yellow)' : 'var(--border)'}"></rect>`;
+        html += `<line x1="${EX(i)}" y1="115" x2="${EX(i)}" y2="92" class="sf-a"></line><text x="${EX(i)}" y="128" class="sf-t">${w}</text>`;
+        if (i) html += `<line x1="${EX(i) - 23}" y1="75" x2="${EX(i) - 16}" y2="75" class="sf-a"></line>`;
+      });
+      html += `<line x1="${EX(SRC.length - 1) + 16}" y1="75" x2="${CX - 12}" y2="75" class="sf-a"></line>`;
+      html += `<rect x="${CX - 12}" y="63" width="24" height="24" rx="4" style="fill:${ctx ? 'rgba(251,188,5,0.7)' : 'var(--bg)'};stroke:var(--g-yellow)"></rect><text x="${CX}" y="52" class="sf-t">context</text>`;
+      html += `<line x1="${CX + 12}" y1="75" x2="${DX(0) - 16}" y2="75" class="sf-a"></line>`;
+      TGT.forEach((w, i) => {
+        const on = i < dec;
+        html += `<rect x="${DX(i) - 15}" y="60" width="30" height="30" rx="5" style="fill:${on ? 'rgba(52,168,83,0.5)' : 'var(--bg)'};stroke:${i === dec - 1 ? 'var(--g-yellow)' : 'var(--border)'}"></rect>`;
+        if (i) html += `<line x1="${DX(i) - 23}" y1="75" x2="${DX(i) - 16}" y2="75" class="sf-a"></line>`;
+        if (on) html += `<line x1="${DX(i)}" y1="58" x2="${DX(i)}" y2="36" class="sf-a"></line><text x="${DX(i)}" y="28" class="sf-t">${w}</text>`;
+        html += `<text x="${DX(i)}" y="128" class="sf-t">${i === 0 ? '⟨start⟩' : on || i <= dec ? TGT[i - 1] : ''}</text>`;
+        if (i <= dec) html += `<line x1="${DX(i)}" y1="115" x2="${DX(i)}" y2="92" class="sf-a"></line>`;
+      });
+      html += `<text x="80" y="160" class="sf-t">encoder</text><text x="${DX(2)}" y="160" class="sf-t">decoder</text>`;
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const msg =
+        this.i === 0
+          ? 'Press Step to start encoding.'
+          : this.i <= SRC.length
+            ? `encoder reads "${SRC[this.i - 1]}" and updates its state`
+            : !dec
+              ? 'the final encoder state becomes the context vector: the whole sentence in one fixed-size vector'
+              : `decoder writes "${TGT[dec - 1]}"${dec < TGT.length ? `, then reads it back as its next input` : ': done'}`;
+      this.querySelector('[data-stat]')!.textContent = msg;
+    }
+  }
+  customElements.define('seq2seq-flow', Seq2SeqFlow);
+</script>

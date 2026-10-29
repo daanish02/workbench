@@ -3,6 +3,127 @@ title: "Why Sequence Models"
 description: "The limits of feedforward and convolutional networks on sequential data."
 order: 1
 tier: core
+takeaways:
+  - "Sequences (text, speech, sensor readings, prices) have three properties a plain network handles badly: **variable length**, **order** that carries meaning, and **dependencies** that can span many steps."
+  - "A bag of words throws order away: 'the dog bit the man' and 'the man bit the dog' are the same bag."
+  - "A feed-forward network on a fixed **window** sees only $k$ tokens and needs a separate weight for every position: 1.28 million first-layer weights for a 200-token window, against 22,912 for an RNN cell that handles any length."
+  - "A **recurrent network** applies the same cell at every step and carries a **hidden state** forward, so it shares weights across time and can in principle use everything it has read."
+  - "Convolutions over time and, later, attention are the other answers; each trades off how far it can see, how parallel it is to train, and how much it costs per step."
+resources:
+  - title: "The Unreasonable Effectiveness of Recurrent Neural Networks (Andrej Karpathy)"
+    url: "http://karpathy.github.io/2015/05/21/rnn-effectiveness/"
+    note: "Character-level RNNs writing Shakespeare, LaTeX and C code, and what their individual units learn."
+  - title: "Sequence Modeling: Recurrent and Recursive Nets (Goodfellow, Bengio, Courville)"
+    url: "https://www.deeplearningbook.org/contents/rnn.html"
+    note: "Chapter 10: unfolding computational graphs, parameter sharing across time and the design space of RNNs."
+  - title: "Recurrent Neural Networks (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_recurrent-neural-networks/index.html"
+    note: "Sequence models from autoregressive baselines to RNNs, with runnable code."
 ---
 
-_Placeholder. Content not written yet._
+The networks so far take a fixed-size input: a vector of features, or an image of a set size. Much of the world's data does not come that way. A sentence has 3 words or 60; a speech recording lasts one second or ten minutes; a sensor stream never ends. In these **sequences** the order carries meaning, and an early element can decide how a late one should be read. This note shows what goes wrong when a [multi-layer perceptron](../../../ml/shallow-neural-networks/multi-layer-perceptrons/) or a [convolutional network](../../convolutional-networks/the-convolution-operation/) is applied to sequences, and introduces the idea that fixes it, a hidden state carried from step to step, which [Vanilla RNNs](../vanilla-rnns/) then builds. Run the code with `uv run --with numpy` where it imports numpy.
+
+## What makes a sequence
+
+A **sequence** is an ordered list $x_1, x_2, \dots, x_T$ whose length $T$ varies from example to example. Three properties matter:
+
+- **Variable length.** A model must accept $T = 3$ and $T = 300$ with the same parameters.
+- **Order.** Rearranging the elements changes the meaning.
+- **Long-range dependencies.** In "The dog that the cats near the old barn chased all day was very tired", the verb "was" must agree with "dog", eleven words earlier.
+
+Ignoring order is the simplest way to handle variable length: count the words, a **bag of words**, and feed the counts to any classifier. It works surprisingly well for topic classification and fails as soon as order matters.
+
+```python
+from collections import Counter
+
+a = "the dog bit the man".split()
+b = "the man bit the dog".split()
+print("same bag of words:", Counter(a) == Counter(b))
+print("same sequence:    ", a == b)
+# same bag of words: True
+# same sequence:     False
+```
+
+In words: the two sentences have identical word counts and opposite meanings. A model that only sees the bag cannot tell who bit whom.
+
+## Fixed windows
+
+The next idea is to look at the last $k$ elements: concatenate their vectors and feed them to an MLP. This is how early neural language models worked. Two problems follow. Anything more than $k$ steps back is invisible, and every position in the window gets its own weights, so the model learns "dog in position 3" separately from "dog in position 4".
+
+```python
+d, h = 50, 128                     # embedding size, hidden units
+for k in [3, 10, 50, 200]:
+    window_mlp = k * d * h + h     # one weight per (position, feature, unit)
+    print(f"window of {k:3d} tokens: MLP first layer {window_mlp:>9,} weights")
+rnn = d * h + h * h + h            # input, recurrent and bias weights, any length
+print(f"RNN cell, any length:      {rnn:>9,} weights")
+# window of   3 tokens: MLP first layer    19,328 weights
+# window of  10 tokens: MLP first layer    64,128 weights
+# window of  50 tokens: MLP first layer   320,128 weights
+# window of 200 tokens: MLP first layer 1,280,128 weights
+# RNN cell, any length:         22,912 weights
+```
+
+In words: with 50-dimensional word vectors and 128 hidden units, the window MLP's first layer grows linearly with the window, to 1.28 million weights for 200 tokens, and still cannot see token 201. A recurrent cell with the same sizes has 22,912 weights and handles any length, because it reuses them at every step.
+
+A **1D convolution** over time fixes the weight sharing (one kernel slides along the sequence, as in [Convolution Operation](../../convolutional-networks/the-convolution-operation/)) but keeps a finite reach: $L$ layers of width $k$ see $L(k - 1) + 1$ steps. Dilated convolutions, as in WaveNet, grow that reach exponentially with depth, and convolutional sequence models are fast to train because every position is computed in parallel.
+
+<ContextReach />
+
+## Carry a state
+
+A **recurrent neural network** (RNN) reads the sequence one element at a time and keeps a **hidden state** $h_t$, a fixed-size vector that summarises everything read so far. At each step the same function combines the previous state and the new input:
+
+$$
+h_t = f(h_{t-1}, x_t; \theta).
+
+$$
+
+In words: the new state depends on the old state and the current input, through parameters $\theta$ that are the same at every step. Because $\theta$ is shared, the model handles any length; because $h_t$ depends on $h_{t-1}$, which depends on $h_{t-2}$, and so on, the state at step $t$ can in principle depend on every earlier input.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+d, h = 4, 8
+Wx = rng.normal(size=(d, h)) * 0.5
+Wh = rng.normal(size=(h, h)) * (0.9 / np.sqrt(h))
+b = np.zeros(h)
+
+def run(xs):
+    s = np.zeros(h)
+    for x in xs:                   # the same weights at every step
+        s = np.tanh(x @ Wx + s @ Wh + b)
+    return s
+
+for n in [3, 7, 12]:
+    xs = rng.normal(size=(n, d))
+    print(f"sequence of {n:2d} steps -> final state of shape {run(xs).shape}")
+x = rng.normal(size=(5, d))
+print("order matters:", not np.allclose(run(x), run(x[::-1])))
+# sequence of  3 steps -> final state of shape (8,)
+# sequence of  7 steps -> final state of shape (8,)
+# sequence of 12 steps -> final state of shape (8,)
+# order matters: True
+```
+
+In words: sequences of 3, 7 and 12 steps all end in an 8-number state from the same three weight arrays, and reversing a sequence gives a different state, so the RNN is sensitive to order. Whether it actually uses information from many steps back is a training question; the answer for plain RNNs is "not well", which is what [RNN Gradient Problems](../the-vanishing-gradient-problem-in-rnns/) explains and [LSTMs](../lstms/) fix.
+
+<Callout type="pitfall">
+"Can in principle use the whole history" is not "does". A fixed-size state must compress an arbitrarily long past, and gradient-based training struggles to teach it dependencies longer than a few dozen steps. Test long-range behaviour directly, for example with a task whose answer depends on the first token, rather than assuming the architecture provides it.
+</Callout>
+
+## Shapes of sequence tasks
+
+Recurrent models fit several input-output patterns:
+
+| Pattern | Example | What the RNN outputs |
+|---|---|---|
+| Many to one | sentiment of a review | one prediction from the final state |
+| Many to many, aligned | part-of-speech tagging, next-character prediction | one prediction per step |
+| Many to many, not aligned | translation, summarisation | an encoder reads the input, a decoder writes the output; see [Seq2Seq Models](../sequence-to-sequence-models/) |
+| One to many | image captioning | a state initialised from the image generates words |
+
+<Callout type="key">
+Sequences have variable length, meaningful order and long-range dependencies. Bags of words lose order, fixed windows lose reach and multiply weights, and convolutions have finite reach. Recurrent networks share one cell across time and carry a state forward, which handles any length and, in principle, any distance.
+</Callout>

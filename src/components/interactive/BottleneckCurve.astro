@@ -1,0 +1,107 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A fixed-size summary forgets longer sequences"
+  caption="Random sequences over 10 tokens are compressed into a fixed vector of k numbers by the best linear encoder (PCA) and rebuilt from it, as in the note's code. The share of tokens recovered falls as the sequence gets longer, whatever k is; a bigger vector only moves the drop to longer sequences. A seq2seq encoder has the same problem: one context vector for the whole input. The dashed line is chance, 10 %."
+>
+  <bottleneck-curve>
+    <div class="bc-ctl">
+      <input type="hidden" data-k value="32" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="16" aria-pressed="false">k = 16</button>
+        <button type="button" class="btn" data-choice="32" aria-pressed="true">k = 32</button>
+        <button type="button" class="btn" data-choice="64" aria-pressed="false">k = 64</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">tokens recovered</span>
+      <svg class="bc-svg" viewBox="0 0 400 200" data-grid='{"box":[40,10,390,180],"x":[1,64,"log"],"y":[0,1]}' role="img" aria-label="Share of tokens recovered against sequence length for a fixed-size code">
+        <line x1="40" x2="390" data-chance class="bc-chance"></line>
+        <path data-all class="bc-other"></path>
+        <path data-line class="bc-line"></path>
+        <g data-pts></g>
+        <text x="34" y="14" class="ax-tick bc-end">1</text>
+        <text x="34" y="182" class="ax-tick bc-end">0</text>
+      </svg>
+      <span class="ax-x">sequence length (log scale)</span>
+    </div>
+    <p class="bc-stat" data-stat></p>
+  </bottleneck-curve>
+</Figure>
+
+<style>
+  .bc-ctl {
+    margin-bottom: 10px;
+  }
+  .bc-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .bc-line {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .bc-other {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1;
+  }
+  .bc-chance {
+    stroke: var(--g-red);
+    stroke-dasharray: 4 4;
+  }
+  .bc-svg :global(.bc-pt) {
+    fill: var(--g-blue);
+  }
+  .bc-svg :global(.bc-l) {
+    fill: var(--text-muted);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+  }
+  .bc-end {
+    text-anchor: end;
+  }
+  .bc-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Printed by the PCA experiment for code sizes 16, 32 and 64.
+  const LENS = [2, 4, 8, 16, 32, 64];
+  const DATA: Record<string, number[]> = {
+    16: [0.991, 0.804, 0.541, 0.361, 0.263, 0.204],
+    32: [1.0, 0.998, 0.829, 0.549, 0.371, 0.267],
+    64: [1.0, 1.0, 1.0, 0.861, 0.564, 0.376],
+  };
+  const px = (L: number) => 40 + (Math.log2(L) / 6) * 350;
+  const py = (a: number) => 180 - a * 170;
+
+  class BottleneckCurve extends HTMLElement {
+    connectedCallback() {
+      const c = this.querySelector('[data-chance]')!;
+      c.setAttribute('y1', py(0.1).toFixed(1));
+      c.setAttribute('y2', py(0.1).toFixed(1));
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const k = this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      const path = (v: number[]) => v.map((a, i) => `${i ? 'L' : 'M'}${px(LENS[i]).toFixed(1)},${py(a).toFixed(1)}`).join('');
+      this.querySelector('[data-all]')!.setAttribute('d', Object.keys(DATA).filter((x) => x !== k).map((x) => path(DATA[x])).join(''));
+      this.querySelector('[data-line]')!.setAttribute('d', path(DATA[k]));
+      this.querySelector('[data-pts]')!.innerHTML = DATA[k]
+        .map((a, i) => `<circle cx="${px(LENS[i]).toFixed(1)}" cy="${py(a).toFixed(1)}" r="4" class="bc-pt"></circle><text x="${px(LENS[i]).toFixed(1)}" y="196" class="bc-l">${LENS[i]}</text>`)
+        .join('');
+      this.querySelector('[data-stat]')!.textContent = `k = ${k} numbers · length 8: ${DATA[k][2].toFixed(3)} · length 64: ${DATA[k][5].toFixed(3)} of tokens recovered`;
+    }
+  }
+  customElements.define('bottleneck-curve', BottleneckCurve);
+</script>

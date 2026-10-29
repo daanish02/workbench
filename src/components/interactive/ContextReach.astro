@@ -1,0 +1,95 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How far back each model can see"
+  caption="Predicting the token at the yellow position. Blue tokens can influence the prediction, grey ones cannot. A feed-forward network on a window sees a fixed number of previous tokens; three stacked convolutions of width 3 see 7; an RNN carries a state from the very first token, with the same few weights at every step. Drag the position along the sequence."
+>
+  <context-reach>
+    <div class="cr-ctl">
+      <input type="hidden" data-m value="rnn" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="mlp" aria-pressed="false">window MLP (4)</button>
+        <button type="button" class="btn" data-choice="cnn" aria-pressed="false">3 conv layers</button>
+        <button type="button" class="btn" data-choice="rnn" aria-pressed="true">RNN</button>
+      </span>
+    </div>
+    <label class="cr-lbl">position t <input type="range" min="1" max="14" step="1" value="12" data-t /> <b data-tv>12</b></label>
+    <svg class="cr-svg" viewBox="0 0 400 80" role="img" aria-label="A sequence of tokens with the ones the model can see highlighted">
+      <g data-toks></g>
+    </svg>
+    <p class="cr-stat" data-stat></p>
+  </context-reach>
+</Figure>
+
+<style>
+  .cr-ctl {
+    margin-bottom: 10px;
+  }
+  .cr-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .cr-lbl input[type='range'] {
+    flex: 1;
+  }
+  .cr-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .cr-svg :global(.cr-w) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .cr-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const WORDS = 'the dog that the cats near the old barn chased all day was very tired'.split(' ');
+  const REACH: Record<string, number> = { mlp: 4, cnn: 7, rnn: Infinity };
+  // boxes alternate rows and span two slots, so one extra slot keeps the last box full width
+  const W = 400 / (WORDS.length + 1);
+
+  class ContextReach extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const m = this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = `${t}`;
+      const first = Math.max(0, t - REACH[m]);
+      this.querySelector('[data-toks]')!.innerHTML = WORDS.map((w, i) => {
+        const x = i * W;
+        const fill = i === t ? 'rgba(251,188,5,0.6)' : i >= first && i < t ? 'rgba(66,133,244,0.45)' : 'rgba(255,255,255,0.03)';
+        // alternate rows so long words have room
+        const y = i % 2 ? 46 : 12;
+        return (
+          `<rect x="${(x + 1).toFixed(1)}" y="${y}" width="${(W * 2 - 4).toFixed(1)}" height="26" rx="4" style="fill:${fill};stroke:var(--border)"></rect>` +
+          `<text x="${(x + W - 1).toFixed(1)}" y="${y + 13}" class="cr-w">${i === t ? '?' : w}</text>`
+        );
+      }).join('');
+      const seen = t - first;
+      this.querySelector('[data-stat]')!.textContent =
+        `${m === 'rnn' ? 'RNN' : m === 'cnn' ? '3 stacked width-3 convolutions' : 'window MLP'} · sees ${seen} previous token${seen === 1 ? '' : 's'}` +
+        (m !== 'rnn' && first > 1 ? ` · "${WORDS[1]}", the subject the verb must agree with, is out of reach` : m === 'rnn' ? ' · everything so far, compressed into one state vector' : '');
+    }
+  }
+  customElements.define('context-reach', ContextReach);
+</script>

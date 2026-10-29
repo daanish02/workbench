@@ -1,0 +1,150 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="An LSTM holding a value through noise"
+  caption="A one-unit LSTM with hand-set weights reads a sequence: a value with a 'store' flag, then distracting tokens, then a 'recall' flag. Each column shows the gates at that step (forget, input, output, from 0 to 1) and the cell state c (blue positive, red negative). The input gate opens only on 'store', the forget gate stays near 1 so c is carried unchanged, and the output gate opens only on 'recall'. Switch the stored value to see it come out at the end."
+>
+  <lstm-gates>
+    <div class="lg2-ctl">
+      <input type="hidden" data-v value="1" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="1" aria-pressed="true">store +1</button>
+        <button type="button" class="btn" data-choice="-1" aria-pressed="false">store −1</button>
+      </span>
+    </div>
+    <div class="lg2-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="lg2-svg" viewBox="0 0 400 210" role="img" aria-label="Gate values and cell state of an LSTM at each step">
+      <g data-g></g>
+    </svg>
+    <p class="lg2-stat" data-stat aria-live="polite"></p>
+  </lstm-gates>
+</Figure>
+
+<style>
+  .lg2-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .lg2-svg {
+    display: block;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .lg2-svg :global(.lg2-lab) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: end;
+    dominant-baseline: central;
+  }
+  .lg2-svg :global(.lg2-tok) {
+    fill: var(--text);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+  }
+  .lg2-svg :global(.lg2-slot) {
+    fill: var(--bg);
+    stroke: var(--border);
+  }
+  .lg2-svg :global(.lg2-now) {
+    fill: none;
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .lg2-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  const sig = (z: number) => 1 / (1 + Math.exp(-z));
+  const TOKENS = ['v, store', 'the', 'cat', '7', 'sat', 'on', '0.4', 'mat', 'recall'];
+  const NOISE = [0, 0.8, -1.2, 0.3, 1.5, -0.6, 0.9, -0.2, 0];
+  const ROWS = ['forget', 'input', 'output', 'cell c', 'out h'];
+  const COLW = 36;
+  const X0 = 64;
+
+  type S = { f: number; i: number; o: number; c: number; h: number };
+  function run(v: number): S[] {
+    let c = 0;
+    return TOKENS.map((_, t) => {
+      const store = t === 0 ? 1 : 0;
+      const recall = t === TOKENS.length - 1 ? 1 : 0;
+      const val = t === 0 ? v : 0;
+      // same weights as the note's code; the noise input has zero weight everywhere
+      const f = sig(10 - 20 * store);
+      const i = sig(-10 + 20 * store);
+      const o = sig(-10 + 20 * recall);
+      const g = Math.tanh(2 * val + 0 * NOISE[t]);
+      c = f * c + i * g;
+      return { f, i, o, c, h: o * Math.tanh(c) };
+    });
+  }
+
+  class LstmGates extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-v]')!.addEventListener('input', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      if (this.i >= TOKENS.length) return;
+      this.i++;
+      this.draw();
+      if (this.i >= TOKENS.length) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const v = +this.querySelector<HTMLInputElement>('[data-v]')!.value;
+      const S = run(v);
+      let html = ROWS.map((r, k) => `<text x="${X0 - 6}" y="${42 + k * 32}" class="lg2-lab">${r}</text>`).join('');
+      TOKENS.forEach((tok, t) => {
+        const x = X0 + t * COLW;
+        html += `<text x="${x + COLW / 2 - 2}" y="16" class="lg2-tok">${tok === 'v, store' ? (v > 0 ? '+1 store' : '−1 store') : tok}</text>`;
+        ROWS.forEach((_, k) => {
+          const y = 28 + k * 32;
+          html += `<rect x="${x}" y="${y}" width="${COLW - 4}" height="26" rx="3" class="lg2-slot"></rect>`;
+          if (t >= this.i) return;
+          const s = S[t];
+          const val = [s.f, s.i, s.o, s.c, s.h][k];
+          if (k < 3) {
+            // gates: a bar filled from the bottom, height = value
+            const hh = val * 22;
+            html += `<rect x="${x + 4}" y="${(y + 24 - hh).toFixed(1)}" width="${COLW - 12}" height="${hh.toFixed(1)}" style="fill:var(--g-green)"></rect>`;
+          } else {
+            const a = Math.min(1, Math.abs(val)) * 0.8 + 0.1;
+            html += `<rect x="${x + 2}" y="${y + 2}" width="${COLW - 8}" height="22" style="fill:${val >= 0 ? `rgba(66,133,244,${a})` : `rgba(234,67,53,${a})`}"></rect>`;
+          }
+        });
+        if (t === this.i - 1) html += `<rect x="${x - 2}" y="24" width="${COLW}" height="${ROWS.length * 32}" rx="4" class="lg2-now"></rect>`;
+      });
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const t = this.i - 1;
+      const s = S[t];
+      this.querySelector('[data-stat]')!.textContent =
+        t < 0
+          ? 'Press Step to read the first token.'
+          : `"${TOKENS[t]}": forget ${s.f.toFixed(3)} · input ${s.i.toFixed(3)} · output ${s.o.toFixed(3)} · c ${s.c.toFixed(3)} · h ${s.h.toFixed(3)}` +
+            (t === TOKENS.length - 1 ? ` · the stored ${v > 0 ? '+1' : '−1'} comes back out` : '');
+    }
+  }
+  customElements.define('lstm-gates', LstmGates);
+</script>

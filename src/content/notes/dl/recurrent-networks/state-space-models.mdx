@@ -3,6 +3,187 @@ title: "State Space Models"
 description: "Linear recurrences that train in parallel: S4 and Mamba as an alternative to attention for long sequences."
 order: 7
 tier: advanced
+takeaways:
+  - "A **state space model** (SSM) layer is a *linear* recurrence, $h_t = \\bar A h_{t-1} + \\bar B x_t$, $y_t = C h_t$. Dropping the nonlinearity inside the recurrence is what makes the rest possible."
+  - "Being linear and time-invariant, it equals a **convolution** with kernel $K_k = C \\bar A^{k} \\bar B$: train it as one long convolution over the whole sequence, run it as a recurrence with constant memory per step."
+  - "Even with input-dependent coefficients, the recurrence can be computed with a **parallel scan** in $\\lceil \\log_2 T \\rceil$ rounds: 10 rounds instead of 1000 sequential steps."
+  - "Diagonal decays $a = e^{\\Delta \\lambda}$ set the memory timescales; with $\\Delta = 1$, rates from 1 to 0.001 give half-lives from 0.7 to 693 steps. **S4** mixes many timescales to model dependencies thousands of steps long."
+  - "**Mamba** makes $\\Delta$, $B$ and $C$ functions of the input (**selection**), so the layer can decide what to store and what to ignore: it keeps a flagged value at 2.96 after 54 noisy steps, where a fixed layer has forgotten it."
+resources:
+  - title: "Efficiently Modeling Long Sequences with Structured State Spaces (Gu, Goel, Ré)"
+    url: "https://arxiv.org/abs/2111.00396"
+    note: "S4: the structured state matrix, the convolution view and the first model to solve the Path-X long-range task."
+  - title: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu and Dao)"
+    url: "https://arxiv.org/abs/2312.00752"
+    note: "Input-dependent SSM parameters, the hardware-aware parallel scan and language-model results against transformers."
+  - title: "The Annotated S4 (Sasha Rush)"
+    url: "https://srush.github.io/annotated-s4/"
+    note: "S4 rebuilt step by step in JAX, from discretisation to the convolution kernel."
 ---
 
-_Placeholder. Content not written yet._
+[LSTMs](../lstms/) and [GRUs](../grus/) can remember for hundreds of steps, but they have a training cost that attention does not: each step's state depends on the previous one through a nonlinearity, so the $T$ steps of a sequence must be computed one after another. Transformers process all positions in parallel but cost grows with the square of the sequence length. **State space models** sit between the two. They are recurrences, so inference costs a constant amount per token, but their recurrence is *linear*, which lets training run in parallel, either as a convolution or as a parallel scan. This note builds the idea from a linear recurrence, shows its two equivalent forms, explains how S4 gets long memory, and how Mamba's selection makes the layer content-aware. It builds on [Vanilla RNNs](../vanilla-rnns/) and [Convolution](../../../math/signals-fourier/convolution/); run the code with `uv run --with numpy`.
+
+## A linear recurrence
+
+The name comes from control theory, where a continuous-time **state space model** maps an input signal $x(t)$ to an output $y(t)$ through a hidden state $h(t)$:
+
+$$
+h'(t) = A h(t) + B x(t), \qquad y(t) = C h(t).
+
+$$
+
+In words: the state changes at a rate given by its own value (through $A$) and the input (through $B$), and the output is a linear read-out. For sequences, the equation is **discretised** with a step size $\Delta$, giving a recurrence with matrices $\bar A$ and $\bar B$ (for example $\bar A = e^{\Delta A}$):
+
+$$
+h_t = \bar A h_{t-1} + \bar B x_t, \qquad y_t = C h_t.
+
+$$
+
+In words: exactly a vanilla RNN without the tanh. Deep SSMs stack many such layers, each applied separately to every channel of the input, with ordinary nonlinear layers (gates, MLPs) between them, so the network as a whole is nonlinear even though each recurrence is linear. Modern SSMs use a **diagonal** $\bar A$: each state $n$ simply decays by its own factor $a_n$ per step.
+
+## Two views of one layer
+
+Unrolling the linear recurrence from $h_0 = 0$ gives $y_t = \sum_{k=0}^{t} C \bar A^{k} \bar B \, x_{t-k}$. That is a convolution of the input with the kernel $K_k = C \bar A^{k} \bar B$, which does not depend on the input, so it can be precomputed.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+N, T = 4, 50                                   # state size, sequence length
+a = np.array([0.5, 0.8, 0.95, 0.99])           # diagonal state matrix: one decay per state
+b, c = rng.normal(size=N), rng.normal(size=N)
+x = rng.normal(size=T)
+
+# recurrent view: one step at a time, constant memory
+h, y_rec = np.zeros(N), []
+for xt in x:
+    h = a * h + b * xt
+    y_rec.append(c @ h)
+
+# convolutional view: precompute the kernel K_k = sum_n c_n a_n^k b_n, then convolve
+K = np.array([(c * a**k * b).sum() for k in range(T)])
+y_conv = [K[:t + 1][::-1] @ x[:t + 1] for t in range(T)]
+
+print("recurrent and convolutional outputs agree:", np.allclose(y_rec, y_conv))
+print("kernel K[0], K[10], K[49]:", np.round(K[[0, 10, 49]], 4))
+# recurrent and convolutional outputs agree: True
+# kernel K[0], K[10], K[49]: [0.8193 0.5847 0.1284]
+```
+
+In words: the step-by-step recurrence and the convolution with the precomputed kernel give identical outputs. The kernel still has weight 0.1284 at lag 49, carried by the state that decays by 0.99 per step. During training the whole sequence is known, so the convolution view runs in parallel (with an FFT, in $O(T \log T)$); during generation tokens arrive one at a time, so the recurrent view produces each output in constant time and memory, with no growing cache. This "train like a CNN, run like an RNN" property is the main appeal.
+
+<SsmKernel />
+
+## Long memory: S4
+
+Which kernel shapes are possible depends on the decays. In continuous time each diagonal entry is a rate $\lambda_n < 0$, and discretising with step $\Delta$ gives $a_n = e^{\Delta \lambda_n}$.
+
+```python
+import numpy as np
+
+# continuous decay rates, discretised with step size dt: a = exp(dt * lam)
+lam = -np.array([1.0, 0.1, 0.01, 0.001])
+for dt in [1.0, 0.1]:
+    a = np.exp(dt * lam)
+    half_life = np.log(0.5) / np.log(a)          # steps until a state halves
+    print(f"dt {dt}: decays {np.round(a, 4)}  half-lives " + " ".join(f"{v:.1f}" for v in half_life))
+# dt 1.0: decays [0.3679 0.9048 0.99   0.999 ]  half-lives 0.7 6.9 69.3 693.1
+# dt 0.1: decays [0.9048 0.99   0.999  0.9999]  half-lives 6.9 69.3 693.1 6931.5
+```
+
+In words: four rates spread over three orders of magnitude give half-lives from 0.7 to 693 steps, so one layer can attend to the last token and to tokens hundreds of steps back at once. A smaller $\Delta$ stretches every timescale by the same factor: 6931 steps for the slowest state at $\Delta = 0.1$. The step size is a learned parameter.
+
+**S4** (Gu, Goel and Ré, 2021) made this work in practice. Its state matrix is initialised from **HiPPO** theory, a construction whose state optimally summarises the recent history of the input as a projection onto polynomials, and parametrised so that the kernel can be computed efficiently. S4 was the first model to solve Path-X, a Long Range Arena task with sequences of 16,384 steps on which transformers performed at chance. Later simplifications (S4D, S5) showed that diagonal matrices with a good initialization work nearly as well.
+
+## Selection: Mamba
+
+A time-invariant layer applies the same kernel to every input, whatever it contains. It cannot decide that one token is worth remembering and the next is noise, which is exactly what language needs and what LSTM gates provide. **Mamba** (Gu and Dao, 2023) makes $\Delta$, $B$ and $C$ functions of the current input. A large $\Delta_t$ means "reset and write this input", a near-zero $\Delta_t$ means "keep the state and ignore this input".
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+T = 60
+x = rng.normal(size=T) * 0.5                     # noise
+x[5] = 3.0                                       # the one value worth remembering
+mark = np.zeros(T); mark[5] = 1.0                # a flag saying "store this"
+
+def run(selective):
+    h, out = 0.0, []
+    for t in range(T):
+        if selective:
+            dt = 5.0 if mark[t] else 1e-4        # step size chosen from the input
+        else:
+            dt = 0.1                             # fixed: the same dynamics at every step
+        a = np.exp(-dt)                          # keep factor
+        h = a * h + (1 - a) * x[t]               # blend old state and input
+        out.append(h)
+    return np.array(out)
+
+for name, sel in [("fixed (LTI)", False), ("selective", True)]:
+    h = run(sel)
+    print(f"{name:12s} state at t=6 {h[6]:+.3f}, t=30 {h[30]:+.3f}, t=59 {h[59]:+.3f}")
+# fixed (LTI)  state at t=6 +0.323, t=30 -0.077, t=59 +0.062
+# selective    state at t=6 +2.980, t=30 +2.972, t=59 +2.964
+```
+
+In words: with a fixed step of 0.1, the important value 3.0 only moves the state to 0.323 and is then washed out by noise (−0.077 at step 30). The selective layer takes a large step on the flagged input, jumping to 2.980, then takes near-zero steps and holds 2.964 at step 59. It behaves like an LSTM's input and forget gates, implemented as an input-dependent step size. The price is that the kernel now changes with the input, so the convolution view no longer applies.
+
+<SelectiveState />
+
+## Parallel scans
+
+Without the convolution, the recurrence $h_t = a_t h_{t-1} + b_t$ (with input-dependent $a_t$, $b_t$) seems to need $T$ sequential steps again. It does not, because composing two steps is associative: applying $(a_1, b_1)$ and then $(a_2, b_2)$ is the single step $(a_1 a_2, \; a_2 b_1 + b_2)$. Any associative operation can be accumulated over a sequence with a **parallel scan**, the same algorithm as a parallel prefix sum.
+
+```python
+import numpy as np
+
+def combine(e1, e2):
+    # (a1, b1) then (a2, b2): h -> a2 (a1 h + b1) + b2; this rule is associative
+    a1, b1 = e1
+    a2, b2 = e2
+    return a1 * a2, a2 * b1 + b2
+
+def scan(a, bx):
+    """Inclusive scan in ceil(log2 T) rounds; every round is one parallel operation."""
+    A, B = a.copy(), bx.copy()
+    shift, rounds = 1, 0
+    while shift < len(a):
+        A_prev = np.r_[np.ones(shift), A[:-shift]]
+        B_prev = np.r_[np.zeros(shift), B[:-shift]]
+        A, B = combine((A_prev, B_prev), (A, B))
+        shift, rounds = shift * 2, rounds + 1
+    return B, rounds
+
+rng = np.random.default_rng(1)
+T = 1000
+a, bx = rng.uniform(0.9, 1.0, T), rng.normal(size=T)
+h, seq = 0.0, []
+for t in range(T):                              # sequential: T dependent steps
+    h = a[t] * h + bx[t]
+    seq.append(h)
+par, rounds = scan(a, bx)
+print(f"sequential steps: {T}, parallel rounds: {rounds}, same result: {np.allclose(seq, par)}")
+# sequential steps: 1000, parallel rounds: 10, same result: True
+```
+
+In words: 1000 dependent steps become 10 rounds, each of which updates every position at once, with the same result. A nonlinear RNN cannot do this, because $\tanh(w \tanh(w h + x_1) + x_2)$ does not collapse into one step of the same form. Mamba implements the scan in a fused GPU kernel that keeps the expanded state in fast on-chip memory, which is where its speed comes from.
+
+<Callout type="pitfall">
+"Linear time" is about sequence length, not the whole story. SSMs compress the entire past into a fixed-size state, the same bottleneck as the [seq2seq context vector](../sequence-to-sequence-models/), so tasks that need exact recall of arbitrary earlier tokens, such as copying a long string or looking up a key from far back, remain hard for them where attention, which keeps every token, finds them easy. Many recent models are hybrids that interleave SSM layers with a few attention layers.
+</Callout>
+
+## Where they stand
+
+| | RNN / LSTM | Transformer | SSM (S4, Mamba) |
+|---|---|---|---|
+| Training over a sequence | sequential | parallel | parallel (convolution or scan) |
+| Generation cost per token | constant | grows with context (KV cache) | constant |
+| Memory of the past | fixed-size state | every token kept | fixed-size state |
+| Content-based selection | gates | attention weights | Mamba's input-dependent $\Delta$, $B$, $C$ |
+
+On language modelling, Mamba models matched transformers of similar size at the scales tested in 2023 and generated text several times faster on long contexts. Whether SSMs or hybrids displace attention at the largest scales is still open; their clearest wins so far are on very long sequences such as audio, genomics and long documents.
+
+<Callout type="key">
+An SSM layer is a linear recurrence: as a time-invariant layer it is also a convolution, so it trains in parallel and generates with constant cost per step. Spreading decay rates over many timescales gives long memory (S4); making the step size and projections depend on the input gives content-based selection (Mamba), computed with a parallel scan.
+</Callout>

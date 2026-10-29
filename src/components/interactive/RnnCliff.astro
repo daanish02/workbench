@@ -1,0 +1,109 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A one-unit RNN grows a cliff"
+  caption="A single tanh unit h_t = tanh(w · h_{t−1}) started at h₀ = 0.5 and run for T steps, plotted against its recurrent weight w. Below w = 1 the state decays to 0; above it, it settles at a nonzero fixed point. The longer the sequence, the sharper the step between the two, so the slope (green dots: the gradient at a few weights) becomes huge right at the edge and tiny everywhere else. That is an exploding and a vanishing gradient in one picture."
+>
+  <rnn-cliff>
+    <div class="rc2-ctl">
+      <input type="hidden" data-t value="20" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="3" aria-pressed="false">T = 3</button>
+        <button type="button" class="btn" data-choice="20" aria-pressed="true">T = 20</button>
+        <button type="button" class="btn" data-choice="100" aria-pressed="false">T = 100</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">final state h_T</span>
+      <svg class="rc2-svg" viewBox="0 0 400 200" data-grid='{"box":[40,10,390,180],"x":[0,2],"y":[0,1]}' role="img" aria-label="Final state of a one-unit RNN against its recurrent weight">
+        <path data-line class="rc2-line"></path>
+        <g data-dots></g>
+        <text x="40" y="196" class="ax-tick">0</text>
+        <text x="215" y="196" class="ax-tick rc2-mid">1</text>
+        <text x="390" y="196" class="ax-tick rc2-end">2</text>
+        <text x="34" y="14" class="ax-tick rc2-end">1</text>
+      </svg>
+      <span class="ax-x">recurrent weight w</span>
+    </div>
+    <p class="rc2-stat" data-stat></p>
+  </rnn-cliff>
+</Figure>
+
+<style>
+  .rc2-ctl {
+    margin-bottom: 10px;
+  }
+  .rc2-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .rc2-line {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .rc2-svg :global(.rc2-dot) {
+    fill: var(--g-green);
+  }
+  .rc2-svg :global(.rc2-g) {
+    fill: var(--g-green-l);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+  }
+  .rc2-mid {
+    text-anchor: middle;
+  }
+  .rc2-end {
+    text-anchor: end;
+  }
+  .rc2-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  function hT(w: number, T: number): number {
+    let h = 0.5;
+    for (let t = 0; t < T; t++) h = Math.tanh(w * h);
+    return h;
+  }
+  const px = (w: number) => 40 + (w / 2) * 350;
+  const py = (h: number) => 180 - h * 170;
+
+  class RnnCliff extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const T = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      let d = '';
+      for (let i = 0; i <= 800; i++) {
+        const w = (i / 800) * 2;
+        d += `${i ? 'L' : 'M'}${px(w).toFixed(1)},${py(hT(w, T)).toFixed(1)}`;
+      }
+      this.querySelector('[data-line]')!.setAttribute('d', d);
+      let html = '';
+      for (const w of [0.5, 0.9, 1.0, 1.1, 1.5]) {
+        const gr = (hT(w + 1e-4, T) - hT(w - 1e-4, T)) / 2e-4;
+        html += `<circle cx="${px(w).toFixed(1)}" cy="${py(hT(w, T)).toFixed(1)}" r="4" class="rc2-dot"></circle>`;
+        html += `<text x="${px(w).toFixed(1)}" y="${(py(hT(w, T)) - 8).toFixed(1)}" class="rc2-g">${gr < 0.01 ? gr.toExponential(0) : gr.toFixed(2)}</text>`;
+      }
+      this.querySelector('[data-dots]')!.innerHTML = html;
+      let steep = 0;
+      for (let i = 1; i < 2000; i++) {
+        const w = i / 1000;
+        steep = Math.max(steep, (hT(w + 1e-4, T) - hT(w - 1e-4, T)) / 2e-4);
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `T = ${T} · steepest slope dh_T/dw = ${steep.toFixed(1)} · slope at w = 0.5: ${((hT(0.5001, T) - hT(0.4999, T)) / 2e-4).toExponential(1)}`;
+    }
+  }
+  customElements.define('rnn-cliff', RnnCliff);
+</script>

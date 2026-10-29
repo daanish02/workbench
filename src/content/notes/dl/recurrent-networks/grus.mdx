@@ -3,6 +3,146 @@ title: "GRUs"
 description: "The simplified alternative to LSTMs, and what gets traded away."
 order: 5
 tier: core
+takeaways:
+  - "A **GRU** (gated recurrent unit) has one state $h_t$ and two gates: an **update gate** $z$ and a **reset gate** $r$. The update is an interpolation, $h_t = (1 - z_t) \\odot h_{t-1} + z_t \\odot \\tilde n_t$."
+  - "$1 - z$ plays the LSTM's forget gate and $z$ its input gate, tied together: whatever is written replaces an equal share of the old state. The direct path keeps a factor $1 - z$ per step, so $z = 0.001$ keeps 0.90 of a gradient over 100 steps."
+  - "It has 3 weight blocks instead of 4, so 25 % fewer parameters than an LSTM of the same size (295,680 against 394,240 for 128 inputs and 256 units), and no separate cell or output gate."
+  - "What is traded away: the state is always an average of values in $(-1, 1)$, so it cannot count. Twenty identical inputs leave a GRU at 0.964 and an LSTM cell at 19.28."
+  - "On most benchmarks the two perform about the same; GRUs are faster per step, LSTMs are the safer default when unbounded counting or very long memory matters."
+resources:
+  - title: "Learning Phrase Representations using RNN Encoder-Decoder (Cho et al.)"
+    url: "https://arxiv.org/abs/1406.1078"
+    note: "Introduced the GRU, in the paper that also introduced the RNN encoder-decoder for translation."
+  - title: "Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling (Chung et al.)"
+    url: "https://arxiv.org/abs/1412.3555"
+    note: "GRU against LSTM on music and speech: both far ahead of tanh RNNs, neither consistently better."
+  - title: "On the Practical Computational Power of Finite Precision RNNs (Weiss, Goldberg, Yahav)"
+    url: "https://arxiv.org/abs/1805.04908"
+    note: "Shows that LSTMs can learn to count while GRUs cannot, and what that means for recognising simple languages."
 ---
 
-_Placeholder. Content not written yet._
+The [LSTM](../lstms/) solved the vanishing gradient problem with a cell state, three gates and a candidate: four blocks of weights per layer. In 2014 Cho and colleagues proposed a smaller cell with the same core idea, a gated, near-identity path through time, and only two gates. The **gated recurrent unit** (GRU) is faster and has fewer parameters, and in most experiments it trains about as well. This note defines it, shows how its gates map onto the LSTM's, and shows the one ability it gives up. Run the code with `uv run --with numpy`.
+
+## The cell
+
+A GRU keeps a single state $h_t$. At each step it computes two gates and a candidate:
+
+$$
+\begin{aligned}
+z_t &= \sigma(x_t W_z + h_{t-1} U_z + b_z), & r_t &= \sigma(x_t W_r + h_{t-1} U_r + b_r), \\
+\tilde n_t &= \tanh\left(x_t W_n + (r_t \odot h_{t-1}) U_n + b_n\right), & h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde n_t.
+\end{aligned}
+
+$$
+
+In words: the **update gate** $z_t$ decides, per unit, how much of the state to replace; the **candidate** $\tilde n_t$ is the proposed new content; and the **reset gate** $r_t$ decides how much of the old state the candidate may use. The new state is a weighted average of the old state and the candidate. When $z = 0$ the old state passes through untouched; when $r = 0$ the candidate ignores the past, which lets a unit start fresh at a boundary such as the end of a phrase.
+
+<GruMix />
+
+```python
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+def gru_step(x, h, W, U, b):
+    """One GRU step. W: (d, 3H), U: (H, 3H), b: (3H,), block order z, r, n."""
+    H = h.shape[-1]
+    zr = x @ W[:, :2 * H] + h @ U[:, :2 * H] + b[:2 * H]
+    z = sigmoid(zr[..., :H])                     # update gate: how much to replace
+    r = sigmoid(zr[..., H:])                     # reset gate: how much past to use
+    n = np.tanh(x @ W[:, 2 * H:] + (r * h) @ U[:, 2 * H:] + b[2 * H:])   # candidate
+    return (1 - z) * h + z * n, z, r             # interpolate old state and candidate
+
+rng = np.random.default_rng(0)
+d, H = 3, 4
+W, U, b = rng.normal(size=(d, 3 * H)) * 0.5, rng.normal(size=(H, 3 * H)) * 0.5, np.zeros(3 * H)
+h = np.zeros(H)
+for t, x in enumerate(rng.normal(size=(3, d))):
+    h, z, r = gru_step(x, h, W, U, b)
+    print(f"t={t}: update {np.round(z, 2)}  reset {np.round(r, 2)}  h {np.round(h, 2)}")
+# t=0: update [0.37 0.51 0.27 0.36]  reset [0.51 0.43 0.27 0.42]  h [0.13 0.45 0.07 0.07]
+# t=1: update [0.89 0.58 0.62 0.34]  reset [0.35 0.69 0.42 0.57]  h [-0.37 -0.2  -0.06  0.09]
+# t=2: update [0.11 0.43 0.26 0.36]  reset [0.49 0.34 0.55 0.64]  h [-0.33  0.24 -0.18  0.06]
+```
+
+In words: three blocks of weights, not four. At step 1 the first unit's update gate is 0.89, so its state is almost replaced (0.13 becomes −0.37); at step 2 the same unit's gate is 0.11, so it keeps most of its value (−0.37 becomes −0.33).
+
+<Callout type="pitfall">
+There are two GRU formulas in use. Cho's original applies the reset gate before the matrix, $(r \odot h) U_n$, as above. PyTorch, cuDNN and Keras (with `reset_after=True`) apply it after, $r \odot (h U_n + b)$, which is faster on GPUs. They are different functions, so weights trained in one convention do not transfer to the other, and hand-written code must match the framework's documentation.
+</Callout>
+
+## Mapping onto the LSTM
+
+Compare the GRU update with the LSTM's cell update $c_t = f \odot c_{t-1} + i \odot g$:
+
+| LSTM | GRU | Difference |
+|---|---|---|
+| forget gate $f$ | $1 - z$ | tied to the input gate |
+| input gate $i$ | $z$ | writing more always forgets more |
+| cell $c$ and output $h$ | one state $h$ | no separate memory |
+| output gate $o$ | none | the whole state is always exposed |
+
+Coupling the gates keeps what matters for gradients. Along the direct path the GRU's state is carried with factor $1 - z$, a learned keep factor just like the LSTM's forget gate.
+
+```python
+import numpy as np
+
+# along the direct path, d h_t / d h_{t-1} contains (1 - z): a learned keep factor like the LSTM's forget gate
+for z in [0.5, 0.1, 0.01, 0.001]:
+    print(f"update gate {z:<5}: keep factor {1 - z:.3f}  ->  over 100 steps {(1 - z) ** 100:.1e}")
+# update gate 0.5  : keep factor 0.500  ->  over 100 steps 7.9e-31
+# update gate 0.1  : keep factor 0.900  ->  over 100 steps 2.7e-05
+# update gate 0.01 : keep factor 0.990  ->  over 100 steps 3.7e-01
+# update gate 0.001: keep factor 0.999  ->  over 100 steps 9.0e-01
+```
+
+In words: a unit whose update gate learns to stay near 0.001 while holding information keeps 0.90 of the gradient over 100 steps, the same figure as an LSTM forget gate at 0.999. A unit stuck at $z = 0.5$ loses it as fast as a vanilla RNN. As with the LSTM, the advantage over [vanilla RNNs](../vanilla-rnns/) is that the network can choose.
+
+## What is traded away
+
+Tying the gates has a cost. The LSTM cell can keep its old value ($f = 1$) *and* add new content ($i = 1$) on the same step, so its cell can grow without bound and act as a counter. The GRU state is always a weighted average of the old state and a candidate in $(-1, 1)$, so it stays in $(-1, 1)$ forever.
+
+```python
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+# count the 1s in a stream: the LSTM can add without limit, the GRU interpolates
+steps = 20
+c = 0.0                        # LSTM cell with forget gate 1 and input gate 1, candidate tanh(2)
+h = 0.0                        # GRU state with update gate 0.5, candidate tanh(2)
+lstm, gru = [], []
+for t in range(steps):
+    c = 1.0 * c + 1.0 * np.tanh(2.0)
+    h = (1 - 0.5) * h + 0.5 * np.tanh(2.0)
+    lstm.append(c); gru.append(h)
+for t in [1, 5, 10, 20]:
+    print(f"after {t:2d} ones: LSTM cell {lstm[t - 1]:6.3f}   GRU state {gru[t - 1]:.3f}")
+print("GRU state is a weighted average of values in (-1, 1), so it can never exceed 1")
+# after  1 ones: LSTM cell  0.964   GRU state 0.482
+# after  5 ones: LSTM cell  4.820   GRU state 0.934
+# after 10 ones: LSTM cell  9.640   GRU state 0.963
+# after 20 ones: LSTM cell 19.281   GRU state 0.964
+# GRU state is a weighted average of values in (-1, 1), so it can never exceed 1
+```
+
+In words: after 5, 10 and 20 identical inputs the LSTM cell holds 4.82, 9.64 and 19.28, exactly proportional to the count. The GRU state is 0.934, 0.963 and 0.964: after a handful of steps every count looks the same. Weiss, Goldberg and Yahav (2018) showed that trained LSTMs do learn counter-like units of this kind, for example to recognise strings of the form $a^n b^n$, and GRUs cannot. For most real tasks this rarely matters; for tasks that need to track nesting depth or exact counts over long spans, it can.
+
+<CountCompare />
+
+## Choosing between them
+
+| Consideration | LSTM | GRU |
+|---|---|---|
+| Parameters and compute per step | 4 blocks | 3 blocks, about 25 % less |
+| Typical accuracy | about the same on most benchmarks | about the same |
+| Counting, unbounded memory | can | cannot |
+| Small datasets | more parameters to fit | slightly easier to train |
+
+Chung et al. (2014) and Jozefowicz et al. (2015) found no consistent winner across tasks, and LSTMs with a forget-gate bias of 1 matched or beat GRUs on most of them. A sensible default: try a GRU when speed or data size is the constraint, use an LSTM otherwise, and compare both if the recurrent layer is central to the model. Both feed the encoder-decoder models of [Seq2Seq Models](../sequence-to-sequence-models/).
+
+<Callout type="key">
+A GRU interpolates between its old state and a candidate with one update gate, plus a reset gate for the candidate. It keeps the LSTM's learned, near-identity path for gradients with three weight blocks instead of four, and gives up a separate, unbounded memory: its state stays in $(-1, 1)$.
+</Callout>

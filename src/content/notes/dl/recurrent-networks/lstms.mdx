@@ -3,6 +3,167 @@ title: "LSTMs"
 description: "Gates, what each gate does, why the architecture solves vanishing gradients."
 order: 4
 tier: core
+takeaways:
+  - "An **LSTM** keeps two states: a **cell state** $c_t$, the long-term memory, and an output $h_t$. Three sigmoid **gates** in $(0, 1)$ control them: forget $f$, input $i$ and output $o$."
+  - "The cell is updated by addition, $c_t = f_t \\odot c_{t-1} + i_t \\odot g_t$, with no squashing in between, so along the cell path $\\partial c_t / \\partial c_{t-1} = f_t$. When the forget gate is near 1, gradients cross many steps almost unchanged."
+  - "Forget gates at 0.5 shrink that path to $7.9 \\times 10^{-31}$ over 100 steps; a gate of 0.999 keeps 0.905. Initialising the forget-gate bias to 1 or more starts training in the remembering regime."
+  - "A one-unit LSTM with hand-set weights stores a value, ignores 100 noisy steps (forget gate 0.999955) and reads it back: the gates implement write, keep and read."
+  - "An LSTM has 4 weight blocks per layer, 4 times a vanilla RNN's parameters (394,240 against 98,560 for 128 inputs and 256 units)."
+resources:
+  - title: "Understanding LSTM Networks (Christopher Olah)"
+    url: "https://colah.github.io/posts/2015-08-Understanding-LSTMs/"
+    note: "The standard illustrated walk through the cell, gate by gate, and the common variants."
+  - title: "LSTM: A Search Space Odyssey (Greff et al.)"
+    url: "https://arxiv.org/abs/1503.04069"
+    note: "Eight LSTM variants compared on three tasks: the forget gate and the output activation matter most."
+  - title: "An Empirical Exploration of Recurrent Network Architectures (Jozefowicz, Zaremba, Sutskever)"
+    url: "https://proceedings.mlr.press/v37/jozefowicz15.html"
+    note: "Ten thousand architectures searched; adding a forget-gate bias of 1 closes most of the gap between LSTM and the best found."
 ---
 
-_Placeholder. Content not written yet._
+[RNN Gradient Problems](../the-vanishing-gradient-problem-in-rnns/) showed that a vanilla RNN rewrites its whole state through $W_h$ and a tanh at every step, so the gradient across many steps is a product of many shrinking factors. The **long short-term memory** (LSTM), introduced by Hochreiter and Schmidhuber in 1997 and given its forget gate by Gers, Schmidhuber and Cummins in 2000, changes the update itself: a separate memory, the cell state, is changed by learned, gated addition. That one design decision lets gradients flow across hundreds of steps. This note goes through the cell gate by gate, shows why the additive path fixes vanishing gradients, builds a hand-set LSTM that holds a value through noise, and covers initialization and cost. Run the code with `uv run --with numpy`.
+
+## The cell, gate by gate
+
+At each step the LSTM computes four vectors from the input $x_t$ and the previous output $h_{t-1}$, each with its own weights:
+
+$$
+\begin{aligned}
+f_t &= \sigma(x_t W_f + h_{t-1} U_f + b_f), & i_t &= \sigma(x_t W_i + h_{t-1} U_i + b_i), \\
+o_t &= \sigma(x_t W_o + h_{t-1} U_o + b_o), & g_t &= \tanh(x_t W_g + h_{t-1} U_g + b_g),
+\end{aligned}
+
+$$
+
+and then updates the two states:
+
+$$
+c_t = f_t \odot c_{t-1} + i_t \odot g_t, \qquad h_t = o_t \odot \tanh(c_t).
+
+$$
+
+In words: the **forget gate** $f_t$ decides, per unit, how much of the old memory to keep (1 keeps it, 0 erases it). The **candidate** $g_t$ is new content in $(-1, 1)$, and the **input gate** $i_t$ decides how much of it to write. The **output gate** $o_t$ decides how much of the memory to expose as $h_t$, which is what the next layer and the next step see. The sigmoid $\sigma$ keeps each gate in $(0, 1)$, so gates act as soft switches; $\odot$ is elementwise multiplication.
+
+<LstmCell />
+
+```python
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+def lstm_step(x, h, c, W, U, b):
+    """One LSTM step. W: (d, 4H), U: (H, 4H), b: (4H,), gate order f, i, o, g."""
+    z = x @ W + h @ U + b
+    H = h.shape[-1]
+    f = sigmoid(z[..., :H])            # forget gate: how much of c to keep
+    i = sigmoid(z[..., H:2 * H])       # input gate: how much new content to write
+    o = sigmoid(z[..., 2 * H:3 * H])   # output gate: how much of c to expose
+    g = np.tanh(z[..., 3 * H:])        # candidate content
+    c = f * c + i * g                  # additive update of the cell state
+    h = o * np.tanh(c)
+    return h, c, (f, i, o)
+
+rng = np.random.default_rng(0)
+d, H = 3, 4
+W, U = rng.normal(size=(d, 4 * H)) * 0.5, rng.normal(size=(H, 4 * H)) * 0.5
+b = np.zeros(4 * H)
+b[:H] = 1.0                            # forget-gate bias 1: start by remembering
+h, c = np.zeros(H), np.zeros(H)
+for t, x in enumerate(rng.normal(size=(3, d))):
+    h, c, (f, i, o) = lstm_step(x, h, c, W, U, b)
+    print(f"t={t}: forget {np.round(f, 2)}  input {np.round(i, 2)}  c {np.round(c, 2)}")
+# t=0: forget [0.71 0.76 0.75 0.77]  input [0.45 0.52 0.54 0.63]  c [ 0.06 -0.04  0.23  0.37]
+# t=1: forget [0.64 0.72 0.72 0.83]  input [0.46 0.72 0.34 0.6 ]  c [0.21 0.03 0.25 0.74]
+# t=2: forget [0.7  0.72 0.81 0.81]  input [0.36 0.75 0.6  0.76]  c [-0.18 -0.08 -0.07  0.9 ]
+```
+
+In words: all four pre-activations come from one matrix multiply, split into four blocks, which is how frameworks implement it. With a forget-gate bias of 1 and random weights, the forget gates sit around 0.64 to 0.83, so each unit keeps most of its memory; the fourth unit's cell grows from 0.37 to 0.9 as it keeps accumulating.
+
+## Why gradients survive
+
+The cell update has no weight matrix and no squashing on the path from $c_{t-1}$ to $c_t$. Holding the gates fixed, its derivative is just the forget gate:
+
+$$
+\frac{\partial c_t}{\partial c_{t-1}} = \operatorname{diag}(f_t), \qquad \frac{\partial c_T}{\partial c_t} = \operatorname{diag}\left(\prod_{k = t + 1}^{T} f_k\right).
+
+$$
+
+In words: along the cell path, the gradient from step $T$ back to step $t$ is the product of the forget gates in between, a number per unit that the network learns to set. A vanilla RNN has no choice: its factor is $W_h$ times tanh slopes at every step. An LSTM that needs to remember sets $f \approx 1$ and passes the gradient through untouched, the same identity-path idea as a [residual connection](../../convolutional-networks/residual-connections/), laid along time. (The full gradient also flows through $h$ and the gates; the cell path is the one that does not vanish.)
+
+```python
+import numpy as np
+
+# along the cell path, d c_T / d c_t = product of the forget gates in between
+for bias in [0.0, 1.0, 3.0]:
+    f = 1 / (1 + np.exp(-bias))        # a forget gate at its bias, before any learning
+    print(f"forget bias {bias}: gate {f:.3f}  ->  " +
+          "  ".join(f"{k} steps {f**k:.1e}" for k in [10, 50, 100]))
+print("a learned gate of 0.999 over 100 steps keeps", round(0.999**100, 3))
+# forget bias 0.0: gate 0.500  ->  10 steps 9.8e-04  50 steps 8.9e-16  100 steps 7.9e-31
+# forget bias 1.0: gate 0.731  ->  10 steps 4.4e-02  50 steps 1.6e-07  100 steps 2.5e-14
+# forget bias 3.0: gate 0.953  ->  10 steps 6.2e-01  50 steps 8.8e-02  100 steps 7.8e-03
+# a learned gate of 0.999 over 100 steps keeps 0.905
+```
+
+In words: a forget gate stuck at 0.5 is as bad as a vanilla RNN, $7.9 \times 10^{-31}$ over 100 steps. The gradient survives only if the gates are close to 1: a learned 0.999 keeps 0.905 of it over 100 steps. A larger initial bias moves the starting point towards remembering, 0.953 for a bias of 3, from which training can push the gates where each unit needs them.
+
+<Callout type="pitfall">
+With a forget-gate bias of 0, every forget gate starts at 0.5 and the LSTM begins life with the short memory of a vanilla RNN. Initialise the forget-gate bias to 1 (common) or higher for long-range tasks. PyTorch's `nn.LSTM` initialises all biases uniformly around 0 and has two bias vectors per gate, so set the forget slices of `bias_ih` and `bias_hh` yourself if you need this.
+</Callout>
+
+## Write, keep, read
+
+The gates make it possible to implement memory operations exactly. The code sets the weights of a one-unit LSTM by hand: a 'store' flag opens the input gate and closes the forget gate for one step, every other step keeps the forget gate open and the input gate closed, and the noise input has zero weight.
+
+```python
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+# a 1-unit LSTM with hand-set weights; inputs are [value, store flag, noise]
+def run(value, steps, rng):
+    c = 0.0
+    for t in range(steps + 1):
+        x = np.array([value if t == 0 else 0.0, 1.0 if t == 0 else 0.0, rng.normal()])
+        f = sigmoid(10 - 20 * x[1])                    # forget only when told to store
+        i = sigmoid(-10 + 20 * x[1])                   # write only when told to store
+        g = np.tanh(2 * x[0])                          # candidate: the value; noise has no weight
+        c = f * c + i * g
+    return np.tanh(c)                                  # output gate fully open at the end
+
+rng = np.random.default_rng(0)
+for v in [-1.0, 1.0]:
+    print(f"stored {v:+.0f}, read after 100 noisy steps: {run(v, 100, rng):+.3f}")
+print("forget gate while holding:", round(sigmoid(10), 6), " over 100 steps keeps", round(sigmoid(10) ** 100, 4))
+# stored -1, read after 100 noisy steps: -0.744
+# stored +1, read after 100 noisy steps: +0.744
+# forget gate while holding: 0.999955  over 100 steps keeps 0.9955
+```
+
+In words: storing $-1$ or $+1$ writes $\tanh(\pm 2) = \pm 0.964$ into the cell; after 100 noisy steps it reads back as $\pm 0.744$, which is $\tanh$ of the slightly decayed cell value, with the sign intact. The holding forget gate is $\sigma(10) = 0.999955$, which keeps 99.55 % of the memory over 100 steps. A vanilla RNN cannot do this with any weights for long delays, because its state is rewritten through the same squashing map at every step. Training finds weights like these by gradient descent, which the additive path makes possible.
+
+<LstmGates />
+
+## Cost and variants
+
+```python
+d, H = 128, 256
+rnn = d * H + H * H + H
+gru = 3 * (d * H + H * H + H)
+lstm = 4 * (d * H + H * H + H)
+for name, n in [("vanilla RNN", rnn), ("GRU", gru), ("LSTM", lstm)]:
+    print(f"{name:12s} {n:>9,} parameters  ({n / rnn:.0f}x the RNN)")
+# vanilla RNN     98,560 parameters  (1x the RNN)
+# GRU            295,680 parameters  (3x the RNN)
+# LSTM           394,240 parameters  (4x the RNN)
+```
+
+In words: an LSTM layer with 128 inputs and 256 units has 394,240 parameters, four times the vanilla RNN's 98,560, because it computes four blocks (three gates and the candidate) with their own input weights, recurrent weights and biases. The compute per step is four times larger too, all in one fused matrix multiply. A GRU, the subject of [GRUs](../grus/), uses three blocks.
+
+Common additions: **stacking** several LSTM layers, each reading the previous layer's $h$ sequence; **bidirectional** LSTMs, which run a second LSTM backwards and concatenate the two states, for tasks where the whole input is available (tagging, encoding); **peephole connections**, which let the gates read $c$ directly; and **dropout** on the non-recurrent connections. LSTMs were the state of the art in speech recognition, translation and language modelling from about 2014 until attention-based transformers replaced them around 2018.
+
+<Callout type="key">
+An LSTM separates memory from output: a cell state changed only by gated addition, with forget, input and output gates deciding what to keep, write and read. The additive path makes $\partial c_t / \partial c_{t-1}$ equal to the forget gate, so gradients survive as long as the gates stay near 1. Initialise the forget bias high, and budget 4 times a vanilla RNN's parameters.
+</Callout>
