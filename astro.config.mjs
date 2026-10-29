@@ -176,6 +176,73 @@ function outputBlocks() {
   };
 }
 
+// Long code blocks fold: past FOLD_OVER code lines, only the first FOLD_KEEP show, with a bar to expand. The output area
+// at the end always stays visible. Folded lines are hidden "until-found", so find-in-page still reaches and unfolds them.
+const FOLD_OVER = 25;
+const FOLD_KEEP = 12;
+function outputStart(codeBlock) {
+  const prefix = COMMENT_PREFIX[codeBlock.language];
+  const texts = codeBlock.getLines().map((l) => l.text.trim());
+  if (!prefix) return texts.length;
+  let start = texts.length;
+  while (start > 0 && (texts[start - 1] === '' || texts[start - 1].startsWith(prefix))) start--;
+  while (start < texts.length && texts[start] === '') start++;
+  return start === 0 ? texts.length : start;
+}
+function codeFold() {
+  return {
+    name: 'code-fold',
+    hooks: {
+      postprocessRenderedBlock: ({ codeBlock, renderData }) => {
+        const end = outputStart(codeBlock);
+        if (end <= FOLD_OVER) return;
+        collectByClass(renderData.blockAst, 'ec-line').forEach((line, i) => {
+          if (i >= FOLD_KEEP && i < end) line.properties.className.push('ec-fold');
+        });
+      },
+    },
+    jsModules: [
+      `document.querySelectorAll('.expressive-code').forEach((ec) => {
+        const lines = [...ec.querySelectorAll('.ec-line.ec-fold')];
+        if (!lines.length || ec.querySelector('.fold-bar')) return;
+        const findable = 'onbeforematch' in document.body;
+        const bar = document.createElement('button');
+        bar.type = 'button';
+        bar.className = 'fold-bar';
+        const set = (open) => {
+          lines.forEach((l) => (open ? l.removeAttribute('hidden') : l.setAttribute('hidden', findable ? 'until-found' : '')));
+          bar.textContent = open ? 'Show less' : 'Show ' + lines.length + ' more lines';
+          bar.setAttribute('aria-expanded', String(open));
+          bar.classList.toggle('open', open);
+        };
+        let open = false;
+        bar.addEventListener('click', () => {
+          set((open = !open));
+          if (!open) ec.scrollIntoView({ block: 'nearest' });
+        });
+        lines.forEach((l) => l.addEventListener('beforematch', () => set((open = true))));
+        lines[lines.length - 1].after(bar);
+        set(false);
+      });`,
+    ],
+    baseStyles: `
+      .ec-line[hidden]:not([hidden='until-found']) { display: none; }
+      /* until-found keeps the box in the tree for find-in-page; collapse it to nothing */
+      .ec-line[hidden='until-found'] { padding-block: 0; min-height: 0; height: 0; overflow: hidden; }
+      .fold-bar {
+        /* same gap above as the output area has, so the bar sits evenly between code and output */
+        display: block; width: 100%; margin: 0.75rem 0 0; padding: 0.55rem 1rem; cursor: pointer; text-align: left;
+        border: 0; border-top: 1px dashed #262626; border-bottom: 1px dashed #262626;
+        background: linear-gradient(to bottom, rgba(11, 11, 11, 0) , rgba(138, 180, 248, 0.08));
+        font: 600 0.75rem 'JetBrains Mono', ui-monospace, monospace; color: #8ab4f8;
+        &:hover, &:focus-visible { background: rgba(138, 180, 248, 0.14); }
+        &.open { background: transparent; }
+        @media (scripting: none) { display: none; }
+      }
+    `,
+  };
+}
+
 // In GitHub Actions, actions/configure-pages provides the real origin and base path.
 // Locally we fall back to the project-site layout: https://<user>.github.io/workbench/
 const site = process.env.SITE_ORIGIN || 'http://localhost:4321';
@@ -222,7 +289,7 @@ export default defineConfig({
     expressiveCode({
       themes: ['github-dark-default'],
       // Code blocks get a header bar (language tab left, copy button right); shell blocks keep the terminal frame.
-      plugins: [languageHeaders(), outputBlocks(), wrapToggle()],
+      plugins: [languageHeaders(), outputBlocks(), wrapToggle(), codeFold()],
       styleOverrides: {
         borderRadius: '12px',
         borderColor: '#262626',
