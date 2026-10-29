@@ -3,6 +3,122 @@ title: "Efficient Attention"
 description: "Making attention cheaper: FlashAttention, sparse and linear attention."
 order: 7
 tier: advanced
+takeaways:
+  - "Standard attention writes the $n \\times n$ score table to GPU memory and reads it back, so for long sequences it is limited by memory traffic, not arithmetic."
+  - "**FlashAttention** computes exactly the same result in tiles that stay in fast on-chip memory, using an **online softmax** that rescales partial sums as new blocks arrive. Memory becomes linear in $n$ and long-sequence attention runs several times faster."
+  - "**Sparse attention** computes only some pairs, such as a sliding window plus a few global tokens. It is approximate: two distant tokens can only interact through intermediate layers."
+  - "**Linear attention** replaces the softmax with a feature map so the product can be regrouped as $\\phi(Q)(\\phi(K)^\\top V)$: cost $O(nd^2)$ instead of $O(n^2 d)$, at a cost in quality. Its recurrent form is an RNN with a matrix-valued state."
+  - "**Multi-query** and **grouped-query attention** share keys and values across heads, shrinking the KV cache that dominates memory at inference."
+resources:
+  - title: "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao et al.)"
+    url: "https://arxiv.org/abs/2205.14135"
+    note: "The tiling and online-softmax algorithm, with the memory-traffic analysis and speedups."
+  - title: "Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention (Katharopoulos et al.)"
+    url: "https://arxiv.org/abs/2006.16236"
+    note: "Linear attention with the elu + 1 feature map, and its equivalence to a recurrent network."
+  - title: "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al.)"
+    url: "https://arxiv.org/abs/2305.13245"
+    note: "Grouped-query attention, the middle ground between multi-head and multi-query attention used by Llama 2 and later."
 ---
 
-_Placeholder. Content not written yet._
+[Self-attention](../self-attention/) costs $n^2$ in time and memory for a sequence of $n$ tokens: at 131,072 tokens one head's score table alone is 32 GiB. This note covers the main ways around that cost, which differ in what they give up. FlashAttention gives up nothing: it computes exact attention, organized so that the table never reaches slow memory. Sparse and linear attention change the computation and approximate it. Sharing keys and values across heads targets the memory of generation rather than training. It builds on [Transformer Parallelism](../why-transformers-parallelize-better-than-rnns/) for the memory-bound versus compute-bound distinction. Run the code with `uv run --with numpy`.
+
+## Where the time goes
+
+A GPU has two kinds of memory: large, slow **HBM** (80 GB at about 3.35 TB/s on an H100) and small, fast on-chip **SRAM** (up to 228 KB of shared memory per streaming multiprocessor, about 30 MB across the chip, at many times the bandwidth). A straightforward implementation computes $S = QK^\top / \sqrt{d_k}$, writes the $n \times n$ table $S$ to HBM, reads it back to compute the softmax $P$, writes $P$, and reads it again to multiply by $V$. The two matrix products are fast; moving $S$ and $P$ through HBM, $O(n^2)$ bytes several times over, is what takes the time. The softmax does only a handful of operations per byte it moves, far below the GPU's ridge point.
+
+## FlashAttention
+
+**FlashAttention** (Dao et al., 2022) never writes the table. It splits $Q$, $K$ and $V$ into blocks small enough for SRAM, and for each block of queries walks over the blocks of keys and values, keeping a running result. The obstacle is the softmax, which needs the maximum and the sum over all keys before any weight is known. The fix is the **online softmax**: keep a running maximum $m$, a running sum $\ell$ and a running weighted output, and when a new block raises the maximum, rescale what has been accumulated so far by $e^{m_{\text{old}} - m_{\text{new}}}$.
+
+```python
+import numpy as np
+
+# attention for one query, reading keys and values in blocks of 4
+rng = np.random.default_rng(0)
+n, d, B = 16, 8, 4
+q = rng.standard_normal(d)
+K, V = rng.standard_normal((n, d)), rng.standard_normal((n, d))
+
+s = K @ q / np.sqrt(d)                           # reference: full softmax
+w = np.exp(s - s.max())
+ref = (w / w.sum()) @ V
+
+m, l, acc = -np.inf, 0.0, np.zeros(d)            # running max, sum, output
+for start in range(0, n, B):
+    sb = K[start:start + B] @ q / np.sqrt(d)
+    m_new = max(m, sb.max())
+    scale = np.exp(m - m_new)                    # rescale what was summed so far
+    p = np.exp(sb - m_new)
+    l = l * scale + p.sum()
+    acc = acc * scale + p @ V[start:start + B]
+    m = m_new
+print("blockwise == full softmax:", np.allclose(acc / l, ref))
+print("largest score table held at once:", B, "of", n)
+# blockwise == full softmax: True
+# largest score table held at once: 4 of 16
+```
+
+In words: the blockwise loop sees only 4 scores at a time, yet its result equals the full softmax average to floating-point precision. Nothing is approximated; the order of the arithmetic changes. In FlashAttention each block of scores lives only in SRAM, HBM traffic for the table disappears, and memory use is linear in $n$. For the backward pass the scores are recomputed from $Q$ and $K$ rather than stored, which costs extra FLOPs but saves far more time in memory traffic. The paper reported 2 to 4 times faster attention and made contexts of 16k and more practical to train; FlashAttention-2 and -3 improved the work partitioning for newer GPUs. It is now the default attention kernel in PyTorch (`scaled_dot_product_attention`) and most training frameworks.
+
+<FlashTiles />
+
+## Sparse attention
+
+**Sparse attention** computes scores for only some pairs. Common patterns:
+
+- **Sliding window**: each token attends to the $w$ tokens before it (Longformer; Mistral 7B used $w = 4096$). Cost $O(nw)$.
+- **Global tokens**: a few positions, such as a classification token, attend to and are attended by everything, giving a short route between any two tokens.
+- **Strided** or **dilated**: attend to every $k$-th earlier token, so information travels far in few layers (Sparse Transformer, Child et al., 2019).
+
+With a window of $w$ and $L$ layers, information can travel at most $wL$ positions, so a 32-layer model with a 4096-token window reaches back about 131,000 tokens, but only indirectly, through intermediate tokens' representations. Sparse attention is approximate: a fact on page 1 that the window does not cover can only reach page 50 if earlier layers carried it forward.
+
+<SparsePatterns />
+
+## Linear attention
+
+The quadratic cost comes from computing $QK^\top$ before multiplying by $V$. If the softmax similarity $\exp(q \cdot k)$ is replaced by a product of feature maps $\phi(q) \cdot \phi(k)$, matrix multiplication can be regrouped:
+
+$$
+\big(\phi(Q)\, \phi(K)^\top\big)\, V = \phi(Q)\, \big(\phi(K)^\top V\big).
+
+$$
+
+In words: the left side builds an $n \times n$ table; the right side first builds $\phi(K)^\top V$, a $d \times d$ summary of all keys and values, and then lets each query read from it. Cost drops from $O(n^2 d)$ to $O(n d^2)$. With a causal mask the summary is built up one token at a time, $S_t = S_{t-1} + \phi(k_t) v_t^\top$, which is an RNN whose state is a $d \times d$ matrix; this is the bridge to linear RNNs and [state space models](../../recurrent-networks/state-space-models/).
+
+```python
+import numpy as np
+
+# linear attention: phi(Q) (phi(K)^T V) instead of softmax(Q K^T) V
+rng = np.random.default_rng(0)
+n, d = 512, 16
+Q, K, V = (rng.standard_normal((n, d)) for _ in range(3))
+phi = lambda x: np.where(x > 0, x + 1, np.exp(x))   # elu(x) + 1, always positive
+
+A = phi(Q) @ phi(K).T                            # n x n, the quadratic way
+quad = (A / A.sum(1, keepdims=True)) @ V
+S = phi(K).T @ V                                 # d x d summary of all keys and values
+z = phi(K).sum(0)
+lin = (phi(Q) @ S) / (phi(Q) @ z)[:, None]
+print("same output:", np.allclose(quad, lin))
+for n_ in [512, 4_096, 65_536]:
+    print(f"n = {n_:6,d}: n*n*d = {n_ * n_ * d:15,d} · n*d*d = {n_ * d * d:12,d}")
+# same output: True
+# n =    512: n*n*d =       4,194,304 · n*d*d =      131,072
+# n =  4,096: n*n*d =     268,435,456 · n*d*d =    1,048,576
+# n = 65,536: n*n*d =  68,719,476,736 · n*d*d =   16,777,216
+```
+
+In words: both groupings give the same output, since only the order of multiplication changed. At 65,536 tokens with $d = 16$ the quadratic order needs about 68.7 billion multiply-adds against 16.8 million, 4096 times fewer. The catch is quality: the feature map is not the softmax, the $d \times d$ state cannot store as much as a table over all tokens, and plain linear attention trails softmax attention on tasks that need exact recall of a specific earlier token. Gated variants and modern state space models narrow that gap.
+
+<Callout type="pitfall">
+"Efficient attention" covers both exact and approximate methods, and they are not interchangeable. FlashAttention gives the same outputs as standard attention (up to floating-point rounding), so it can be dropped into a trained model. Sliding-window, sparse and linear attention change what the model computes; swapping them into a model trained with full attention breaks it, and a model trained with them may score well on average perplexity while failing at retrieving a specific fact from far back in the context. Test long-context recall directly, for example with a needle-in-a-haystack probe.
+</Callout>
+
+## Sharing keys and values
+
+At inference the cost that matters is often memory, not FLOPs. A decoder keeps every earlier token's keys and values in the [KV cache](../../../applied-dl/llm-inference/kv-cache/), one pair per head per layer. **Multi-query attention** (MQA, Shazeer 2019) keeps separate queries per head but a single shared key and value head, cutting the cache by the number of heads. **Grouped-query attention** (GQA, Ainslie et al. 2023) is the middle ground: heads are split into groups that share keys and values. Llama 2 70B uses 64 query heads and 8 key-value heads, so its cache is 8 times smaller than full multi-head attention would need, with little loss in quality.
+
+<Callout type="key">
+The $n^2$ cost of attention is attacked at three levels. FlashAttention keeps the exact computation and removes the memory traffic by tiling with an online softmax. Sparse and linear attention change the computation to cut the arithmetic, trading away some ability to connect arbitrary distant tokens. MQA and GQA shrink the KV cache for generation by sharing keys and values across heads.
+</Callout>

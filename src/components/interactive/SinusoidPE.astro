@@ -1,0 +1,83 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Sinusoidal encodings: many clocks"
+  caption="The sinusoidal encoding for positions 0 to 99 (rows) and the 64 dimensions (columns): blue is positive, red negative. The left columns are fast clocks that flip within a few positions; the right columns barely change over 100 positions. Each row is a unique pattern. Drag the position to highlight its row (yellow); the readout gives the angle of the fastest and slowest pairs."
+>
+  <sinusoid-pe>
+    <label class="pe-lbl">position p <input type="range" min="0" max="99" step="1" value="20" data-p /> <b data-pv>20</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">position p</span>
+      <div class="pe-wrap">
+        <canvas width="320" height="250" data-c></canvas>
+      </div>
+      <span class="ax-x">dimension (pair i = column / 2), fast to slow</span>
+    </div>
+    <p class="pe-stat" data-stat></p>
+  </sinusoid-pe>
+</Figure>
+
+<style>
+  .pe-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .pe-lbl input[type='range'] {
+    flex: 1;
+  }
+  .pe-wrap canvas {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    image-rendering: pixelated;
+  }
+  .pe-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 100;
+  const D = 64;
+  const W = 5; // px per dimension
+  const H = 2.5; // px per position
+  const omega = (i: number) => 10000 ** (-(2 * i) / D);
+  const pe = (p: number, j: number) => (j % 2 ? Math.cos(p * omega(j >> 1)) : Math.sin(p * omega(j >> 1)));
+
+  class SinusoidPE extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const p = +this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      this.querySelector('[data-pv]')!.textContent = String(p);
+      const c = this.querySelector<HTMLCanvasElement>('[data-c]')!;
+      const g = c.getContext('2d')!;
+      g.clearRect(0, 0, c.width, c.height);
+      for (let r = 0; r < N; r++) {
+        for (let j = 0; j < D; j++) {
+          const v = pe(r, j);
+          g.fillStyle = v >= 0 ? `rgba(66,133,244,${(0.08 + 0.92 * v).toFixed(2)})` : `rgba(234,67,53,${(0.08 - 0.92 * v).toFixed(2)})`;
+          g.fillRect(j * W, r * H, W, H);
+        }
+      }
+      g.strokeStyle = '#fbbc05';
+      g.lineWidth = 1.5;
+      g.strokeRect(0.75, p * H - 0.75, D * W - 1.5, H + 1.5);
+      const deg = (a: number) => (((a * 180) / Math.PI) % 360).toFixed(1);
+      this.querySelector('[data-stat]')!.textContent =
+        `p = ${p} · fastest pair at ${deg(p * omega(0))}° · slowest pair at ${deg(p * omega(D / 2 - 1))}°`;
+    }
+  }
+  customElements.define('sinusoid-pe', SinusoidPE);
+</script>

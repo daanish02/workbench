@@ -1,0 +1,87 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Without scaling, the softmax saturates"
+  caption="One query scored against 10 random keys whose entries have variance 1. The raw dot products have standard deviation √d, so in high dimensions one score dwarfs the rest and the softmax gives it nearly all the weight (red): the gradient through the other keys is close to 0. Dividing by √d keeps the weights spread out at every dimension (blue, largest in yellow). Switch the dimension and the scaling."
+>
+  <scaled-softmax>
+    <div class="sm-ctl">
+      <input type="hidden" data-d value="512" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="4" aria-pressed="false">d = 4</button>
+        <button type="button" class="btn" data-choice="64" aria-pressed="false">d = 64</button>
+        <button type="button" class="btn" data-choice="512" aria-pressed="true">d = 512</button>
+      </span>
+      <input type="checkbox" hidden data-scale /><button type="button" class="btn" data-toggle aria-pressed="false">divide by √d</button>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">softmax weight</span>
+      <svg class="sm-svg" viewBox="0 0 400 180" data-grid='{"box":[30,10,390,160],"y":[0,1]}' role="img" aria-label="Attention weights of one query over ten keys">
+        <g data-bars></g>
+        <text x="24" y="14" class="ax-tick sm-end">1</text>
+        <text x="24" y="163" class="ax-tick sm-end">0</text>
+      </svg>
+      <span class="ax-x">key</span>
+    </div>
+    <p class="sm-stat" data-stat></p>
+  </scaled-softmax>
+</Figure>
+
+<style>
+  .sm-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sm-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .sm-end {
+    text-anchor: end;
+  }
+  .sm-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // fixed standard-normal draws: the score of key i is z_i · √d before scaling
+  const Z = [0.42, -1.13, 1.71, 0.08, -0.56, 0.93, -0.27, 1.24, -1.62, 0.35];
+
+  class ScaledSoftmax extends HTMLElement {
+    connectedCallback() {
+      this.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const d = +this.querySelector<HTMLInputElement>('[data-d]')!.value;
+      const scale = this.querySelector<HTMLInputElement>('[data-scale]')!.checked;
+      const s = Z.map((z) => (scale ? z : z * Math.sqrt(d)));
+      const m = Math.max(...s);
+      const e = s.map((v) => Math.exp(v - m));
+      const sum = e.reduce((a, b) => a + b, 0);
+      const w = e.map((v) => v / sum);
+      const top = Math.max(...w);
+      const bw = 360 / Z.length;
+      let html = '';
+      w.forEach((v, i) => {
+        const h = v * 150;
+        const col = v === top ? (top > 0.8 ? '#ea4335' : '#fbbc05') : '#4285f4';
+        html += `<rect x="${(30 + i * bw + 6).toFixed(1)}" y="${(160 - h).toFixed(1)}" width="${(bw - 12).toFixed(1)}" height="${Math.max(h, 0.5).toFixed(1)}" rx="2" style="fill:${col};opacity:0.85"></rect>`;
+      });
+      this.querySelector('[data-bars]')!.innerHTML = html;
+      const sd = scale ? 1 : Math.sqrt(d);
+      this.querySelector('[data-stat]')!.textContent =
+        `score std ≈ ${sd.toFixed(1)} · largest weight ${top.toFixed(2)} · ${top > 0.8 ? 'saturated' : 'soft'}`;
+    }
+  }
+  customElements.define('scaled-softmax', ScaledSoftmax);
+</script>

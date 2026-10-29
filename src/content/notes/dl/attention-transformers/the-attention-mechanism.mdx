@@ -3,6 +3,154 @@ title: "Attention Mechanism"
 description: "Query/key/value, how attention solves the seq2seq bottleneck from the previous section."
 order: 1
 tier: core
+takeaways:
+  - "**Attention** lets a model read from a set of vectors by a weighted average, with weights computed from how well each vector matches what it is looking for."
+  - "In the **query, key, value** form, a query is compared with every key, the scores go through a softmax, and the weights average the values: a soft dictionary lookup."
+  - "**Scaled dot-product attention** is $\\operatorname{softmax}(QK^\\top / \\sqrt{d_k})\\,V$. Without the $\\sqrt{d_k}$, scores of random 512-dimensional vectors have standard deviation 22.5 and the softmax puts 0.95 on one key; scaled, 0.32."
+  - "For seq2seq, attention removes the fixed-size context vector: every decoder step looks at all encoder states, so long inputs no longer have to fit through one vector."
+resources:
+  - title: "Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau, Cho, Bengio)"
+    url: "https://arxiv.org/abs/1409.0473"
+    note: "The paper that introduced attention for translation, with the alignment plots."
+  - title: "Attention? Attention! (Lilian Weng)"
+    url: "https://lilianweng.github.io/posts/2018-06-24-attention/"
+    note: "A survey of the attention variants (additive, dot-product, self, soft and hard) with one notation."
+  - title: "Attention Mechanisms and Transformers (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_attention-mechanisms-and-transformers/index.html"
+    note: "Queries, keys and values built up from kernel regression, with runnable code."
 ---
 
-_Placeholder. Content not written yet._
+A [sequence-to-sequence model](../../recurrent-networks/sequence-to-sequence-models/) squeezes the whole input into one fixed-size context vector, and its translation quality falls on long sentences. **Attention**, proposed by Bahdanau, Cho and Bengio in 2014, removes that bottleneck: the decoder keeps every encoder state and, at each output step, reads from all of them with weights it computes on the fly. This note covers the original idea, its general form with queries, keys and values, the scaled dot-product version the transformer uses, and why the scaling matters. The weighted averages are matrix products, so the [vectors](../../../math/linear-algebra/vectors/) note's dot product is the only math needed; run the code with `uv run --with numpy`.
+
+## Looking back at the encoder
+
+In a seq2seq model the encoder produces states $h_1, \dots, h_S$, one per source word, and plain seq2seq passes only $h_S$ on. With attention, the decoder at step $t$ scores every encoder state against its own previous state $s_{t-1}$, turns the scores into weights with a softmax, and takes the weighted average as a context vector made for that step:
+
+$$
+e_{t,i} = \operatorname{score}(s_{t-1}, h_i), \qquad \alpha_{t,i} = \frac{\exp(e_{t,i})}{\sum_{j=1}^{S} \exp(e_{t,j})}, \qquad c_t = \sum_{i=1}^{S} \alpha_{t,i}\, h_i.
+
+$$
+
+In words: $\alpha_{t,i}$ is how much output step $t$ looks at source position $i$. The weights are positive and sum to 1, so $c_t$ is an average of encoder states that leans towards the relevant ones, and it changes at every step. Bahdanau's score was a small network, $v^\top \tanh(W s_{t-1} + U h_i)$, called **additive attention**. The whole model, including the weights, is trained end to end by backpropagation; nobody labels which source word goes with which target word.
+
+<AttnAlign />
+
+The weights learn an **alignment**: when the decoder writes "zone", the weight sits on "Area"; when it writes "européenne", it sits on "European", even though French puts the adjective after the noun. Bahdanau and colleagues plotted these weights and found they matched the word alignments a linguist would draw.
+
+## Queries, keys and values
+
+The same operation shows up everywhere once it is written abstractly. A **query** $q$ is what the reader is looking for. Each item in the memory has a **key** $k_i$, which is compared with the query, and a **value** $v_i$, which is what gets returned. The output is the values averaged by how well their keys match:
+
+$$
+\operatorname{attend}(q, \{(k_i, v_i)\}) = \sum_i \operatorname{softmax}_i(q \cdot k_i)\, v_i.
+
+$$
+
+In words: this is a soft dictionary lookup. A Python dict returns the value whose key equals the query exactly; attention returns a blend of all values, weighted by similarity. In the seq2seq case the query comes from the decoder state and both keys and values come from the encoder states, but they need not be the same vectors. The sharper the scores, the closer the blend gets to picking one value:
+
+```python
+import numpy as np
+
+# a soft dictionary: the query is compared with every key
+keys = np.array([[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]])
+values = np.array([10.0, 20.0, 30.0])
+query = np.array([1.0, 0.2])
+
+def softmax(z):
+    e = np.exp(z - z.max())                      # subtract max for stability
+    return e / e.sum()
+
+for sharp in [1, 5, 50]:
+    w = softmax(sharp * (keys @ query))
+    print(f"sharpness {sharp:2d}: weights {np.round(w, 3)} -> output {w @ values:.2f}")
+# sharpness  1: weights [0.435 0.195 0.37 ] -> output 19.36
+# sharpness  5: weights [0.681 0.012 0.306] -> output 16.25
+# sharpness 50: weights [1. 0. 0.] -> output 10.01
+```
+
+In words: the query is closest to the first key, so it always gets the most weight. With raw scores the output, 19.36, mixes all three values; multiplying the scores by 50 makes the softmax almost a hard choice, and the output becomes 10.01, the first value. Everything is differentiable, so gradients flow to the query, the keys and the values. A hard lookup would have no gradient.
+
+## Scaled dot-product attention
+
+The transformer uses the plain dot product as the score, computed for many queries at once. Stack the queries as rows of $Q$ ($n_q \times d_k$), the keys as rows of $K$ ($n_k \times d_k$) and the values as rows of $V$ ($n_k \times d_v$):
+
+$$
+\operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V.
+
+$$
+
+In words: $QK^\top$ is the $n_q \times n_k$ table of every query's dot product with every key. The softmax runs along each row, over the keys, so every query gets weights that sum to 1. Multiplying by $V$ gives one output per query, each of size $d_v$. The whole thing is two matrix products and a softmax, which GPUs do very fast. The queries, keys and values are usually linear projections of some input, $Q = XW_Q$, $K = YW_K$, $V = YW_V$, and the projections are what training learns.
+
+```python
+import numpy as np
+
+def attention(Q, K, V):
+    # Q: (n_q, d_k), K: (n_k, d_k), V: (n_k, d_v)
+    scores = Q @ K.T / np.sqrt(K.shape[1])       # (n_q, n_k)
+    scores -= scores.max(axis=1, keepdims=True)
+    w = np.exp(scores)
+    w /= w.sum(axis=1, keepdims=True)            # softmax over the keys
+    return w @ V, w
+
+rng = np.random.default_rng(1)
+H = rng.standard_normal((6, 8))                  # 6 encoder states of size 8
+S = rng.standard_normal((3, 8))                  # 3 decoder states
+Wq, Wk, Wv = (rng.standard_normal((8, 4)) / np.sqrt(8) for _ in range(3))
+out, w = attention(S @ Wq, H @ Wk, H @ Wv)
+print("weights shape", w.shape, "· output shape", out.shape)
+print("each row sums to 1:", np.allclose(w.sum(axis=1), 1))
+print("decoder step 0 weights:", np.round(w[0], 2))
+# weights shape (3, 6) · output shape (3, 4)
+# each row sums to 1: True
+# decoder step 0 weights: [0.18 0.11 0.17 0.27 0.11 0.16]
+```
+
+In words: 3 decoder states attend over 6 encoder states, so the weight table is $3 \times 6$ and there are 3 outputs of size 4. Each row of weights sums to 1. With random, untrained projections the weights are nearly uniform (0.11 to 0.27); training is what makes them peak on the relevant positions.
+
+<Callout type="pitfall">
+The softmax must run over the keys, the last axis of the $n_q \times n_k$ score table. Running it over the queries (axis 0, a common slip with batched tensors) still produces numbers between 0 and 1 and a valid-looking output, but each query's weights no longer sum to 1 and the model trains badly. Check `w.sum(-1)` once when writing attention by hand.
+</Callout>
+
+## Why divide by the square root
+
+If the entries of $q$ and $k$ are independent with mean 0 and variance 1, their dot product $q \cdot k = \sum_{j=1}^{d_k} q_j k_j$ is a sum of $d_k$ terms of variance 1, so it has variance $d_k$ and standard deviation $\sqrt{d_k}$. Large scores make the softmax nearly one-hot, and a one-hot softmax has gradients close to 0, so learning stalls. Dividing by $\sqrt{d_k}$ brings the scores back to standard deviation about 1 whatever the dimension.
+
+```python
+import numpy as np
+
+# dot products of random unit-variance vectors grow with the dimension
+rng = np.random.default_rng(0)
+
+def softmax(z):
+    e = np.exp(z - z.max(-1, keepdims=True))
+    return e / e.sum(-1, keepdims=True)
+
+for d in [4, 64, 512]:
+    q = rng.standard_normal((2000, 1, d))
+    k = rng.standard_normal((2000, 10, d))
+    s = (q * k).sum(-1)                          # 2000 queries x 10 keys
+    raw = softmax(s).max(-1).mean()
+    scaled = softmax(s / np.sqrt(d)).max(-1).mean()
+    print(f"d = {d:3d}: score std {s.std():5.1f} · top weight raw {raw:.2f} · scaled {scaled:.2f}")
+# d =   4: score std   2.0 · top weight raw 0.50 · scaled 0.30
+# d =  64: score std   7.9 · top weight raw 0.87 · scaled 0.32
+# d = 512: score std  22.5 · top weight raw 0.95 · scaled 0.32
+```
+
+In words: the score's standard deviation follows $\sqrt{d}$: 2.0, 7.9 and 22.5 for $d$ = 4, 64 and 512. Unscaled, the largest of 10 weights averages 0.95 at $d = 512$, nearly a hard choice before any training. Scaled, it stays at 0.30 to 0.32 for every dimension, so the softmax starts out soft and its gradients are useful. Typical transformer heads use $d_k = 64$ or 128.
+
+<ScaledSoftmax />
+
+## What attention fixes
+
+Attention changes three things about the seq2seq model:
+
+- **No bottleneck.** The decoder reads from all $S$ encoder states, so memory grows with the input instead of being fixed. Bahdanau's model held its quality on sentences of 50 words and more, where the fixed-vector model had collapsed.
+- **Short paths.** Any source word reaches any output step through one weighted sum, not through every recurrent step in between, so gradients do not have to survive a long chain (see [the vanishing gradient problem in RNNs](../../recurrent-networks/the-vanishing-gradient-problem-in-rnns/)).
+- **Inspectable weights.** The weight table shows what each output looked at, which is useful for debugging, though high weight does not prove that a position caused the output.
+
+The cost is computing a score for every pair of query and key: $n_q \times n_k$ of them. Attention between a sequence and itself, without any recurrence, is the step that leads to the transformer; see [Self-Attention](../self-attention/).
+
+<Callout type="key">
+Attention is a differentiable lookup: score a query against every key, softmax the scores, average the values. The transformer's version is $\operatorname{softmax}(QK^\top / \sqrt{d_k})V$, two matrix products and a softmax, with the $\sqrt{d_k}$ keeping the softmax soft at any dimension. In seq2seq it replaces the single context vector with a fresh weighted view of every encoder state at every step.
+</Callout>

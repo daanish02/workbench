@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="More tokens per multiply, more of the GPU"
+  caption="Roofline of an H100 (989 TFLOP/s dense 16-bit, 3.35 TB/s), both axes on a log scale. Multiplying m token vectors by a 4096 × 4096 weight matrix: at m = 1, one RNN step for one sequence, every weight is used once and the multiply sits on the sloped, memory-bound part of the roof (red). The ridge (yellow) is at 295 FLOP per byte; past it the multiply is limited by arithmetic (green). A transformer gets m = n tokens from one sequence. Drag m."
+>
+  <intensity-roofline>
+    <label class="ir-lbl">tokens per multiply m <input type="range" min="0" max="12" step="1" value="0" data-e /> <b data-ev>1</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">attainable TFLOP/s (log scale)</span>
+      <svg class="ir-svg" viewBox="0 0 400 200" data-grid='{"box":[40,10,390,180],"x":[0.1,10000,"log"],"y":[0.1,10000,"log"]}' role="img" aria-label="Roofline with the operating point of a matrix multiply">
+        <path data-roof class="ir-roof"></path>
+        <line data-ridge y1="10" y2="180" class="ir-ridge"></line>
+        <circle data-p r="5"></circle>
+        <text x="40" y="194" class="ax-tick">0.1</text>
+        <text x="390" y="194" class="ax-tick ir-end">10⁴</text>
+        <text x="36" y="14" class="ax-tick ir-end">10⁴</text>
+        <text x="36" y="183" class="ax-tick ir-end">0.1</text>
+      </svg>
+      <span class="ax-x">arithmetic intensity, FLOP per byte (log scale)</span>
+    </div>
+    <p class="ir-stat" data-stat></p>
+  </intensity-roofline>
+</Figure>
+
+<style>
+  .ir-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ir-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ir-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ir-roof {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .ir-ridge {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .ir-end {
+    text-anchor: end;
+  }
+  .ir-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const PEAK = 989; // TFLOP/s
+  const BW = 3.35; // TB/s, so TFLOP/s = BW * intensity
+  const D = 4096;
+  const RIDGE = PEAK / BW;
+  const px = (ai: number) => 40 + ((Math.log10(ai) + 1) / 5) * 350;
+  const py = (tf: number) => 180 - ((Math.log10(tf) + 1) / 5) * 170;
+  const roof = (ai: number) => Math.min(PEAK, BW * ai);
+
+  class IntensityRoofline extends HTMLElement {
+    connectedCallback() {
+      let d = '';
+      for (let e = -1; e <= 4.001; e += 0.05) {
+        const ai = 10 ** e;
+        d += `${d ? 'L' : 'M'}${px(ai).toFixed(1)},${py(roof(ai)).toFixed(1)}`;
+      }
+      this.querySelector('[data-roof]')!.setAttribute('d', d);
+      const r = this.querySelector('[data-ridge]')!;
+      r.setAttribute('x1', px(RIDGE).toFixed(1));
+      r.setAttribute('x2', px(RIDGE).toFixed(1));
+      this.querySelector('[data-e]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const m = 2 ** +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-ev]')!.textContent = String(m);
+      const ai = (2 * m * D * D) / (2 * (D * D + 2 * m * D));
+      const tf = roof(ai);
+      const p = this.querySelector('[data-p]')!;
+      p.setAttribute('cx', px(ai).toFixed(1));
+      p.setAttribute('cy', py(tf).toFixed(1));
+      p.setAttribute('style', `fill:${ai < RIDGE ? '#ea4335' : '#34a853'}`);
+      this.querySelector('[data-stat]')!.textContent =
+        `m = ${m} · ${ai.toFixed(1)} FLOP/byte · up to ${tf.toFixed(tf < 10 ? 1 : 0)} TFLOP/s (${((tf / PEAK) * 100).toFixed(1)}% of peak) · ${ai < RIDGE ? 'memory-bound' : 'compute-bound'}`;
+    }
+  }
+  customElements.define('intensity-roofline', IntensityRoofline);
+</script>

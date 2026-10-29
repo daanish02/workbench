@@ -3,6 +3,63 @@ title: "Transformer Parallelism"
 description: "Why transformers parallelize better than RNNs, and how that suits GPU hardware."
 order: 5
 tier: core
+takeaways:
+  - "An RNN's state at step $t$ needs the state at step $t-1$, so a sequence of $n$ tokens takes $n$ dependent steps. A transformer layer has no such chain: with the causal mask, all $n$ positions are computed in one pass."
+  - "Each RNN step multiplies one vector by a weight matrix, which reads the whole matrix for 1 FLOP per byte. On an H100 that caps it at about 0.3 % of peak compute; a transformer multiplies all tokens at once, and 4096 tokens reach 1365 FLOP per byte, enough for full speed."
+  - "Across $L$ layers the RNN's critical path is about $n + L$ steps, the transformer's $L$: for 2048 tokens and 24 layers, roughly 2071 against 24."
+  - "The advantage is in training and in reading the prompt. Generating text is sequential in both, one token per step."
+resources:
+  - title: "Making Deep Learning Go Brrrr From First Principles (Horace He)"
+    url: "https://horace.io/brrr_intro.html"
+    note: "Compute-bound versus memory-bound work on GPUs, explained with arithmetic intensity and real kernels."
+  - title: "Matrix Multiplication Background User's Guide (NVIDIA)"
+    url: "https://docs.nvidia.com/deeplearning/performance/dl-performance-matrix-multiplication/index.html"
+    note: "How matrix sizes decide whether a GEMM is limited by memory or by math, with measured curves."
+  - title: "Attention Is All You Need (Vaswani et al.)"
+    url: "https://arxiv.org/abs/1706.03762"
+    note: "Section 4 and Table 1: sequential operations and path length of self-attention against recurrence."
 ---
 
-_Placeholder. Content not written yet._
+The transformer did not win only because attention models language well. It won because it trains fast on GPUs, which made it practical to train on far more text than any recurrent network had seen. This note explains why: the sequential dependency inside an [RNN](../../recurrent-networks/vanilla-rnns/), what that does to GPU utilization in terms of the [roofline model](../../../infra/gpus-parallelism/roofline-model/), how the transformer removes the dependency, and where sequential work remains. It builds on [Self-Attention](../self-attention/) and the causal mask.
+
+## The chain inside an RNN
+
+An RNN computes $h_t = \tanh(W h_{t-1} + U x_t)$. Step $t$ cannot start until step $t-1$ has finished, so a sequence of $n$ tokens is $n$ steps one after another, however many processors are available. Stacking $L$ layers does not help much: layer 2 can start on token 1 once layer 1 has finished token 1, so the layers run as a diagonal wavefront and the **critical path**, the longest chain of dependent steps, is $n + L - 1$.
+
+A transformer layer has no dependency between positions. Queries, keys and values for all tokens come from one matrix product each, the $n \times n$ scores from another, and the causal mask stops each position from seeing the future without making it wait. Each layer is one parallel step, so the critical path is $L$. For 2048 tokens and 24 layers that is 2071 dependent steps for an RNN against 24 for a transformer.
+
+<SeqVsParallel />
+
+## Why the chain wastes a GPU
+
+A GPU has thousands of arithmetic units and can do far more arithmetic per second than it can move bytes from memory; see [why GPUs are architecturally different](../../../infra/gpus-parallelism/why-gpus-are-architecturally-different/). Whether a computation can use that arithmetic depends on its **arithmetic intensity**: floating-point operations per byte moved. Below the **ridge point** (peak FLOP/s divided by memory bandwidth) the computation is limited by memory.
+
+Multiplying $m$ token vectors by a $d \times d$ weight matrix costs $2md^2$ FLOPs and moves the matrix ($d^2$ numbers) plus the inputs and outputs ($2md$ numbers), so in 16-bit floats
+
+$$
+\text{intensity} = \frac{2md^2}{2(d^2 + 2md)} \;\text{FLOP per byte}.
+
+$$
+
+In words: an RNN step has $m = 1$ per sequence, a transformer layer has $m = n$. With $d = 4096$, one vector times a matrix does 1 FLOP per byte, so an H100 (989 TFLOP/s dense 16-bit, 3.35 TB/s, ridge point 295 FLOP per byte) can use at most 0.3% of its arithmetic: every weight is read from memory, used once, and thrown away. With 4096 tokens each weight is reused 4096 times, intensity reaches 1365 FLOP per byte, and the multiply is limited by arithmetic, not memory. An RNN can only raise $m$ by batching independent sequences: a batch of 16 reaches 5.4% of peak, 256 reaches 77%, and large batches bring their own optimization problems. A transformer gets $m = n$ from every single sequence.
+
+<IntensityRoofline />
+
+The attention scores themselves, $QK^\top$, are also a large matrix product ($n \times d_k$ by $d_k \times n$) and run on the same tensor cores. The softmax between them is memory-bound, which is the inefficiency that [Efficient Attention](../efficient-attention/) methods such as FlashAttention remove.
+
+## Where sequence still matters
+
+Generation is sequential for every autoregressive model: token $t+1$ cannot be chosen until token $t$ exists. A transformer generating text runs one position per step, like an RNN. It splits inference into two phases:
+
+- **Prefill**: the prompt is known, so all its positions are processed in parallel, with high arithmetic intensity.
+- **Decode**: one new token per step. Each step multiplies a single vector by every weight matrix, $m = 1$ again, so decoding is memory-bound. Servers batch many users' requests together to raise $m$, and keep earlier keys and values in a [KV cache](../../../applied-dl/llm-inference/kv-cache/) so that old tokens are not recomputed.
+
+A decode step also has to read the cache for every earlier token, so its cost grows with the context, while an RNN's step costs the same at token 10 and token 100,000. That gap is what linear recurrences and [state space models](../../recurrent-networks/state-space-models/) try to close: they are written so that training runs in parallel like a transformer while generation keeps a fixed-size state like an RNN.
+
+<Callout type="pitfall">
+"Transformers are parallel" is true for training and for reading the prompt, not for generation. A 1000-token answer takes 1000 sequential forward passes in a transformer too, and each one is memory-bound. Estimating serving cost from training throughput, or from FLOP counts alone, can be off by more than an order of magnitude; decode speed is set mostly by memory bandwidth and by how many requests are batched together.
+</Callout>
+
+<Callout type="key">
+An RNN has an $n$-step chain of dependent matrix-vector products, which leaves a GPU memory-bound at about 1 FLOP per byte. A transformer layer turns the same work into a few large matrix-matrix products over all positions, with arithmetic intensity that grows with the number of tokens, and a critical path of $L$ instead of $n + L$. That training speed is what let transformers scale; generation remains token by token.
+</Callout>

@@ -3,6 +3,119 @@ title: "Positional Encodings"
 description: "Learned vs. sinusoidal vs. rotary, why position needs to be injected at all."
 order: 6
 tier: advanced
+takeaways:
+  - "Self-attention treats its input as a set, so word order has to be added. A **positional encoding** gives each position a signal the attention scores can use."
+  - "**Learned absolute** embeddings (BERT, GPT-2) add a trained vector per position. They are simple but have no vector for positions beyond the training length."
+  - "**Sinusoidal** encodings use sines and cosines at geometrically spaced frequencies. The dot product of two of them depends only on their distance: 23.504 for 5 apart at positions 0, 100 and 500 alike."
+  - "**RoPE** rotates each pair of query and key coordinates by an angle proportional to the position, so the attention score depends only on the offset $m - n$. Llama and most current LLMs use it."
+  - "**ALiBi** adds no vector at all: it subtracts a penalty proportional to distance from each score. Extending any scheme past its training length needs care, such as RoPE position interpolation plus fine-tuning."
+resources:
+  - title: "RoFormer: Enhanced Transformer with Rotary Position Embedding (Su et al.)"
+    url: "https://arxiv.org/abs/2104.09864"
+    note: "The RoPE paper, with the derivation that rotation makes the score a function of relative position."
+  - title: "Rotary Embeddings: A Relative Revolution (EleutherAI)"
+    url: "https://blog.eleuther.ai/rotary-embeddings/"
+    note: "An intuitive explanation of RoPE with complex numbers, and experiments against learned and sinusoidal encodings."
+  - title: "Train Short, Test Long: Attention with Linear Biases (Press, Smith, Lewis)"
+    url: "https://arxiv.org/abs/2108.12409"
+    note: "ALiBi, and measurements of how each encoding behaves on sequences longer than those seen in training."
 ---
 
-_Placeholder. Content not written yet._
+[Self-attention](../self-attention/) is permutation equivariant: shuffle the tokens and the outputs shuffle with them, so "dog bites man" and "man bites dog" look the same to it. Position has to be supplied separately. This note covers the main ways of doing it, learned and sinusoidal vectors added at the input, rotary embeddings (RoPE) applied inside attention, and linear biases (ALiBi) added to the scores, and what each implies for sequences longer than those seen in training. It assumes [The Transformer](../the-transformer-architecture-in-full/) and the dot product from [vectors](../../../math/linear-algebra/vectors/); RoPE uses the 2D rotation from [matrices as transformations](../../../math/linear-algebra/matrices-as-transformations/). Run the code with `uv run --with numpy`.
+
+## Learned absolute positions
+
+The simplest scheme gives every position $p$ its own trainable vector $P_p$ of width $d$ and adds it to the token embedding before the first block: $x_p = E[\text{token}_p] + P_p$. BERT and GPT-2 do this with tables of 512 and 1024 positions. It works well within the trained range, but there is no vector for position 1025, and positions seen rarely in training (the end of long documents) get poorly trained vectors.
+
+## Sinusoidal encodings
+
+The original transformer used fixed vectors instead. Each pair of dimensions $(2i, 2i+1)$ gets a sine and a cosine of the position at its own frequency:
+
+$$
+\operatorname{PE}(p, 2i) = \sin(p\, \omega_i), \qquad \operatorname{PE}(p, 2i+1) = \cos(p\, \omega_i), \qquad \omega_i = 10000^{-2i/d}.
+
+$$
+
+In words: the first pair oscillates once every $2\pi \approx 6.3$ positions, the last once every $2\pi \cdot 10000$ positions, with the frequencies spaced geometrically in between, like the hands of a clock running at many speeds. Each position gets a unique pattern, and since a pair $(\sin, \cos)$ at angle $p\omega_i$ is a point on a circle, moving $k$ positions is a rotation by $k\omega_i$ whatever $p$ is.
+
+```python
+import numpy as np
+
+def sinusoidal(n, d):
+    pos = np.arange(n)[:, None]
+    freq = 1 / 10000 ** (np.arange(0, d, 2) / d)   # one frequency per pair of dims
+    pe = np.zeros((n, d))
+    pe[:, 0::2] = np.sin(pos * freq)
+    pe[:, 1::2] = np.cos(pos * freq)
+    return pe
+
+pe = sinusoidal(1000, 64)
+print("position 0 :", np.round(pe[0, :6], 3))
+print("position 1 :", np.round(pe[1, :6], 3))
+# similarity of two positions depends only on how far apart they are
+for p in [0, 100, 500]:
+    print(f"pe[{p}] . pe[{p}+5] = {pe[p] @ pe[p + 5]:.3f} · pe[{p}] . pe[{p}+50] = {pe[p] @ pe[p + 50]:.3f}")
+# position 0 : [0. 1. 0. 1. 0. 1.]
+# position 1 : [0.841 0.54  0.682 0.732 0.533 0.846]
+# pe[0] . pe[0+5] = 23.504 · pe[0] . pe[0+50] = 15.674
+# pe[100] . pe[100+5] = 23.504 · pe[100] . pe[100+50] = 15.674
+# pe[500] . pe[500+5] = 23.504 · pe[500] . pe[500+50] = 15.674
+```
+
+In words: position 0 is $(0, 1, 0, 1, \dots)$ since $\sin 0 = 0$ and $\cos 0 = 1$; position 1 has moved most in the fast pairs (0.841 in the first) and least in the slow ones. The dot product of two encodings is $\sum_i \cos(k\omega_i)$ for offset $k$, so it is 23.504 for any two positions 5 apart and 15.674 for any two 50 apart, against 32 for a position with itself. Nearby positions look similar and the similarity depends only on distance. The catch is that the vectors are added to the token embeddings and then projected by $W_Q$ and $W_K$, which mixes position and content; the clean relative structure does not survive into the attention scores exactly.
+
+<SinusoidPE />
+
+## Rotary embeddings (RoPE)
+
+**Rotary position embedding** (Su et al., 2021) moves position into the attention score itself. Instead of adding a vector to the input, it rotates the query and the key. Each pair of coordinates $(x_{2i}, x_{2i+1})$ of a query at position $m$ is rotated by angle $m\theta_i$, and each pair of a key at position $n$ by $n\theta_i$, with $\theta_i = 10000^{-2i/d}$ as in the sinusoidal scheme:
+
+$$
+\tilde q_m = R(m\theta)\, q, \qquad \tilde k_n = R(n\theta)\, k, \qquad \tilde q_m^\top \tilde k_n = q^\top R(m\theta)^\top R(n\theta)\, k = q^\top R\big((n - m)\theta\big)\, k.
+
+$$
+
+In words: rotations compose by adding angles and the transpose of a rotation is the reverse rotation, so the score depends on the query, the key and the offset $n - m$, never on the absolute positions. Rotations keep lengths, so the content of $q$ and $k$ is untouched. Nothing is added to the residual stream, and RoPE is applied in every layer, right before the dot product.
+
+```python
+import numpy as np
+
+def rope(x, pos, base=10000):
+    # rotate each pair (x[2i], x[2i+1]) by the angle pos * theta_i
+    d = len(x)
+    theta = base ** (-np.arange(0, d, 2) / d)
+    c, s = np.cos(pos * theta), np.sin(pos * theta)
+    out = np.empty_like(x)
+    out[0::2] = x[0::2] * c - x[1::2] * s
+    out[1::2] = x[0::2] * s + x[1::2] * c
+    return out
+
+rng = np.random.default_rng(0)
+q, k = rng.standard_normal(64), rng.standard_normal(64)
+for m, n in [(7, 3), (107, 103), (5007, 5003), (3, 7)]:
+    print(f"query at {m:4d}, key at {n:4d} (offset {m - n:+d}): score {rope(q, m) @ rope(k, n):.4f}")
+print("norm kept:", np.isclose(np.linalg.norm(rope(q, 42)), np.linalg.norm(q)))
+# query at    7, key at    3 (offset +4): score -9.1879
+# query at  107, key at  103 (offset +4): score -9.1879
+# query at 5007, key at 5003 (offset +4): score -9.1879
+# query at    3, key at    7 (offset -4): score -12.2146
+# norm kept: True
+```
+
+In words: the same query and key give the score $-9.1879$ at positions 7 and 3, 107 and 103, or 5007 and 5003, because the offset is $+4$ each time. Swapping the order to an offset of $-4$ gives a different score, $-12.2146$, so RoPE also knows which token comes first. The rotation leaves the vector's length unchanged. GPT-NeoX, Llama, Mistral, Qwen and most open models since 2022 use RoPE.
+
+<RopeRotate />
+
+## ALiBi and the length problem
+
+**ALiBi** (Press et al., 2021) adds no positional vector at all. It subtracts a fixed penalty from each attention score in proportion to the distance, $s_{ij} - m_h \lvert i - j \rvert$, with a different slope $m_h$ for each head. Distant tokens are discouraged rather than forbidden, and because the penalty is defined for any distance, ALiBi models trained on 1024 tokens kept their perplexity on inputs several times longer.
+
+Extending a model's context past its training length is a recurring need. Learned positions cannot do it at all. RoPE at unseen positions produces rotation angles the model never saw, and quality collapses quickly. **Position interpolation** (Chen et al., 2023) instead scales the positions down, so that 8192 positions are squeezed into the angles of the trained 2048, and a short fine-tune adapts the model; later variants such as NTK-aware scaling and YaRN stretch the low frequencies more than the high ones. How production models reach contexts of hundreds of thousands of tokens is covered in [context windows at scale](../../../applied-dl/llm-architecture/context-windows-at-scale/).
+
+<Callout type="pitfall">
+Batched generation with left padding shifts positions. If three prompts of different lengths are padded on the left to the same length, a naive implementation numbers the pad tokens too, so a prompt's first real token sits at position 5 instead of 0. With learned or rotary encodings the model then sees positions it would not see unpadded and its outputs change slightly or badly. Compute position ids from the attention mask (a cumulative sum of real tokens) and keep them consistent between the prompt and every cached decoding step.
+</Callout>
+
+<Callout type="key">
+Attention needs position injected. Learned absolute vectors are simple and bounded by the training length; sinusoidal vectors make similarity a function of distance; RoPE rotates queries and keys so the score depends only on the offset, which is why it is the current default; ALiBi penalizes distance directly in the scores. Going beyond the trained length is a separate problem, handled by rescaling positions and fine-tuning.
+</Callout>

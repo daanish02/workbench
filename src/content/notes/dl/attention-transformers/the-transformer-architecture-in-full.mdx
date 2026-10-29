@@ -3,6 +3,162 @@ title: "The Transformer"
 description: "Multi-head attention, positional encoding, feed-forward sublayers, and layer norm, in full."
 order: 3
 tier: core
+takeaways:
+  - "A transformer is a stack of identical **blocks**. Each block has two sublayers, **multi-head self-attention** (tokens exchange information) and a **feed-forward network** (each token is processed on its own), each wrapped in a residual connection and a layer norm."
+  - "**Multi-head attention** splits the width $d$ into $h$ heads of size $d/h$ that attend independently, then concatenates them. It costs the same $4d^2$ parameters as one wide head but can track several relations at once."
+  - "The feed-forward sublayer, usually 4 times wider than the model, holds about two-thirds of each block's parameters: 4.7 M of 7.1 M per GPT-2 small block."
+  - "Modern models use **pre-LN**, $x + \\operatorname{Sublayer}(\\operatorname{LN}(x))$, instead of the original post-LN. It keeps a clean residual path and trains deep stacks without the long learning-rate warmup post-LN needs."
+  - "The 2017 base model: 6 encoder and 6 decoder blocks, $d = 512$, 8 heads, $d_{\\text{ff}} = 2048$, about 65 M parameters."
+resources:
+  - title: "The Annotated Transformer (Harvard NLP)"
+    url: "https://nlp.seas.harvard.edu/annotated-transformer/"
+    note: "The original paper interleaved with a complete, runnable PyTorch implementation, line by line."
+  - title: "Attention Is All You Need (Vaswani et al.)"
+    url: "https://arxiv.org/abs/1706.03762"
+    note: "Section 3 defines the block, multi-head attention and the sinusoidal encoding; Table 3 has the model sizes."
+  - title: "On Layer Normalization in the Transformer Architecture (Xiong et al.)"
+    url: "https://arxiv.org/abs/2002.04745"
+    note: "Why post-LN needs learning-rate warmup and pre-LN does not, with the gradient analysis."
 ---
 
-_Placeholder. Content not written yet._
+[Self-attention](../self-attention/) lets tokens read from each other, but on its own it is one linear mixing step with no position information. The **transformer**, introduced by Vaswani and colleagues in 2017 in "Attention Is All You Need", turns it into a full architecture: several attention heads in parallel, a per-token feed-forward network, [residual connections](../../convolutional-networks/residual-connections/) and [layer normalization](../../training-optimization/normalization-layers/) around both, and position added at the input. This note goes through each part, puts them together into a block, and counts where the parameters are. Run the code with `uv run --with numpy`.
+
+## Multi-head attention
+
+A single attention head gives each token one weighted average, so it can follow one kind of relation at a time. **Multi-head attention** runs $h$ heads in parallel, each with its own projections into a smaller space of size $d_k = d/h$, and joins their outputs:
+
+$$
+\operatorname{head}_i = \operatorname{Attention}(X W_Q^{(i)}, X W_K^{(i)}, X W_V^{(i)}), \qquad \operatorname{MHA}(X) = [\operatorname{head}_1, \dots, \operatorname{head}_h]\, W_O.
+
+$$
+
+In words: each head has its own $d \times d_k$ query, key and value matrices, attends on its own, and returns $n$ vectors of size $d_k$. Concatenating the $h$ results gives back width $d$, and the output matrix $W_O$ ($d \times d$) mixes them. In practice the $h$ query matrices are one $d \times d$ matrix whose columns are split into heads, so multi-head attention is a reshape, not $h$ separate layers:
+
+```python
+import numpy as np
+
+def softmax(s):
+    e = np.exp(s - s.max(-1, keepdims=True))
+    return e / e.sum(-1, keepdims=True)
+
+def multi_head(X, Wq, Wk, Wv, Wo, h):
+    n, d = X.shape
+    dk = d // h
+    # project once, then split the d columns into h heads of size dk
+    split = lambda M: (X @ M).reshape(n, h, dk).transpose(1, 0, 2)   # (h, n, dk)
+    Q, K, V = split(Wq), split(Wk), split(Wv)
+    w = softmax(Q @ K.transpose(0, 2, 1) / np.sqrt(dk))              # (h, n, n)
+    heads = w @ V                                                    # (h, n, dk)
+    concat = heads.transpose(1, 0, 2).reshape(n, d)
+    return concat @ Wo, w
+
+rng = np.random.default_rng(0)
+n, d, h = 6, 16, 4
+X = rng.standard_normal((n, d))
+Wq, Wk, Wv, Wo = (rng.standard_normal((d, d)) / np.sqrt(d) for _ in range(4))
+Y, w = multi_head(X, Wq, Wk, Wv, Wo, h)
+print("output", Y.shape, "· weights", w.shape)
+print("token 0 attends most to, per head:", w[:, 0].argmax(-1))
+print(f"parameters: {4 * d * d} (same as one head of width {d})")
+# output (6, 16) · weights (4, 6, 6)
+# token 0 attends most to, per head: [1 1 2 2]
+# parameters: 1024 (same as one head of width 16)
+```
+
+In words: 4 heads produce 4 separate $6 \times 6$ weight tables, and even with random weights token 0 looks hardest at token 1 in two heads and token 2 in the other two. The parameter count is $4d^2 = 1024$ whatever $h$ is; heads trade the width of each comparison for the number of comparisons. Trained models have heads that track the previous token, the syntactic head of a word, or what a pronoun refers to, though many heads are redundant and can be pruned with little loss.
+
+<MultiHeadView />
+
+## The feed-forward sublayer
+
+Attention mixes information across tokens; the **feed-forward network** (FFN) then processes each token on its own, with the same weights at every position:
+
+$$
+\operatorname{FFN}(x) = W_2\, \sigma(W_1 x + b_1) + b_2, \qquad W_1 \in \mathbb{R}^{d_{\text{ff}} \times d}, \; W_2 \in \mathbb{R}^{d \times d_{\text{ff}}}.
+
+$$
+
+In words: a two-layer MLP that widens each token vector to $d_{\text{ff}}$, usually $4d$, applies a nonlinearity $\sigma$ (ReLU in the original paper, GELU or a gated variant in later models, see [modern activations](../../nn-foundations/modern-activations/)), and projects back to $d$. Attention is the only place tokens interact, and it is mostly linear in the values; the FFN supplies most of the nonlinearity and most of the parameters. Probing studies find that FFN layers act partly as key-value memories that store facts seen in training.
+
+## Residuals and layer norm
+
+Each sublayer is wrapped in a residual connection and a layer norm. The original paper put the norm after the addition (**post-LN**); almost every model since GPT-2 puts it before the sublayer (**pre-LN**):
+
+$$
+\text{post-LN: } x \leftarrow \operatorname{LN}(x + \operatorname{Sublayer}(x)), \qquad \text{pre-LN: } x \leftarrow x + \operatorname{Sublayer}(\operatorname{LN}(x)).
+
+$$
+
+In words: in pre-LN the running vector $x$, called the **residual stream**, is never normalized on its way through the stack; each sublayer reads a normalized copy and adds its result back. The gradient therefore has an identity path from the loss to the first layer. In post-LN every block's output passes through a norm, which rescales gradients near the output; Xiong et al. (2020) showed that this makes the gradients at initialization large in the last layers, so post-LN needs a long [learning-rate warmup](../../training-optimization/learning-rate-schedules/) to avoid diverging. Pre-LN models add one final layer norm after the last block. Many recent models also replace LayerNorm by RMSNorm, which skips the mean subtraction.
+
+<Callout type="pitfall">
+Code copied from the 2017 paper or older tutorials uses post-LN. Stacked deep and trained without warmup, it often diverges in the first few hundred steps, which looks like a bad learning rate. If a transformer of more than a few layers blows up early, check where the layer norm sits before tuning anything else. Pre-LN has its own cost: the residual stream grows with depth, so late blocks change it relatively less, and very deep pre-LN models use tricks such as scaled initialization of the output projections.
+</Callout>
+
+## The complete block
+
+Putting the parts together, a pre-LN block maps $n$ token vectors to $n$ token vectors of the same size:
+
+$$
+x \leftarrow x + \operatorname{MHA}(\operatorname{LN}_1(x)), \qquad x \leftarrow x + \operatorname{FFN}(\operatorname{LN}_2(x)).
+
+$$
+
+In words: first every token gathers information from the others, then every token is transformed on its own, and both results are added to the residual stream. Because the shape never changes, blocks stack: GPT-2 small has 12, GPT-3 has 96. Before the first block, tokens are turned into vectors by an embedding table and position information is added; [positional encodings](../positional-encoding-variants/) cover the options. After the last block a linear layer maps each vector to scores over the vocabulary.
+
+<TransformerBlock />
+
+```python
+import numpy as np
+
+def layer_norm(x, eps=1e-5):
+    return (x - x.mean(-1, keepdims=True)) / np.sqrt(x.var(-1, keepdims=True) + eps)
+
+def attn(x, Wq, Wk, Wv, Wo, h):
+    n, d = x.shape
+    sp = lambda M: (x @ M).reshape(n, h, d // h).transpose(1, 0, 2)
+    Q, K, V = sp(Wq), sp(Wk), sp(Wv)
+    s = Q @ K.transpose(0, 2, 1) / np.sqrt(d // h)
+    w = np.exp(s - s.max(-1, keepdims=True))
+    w /= w.sum(-1, keepdims=True)
+    return (w @ V).transpose(1, 0, 2).reshape(n, d) @ Wo
+
+def block(x, p, h):
+    x = x + attn(layer_norm(x), *p["attn"], h)                      # pre-LN
+    hidden = np.maximum(0, layer_norm(x) @ p["W1"] + p["b1"])       # ReLU
+    return x + hidden @ p["W2"] + p["b2"]
+
+rng = np.random.default_rng(0)
+n, d, h = 10, 64, 8
+init = lambda *s: rng.standard_normal(s) / np.sqrt(s[0])
+p = {"attn": [init(d, d) for _ in range(4)],
+     "W1": init(d, 4 * d), "b1": np.zeros(4 * d),
+     "W2": init(4 * d, d), "b2": np.zeros(d)}
+x = rng.standard_normal((n, d))
+for _ in range(6):                                                  # same weights, for shape only
+    x = block(x, p, h)
+print("after 6 blocks:", x.shape)
+
+def block_params(d, d_ff):
+    attn = 4 * d * d + 4 * d                     # Q, K, V, O with biases
+    ffn = 2 * d * d_ff + d_ff + d
+    norms = 2 * 2 * d                            # two layer norms, scale and shift
+    return attn, ffn, attn + ffn + norms
+
+for name, d, d_ff, layers in [("base (2017)", 512, 2048, 6), ("GPT-2 small", 768, 3072, 12)]:
+    a, f, total = block_params(d, d_ff)
+    print(f"{name}: attention {a:,} · FFN {f:,} ({f / total:.0%}) · per block {total:,} · x{layers} = {total * layers:,}")
+# after 6 blocks: (10, 64)
+# base (2017): attention 1,050,624 · FFN 2,099,712 (67%) · per block 3,152,384 · x6 = 18,914,304
+# GPT-2 small: attention 2,362,368 · FFN 4,722,432 (67%) · per block 7,087,872 · x12 = 85,054,464
+```
+
+In words: the block keeps the shape $(10, 64)$ through 6 applications. With $d_{\text{ff}} = 4d$ the FFN has $8d^2$ weights against $4d^2$ for attention, so it is 67% of every block. GPT-2 small's 12 blocks hold 85 M parameters; its token and position embeddings ($50{,}257 \times 768$ and $1024 \times 768$) add about 39 M, giving the published 124 M.
+
+## Encoder, decoder and cross-attention
+
+The 2017 model was built for translation and has two stacks. The **encoder** is a stack of the blocks above, without a mask, reading the source sentence. The **decoder** blocks have a third sublayer between the two: **cross-attention**, in which queries come from the decoder and keys and values from the encoder's final output. This is [the attention mechanism](../the-attention-mechanism/) of the seq2seq model, now inside every decoder block, and the decoder's self-attention uses a causal mask. The base model has 6 encoder blocks (the 18.9 M above), 6 decoder blocks of about 4.2 M each, and a 37,000-token embedding table shared between input and output, about 65 M parameters in total. Many later models keep only one of the two stacks; see [Transformer Variants](../transformer-variants/).
+
+<Callout type="key">
+A transformer block is multi-head self-attention followed by a per-token feed-forward network, each added to a residual stream through a layer norm (pre-LN in modern models). Heads split the width to attend to several things at once at no extra parameter cost; the FFN holds two-thirds of the parameters. Blocks keep the shape, so they stack, with embeddings and position at the bottom and a vocabulary projection at the top.
+</Callout>

@@ -1,0 +1,136 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="RoPE: rotate, and only the gap matters"
+  caption="One pair of coordinates of a query (blue) and a key (green). RoPE rotates the query by m·θ and the key by n·θ, here with θ = 15° per position. Their dot product depends on the angle between them, which is the original angle plus (n − m)·θ. Drag m and n separately and the score changes; press “shift both +5” and both arrows turn together, so the score stays the same (at the end of the sliders it shifts both back to the start instead)."
+>
+  <rope-rotate>
+    <label class="rr-lbl">query position m <input type="range" min="0" max="23" step="1" value="2" data-m /> <b data-mv>2</b></label>
+    <label class="rr-lbl">key position n <input type="range" min="0" max="23" step="1" value="5" data-n /> <b data-nv>5</b></label>
+    <div class="rr-ctl"><button type="button" class="btn" data-shift>shift both +5</button></div>
+    <div class="axes" style="--ax-w: 300px">
+      <span class="ax-y">y</span>
+      <svg class="rr-svg" viewBox="0 0 240 240" role="img" aria-label="Rotated query and key vectors">
+        <circle cx="120" cy="120" r="90" class="rr-c"></circle>
+        <line x1="20" x2="220" y1="120" y2="120" class="rr-ax"></line>
+        <line x1="120" x2="120" y1="20" y2="220" class="rr-ax"></line>
+        <path data-arc class="rr-arc"></path>
+        <line x1="120" y1="120" data-q class="rr-q"></line>
+        <line x1="120" y1="120" data-k class="rr-k"></line>
+        <circle r="5" data-qd class="rr-qd"></circle>
+        <circle r="5" data-kd class="rr-kd"></circle>
+      </svg>
+      <span class="ax-x">x</span>
+    </div>
+    <p class="rr-stat" data-stat></p>
+  </rope-rotate>
+</Figure>
+
+<style>
+  .rr-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .rr-lbl input[type='range'] {
+    flex: 1;
+  }
+  .rr-ctl {
+    margin-bottom: 10px;
+  }
+  .rr-svg {
+    display: block;
+    width: 100%;
+    max-width: 300px;
+  }
+  .rr-c {
+    fill: none;
+    stroke: var(--border);
+  }
+  .rr-ax {
+    stroke: var(--text-faint);
+  }
+  .rr-arc {
+    fill: rgba(251, 188, 5, 0.18);
+    stroke: var(--g-yellow);
+  }
+  .rr-q {
+    stroke: var(--g-blue);
+    stroke-width: 3;
+  }
+  .rr-k {
+    stroke: var(--g-green);
+    stroke-width: 3;
+  }
+  .rr-qd {
+    fill: var(--g-blue);
+  }
+  .rr-kd {
+    fill: var(--g-green);
+  }
+  .rr-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const TH = (15 * Math.PI) / 180;
+  const Q0 = (10 * Math.PI) / 180; // unrotated query angle
+  const K0 = (60 * Math.PI) / 180; // unrotated key angle
+  const R = 90;
+
+  class RopeRotate extends HTMLElement {
+    connectedCallback() {
+      this.addEventListener('input', () => this.draw());
+      this.querySelector('[data-shift]')!.addEventListener('click', () => {
+        const m = this.querySelector<HTMLInputElement>('[data-m]')!;
+        const n = this.querySelector<HTMLInputElement>('[data-n]')!;
+        // past the end of the slider, shift both back to the start instead
+        const s = Math.max(+m.value, +n.value) + 5 <= 23 ? 5 : -Math.min(+m.value, +n.value);
+        m.value = String(+m.value + s);
+        n.value = String(+n.value + s);
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const m = +this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const n = +this.querySelector<HTMLInputElement>('[data-n]')!.value;
+      this.querySelector('[data-mv]')!.textContent = String(m);
+      this.querySelector('[data-nv]')!.textContent = String(n);
+      const aq = Q0 + m * TH;
+      const ak = K0 + n * TH;
+      const pt = (a: number, r = R) => [120 + r * Math.cos(a), 120 - r * Math.sin(a)];
+      const [qx, qy] = pt(aq);
+      const [kx, ky] = pt(ak);
+      for (const [sel, x, y] of [['q', qx, qy], ['k', kx, ky]] as const) {
+        const l = this.querySelector(`[data-${sel}]`)!;
+        l.setAttribute('x2', x.toFixed(1));
+        l.setAttribute('y2', y.toFixed(1));
+        const d = this.querySelector(`[data-${sel}d]`)!;
+        d.setAttribute('cx', x.toFixed(1));
+        d.setAttribute('cy', y.toFixed(1));
+      }
+      // wedge between the two arrows, along the shorter way round
+      let diff = Math.atan2(Math.sin(ak - aq), Math.cos(ak - aq));
+      const [ax, ay] = pt(aq, 34);
+      const [bx, by] = pt(aq + diff, 34);
+      this.querySelector('[data-arc]')!.setAttribute(
+        'd',
+        `M120,120L${ax.toFixed(1)},${ay.toFixed(1)}A34,34 0 0 ${diff > 0 ? 0 : 1} ${bx.toFixed(1)},${by.toFixed(1)}Z`,
+      );
+      const score = Math.cos(ak - aq);
+      this.querySelector('[data-stat]')!.textContent =
+        `n − m = ${n - m} · angle between ${((Math.abs(diff) * 180) / Math.PI).toFixed(0)}° · score q·k = ${score.toFixed(3)}`;
+    }
+  }
+  customElements.define('rope-rotate', RopeRotate);
+</script>

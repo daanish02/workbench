@@ -3,6 +3,125 @@ title: "Self-Attention"
 description: "Attending within a single sequence rather than between two."
 order: 2
 tier: core
+takeaways:
+  - "In **self-attention** the queries, keys and values all come from the same sequence, so every token builds its new representation by reading from every other token."
+  - "One layer connects any two positions in a single step (path length 1), against $n$ steps in an RNN, and all positions are computed at once."
+  - "Self-attention is **permutation equivariant**: shuffle the input tokens and the outputs shuffle the same way. It has no notion of order until position information is added."
+  - "A **causal mask** sets the scores of future positions to $-\\infty$, so token $i$ only sees tokens $\\le i$. Language models need it to train on next-token prediction."
+  - "The price is an $n \\times n$ score table per head: at $n = 131{,}072$ tokens one head's table in 16-bit floats is 32 GiB, against 1 GiB for the token vectors themselves."
+resources:
+  - title: "Attention Is All You Need (Vaswani et al.)"
+    url: "https://arxiv.org/abs/1706.03762"
+    note: "The transformer paper; Section 4 compares self-attention with recurrent and convolutional layers on cost and path length."
+  - title: "The Illustrated Transformer (Jay Alammar)"
+    url: "https://jalammar.github.io/illustrated-transformer/"
+    note: "Step-by-step drawings of how one token's query, key and value turn into its output."
+  - title: "Let's build GPT: from scratch, in code, spelled out (Andrej Karpathy)"
+    url: "https://www.youtube.com/watch?v=kCc8FmEb1nY"
+    note: "Builds self-attention and the causal mask from a running average, in a two-hour live-coded session."
 ---
 
-_Placeholder. Content not written yet._
+[The attention mechanism](../the-attention-mechanism/) lets a decoder read from an encoder: queries come from one sequence, keys and values from another. **Self-attention** points the mechanism at a single sequence, so every token reads from every token in the same sequence, itself included. That one change lets a layer relate distant words directly, without the step-by-step recurrence of an [RNN](../../recurrent-networks/vanilla-rnns/), and it is the core operation of the transformer. This note covers how a self-attention layer computes, what it does and does not know about order, the causal mask that language models need, and the quadratic cost that comes with it. Run the code with `uv run --with numpy`.
+
+## Every token reads every token
+
+Stack the $n$ input token vectors as the rows of $X$ ($n \times d$). A self-attention layer projects $X$ three ways with learned matrices and applies scaled dot-product attention:
+
+$$
+Q = X W_Q, \quad K = X W_K, \quad V = X W_V, \qquad Y = \operatorname{softmax}\!\left(\frac{Q K^\top}{\sqrt{d_k}}\right) V.
+
+$$
+
+In words: row $i$ of $Q$ is what token $i$ is looking for, row $j$ of $K$ is what token $j$ offers to be found by, and row $j$ of $V$ is what token $j$ hands over. Row $i$ of the $n \times n$ weight table says how much token $i$ reads from each token, and row $i$ of $Y$ is the resulting mix: a new representation of token $i$ that depends on its context. In "The animal didn't cross the street because it was too tired", a trained layer can give "it" high weight on "animal", so the output vector for "it" carries what "it" refers to.
+
+<SelfAttnMatrix />
+
+```python
+import numpy as np
+
+def self_attention(X, Wq, Wk, Wv):
+    Q, K, V = X @ Wq, X @ Wk, X @ Wv             # all three come from X
+    s = Q @ K.T / np.sqrt(K.shape[1])
+    w = np.exp(s - s.max(axis=1, keepdims=True))
+    w /= w.sum(axis=1, keepdims=True)
+    return w @ V
+
+rng = np.random.default_rng(0)
+n, d = 5, 8
+X = rng.standard_normal((n, d))                  # 5 tokens, no position info
+Wq, Wk, Wv = (rng.standard_normal((d, d)) / np.sqrt(d) for _ in range(3))
+Y = self_attention(X, Wq, Wk, Wv)
+print("input", X.shape, "-> output", Y.shape)
+
+perm = [3, 0, 4, 1, 2]                           # shuffle the tokens
+Y_perm = self_attention(X[perm], Wq, Wk, Wv)
+print("shuffled output == shuffled original:", np.allclose(Y_perm, Y[perm]))
+# input (5, 8) -> output (5, 8)
+# shuffled output == shuffled original: True
+```
+
+In words: the layer maps 5 vectors to 5 vectors of the same size, so layers can be stacked. Shuffling the input tokens shuffles the outputs in exactly the same way and changes nothing else. Self-attention is **permutation equivariant**: it treats its input as a set. "Dog bites man" and "man bites dog" give the same three output vectors in a different order. Order has to be put into the input vectors, which is the job of [positional encodings](../positional-encoding-variants/).
+
+## Compared with recurrence and convolution
+
+Vaswani et al. compared three ways to let tokens exchange information, for a sequence of length $n$, width $d$ and convolution kernel size $k$:
+
+| Layer | Work per layer | Sequential steps | Longest path between two tokens |
+| --- | --- | --- | --- |
+| Self-attention | $O(n^2 d)$ | $O(1)$ | $O(1)$ |
+| Recurrent | $O(n d^2)$ | $O(n)$ | $O(n)$ |
+| Convolution | $O(k n d^2)$ | $O(1)$ | $O(\log_k n)$ with dilations |
+
+In words: self-attention connects every pair of tokens in one step and has no sequential chain, so all positions are computed in parallel. A recurrent layer needs $n$ steps one after the other, and information from the first token reaches the last through $n$ updates, which is where [vanishing gradients](../../recurrent-networks/the-vanishing-gradient-problem-in-rnns/) come from. Self-attention does more total work when $n > d$, but the work is large matrix products, which GPUs run efficiently; see [Transformer Parallelism](../why-transformers-parallelize-better-than-rnns/).
+
+## The causal mask
+
+A language model is trained to predict each next token from the ones before it. If token $i$ could attend to token $i+1$, it could copy the answer, and the model would learn nothing useful. A **causal mask** (also called a look-ahead mask) blocks this: before the softmax, every score with $j > i$ is set to $-\infty$, so its weight becomes exactly 0.
+
+```python
+import numpy as np
+
+def causal_attention(X, Wq, Wk, Wv):
+    Q, K, V = X @ Wq, X @ Wk, X @ Wv
+    n = len(X)
+    s = Q @ K.T / np.sqrt(K.shape[1])
+    future = np.triu(np.ones((n, n), dtype=bool), k=1)
+    s[future] = -np.inf                          # token i may not see j > i
+    w = np.exp(s - s.max(axis=1, keepdims=True))
+    w /= w.sum(axis=1, keepdims=True)
+    return w @ V, w
+
+rng = np.random.default_rng(0)
+n, d = 5, 8
+X = rng.standard_normal((n, d))
+Wq, Wk, Wv = (rng.standard_normal((d, d)) / np.sqrt(d) for _ in range(3))
+Y, w = causal_attention(X, Wq, Wk, Wv)
+print(np.round(w, 2))
+
+X2 = X.copy()
+X2[3:] = rng.standard_normal((2, d))             # change the last two tokens
+Y2, _ = causal_attention(X2, Wq, Wk, Wv)
+print("outputs 0-2 unchanged:", np.allclose(Y[:3], Y2[:3]))
+# [[1.   0.   0.   0.   0.  ]
+#  [0.88 0.12 0.   0.   0.  ]
+#  [0.42 0.29 0.29 0.   0.  ]
+#  [0.28 0.24 0.29 0.19 0.  ]
+#  [0.34 0.06 0.24 0.11 0.26]]
+# outputs 0-2 unchanged: True
+```
+
+In words: the weight table is lower triangular. The first token can only read itself (weight 1), the second splits 0.88 and 0.12 over the first two, and so on. Replacing the last two tokens leaves the first three outputs identical, so no position sees the future. Because of the mask, one forward pass over a sequence of $n$ tokens trains all $n$ next-token predictions at once, which is a large part of why transformers train fast. Encoders such as BERT, which read a whole sentence, use no causal mask; see [Transformer Variants](../transformer-variants/).
+
+<Callout type="pitfall">
+A missing or wrong causal mask fails silently in training. The model looks at the token it is supposed to predict, training loss drops to near 0 within a few hundred steps, and generation then produces garbage, because at inference the future token is not there to copy. A training loss that looks too good on next-token prediction is the usual symptom. Also apply the mask before the softmax: zeroing weights after it leaves rows that no longer sum to 1.
+</Callout>
+
+## The quadratic cost
+
+Every token scores every token, so each head in each layer builds an $n \times n$ table, while the token vectors themselves only take $n \times d$. In 16-bit floats with $d = 4096$, the two are equal at $n = d = 4096$ (32 MiB each). Beyond that the score table dominates: at 131,072 tokens one head's table is 32,768 MiB (32 GiB), 32 times the 1,024 MiB of token vectors, and a model has dozens of heads per layer. Compute grows the same way, as $n^2$. This is why context length was long limited to a few thousand tokens, and why [Efficient Attention](../efficient-attention/) methods avoid storing the table at all.
+
+<AttnCost />
+
+<Callout type="key">
+Self-attention lets every token build its representation from every other token in one parallel step: $Q$, $K$ and $V$ are three projections of the same input. It treats the input as a set, so position must be added separately; a causal mask stops tokens from seeing the future when the model predicts the next token; and it costs $n^2$ in time and memory per head.
+</Callout>

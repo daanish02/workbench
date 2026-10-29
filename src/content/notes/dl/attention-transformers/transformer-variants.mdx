@@ -3,6 +3,69 @@ title: "Transformer Variants"
 description: "Encoder-only, decoder-only and encoder-decoder transformers, and which tasks each suits."
 order: 4
 tier: core
+takeaways:
+  - "The block is the same in all three families. What differs is the **attention mask** and the training objective."
+  - "**Encoder-only** models (BERT) attend in both directions and are trained to fill in masked tokens. They produce representations for classification, tagging and retrieval but cannot generate text left to right."
+  - "**Decoder-only** models (GPT, Llama) use a causal mask and predict the next token. Every position is a training target (511 of 512 tokens, against about 15 % for masked LM), and generation is native, which is why large language models are built this way."
+  - "**Encoder-decoder** models (the original transformer, T5, Whisper) read the input bidirectionally and generate the output with cross-attention. They suit tasks with a distinct input and output, such as translation and speech recognition."
+resources:
+  - title: "BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al.)"
+    url: "https://arxiv.org/abs/1810.04805"
+    note: "The encoder-only model and its masked-language-model objective."
+  - title: "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (Raffel et al.)"
+    url: "https://arxiv.org/abs/1910.10683"
+    note: "T5. Section 3.2 compares encoder-decoder, decoder-only and prefix-LM models on the same data."
+  - title: "Language Models are Unsupervised Multitask Learners (Radford et al.)"
+    url: "https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf"
+    note: "GPT-2: a decoder-only model trained only on next-token prediction, performing tasks it was never trained on."
 ---
 
-_Placeholder. Content not written yet._
+The 2017 transformer had an encoder and a decoder, built for translation. Within two years three families had split off, and they differ in which tokens may attend to which, not in the block itself. This note describes each family, the attention mask that defines it, how it is trained, and which tasks it suits. It builds on [The Transformer](../the-transformer-architecture-in-full/) and the causal mask from [Self-Attention](../self-attention/). Run the code with `uv run --with numpy`.
+
+## Masks define the family
+
+An attention mask is an $n \times n$ table: entry $(i, j)$ says whether token $i$ may attend to token $j$. Three masks cover almost every model. In a **bidirectional** mask every token sees every token, so each representation uses context on both sides. In a **causal** mask (lower triangular) token $i$ sees only tokens $0$ to $i$, which is what next-token prediction needs. A **prefix LM** mask makes the input tokens fully visible to each other, and keeps the rest causal. Encoder-decoder models use a bidirectional mask in the encoder, a causal one in the decoder, and a full mask from decoder to encoder in cross-attention. In code a mask is one line, `np.tril(np.ones((n, n)))` for causal, and blocked entries get a score of $-\infty$ before the softmax.
+
+<MaskPatterns />
+
+## Encoder-only: BERT
+
+**BERT** (Devlin et al., 2018) is a stack of encoder blocks with a bidirectional mask. Because every token sees the whole sentence, the model cannot be trained to predict the next token: the answer would be visible. Instead it is trained with **masked language modelling**: about 15% of the input tokens are hidden behind a `[MASK]` token (or swapped for a random one), and the model predicts the originals from both sides of context.
+
+The output is one contextual vector per token. A small head on top turns it into a sentence label (sentiment, spam), a label per token (named entities), or a span (extractive question answering), and the pooled vectors serve as embeddings for search. Encoder-only models are small and cheap at inference (BERT-base has 110 M parameters) and are still the usual choice for classification and retrieval embeddings.
+
+## Decoder-only: GPT
+
+**GPT** (Radford et al., 2018) and its successors, including Llama and most current large language models, are a stack of decoder blocks without cross-attention, using a causal mask. They are trained on plain text to predict every next token. Generation is the same computation: predict a token, append it, predict the next.
+
+```python
+import numpy as np
+
+# how many tokens give a training signal in one sequence of length n
+rng = np.random.default_rng(0)
+n = 512
+mlm = (rng.random(n) < 0.15).sum()               # BERT: predict ~15% masked tokens
+causal = n - 1                                   # GPT: predict every next token
+print(f"masked LM targets: {mlm} · causal LM targets: {causal} · ratio {causal / mlm:.1f}x")
+# masked LM targets: 67 · causal LM targets: 511 · ratio 7.6x
+```
+
+In words: in one 512-token sequence, masked language modelling gets a loss from the 67 tokens that happened to be masked; the causal model gets one from all 511 positions, 7.6 times as many, from the same forward pass. Add that one model both reads and writes, and that any task can be phrased as text to continue, and decoder-only models became the default once models were scaled up. GPT-2 (2019) showed that such a model, trained on nothing but next-token prediction, could translate and summarize when prompted; how that scales is the subject of [pretraining objectives](../../../applied-dl/llm-architecture/pretraining-objectives/).
+
+## Encoder-decoder: T5 and Whisper
+
+The **encoder-decoder** model keeps the original design. The encoder reads the whole input bidirectionally; the decoder generates the output causally and reads the encoder's output through cross-attention in every block. **T5** (Raffel et al., 2019) cast every task as text in, text out ("translate English to German: …", "summarize: …") and trained with a span-corruption objective, a masked-LM variant whose missing spans the decoder writes out. **Whisper** (2022) encodes audio and decodes text. The design suits tasks where the input and the output are different things and the input is fully known before generation starts.
+
+| Family | Mask | Training objective | Examples | Typical use |
+| --- | --- | --- | --- | --- |
+| Encoder-only | bidirectional | masked LM | BERT, RoBERTa | classification, tagging, embeddings |
+| Decoder-only | causal | next token | GPT, Llama | generation, chat, general-purpose LLMs |
+| Encoder-decoder | bidirectional + causal + cross | span corruption, seq2seq | T5, BART, Whisper | translation, summarization, speech to text |
+
+<Callout type="pitfall">
+An encoder-only model cannot be used as a text generator by feeding it a prompt and reading off the next word. It was never trained to predict a token from left context only, and its output at the last position is a representation of that position, not a next-token distribution. The reverse also needs care: a decoder-only model's vector for an early token has not seen the rest of the input, so for sentence embeddings use the last token's vector, which has seen everything, or a model fine-tuned for embeddings; the first token's vector has seen only itself.
+</Callout>
+
+<Callout type="key">
+The three families share the block and differ in the mask: bidirectional for encoders that represent, causal for decoders that generate, and both joined by cross-attention for encoder-decoders that transform one sequence into another. Decoder-only won for large models because every token is a training target and one model both reads and writes.
+</Callout>

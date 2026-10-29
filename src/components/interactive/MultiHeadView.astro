@@ -1,0 +1,100 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Different heads, different relations"
+  caption="Each arc joins a token (dot) to the token it attends to most in one head; thicker means more weight. The patterns are illustrative, modelled on heads found in trained models (Clark et al., 2019, “What Does BERT Look At?”): one head reads the previous token, one links a pronoun to its noun, one links words to their syntactic partners, and one parks most of its weight on the first token when it has nothing useful to do. Switch heads: the same sentence, four different views of it."
+>
+  <multi-head-view>
+    <input type="hidden" data-h value="1" />
+    <span class="choice mh-ctl">
+      <button type="button" class="btn" data-choice="0" aria-pressed="false">head 1</button>
+      <button type="button" class="btn" data-choice="1" aria-pressed="true">head 2</button>
+      <button type="button" class="btn" data-choice="2" aria-pressed="false">head 3</button>
+      <button type="button" class="btn" data-choice="3" aria-pressed="false">head 4</button>
+    </span>
+    <svg class="mh-svg" viewBox="0 0 400 150" role="img" aria-label="Strongest attention link of each token in one attention head">
+      <g data-g></g>
+    </svg>
+    <p class="mh-stat" data-stat></p>
+  </multi-head-view>
+</Figure>
+
+<style>
+  .mh-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .mh-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .mh-svg :global(.mh-t) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .mh-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const T = ['the', 'dog', 'chased', 'the', 'cat', 'because', 'it', 'was', 'hungry'];
+  // per head: [query, key, weight] for each token's strongest link
+  const HEADS: { name: string; col: string; links: [number, number, number][] }[] = [
+    {
+      name: 'previous token',
+      col: '#4285f4',
+      links: [[1, 0, 0.8], [2, 1, 0.85], [3, 2, 0.8], [4, 3, 0.9], [5, 4, 0.75], [6, 5, 0.8], [7, 6, 0.85], [8, 7, 0.8]],
+    },
+    {
+      name: 'pronoun to its noun',
+      col: '#34a853',
+      links: [[6, 1, 0.72], [7, 6, 0.4], [8, 1, 0.45], [4, 1, 0.3]],
+    },
+    {
+      name: 'syntactic partners (determiner to noun, verb to subject and object)',
+      col: '#fbbc05',
+      links: [[0, 1, 0.7], [3, 4, 0.75], [2, 1, 0.55], [4, 2, 0.5], [7, 6, 0.6], [8, 6, 0.5], [5, 7, 0.4]],
+    },
+    {
+      name: 'no-op: weight parked on the first token',
+      col: '#ea4335',
+      links: [[1, 0, 0.6], [2, 0, 0.65], [3, 0, 0.7], [4, 0, 0.6], [5, 0, 0.7], [6, 0, 0.55], [7, 0, 0.7], [8, 0, 0.65]],
+    },
+  ];
+  const X = (i: number) => 24 + i * 44;
+  const Y = 128;
+
+  class MultiHeadView extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-h]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const h = HEADS[+this.querySelector<HTMLInputElement>('[data-h]')!.value];
+      let html = '';
+      for (const [q, k, w] of h.links) {
+        const x1 = X(q);
+        const x2 = X(k);
+        const lift = 14 + Math.abs(x1 - x2) * 0.42;
+        html += `<path d="M${x1},${Y - 14} Q${(x1 + x2) / 2},${Y - 14 - lift} ${x2},${Y - 14}" style="fill:none;stroke:${h.col};stroke-width:${(0.8 + w * 4).toFixed(1)};opacity:${(0.35 + w * 0.6).toFixed(2)}"></path>`;
+        html += `<circle cx="${x1}" cy="${Y - 14}" r="3" style="fill:${h.col}"></circle>`;
+      }
+      T.forEach((t, i) => (html += `<text x="${X(i)}" y="${Y}" class="mh-t">${t}</text>`));
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const top = h.links.reduce((a, b) => (b[2] > a[2] ? b : a));
+      this.querySelector('[data-stat]')!.textContent = `${h.name} · strongest: “${T[top[0]]}” to “${T[top[1]]}” ${top[2].toFixed(2)}`;
+    }
+  }
+  customElements.define('multi-head-view', MultiHeadView);
+</script>

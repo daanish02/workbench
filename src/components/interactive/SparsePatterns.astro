@@ -1,0 +1,91 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which pairs sparse attention computes"
+  caption="Causal attention over 16 tokens: rows attend to columns. Blue cells are computed, red cells skipped. Full causal attention computes every earlier pair. A sliding window keeps the last 4 tokens; adding a global first token (yellow) gives every token a direct line to it; a strided pattern adds every 4th earlier token, so information travels far in few layers. The readout counts computed pairs; for long sequences the window's cost grows as n·w instead of n²."
+>
+  <sparse-patterns>
+    <input type="hidden" data-p value="window" />
+    <span class="choice sp2-ctl">
+      <button type="button" class="btn" data-choice="full" aria-pressed="false">full causal</button>
+      <button type="button" class="btn" data-choice="window" aria-pressed="true">sliding window</button>
+      <button type="button" class="btn" data-choice="global" aria-pressed="false">window + global</button>
+      <button type="button" class="btn" data-choice="strided" aria-pressed="false">window + strided</button>
+    </span>
+    <svg class="sp2-svg" viewBox="0 0 300 300" role="img" aria-label="Attention pattern over sixteen tokens">
+      <g data-g></g>
+    </svg>
+    <p class="sp2-stat" data-stat></p>
+  </sparse-patterns>
+</Figure>
+
+<style>
+  .sp2-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .sp2-svg {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+  }
+  .sp2-svg :global(.sp2-t) {
+    fill: var(--text-faint);
+    font: 9px var(--font-mono);
+    dominant-baseline: middle;
+  }
+  .sp2-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 16;
+  const W = 4;
+  const S = 4;
+  const X0 = 30;
+  const Y0 = 20;
+  const C = 16.5;
+  // 0 skipped, 1 computed, 2 computed via the global token
+  const RULE: Record<string, (i: number, j: number) => number> = {
+    full: (i, j) => (j <= i ? 1 : 0),
+    window: (i, j) => (j <= i && i - j < W ? 1 : 0),
+    global: (i, j) => (j > i ? 0 : i - j < W ? 1 : j === 0 ? 2 : 0),
+    strided: (i, j) => (j > i ? 0 : i - j < W || (i - j) % S === 0 ? 1 : 0),
+  };
+
+  class SparsePatterns extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-p]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-p]')!.value;
+      const rule = RULE[mode];
+      let html = '';
+      let on = 0;
+      for (let i = 0; i < N; i++) {
+        if (i % 5 === 0) html += `<text x="${X0 - 5}" y="${Y0 + i * C + C / 2}" class="sp2-t" style="text-anchor:end">${i + 1}</text>`;
+        for (let j = 0; j < N; j++) {
+          const r = rule(i, j);
+          if (r) on++;
+          const fill = r === 1 ? 'rgba(66,133,244,0.6)' : r === 2 ? 'rgba(251,188,5,0.75)' : 'rgba(234,67,53,0.12)';
+          html += `<rect x="${X0 + j * C + 1}" y="${Y0 + i * C + 1}" width="${C - 2}" height="${C - 2}" rx="2" style="fill:${fill}"></rect>`;
+        }
+      }
+      html += `<text x="${X0}" y="${Y0 + N * C + 12}" class="sp2-t">key position →</text>`;
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const full = (N * (N + 1)) / 2;
+      this.querySelector('[data-stat]')!.textContent = `${on} of ${full} causal pairs computed (${((on / full) * 100).toFixed(0)}%)`;
+    }
+  }
+  customElements.define('sparse-patterns', SparsePatterns);
+</script>

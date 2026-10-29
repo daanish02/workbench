@@ -1,0 +1,107 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A wavefront against whole layers"
+  caption="Three layers (rows) over eight tokens (columns). Each Step is one unit of dependent work. In the RNN (top), a cell needs the cell to its left (the previous token) and the cell below (the previous layer), so work spreads as a diagonal wavefront and takes n + L − 1 = 10 steps. In the transformer (bottom), every token of a layer is computed together, so it takes L = 3 steps. Yellow cells are being computed in the current step."
+>
+  <seq-vs-parallel>
+    <div class="sp-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="sp-svg" viewBox="0 0 400 230" role="img" aria-label="Order of computation in an RNN and a transformer over three layers and eight tokens">
+      <g data-g></g>
+    </svg>
+    <p class="sp-stat" data-stat aria-live="polite"></p>
+  </seq-vs-parallel>
+</Figure>
+
+<style>
+  .sp-ctl {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .sp-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .sp-svg :global(.sp-t) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    dominant-baseline: middle;
+  }
+  .sp-svg :global(.sp-h) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+  }
+  .sp-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 8;
+  const L = 3;
+  const TOTAL = N + L - 1;
+  const X0 = 70;
+  const CW = 38;
+  const CH = 22;
+  const rnnAt = (l: number, t: number) => t + l + 1; // step at which the cell is computed
+  const trfAt = (l: number) => l + 1;
+
+  class SeqVsParallel extends HTMLElement {
+    k = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.k = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      if (this.k >= TOTAL) return;
+      this.k++;
+      this.draw();
+      if (this.k >= TOTAL) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    grid(top: number, at: (l: number, t: number) => number, col: string) {
+      let html = '';
+      let done = 0;
+      for (let l = 0; l < L; l++) {
+        const y = top + (L - 1 - l) * CH;
+        html += `<text x="${X0 - 8}" y="${y + CH / 2}" class="sp-t" style="text-anchor:end">layer ${l + 1}</text>`;
+        for (let t = 0; t < N; t++) {
+          const s = at(l, t);
+          if (s <= this.k) done++;
+          const fill = s === this.k ? 'rgba(251,188,5,0.75)' : s < this.k ? col : 'transparent';
+          html += `<rect x="${X0 + t * CW + 2}" y="${y + 2}" width="${CW - 4}" height="${CH - 4}" rx="3" style="fill:${fill};stroke:var(--border)"></rect>`;
+        }
+      }
+      return { html, done };
+    }
+    draw() {
+      const a = this.grid(26, rnnAt, 'rgba(66,133,244,0.5)');
+      const b = this.grid(146, trfAt, 'rgba(52,168,83,0.5)');
+      let html = `<text x="${X0}" y="16" class="sp-h">RNN</text><text x="${X0}" y="136" class="sp-h">transformer</text>`;
+      html += a.html + b.html;
+      for (let t = 0; t < N; t++) html += `<text x="${X0 + t * CW + CW / 2}" y="${226}" class="sp-t" style="text-anchor:middle">t${t + 1}</text>`;
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const all = N * L;
+      this.querySelector('[data-stat]')!.textContent =
+        `step ${this.k} of ${TOTAL} · RNN ${a.done}/${all} cells · transformer ${b.done}/${all} cells${b.done === all && a.done < all ? ' (done)' : ''}`;
+    }
+  }
+  customElements.define('seq-vs-parallel', SeqVsParallel);
+</script>

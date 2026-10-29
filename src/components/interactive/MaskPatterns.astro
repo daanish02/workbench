@@ -1,0 +1,108 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Same tokens, four attention masks"
+  caption="Rows are the token doing the attending, columns the token being read. Blue cells are allowed self-attention, green cells are cross-attention from the output to the input, red cells are blocked, and the yellow dashed square marks an input block that is fully visible to itself. The tokens are an English input (I like tea), a start token ⟨s⟩ and a French output. Switch the mask: an encoder lets everything see everything, a decoder sees only the past, a prefix LM sees the whole input and the past of the output, and an encoder-decoder keeps the two sequences apart except through cross-attention."
+>
+  <mask-patterns>
+    <input type="hidden" data-m value="dec" />
+    <span class="choice mp-ctl">
+      <button type="button" class="btn" data-choice="enc" aria-pressed="false">encoder</button>
+      <button type="button" class="btn" data-choice="dec" aria-pressed="true">decoder</button>
+      <button type="button" class="btn" data-choice="prefix" aria-pressed="false">prefix LM</button>
+      <button type="button" class="btn" data-choice="encdec" aria-pressed="false">encoder-decoder</button>
+    </span>
+    <svg class="mp-svg" viewBox="0 0 320 290" role="img" aria-label="Attention mask over seven tokens">
+      <g data-g></g>
+    </svg>
+    <p class="mp-stat" data-stat></p>
+  </mask-patterns>
+</Figure>
+
+<style>
+  .mp-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .mp-svg {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+  .mp-svg :global(.mp-t) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    dominant-baseline: middle;
+  }
+  .mp-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const T = ['I', 'like', 'tea', '⟨s⟩', "j'aime", 'le', 'thé'];
+  const SRC = 3;
+  const n = T.length;
+  // 0 blocked, 1 self-attention, 2 cross-attention
+  const RULE: Record<string, (i: number, j: number) => number> = {
+    enc: () => 1,
+    dec: (i, j) => (j <= i ? 1 : 0),
+    prefix: (i, j) => (j < SRC + 1 || j <= i ? 1 : 0),
+    encdec: (i, j) => {
+      const si = i < SRC;
+      const sj = j < SRC;
+      if (si) return sj ? 1 : 0;
+      if (sj) return 2;
+      return j <= i ? 1 : 0;
+    },
+  };
+  const USE: Record<string, string> = {
+    enc: 'every token sees both sides: representations for classification and search (BERT)',
+    dec: 'each token sees only itself and the past: next-token prediction and generation (GPT)',
+    prefix: 'the input and ⟨s⟩ see each other fully, the output stays causal (T5 prefix-LM variant)',
+    encdec: 'encoder rows see only the input, decoder rows see the input through cross-attention and their own past (T5, Whisper)',
+  };
+  const X0 = 64;
+  const Y0 = 66;
+  const C = 30;
+
+  class MaskPatterns extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const rule = RULE[mode];
+      let html = '';
+      let open = 0;
+      T.forEach((t, j) => {
+        html += `<text class="mp-t" transform="translate(${X0 + j * C + C / 2} ${Y0 - 6}) rotate(-55)">${t}</text>`;
+        html += `<text x="${X0 - 6}" y="${Y0 + j * C + C / 2}" class="mp-t" style="text-anchor:end">${t}</text>`;
+      });
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const r = rule(i, j);
+          if (r) open++;
+          const fill = r === 1 ? 'rgba(66,133,244,0.55)' : r === 2 ? 'rgba(52,168,83,0.55)' : 'rgba(234,67,53,0.14)';
+          html += `<rect x="${X0 + j * C + 1.5}" y="${Y0 + i * C + 1.5}" width="${C - 3}" height="${C - 3}" rx="3" style="fill:${fill}"></rect>`;
+        }
+      }
+      if (mode === 'prefix' || mode === 'encdec') {
+        const k = mode === 'prefix' ? SRC + 1 : SRC;
+        html += `<rect x="${X0}" y="${Y0}" width="${k * C}" height="${k * C}" rx="4" style="fill:none;stroke:var(--g-yellow);stroke-width:2;stroke-dasharray:5 4"></rect>`;
+      }
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = `${open} of ${n * n} pairs open · ${USE[mode]}`;
+    }
+  }
+  customElements.define('mask-patterns', MaskPatterns);
+</script>

@@ -1,0 +1,175 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="One transformer block, step by step"
+  caption="The vertical line is the residual stream carrying n token vectors of width d upward. Each sublayer branches off, computes, and is added back at ⊕. Step through it: attention (blue) is the only place tokens exchange information; the feed-forward network (green) works on each token alone. Switch between pre-LN, where the norms sit inside the branches and the stream is never normalized, and the original post-LN, where a norm sits on the stream after each addition."
+>
+  <transformer-block>
+    <div class="tb-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+      <input type="hidden" data-mode value="pre" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="pre" aria-pressed="true">pre-LN</button>
+        <button type="button" class="btn" data-choice="post" aria-pressed="false">post-LN</button>
+      </span>
+    </div>
+    <svg class="tb-svg" viewBox="0 0 400 280" role="img" aria-label="Data flow through one transformer block">
+      <g data-g></g>
+    </svg>
+    <p class="tb-stat" data-stat aria-live="polite"></p>
+  </transformer-block>
+</Figure>
+
+<style>
+  .tb-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .tb-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .tb-svg :global(.tb-t) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  .tb-svg :global(.tb-l) {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+  }
+  .tb-svg :global(.tb-s) {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 3;
+    opacity: 0.6;
+  }
+  .tb-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  type Box = { id: string; x: number; y: number; w: number; label: string; kind: 'ln' | 'attn' | 'ffn' | 'add' };
+  const SX = 110; // residual stream x
+  const LAYOUT: Record<string, { boxes: Box[]; lines: string[]; order: string[]; msg: Record<string, string> }> = {
+    pre: {
+      boxes: [
+        { id: 'ln1', x: 175, y: 200, w: 50, label: 'LN', kind: 'ln' },
+        { id: 'attn', x: 275, y: 200, w: 110, label: 'multi-head attn', kind: 'attn' },
+        { id: 'add1', x: SX, y: 160, w: 0, label: '+', kind: 'add' },
+        { id: 'ln2', x: 175, y: 105, w: 50, label: 'LN', kind: 'ln' },
+        { id: 'ffn', x: 275, y: 105, w: 110, label: 'feed-forward', kind: 'ffn' },
+        { id: 'add2', x: SX, y: 65, w: 0, label: '+', kind: 'add' },
+      ],
+      lines: [
+        `M${SX},250L${SX},30`,
+        `M${SX},225L150,225L150,200`,
+        `M200,200L220,200`,
+        `M330,200L340,200L340,160L${SX + 9},160`,
+        `M${SX},130L150,130L150,105`,
+        `M200,105L220,105`,
+        `M330,105L340,105L340,65L${SX + 9},65`,
+      ],
+      order: ['ln1', 'attn', 'add1', 'ln2', 'ffn', 'add2'],
+      msg: {
+        ln1: 'LN normalizes a copy of each token vector; the stream itself is untouched',
+        attn: 'attention: every token reads from every token, n × d in, n × d out (an n × n table per head)',
+        add1: 'the attention output is added to the stream: x ← x + MHA(LN(x))',
+        ln2: 'a second LN normalizes a fresh copy for the feed-forward branch',
+        ffn: 'feed-forward: each token alone, widened to 4d, nonlinearity, back to d',
+        add2: 'added back: x ← x + FFN(LN(x)). Same shape out as in, so the next block can follow',
+      },
+    },
+    post: {
+      boxes: [
+        { id: 'attn', x: 250, y: 205, w: 110, label: 'multi-head attn', kind: 'attn' },
+        { id: 'add1', x: SX, y: 175, w: 0, label: '+', kind: 'add' },
+        { id: 'ln1', x: SX, y: 145, w: 50, label: 'LN', kind: 'ln' },
+        { id: 'ffn', x: 250, y: 105, w: 110, label: 'feed-forward', kind: 'ffn' },
+        { id: 'add2', x: SX, y: 75, w: 0, label: '+', kind: 'add' },
+        { id: 'ln2', x: SX, y: 45, w: 50, label: 'LN', kind: 'ln' },
+      ],
+      lines: [
+        `M${SX},250L${SX},20`,
+        `M${SX},230L195,230L195,205`,
+        `M305,205L320,205L320,175L${SX + 9},175`,
+        `M${SX},125L195,125L195,105`,
+        `M305,105L320,105L320,75L${SX + 9},75`,
+      ],
+      order: ['attn', 'add1', 'ln1', 'ffn', 'add2', 'ln2'],
+      msg: {
+        attn: 'attention reads the raw stream: n × d in, n × d out',
+        add1: 'added to the stream: x + MHA(x)',
+        ln1: 'LN on the stream itself: x ← LN(x + MHA(x)). Every gradient to earlier layers passes through it',
+        ffn: 'feed-forward on each token alone',
+        add2: 'added to the stream: x + FFN(x)',
+        ln2: 'LN on the stream again: x ← LN(x + FFN(x)). Deep post-LN stacks need learning-rate warmup',
+      },
+    },
+  };
+  const FILL: Record<string, string> = {
+    ln: 'rgba(154,160,166,0.16)',
+    attn: 'rgba(66,133,244,0.3)',
+    ffn: 'rgba(52,168,83,0.3)',
+    add: 'rgba(154,160,166,0.16)',
+  };
+
+  class TransformerBlock extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.reset());
+      this.reset();
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+    }
+    step() {
+      const L = LAYOUT[this.querySelector<HTMLInputElement>('[data-mode]')!.value];
+      if (this.i >= L.order.length) return;
+      this.i++;
+      this.draw();
+      if (this.i >= L.order.length) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const L = LAYOUT[this.querySelector<HTMLInputElement>('[data-mode]')!.value];
+      const cur = this.i ? L.order[this.i - 1] : '';
+      let html = `<path d="${L.lines[0]}" class="tb-s"></path>`;
+      L.lines.slice(1).forEach((d) => (html += `<path d="${d}" class="tb-l"></path>`));
+      html += `<text x="${SX}" y="266" class="tb-t">input x (n × d)</text><text x="${SX}" y="10" class="tb-t">output (n × d)</text>`;
+      html += `<text x="${SX - 14}" y="${L === LAYOUT.pre ? 110 : 100}" class="tb-t" style="text-anchor:end;fill:var(--text-faint);font-size:10px">residual</text>`;
+      html += `<text x="${SX - 14}" y="${L === LAYOUT.pre ? 124 : 114}" class="tb-t" style="text-anchor:end;fill:var(--text-faint);font-size:10px">stream</text>`;
+      for (const b of L.boxes) {
+        const done = L.order.indexOf(b.id) < this.i;
+        const stroke = b.id === cur ? 'var(--g-yellow)' : 'var(--border)';
+        const fill = done ? FILL[b.kind] : 'transparent';
+        if (b.kind === 'add') {
+          html += `<circle cx="${b.x}" cy="${b.y}" r="9" style="fill:var(--bg)"></circle><circle cx="${b.x}" cy="${b.y}" r="9" style="fill:${fill};stroke:${stroke};stroke-width:2"></circle><text x="${b.x}" y="${b.y + 1}" class="tb-t">+</text>`;
+        } else {
+          html += `<rect x="${b.x - b.w / 2}" y="${b.y - 13}" width="${b.w}" height="26" rx="5" style="fill:var(--bg)"></rect><rect x="${b.x - b.w / 2}" y="${b.y - 13}" width="${b.w}" height="26" rx="5" style="fill:${fill};stroke:${stroke};stroke-width:2"></rect><text x="${b.x}" y="${b.y + 1}" class="tb-t">${b.label}</text>`;
+        }
+      }
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = cur ? L.msg[cur] : 'Press Step to send the tokens through the block.';
+    }
+  }
+  customElements.define('transformer-block', TransformerBlock);
+</script>

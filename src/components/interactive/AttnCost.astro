@@ -1,0 +1,120 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="The score table outgrows the tokens"
+  caption="Memory in 16-bit floats, both axes on a log scale. The token vectors (blue, width d = 4096) grow linearly with sequence length n; one head's n × n score table (red) grows as n², so its line is twice as steep. They cross at n = d = 4096. Drag the sequence length to read off both."
+>
+  <attn-cost>
+    <label class="ac-lbl">sequence length n <input type="range" min="8" max="18" step="1" value="17" data-e /> <b data-ev>131,072</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">memory, MiB (log scale)</span>
+      <svg class="ac-svg" viewBox="0 0 400 200" data-grid='{"box":[40,10,390,180],"x":[100,1000000,"log"],"y":[0.01,1000000,"log"]}' role="img" aria-label="Memory of the attention score table and of the token vectors against sequence length">
+        <path data-s class="ac-s"></path>
+        <path data-t class="ac-t"></path>
+        <line data-m y1="10" y2="180" class="ac-m"></line>
+        <circle data-ps r="4" class="ac-ps"></circle>
+        <circle data-pt r="4" class="ac-pt"></circle>
+        <text x="40" y="194" class="ax-tick">100</text>
+        <text x="390" y="194" class="ax-tick ac-end">10⁶</text>
+        <text x="36" y="14" class="ax-tick ac-end">10⁶</text>
+        <text x="36" y="183" class="ax-tick ac-end">0.01</text>
+      </svg>
+      <span class="ax-x">sequence length n (log scale)</span>
+    </div>
+    <p class="ac-stat" data-stat></p>
+  </attn-cost>
+</Figure>
+
+<style>
+  .ac-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ac-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ac-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ac-s,
+  .ac-t {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .ac-s {
+    stroke: var(--g-red);
+  }
+  .ac-t {
+    stroke: var(--g-blue);
+  }
+  .ac-m {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .ac-ps {
+    fill: var(--g-red);
+  }
+  .ac-pt {
+    fill: var(--g-blue);
+  }
+  .ac-end {
+    text-anchor: end;
+  }
+  .ac-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const D = 4096;
+  const score = (n: number) => (n * n * 2) / 2 ** 20;
+  const tok = (n: number) => (n * D * 2) / 2 ** 20;
+  const px = (n: number) => 40 + ((Math.log10(n) - 2) / 4) * 350;
+  const py = (v: number) => 180 - ((Math.log10(v) + 2) / 8) * 170;
+  const fmt = (v: number) => (v < 1 ? v.toFixed(2) : Math.round(v).toLocaleString('en-US'));
+
+  class AttnCost extends HTMLElement {
+    connectedCallback() {
+      const line = (f: (n: number) => number) => {
+        let d = '';
+        for (let e = 2; e <= 6.001; e += 0.05) {
+          const n = 10 ** e;
+          const v = Math.min(Math.max(f(n), 0.01), 1e6);
+          d += `${d ? 'L' : 'M'}${px(n).toFixed(1)},${py(v).toFixed(1)}`;
+        }
+        return d;
+      };
+      this.querySelector('[data-s]')!.setAttribute('d', line(score));
+      this.querySelector('[data-t]')!.setAttribute('d', line(tok));
+      this.querySelector('[data-e]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const n = 2 ** +this.querySelector<HTMLInputElement>('[data-e]')!.value;
+      this.querySelector('[data-ev]')!.textContent = n.toLocaleString('en-US');
+      const m = this.querySelector('[data-m]')!;
+      m.setAttribute('x1', px(n).toFixed(1));
+      m.setAttribute('x2', px(n).toFixed(1));
+      for (const [sel, v] of [['[data-ps]', score(n)], ['[data-pt]', tok(n)]] as const) {
+        const c = this.querySelector(sel)!;
+        c.setAttribute('cx', px(n).toFixed(1));
+        c.setAttribute('cy', py(v).toFixed(1));
+      }
+      const r = score(n) / tok(n);
+      this.querySelector('[data-stat]')!.textContent =
+        `n = ${n.toLocaleString('en-US')} · scores ${fmt(score(n))} MiB · tokens ${fmt(tok(n))} MiB · ratio ${r >= 1 ? r.toFixed(0) + '×' : '1/' + (1 / r).toFixed(0)}`;
+    }
+  }
+  customElements.define('attn-cost', AttnCost);
+</script>

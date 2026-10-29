@@ -1,0 +1,115 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Attention weights learn an alignment"
+  caption="Translating an English phrase into French with attention. Pick a French word the decoder is writing: the lines show its attention weights over the English encoder states (thicker and brighter = more weight). The weights are illustrative, shaped like the alignment plots in Bahdanau et al. (2014). Note the crossing lines: French puts “économique européenne” after “zone”, the reverse of the English order, and attention follows the reordering without being told."
+>
+  <attn-align>
+    <input type="hidden" data-t value="4" />
+    <span class="choice aa-ctl">
+      <button type="button" class="btn" data-choice="0" aria-pressed="false">L'</button>
+      <button type="button" class="btn" data-choice="1" aria-pressed="false">accord</button>
+      <button type="button" class="btn" data-choice="2" aria-pressed="false">sur</button>
+      <button type="button" class="btn" data-choice="3" aria-pressed="false">la</button>
+      <button type="button" class="btn" data-choice="4" aria-pressed="true">zone</button>
+      <button type="button" class="btn" data-choice="5" aria-pressed="false">économique</button>
+      <button type="button" class="btn" data-choice="6" aria-pressed="false">européenne</button>
+    </span>
+    <svg class="aa-svg" viewBox="0 0 400 176" role="img" aria-label="Attention weights from one French output word to the English source words">
+      <text x="110" y="12" class="aa-h aa-end">encoder (English)</text>
+      <text x="290" y="12" class="aa-h">decoder (French)</text>
+      <g data-g></g>
+    </svg>
+    <p class="aa-stat" data-stat></p>
+  </attn-align>
+</Figure>
+
+<style>
+  .aa-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .aa-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .aa-h {
+    fill: var(--text-faint);
+    font: 10px var(--font-mono);
+  }
+  .aa-end,
+  .aa-svg :global(.aa-end) {
+    text-anchor: end;
+  }
+  .aa-svg :global(.aa-w) {
+    fill: var(--text);
+    font: 11px var(--font-mono);
+    dominant-baseline: middle;
+  }
+  .aa-svg :global(.aa-on) {
+    fill: var(--g-yellow);
+  }
+  .aa-svg :global(.aa-dim) {
+    fill: var(--text-faint);
+  }
+  .aa-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const SRC = ['The', 'agreement', 'on', 'the', 'European', 'Economic', 'Area'];
+  const TGT = ["L'", 'accord', 'sur', 'la', 'zone', 'économique', 'européenne'];
+  // rows: target word, columns: source word; each row sums to 1
+  const A = [
+    [0.86, 0.08, 0.02, 0.02, 0.0, 0.0, 0.02],
+    [0.06, 0.88, 0.03, 0.01, 0.0, 0.0, 0.02],
+    [0.0, 0.05, 0.9, 0.04, 0.0, 0.0, 0.01],
+    [0.03, 0.0, 0.06, 0.81, 0.02, 0.02, 0.06],
+    [0.0, 0.0, 0.0, 0.08, 0.04, 0.1, 0.78],
+    [0.0, 0.0, 0.0, 0.01, 0.12, 0.8, 0.07],
+    [0.0, 0.0, 0.0, 0.02, 0.85, 0.09, 0.04],
+  ];
+  const Y = (i: number) => 36 + i * 21;
+
+  class AttnAlign extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      const w = A[t];
+      let html = '';
+      w.forEach((a, i) => {
+        if (a < 0.005) return;
+        const col = a >= 0.5 ? '#fbbc05' : '#4285f4';
+        html += `<line x1="116" y1="${Y(i)}" x2="284" y2="${Y(t)}" style="stroke:${col};stroke-width:${(0.6 + a * 7).toFixed(1)};opacity:${(0.25 + a * 0.75).toFixed(2)}"></line>`;
+      });
+      SRC.forEach((s, i) => {
+        html += `<text x="110" y="${Y(i)}" class="aa-w aa-end ${w[i] >= 0.5 ? 'aa-on' : w[i] < 0.05 ? 'aa-dim' : ''}">${s}</text>`;
+      });
+      TGT.forEach((s, i) => {
+        html += `<text x="290" y="${Y(i)}" class="aa-w ${i === t ? 'aa-on' : i > t ? 'aa-dim' : ''}">${s}</text>`;
+      });
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const top = w
+        .map((a, i) => [a, i])
+        .sort((p, q) => q[0] - p[0])
+        .slice(0, 3)
+        .map(([a, i]) => `${SRC[i]} ${a.toFixed(2)}`)
+        .join(' · ');
+      this.querySelector('[data-stat]')!.textContent = `writing “${TGT[t]}”: ${top}`;
+    }
+  }
+  customElements.define('attn-align', AttnAlign);
+</script>
