@@ -86,6 +86,8 @@ _(Architecture only — pretraining objectives, scaling laws, and what you actua
 
 **Interactive:** attention weight visualizer (a sentence, click a word, see which other words it attends to, weights shown as connecting lines of varying thickness — genuinely one of the best possible demos for this concept), multi-head attention comparison (the same sentence, different heads attending to different relationships — syntax vs. coreference, for instance), transformer vs. RNN parallelism demo (visualize the sequential dependency chain in an RNN vs. the fully parallel computation in a transformer).
 
+_Status 2026-10-30: all 7 notes written (numpy only), incl. transformer-variants and advanced positional-encoding-variants and efficient-attention. Figures: AttnAlign, ScaledSoftmax, SelfAttnMatrix, AttnCost, MultiHeadView, TransformerBlock, MaskPatterns, SeqVsParallel, IntensityRoofline, SinusoidPE, RopeRotate, FlashTiles, SparsePatterns. No code block duplicates a figure._
+
 ---
 
 ## 6. Regularization & Generalization
