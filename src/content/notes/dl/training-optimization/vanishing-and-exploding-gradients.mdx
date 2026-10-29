@@ -3,6 +3,161 @@ title: "Unstable Gradients"
 description: "Why depth itself makes training hard, the central motivating problem for most of this section."
 order: 2
 tier: core
+takeaways:
+  - "The gradient at layer $\\ell$ is a product of one weight matrix and one activation slope for every layer above it. A product of many factors shrinks or grows exponentially: **vanishing** or **exploding gradients**."
+  - "In a 20-layer sigmoid network the gradient falls from 21 at the top to $2 \\times 10^{-11}$ at the first layer, so the early layers do not learn. tanh and ReLU with matched initialization stay within a factor of 5."
+  - "Repeating the same matrix is the extreme case (recurrent networks): over 50 steps, singular values of 0.9 shrink the gradient to $5 \\times 10^{-3}$ and 1.1 grows it to 117 times."
+  - "The fixes each target a factor in the product: ReLU-like activations (slope 1), variance-preserving initialization, normalization layers, **residual connections** (an identity path) and gradient clipping for explosions."
+  - "With residual branches scaled by $1/\\sqrt{\\text{depth}}$, 50 tanh layers pass 1.25 times the top gradient to the first layer, against 0.098 without."
+resources:
+  - title: "On the difficulty of training Recurrent Neural Networks (Pascanu, Mikolov, Bengio)"
+    url: "https://arxiv.org/abs/1211.5063"
+    note: "The analysis of vanishing and exploding gradients through singular values, and the case for gradient clipping."
+  - title: "Deep Residual Learning for Image Recognition (He et al.)"
+    url: "https://arxiv.org/abs/1512.03385"
+    note: "Residual connections: the degradation problem of plain deep networks and the identity shortcut that fixed it."
+  - title: "Numerical Stability and Initialization (Dive into Deep Learning)"
+    url: "https://d2l.ai/chapter_multilayer-perceptrons/numerical-stability-and-init.html"
+    note: "Short treatment of vanishing and exploding gradients with runnable framework code."
 ---
 
-_Placeholder. Content not written yet._
+Adding layers should only make a network more capable, yet for decades networks deeper than a few layers trained worse than shallow ones. The reason is in the shape of the backward pass from [Backpropagation Derived](../../nn-foundations/backpropagation-fully-derived/): the gradient reaching a layer is a long product, one factor per layer above it, and long products are unstable. This note measures the effect in real networks, explains it with singular values, and lists the fixes, most of which have their own note in this section. It builds on [Weight Initialization](../../nn-foundations/weight-initialization/), which controlled the same product for the forward signal.
+
+## The product of layers
+
+For a network $h_\ell = \sigma(z_\ell)$, $z_\ell = h_{\ell - 1} W_\ell$, the backward recursion sends the gradient down one layer at a time:
+
+$$
+\bar h_{\ell - 1} = \left( \bar h_\ell \odot \sigma'(z_\ell) \right) W_\ell^\top \quad \Longrightarrow \quad \lVert \bar h_{0} \rVert \approx \lVert \bar h_{L} \rVert \prod_{\ell = 1}^{L} c_\ell.
+
+$$
+
+In words: each layer multiplies the gradient by its activation slopes and its transposed weights, and $c_\ell$ is how much that layer stretches or shrinks the gradient's length on average. If the typical $c_\ell$ is 0.8, then after 30 layers the first layer gets $0.8^{30} \approx 10^{-3}$ of the top gradient; if it is 1.2, it gets 237 times as much. Only factors very close to 1 survive depth. The gradient of the *loss with respect to the weights* of layer $\ell$ is $h_{\ell - 1}^\top \bar z_\ell$, so when $\bar h$ vanishes the early weights stop changing.
+
+The code backpropagates a random top gradient through 20 layers of width 128 and reports its size at three depths, with each activation's standard initialization.
+
+```python
+import numpy as np
+
+def grad_norms(act, dact, std, depth=20, width=128, residual=False, seed=0):
+    rng = np.random.default_rng(seed)
+    Ws = [rng.normal(size=(width, width)) * std for _ in range(depth)]
+    h = rng.normal(size=(64, width))
+    zs = []
+    for W in Ws:                      # forward, keeping pre-activations
+        z = h @ W
+        zs.append(z)
+        h = h + act(z) if residual else act(z)
+    g = rng.normal(size=h.shape)      # a gradient arriving from the loss
+    norms = []
+    for W, z in zip(reversed(Ws), reversed(zs)):
+        branch = (g * dact(z)) @ W.T
+        g = g + branch if residual else branch
+        norms.append(np.linalg.norm(g))
+    return norms[::-1]                # norms[0] is the first layer
+
+sig = lambda z: 1 / (1 + np.exp(-z))
+acts = {
+    "sigmoid": (sig, lambda z: sig(z) * (1 - sig(z)), np.sqrt(1 / 128)),
+    "tanh": (np.tanh, lambda z: 1 - np.tanh(z) ** 2, np.sqrt(1 / 128)),
+    "relu": (lambda z: np.maximum(z, 0), lambda z: (z > 0) * 1.0, np.sqrt(2 / 128)),
+}
+for name, (f, df, std) in acts.items():
+    n = grad_norms(f, df, std)
+    print(f"{name:7s} gradient norm  layer 20: {n[19]:9.2e}  layer 10: {n[9]:9.2e}  layer 1: {n[0]:9.2e}")
+# sigmoid gradient norm  layer 20:  2.11e+01  layer 10:  1.09e-05  layer 1:  2.26e-11
+# tanh    gradient norm  layer 20:  8.74e+01  layer 10:  5.96e+01  layer 1:  1.82e+01
+# relu    gradient norm  layer 20:  9.17e+01  layer 10:  1.26e+02  layer 1:  1.37e+02
+```
+
+In words: with sigmoid the gradient is 21 at the top layer, $10^{-5}$ ten layers down and $2 \times 10^{-11}$ at the first layer, a loss of about a factor of 4 per layer, because sigmoid's slope is at most 0.25. Those early layers effectively do not train. tanh, whose slope is up to 1, loses only a factor of 5 over all 20 layers, and ReLU with He initialization even grows slightly, from 92 to 137. Choice of activation and initialization alone decides between a trainable and an untrainable 20-layer network.
+
+<GradientFlow />
+
+## Singular values
+
+The cleanest case is the same matrix applied again and again, which is what a **recurrent network** does: backpropagating through $T$ time steps multiplies by $W^\top$ (and a slope) $T$ times. How much a matrix can stretch a vector is given by its singular values (see [SVD](../../../math/linear-algebra/singular-value-decomposition-svd/)): after $T$ multiplications a component along a singular direction is scaled by roughly $s^{T}$.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+Q, _ = np.linalg.qr(rng.normal(size=(32, 32)))  # orthogonal: every singular value is 1
+g = rng.normal(size=32)
+for scale in [0.9, 1.0, 1.1]:
+    W = scale * Q
+    v = g.copy()
+    for _ in range(50):              # backprop through 50 steps with the same matrix
+        v = W.T @ v
+    print(f"scale {scale}: gradient norm after 50 steps = {np.linalg.norm(v) / np.linalg.norm(g):.3e} x")
+# scale 0.9: gradient norm after 50 steps = 5.154e-03 x
+# scale 1.0: gradient norm after 50 steps = 1.000e+00 x
+# scale 1.1: gradient norm after 50 steps = 1.174e+02 x
+```
+
+In words: an orthogonal matrix has every singular value exactly 1, so it rotates without stretching and the gradient keeps its size after 50 steps. Scaling it by 0.9 shrinks the gradient to $0.9^{50} = 5.2 \times 10^{-3}$ of its size; scaling by 1.1 grows it to $1.1^{50} = 117$ times. A 10 % error in scale becomes a factor of 100 over 50 steps. That is why plain RNNs cannot learn dependencies more than a few dozen steps long, and why LSTMs replaced the repeated multiplication with an additive memory.
+
+**Exploding** gradients show up as sudden loss spikes, `inf` or `nan` losses, and weights jumping to huge values after one bad batch. **Vanishing** gradients are quieter: the loss decreases slowly or stalls, and the first layers' weights barely change from their initial values. Logging the gradient norm per layer distinguishes the two.
+
+<Callout type="pitfall">
+A loss that stops improving early is not proof of vanishing gradients; a too-small learning rate or a bug look the same. Check directly: print the gradient norm of each layer's weights for a few steps. Vanishing shows as norms falling by orders of magnitude from the last layer to the first; a learning-rate problem shows as healthy norms with tiny updates.
+</Callout>
+
+## Residual connections
+
+A **residual connection** computes $h_\ell = h_{\ell - 1} + F(h_{\ell - 1})$: the layer adds a correction to its input instead of replacing it. Its backward step is
+
+$$
+\bar h_{\ell - 1} = \bar h_\ell + \bar h_\ell \frac{\partial F}{\partial h_{\ell - 1}}.
+
+$$
+
+In words: the gradient passes down the identity path unchanged and the branch adds to it. The product of factors becomes a product of $(1 + \text{something})$, which does not collapse to zero, so every layer receives a gradient of the same order as the top. To keep the sum of many branches from growing, the branches are scaled down, by initialization or by a factor such as $1/\sqrt{\text{depth}}$.
+
+```python
+import numpy as np
+
+def first_layer_grad(residual, depth=50, width=64, seed=0):
+    rng = np.random.default_rng(seed)
+    std = np.sqrt(1 / width)
+    alpha = 1 / np.sqrt(depth)       # scale each branch so the sum stays bounded
+    Ws = [rng.normal(size=(width, width)) * std for _ in range(depth)]
+    h = rng.normal(size=(32, width))
+    zs = []
+    for W in Ws:
+        z = h @ W
+        zs.append(z)
+        h = h + alpha * np.tanh(z) if residual else np.tanh(z)
+    g = rng.normal(size=h.shape)
+    g0 = np.linalg.norm(g)
+    for W, z in zip(reversed(Ws), reversed(zs)):
+        branch = (g * (1 - np.tanh(z) ** 2)) @ W.T
+        g = g + alpha * branch if residual else branch   # skip path adds the identity
+    return np.linalg.norm(g) / g0
+
+print(f"50 tanh layers, plain:    first-layer gradient {first_layer_grad(False):.2e} x the top")
+print(f"50 tanh layers, residual: first-layer gradient {first_layer_grad(True):.2e} x the top")
+# 50 tanh layers, plain:    first-layer gradient 9.78e-02 x the top
+# 50 tanh layers, residual: first-layer gradient 1.25e+00 x the top
+```
+
+In words: through 50 plain tanh layers the first layer receives 0.098 of the top gradient; with residual connections it receives 1.25 times, the same order as the top. ResNets made 152-layer image networks trainable this way in 2015, and every transformer block wraps both its attention and its feed-forward layer in a residual connection.
+
+## The toolbox
+
+Each fix targets one factor of the product:
+
+| Fix | What it controls | Note |
+|---|---|---|
+| ReLU, GELU, SiLU instead of sigmoid | activation slope near 1 | [Modern Activations](../../nn-foundations/modern-activations/) |
+| Xavier, He, orthogonal initialization | weight scale near 1 at the start | [Weight Initialization](../../nn-foundations/weight-initialization/) |
+| Batch norm, layer norm | rescales activations at every layer during training | [Batch Normalization](../batch-normalization/), [Normalization Layers](../normalization-layers/) |
+| Residual connections | adds an identity path around each block | this note |
+| Gradient clipping | caps the size of exploding gradients | [Gradient Clipping](../gradient-clipping/) |
+| Gated recurrence (LSTM, GRU) | replaces repeated multiplication by additive memory | [LSTMs](../../recurrent-networks/lstms/) |
+
+Modern architectures combine several: a transformer uses GELU or SwiGLU, scaled initialization, layer norm in every block, residual connections around every sublayer and gradient clipping during training.
+
+<Callout type="key">
+Depth multiplies: the gradient at the first layer is a product of one factor per layer, so anything slightly below 1 vanishes and anything slightly above 1 explodes. Keep each factor near 1 with activation, initialization and normalization, and give the gradient an identity path with residual connections.
+</Callout>

@@ -3,6 +3,127 @@ title: "Gradient Clipping"
 description: "Capping gradient size to stop single bad batches from wrecking training."
 order: 3
 tier: core
+takeaways:
+  - "**Gradient clipping** caps the size of the update when a gradient is abnormally large. It is the standard defence against exploding gradients and against single batches with corrupted or extreme examples."
+  - "**Clip by global norm** rescales all gradients together so their combined norm is at most $c$: $g \\leftarrow g \\cdot \\min(1, c / \\lVert g \\rVert)$. The direction is unchanged; only the step length is capped."
+  - "**Clip by value** clamps each coordinate to $[-c, c]$, which changes the direction (cosine 0.9887 in the example) and is rarely the better choice."
+  - "One corrupted label in one batch of a linear regression gives a gradient norm of 2421 and sends the clean loss from 11 to 14,260; clipping at 10 keeps it at 9.5 and the model ends 15 times better after 60 steps."
+  - "LLM training clips at a global norm of 1.0 almost universally. Log the pre-clip norm: frequent clipping means the learning rate or the data needs attention."
+resources:
+  - title: "clip_grad_norm_ (PyTorch docs)"
+    url: "https://docs.pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html"
+    note: "The global-norm clipping function, its arguments and the total norm it returns for logging."
+  - title: "On the difficulty of training Recurrent Neural Networks (Pascanu, Mikolov, Bengio)"
+    url: "https://arxiv.org/abs/1211.5063"
+    note: "Where norm clipping was proposed: the cliffs in an RNN's loss surface and why rescaling the gradient steps over them safely."
+  - title: "Why Gradient Clipping Accelerates Training (Zhang et al.)"
+    url: "https://arxiv.org/abs/1905.11881"
+    note: "A theoretical account: clipping adapts the step to the local smoothness, which is why it helps beyond preventing explosions."
 ---
 
-_Placeholder. Content not written yet._
+[Unstable Gradients](../vanishing-and-exploding-gradients/) showed that a gradient can grow by orders of magnitude through depth or time. Even in a stable network, one batch with a mislabelled example or an extreme input can produce a gradient hundreds of times larger than usual, and a single update of that size can throw away hours of training. **Gradient clipping** is the cheap insurance: before the optimizer step, if the gradient is too large, shrink it. This note implements the two kinds of clipping, shows why norm clipping is preferred, demonstrates one bad batch with and without it, and covers how to set and monitor the threshold. Run the code with `uv run --with numpy`.
+
+## Clip by norm or value
+
+Treat the gradients of all parameter tensors as one long vector $g$. **Clipping by global norm** with threshold $c$ rescales it when its length exceeds $c$:
+
+$$
+g \leftarrow g \cdot \min\left(1, \frac{c}{\lVert g \rVert}\right), \qquad \lVert g \rVert = \sqrt{\sum_{\text{tensors}} \sum_{\text{entries}} g_i^{2}}.
+
+$$
+
+In words: if the gradient is longer than $c$, scale every entry of every tensor by the same factor so the total length becomes exactly $c$; otherwise leave it alone. The update still points the same way, it is just shorter. **Clipping by value** instead clamps each entry separately to $[-c, c]$.
+
+```python
+import numpy as np
+
+def clip_by_global_norm(grads, max_norm):
+    total = np.sqrt(sum(np.sum(g * g) for g in grads))
+    scale = min(1.0, max_norm / (total + 1e-6))
+    return [g * scale for g in grads], total
+
+def clip_by_value(grads, limit):
+    return [np.clip(g, -limit, limit) for g in grads]
+
+grads = [np.array([3.0, 0.1]), np.array([[4.0]])]   # two parameter tensors
+flat = lambda gs: np.concatenate([g.ravel() for g in gs])
+cos = lambda a, b: a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
+
+clipped, total = clip_by_global_norm(grads, max_norm=1.0)
+print("global norm before:", round(total, 4), " after:", round(np.linalg.norm(flat(clipped)), 4))
+print("direction kept (cosine):", round(cos(flat(grads), flat(clipped)), 4))
+by_value = clip_by_value(grads, 1.0)
+print("clip by value:", flat(by_value), " cosine:", round(cos(flat(grads), flat(by_value)), 4))
+# global norm before: 5.001  after: 1.0
+# direction kept (cosine): 1.0
+# clip by value: [1.  0.1 1. ]  cosine: 0.9887
+```
+
+In words: the gradient $(3, 0.1, 4)$ spread over two tensors has global norm 5.001. Norm clipping to 1.0 shrinks it to length exactly 1.0 with cosine 1.0 to the original, the same direction. Value clipping to 1.0 gives $(1, 0.1, 1)$: the first and last entries, which differed by a third, are now equal, and the direction has turned (cosine 0.9887). Norm clipping is what `torch.nn.utils.clip_grad_norm_` does and what almost every training recipe uses.
+
+<ClipVector />
+
+<Callout type="pitfall">
+Clip after the gradients are complete and before the optimizer step: `loss.backward()`, then `clip_grad_norm_(model.parameters(), 1.0)`, then `optimizer.step()`. With mixed precision and a gradient scaler, call `scaler.unscale_(optimizer)` before clipping, or the threshold is compared against gradients multiplied by the loss scale (often $2^{16}$) and every step gets clipped.
+</Callout>
+
+## One bad batch
+
+A linear regression trained with mini-batch SGD, batches of 10, where one label in the batch of step 1 is corrupted to 5000 instead of a value near 0. The code reports the gradient norm and the loss on the clean data.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(1000, 5))
+w_true = np.array([1.0, -2.0, 0.5, 0.0, 3.0])
+y = X @ w_true + rng.normal(scale=0.1, size=1000)
+y_bad = y.copy()
+y_bad[17] = 5000.0                   # one corrupted label, in the batch of step 1
+
+def train(max_norm=None, lr=0.05, steps=60, batch=10):
+    w = np.zeros(5)
+    for step in range(steps):
+        idx = np.arange(step * batch, (step + 1) * batch)
+        g = 2 * X[idx].T @ (X[idx] @ w - y_bad[idx]) / batch
+        norm = np.linalg.norm(g)
+        if max_norm is not None and norm > max_norm:
+            g *= max_norm / norm
+        w -= lr * g
+        if step in (0, 1, 2, 10, 30, 59):
+            clean = np.mean((X @ w - y) ** 2)   # loss on the uncorrupted data
+            print(f"  step {step:2d}  grad norm {norm:7.1f}  clean loss {clean:9.3f}")
+
+print("no clipping:")
+train()
+print("clip at norm 10:")
+train(max_norm=10.0)
+# no clipping:
+#   step  0  grad norm     7.1  clean loss    11.134
+#   step  1  grad norm  2420.9  clean loss 14260.180
+#   step  2  grad norm   378.1  clean loss 10610.803
+#   step 10  grad norm   110.3  clean loss  1940.892
+#   step 30  grad norm    14.9  clean loss    23.842
+#   step 59  grad norm     1.1  clean loss     0.148
+# clip at norm 10:
+#   step  0  grad norm     7.1  clean loss    11.134
+#   step  1  grad norm  2420.9  clean loss     9.549
+#   step  2  grad norm     3.8  clean loss     8.776
+#   step 10  grad norm     2.5  clean loss     1.741
+#   step 30  grad norm     0.5  clean loss     0.075
+#   step 59  grad norm     0.2  clean loss     0.010
+```
+
+In words: normal gradients have a norm around 7; the corrupted batch gives 2421. Without clipping that one step multiplies the clean loss by more than a thousand, from 11 to 14,260, and the next 58 steps are spent recovering, ending at 0.148. With clipping at 10 the bad step is just an ordinary-sized step in a slightly wrong direction: the clean loss keeps falling (9.549 at step 1) and ends at 0.010, about 15 times lower. In a deep network the damage without clipping is often permanent, because the huge update can push activations into saturation or kill ReLU units.
+
+## Choosing the threshold
+
+- **Look at the norms first.** Log the global gradient norm for a few hundred steps without clipping (the function returns it). A threshold a little above the typical norm only touches outliers.
+- **Common defaults.** Transformers and LLMs use a global norm of 1.0 almost universally (GPT-3, LLaMA and most open recipes). RNNs and LSTMs commonly use values from 1 to 5.
+- **Clip rate as a signal.** If most steps are clipped, clipping has become an implicit learning-rate cut, and the learning rate or the warmup should change instead. A sudden rise in the pre-clip norm often comes before a loss spike and points to bad data or an instability.
+
+Clipping by norm also has a theoretical justification beyond safety: where the loss surface is steep the gradient is large, and capping the step there acts like an adaptive learning rate that slows down in sharp regions and does not limit progress in flat ones.
+
+<Callout type="key">
+Clip by global norm, after backward and before the optimizer step, at a threshold just above the typical gradient norm (1.0 for transformers). It costs one norm computation per step, keeps the update's direction, and turns a catastrophic batch into an ordinary one.
+</Callout>

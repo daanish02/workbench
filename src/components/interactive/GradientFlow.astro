@@ -1,0 +1,176 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="How much gradient reaches each layer"
+  caption="Each bar is the size of the gradient at one layer, relative to the gradient arriving from the loss at the top (log scale). Green bars are within a factor of 10 of it, red bars outside. Sigmoid loses a factor of about 4 per layer, tanh and ReLU with matched initialization hold up, and residual connections (branches scaled by 1/√depth) keep even deep sigmoid stacks trainable."
+>
+  <gradient-flow>
+    <div class="gf-ctl">
+      <input type="hidden" data-act value="sigmoid" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="sigmoid" aria-pressed="true">sigmoid</button>
+        <button type="button" class="btn" data-choice="tanh" aria-pressed="false">tanh</button>
+        <button type="button" class="btn" data-choice="relu" aria-pressed="false">ReLU</button>
+      </span>
+      <input type="checkbox" hidden data-res />
+      <button type="button" class="btn" data-toggle aria-pressed="false">Residual</button>
+    </div>
+    <label class="gf-lbl">depth <input type="range" min="5" max="50" step="1" value="20" data-depth /> <b data-dv>20</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">gradient size (log scale)</span>
+      <svg class="gf-svg" viewBox="0 0 400 220" data-grid='{"box":[40,10,390,200],"y":[1e-12,100,"log"]}' role="img" aria-label="Bar chart of gradient size per layer relative to the top layer">
+        <line x1="40" y1="47" x2="390" y2="47" class="gf-ref"></line>
+        <g data-bars></g>
+        <text x="34" y="16" class="ax-tick gf-end">10²</text>
+        <text x="34" y="51" class="ax-tick gf-end">1</text>
+        <text x="34" y="203" class="ax-tick gf-end">10⁻¹²</text>
+      </svg>
+      <span class="ax-x">layer (input on the left, loss on the right)</span>
+    </div>
+    <p class="gf-stat" data-stat></p>
+  </gradient-flow>
+</Figure>
+
+<style>
+  .gf-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .gf-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .gf-lbl input[type='range'] {
+    flex: 1;
+  }
+  .gf-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .gf-ref {
+    stroke: var(--g-yellow);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+  }
+  .gf-svg :global(.gf-ok) {
+    fill: var(--g-green);
+  }
+  .gf-svg :global(.gf-bad) {
+    fill: var(--g-red);
+  }
+  .gf-end {
+    text-anchor: end;
+  }
+  .gf-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const WIDTH = 64;
+  const BATCH = 32;
+  const LO = -12;
+  const HI = 2;
+
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    const u = () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return () => Math.sqrt(-2 * Math.log(u() + 1e-12)) * Math.cos(2 * Math.PI * u());
+  }
+  const norm = (a: Float64Array) => Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+
+  // out = a (BATCH × WIDTH) times W, or times Wᵀ when t is set
+  function matmul(a: Float64Array, W: Float64Array, t: boolean): Float64Array {
+    const n = WIDTH;
+    const out = new Float64Array(BATCH * n);
+    for (let i = 0; i < BATCH; i++)
+      for (let k = 0; k < n; k++) {
+        const v = a[i * n + k];
+        if (v === 0) continue;
+        for (let j = 0; j < n; j++) out[i * n + j] += v * (t ? W[j * n + k] : W[k * n + j]);
+      }
+    return out;
+  }
+
+  const sig = (z: number) => 1 / (1 + Math.exp(-z));
+  const ACTS: Record<string, [(z: number) => number, (z: number) => number, number]> = {
+    sigmoid: [sig, (z) => sig(z) * (1 - sig(z)), Math.sqrt(1 / WIDTH)],
+    tanh: [Math.tanh, (z) => 1 - Math.tanh(z) ** 2, Math.sqrt(1 / WIDTH)],
+    relu: [(z) => Math.max(z, 0), (z) => (z > 0 ? 1 : 0), Math.sqrt(2 / WIDTH)],
+  };
+
+  const py = (r: number) => {
+    const l = Math.min(HI, Math.max(LO, Math.log10(Math.max(r, 1e-300))));
+    return 200 - ((l - LO) / (HI - LO)) * 190;
+  };
+
+  class GradientFlow extends HTMLElement {
+    connectedCallback() {
+      ['[data-act]', '[data-res]', '[data-depth]'].forEach((s) =>
+        this.querySelector(s)!.addEventListener('input', () => this.draw()),
+      );
+      this.draw();
+    }
+    draw() {
+      const name = this.querySelector<HTMLInputElement>('[data-act]')!.value;
+      const res = this.querySelector<HTMLInputElement>('[data-res]')!.checked;
+      const depth = +this.querySelector<HTMLInputElement>('[data-depth]')!.value;
+      this.querySelector('[data-dv]')!.textContent = `${depth}`;
+      const [f, df, sd] = ACTS[name];
+      const alpha = res ? 1 / Math.sqrt(depth) : 1;
+      const g = rng(3);
+      const Ws = Array.from({ length: depth }, () => Float64Array.from({ length: WIDTH * WIDTH }, () => g() * sd));
+
+      let h = Float64Array.from({ length: BATCH * WIDTH }, () => g());
+      const pre: Float64Array[] = [];
+      for (const W of Ws) {
+        const z = matmul(h, W, false);
+        pre.push(z);
+        h = res ? h.map((v, i) => v + alpha * f(z[i])) : z.map(f);
+      }
+      let grad = Float64Array.from({ length: BATCH * WIDTH }, () => g());
+      const top = norm(grad);
+      const ratio = new Array<number>(depth);
+      for (let l = depth - 1; l >= 0; l--) {
+        const z = pre[l];
+        const branch = matmul(grad.map((v, i) => v * df(z[i])), Ws[l], true);
+        grad = res ? grad.map((v, i) => v + alpha * branch[i]) : branch;
+        ratio[l] = norm(grad) / top;
+      }
+
+      const bw = 350 / depth;
+      this.querySelector('[data-bars]')!.innerHTML = ratio
+        .map((r, l) => {
+          const y = py(r);
+          const base = py(1);
+          const top = Math.min(y, base);
+          const hgt = Math.max(Math.abs(base - y), 1);
+          const ok = r >= 0.1 && r <= 10;
+          return `<rect x="${(40 + l * bw + bw * 0.15).toFixed(1)}" y="${top.toFixed(1)}" width="${(bw * 0.7).toFixed(1)}" height="${hgt.toFixed(1)}" class="${ok ? 'gf-ok' : 'gf-bad'}"></rect>`;
+        })
+        .join('');
+      const healthy = ratio.filter((r) => r >= 0.1 && r <= 10).length;
+      this.querySelector('[data-stat]')!.textContent =
+        `${name}${res ? ' + residual' : ''} · layer 1 gets ${ratio[0].toExponential(1)} × the top gradient · ${healthy}/${depth} layers within 10×`;
+    }
+  }
+  customElements.define('gradient-flow', GradientFlow);
+</script>
