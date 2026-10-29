@@ -1,0 +1,106 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Three levels of graph prediction"
+  caption="The same GNN produces a vector for every node; the task decides what is predicted. Node level: a few nodes are labelled (blue, yellow) and the rest (?) are to be classified. Link level: dashed pairs are candidates (their endpoints in yellow); the model should score the hidden true edge (green) above sampled non-edges (red). Graph level: each small graph's node vectors are pooled by a readout into one vector, and the label belongs to the whole graph."
+>
+  <task-levels>
+    <input type="hidden" data-t value="node" />
+    <span class="choice tl-ctl">
+      <button type="button" class="btn" data-choice="node" aria-pressed="true">node</button>
+      <button type="button" class="btn" data-choice="link" aria-pressed="false">link</button>
+      <button type="button" class="btn" data-choice="graph" aria-pressed="false">graph</button>
+    </span>
+    <svg class="tl-svg" viewBox="0 0 400 190" role="img" aria-label="What is predicted at node, link and graph level">
+      <g data-g></g>
+    </svg>
+    <p class="tl-stat" data-stat></p>
+  </task-levels>
+</Figure>
+
+<style>
+  .tl-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .tl-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .tl-svg :global(.tl-t) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .tl-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const POS = [
+    [60, 60], [120, 35], [130, 110], [60, 140], [200, 80],
+    [270, 40], [280, 130], [340, 75], [350, 150], [200, 160],
+  ];
+  const EDGES = [[0, 1], [0, 2], [1, 2], [2, 3], [0, 3], [2, 4], [4, 5], [4, 6], [5, 7], [6, 7], [6, 8], [7, 8], [3, 9], [9, 6]];
+  const LABEL: Record<number, string> = { 0: '#4285f4', 3: '#4285f4', 7: '#fbbc05', 8: '#fbbc05' };
+  const CAND: [number, number, boolean][] = [[1, 3, true], [1, 8, false], [0, 7, false]];
+  const MSG: Record<string, string> = {
+    node: '4 labelled nodes, 6 to predict · head: a classifier on each node vector',
+    link: 'score z_u · z_v for each candidate pair · train on true edges against random non-edges',
+    graph: 'readout: sum, mean or max of node vectors · head: an MLP on the pooled vector',
+  };
+
+  const circle = (x: number, y: number, c: string | null, t = '') =>
+    `<circle cx="${x}" cy="${y}" r="12" style="fill:var(--bg)"></circle><circle cx="${x}" cy="${y}" r="12" style="fill:${c ?? 'transparent'};fill-opacity:0.45;stroke:${c ?? 'var(--text-faint)'};stroke-width:2"></circle>${t ? `<text x="${x}" y="${y}" class="tl-t">${t}</text>` : ''}`;
+
+  class TaskLevels extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const t = this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      let html = '';
+      if (t === 'graph') {
+        const graphs: [number, number, number[][], number[][], string][] = [
+          [70, 70, [[-25, -20], [25, -20], [0, 25]], [[0, 1], [1, 2], [2, 0]], '#34a853'],
+          [200, 70, [[-30, 0], [0, -25], [30, 0], [0, 25]], [[0, 1], [1, 2], [2, 3], [3, 0], [0, 2]], '#ea4335'],
+          [330, 70, [[-30, -15], [0, -25], [30, -15], [15, 25], [-15, 25]], [[0, 1], [1, 2], [2, 3], [3, 4]], '#34a853'],
+        ];
+        for (const [cx, cy, pts, es, col] of graphs) {
+          for (const [a, b] of es) html += `<line x1="${cx + pts[a][0]}" y1="${cy + pts[a][1]}" x2="${cx + pts[b][0]}" y2="${cy + pts[b][1]}" style="stroke:var(--text-faint);stroke-width:2"></line>`;
+          for (const [dx, dy] of pts) html += `<circle cx="${cx + dx}" cy="${cy + dy}" r="7" style="fill:var(--bg);stroke:#4285f4;stroke-width:2"></circle>`;
+          html += `<line x1="${cx}" y1="${cy + 40}" x2="${cx}" y2="${cy + 70}" style="stroke:var(--text-muted);stroke-width:1.5"></line>`;
+          html += `<rect x="${cx - 32}" y="${cy + 72}" width="64" height="22" rx="5" style="fill:${col};fill-opacity:0.35;stroke:${col}"></rect><text x="${cx}" y="${cy + 83}" class="tl-t">${col === '#34a853' ? 'safe' : 'toxic'}</text>`;
+        }
+        html += `<text x="200" y="182" class="tl-t" style="fill:var(--text-faint)">readout pools each graph's nodes</text>`;
+      } else {
+        for (const [a, b] of EDGES) html += `<line x1="${POS[a][0]}" y1="${POS[a][1]}" x2="${POS[b][0]}" y2="${POS[b][1]}" style="stroke:var(--text-faint);stroke-width:2"></line>`;
+        if (t === 'link') {
+          for (const [a, b, ok] of CAND) {
+            const col = ok ? '#34a853' : '#ea4335';
+            html += `<line x1="${POS[a][0]}" y1="${POS[a][1]}" x2="${POS[b][0]}" y2="${POS[b][1]}" style="stroke:${col};stroke-width:2.5;stroke-dasharray:6 4"></line>`;
+          }
+        }
+        POS.forEach(([x, y], i) => {
+          if (t === 'node') html += circle(x, y, LABEL[i] ?? null, LABEL[i] ? '' : '?');
+          else html += circle(x, y, CAND.some(([a, b]) => a === i || b === i) ? '#fbbc05' : '#4285f4');
+        });
+      }
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = MSG[t];
+    }
+  }
+  customElements.define('task-levels', TaskLevels);
+</script>

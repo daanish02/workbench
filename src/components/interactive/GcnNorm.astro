@@ -1,0 +1,109 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Why GCN normalizes by degree"
+  caption="A hub (node 0, yellow) with six neighbours, one of which (node 1) has a friend of its own. Every node starts with feature 1, and each node aggregates over itself and its neighbours. Switch the aggregation: a plain sum makes the hub's value 7 and grows with degree, so high-degree nodes dominate the next layer; a mean gives every node exactly 1, hiding the structure; GCN's symmetric weights 1/√(d_u d_v) keep values on one scale while still reflecting the degree. Edge labels show each edge's weight into the hub."
+>
+  <gcn-norm>
+    <input type="hidden" data-m value="sym" />
+    <span class="choice gn-ctl">
+      <button type="button" class="btn" data-choice="sum" aria-pressed="false">sum</button>
+      <button type="button" class="btn" data-choice="mean" aria-pressed="false">mean</button>
+      <button type="button" class="btn" data-choice="sym" aria-pressed="true">GCN symmetric</button>
+    </span>
+    <svg class="gn-svg" viewBox="0 0 400 200" role="img" aria-label="Aggregated value of each node under three normalizations">
+      <g data-g></g>
+    </svg>
+    <p class="gn-stat" data-stat></p>
+  </gcn-norm>
+</Figure>
+
+<style>
+  .gn-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .gn-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .gn-svg :global(.gn-t) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .gn-svg :global(.gn-w) {
+    fill: var(--text-muted);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .gn-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const C = [200, 100];
+  const POS: number[][] = [C];
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * 2 * Math.PI - Math.PI / 2;
+    POS.push([C[0] + 80 * Math.cos(a), C[1] + 72 * Math.sin(a)]);
+  }
+  POS.push([C[0] + 160, C[1] - 70]); // friend of node 1
+  const EDGES = [[0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], [1, 7]];
+  const N = POS.length;
+  const NB: number[][] = Array.from({ length: N }, (_, i) => [i]);
+  for (const [a, b] of EDGES) {
+    NB[a].push(b);
+    NB[b].push(a);
+  }
+  const deg = NB.map((nb) => nb.length); // includes the self-loop
+  const W: Record<string, (v: number, u: number) => number> = {
+    sum: () => 1,
+    mean: (v) => 1 / deg[v],
+    sym: (v, u) => 1 / Math.sqrt(deg[v] * deg[u]),
+  };
+
+  class GcnNorm extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-m]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const m = this.querySelector<HTMLInputElement>('[data-m]')!.value;
+      const w = W[m];
+      const val = NB.map((nb, v) => nb.reduce((s, u) => s + w(v, u), 0));
+      const max = Math.max(...val);
+      let html = '';
+      for (const [a, b] of EDGES) {
+        const [x1, y1] = POS[a];
+        const [x2, y2] = POS[b];
+        html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(--text-faint);stroke-width:2"></line>`;
+        if (a === 0) {
+          const wt = w(0, b);
+          html += `<rect x="${(x1 + x2) / 2 - 15}" y="${(y1 + y2) / 2 - 7}" width="30" height="14" rx="3" style="fill:var(--bg)"></rect><text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2}" class="gn-w">${wt.toFixed(2)}</text>`;
+        }
+      }
+      POS.forEach(([x, y], i) => {
+        const col = i === 0 ? '#fbbc05' : '#4285f4';
+        const r = 11 + 9 * (val[i] / max);
+        html += `<circle cx="${x}" cy="${y}" r="${r.toFixed(1)}" style="fill:var(--bg)"></circle><circle cx="${x}" cy="${y}" r="${r.toFixed(1)}" style="fill:${col};fill-opacity:0.35;stroke:${col};stroke-width:2"></circle><text x="${x}" y="${y}" class="gn-t">${val[i].toFixed(2)}</text>`;
+      });
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        `hub ${val[0].toFixed(2)} · leaf ${val[2].toFixed(2)} · node 1 ${val[1].toFixed(2)} · hub / leaf = ${(val[0] / val[2]).toFixed(2)}`;
+    }
+  }
+  customElements.define('gcn-norm', GcnNorm);
+</script>

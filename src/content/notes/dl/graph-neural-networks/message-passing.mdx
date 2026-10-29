@@ -3,6 +3,104 @@ title: "Message Passing"
 description: "The core GNN step: each node gathers messages from its neighbours and updates its state."
 order: 2
 tier: core
+takeaways:
+  - "A **message-passing** layer computes a **message** along every edge, combines each node's incoming messages into one **aggregate**, and updates the node from its old state and that aggregate, with weights shared by all nodes."
+  - "The aggregate must not depend on neighbour order, so it is a sum, mean or max. Sum is the most expressive: mean and max cannot tell neighbours $\\{1, 1\\}$ from $\\{1\\}$."
+  - "After $k$ layers a node's state depends on its **$k$-hop neighbourhood**, so depth sets how far information travels."
+  - "Too many layers cause **over-smoothing**: repeated averaging drives all node states towards the same vector, which is why most GNNs have only 2 to 4 layers."
+  - "Libraries implement a layer as a **scatter-add** over the edge list, which gives the same result as the dense product $AH$ at a cost proportional to the number of edges."
+resources:
+  - title: "Neural Message Passing for Quantum Chemistry (Gilmer et al.)"
+    url: "https://arxiv.org/abs/1704.01212"
+    note: "Defines the message-passing framework that unifies earlier graph network designs, applied to molecules."
+  - title: "How Powerful are Graph Neural Networks? (Xu et al.)"
+    url: "https://arxiv.org/abs/1810.00826"
+    note: "Why sum aggregation is more expressive than mean or max, and the link to the Weisfeiler-Lehman test."
+  - title: "Graph Representation Learning (William L. Hamilton)"
+    url: "https://www.cs.mcgill.ca/~wlh/grl_book/"
+    note: "Free book; chapter 5 builds GNNs from the message-passing view and covers over-smoothing."
 ---
 
-_Placeholder. Content not written yet._
+[Graphs as data](../graphs-as-data/) ended with a requirement: a layer on a graph must give the same per-node result however the nodes are numbered, and work for any graph size. **Message passing** is the design that meets it, and nearly every GNN is an instance of it. Each node collects information from its neighbours, combines it in an order-independent way, and updates its own state; stacking layers lets information travel further across the graph. This note covers the general layer, the choice of aggregation, how depth sets the range, why too much depth hurts, and how the layer is computed in practice. Run the code with `uv run --with numpy`.
+
+## Gather, aggregate, update
+
+Each node $v$ has a state $h_v$, initially its feature vector. One layer computes a new state for every node at once:
+
+$$
+m_v = \operatorname*{AGG}_{u \in N(v)} \operatorname{MSG}(h_u, h_v, e_{uv}), \qquad h_v' = \operatorname{UPDATE}(h_v, m_v).
+
+$$
+
+In words: every neighbour $u$ of $v$ sends a **message** computed from its state, $v$'s state and the edge's features; $v$ combines the messages into one vector $m_v$ with an **aggregation** function; then $v$ computes its new state from its old one and $m_v$. MSG and UPDATE are small neural networks or linear maps with learned weights, **shared by all nodes**, just as a convolution shares one kernel across all pixels. A simple instance is $h_v' = \sigma\big(W_{\text{self}} h_v + W_{\text{nbr}} \sum_{u \in N(v)} h_u\big)$.
+
+The weights do not depend on how many nodes the graph has or how they are numbered, so the same layer runs on a 9-atom molecule and a million-node network. Because the aggregation does not care about the order of the neighbours, the layer is permutation equivariant.
+
+## Choosing the aggregation
+
+The aggregation has to give the same result for any order of the neighbours, so the usual choices are **sum**, **mean** and **max**, applied element-wise. They see different things:
+
+```python
+import numpy as np
+
+# two nodes whose neighbours carry features {1, 1} and {1}
+nbrs_a, nbrs_b = np.array([1.0, 1.0]), np.array([1.0])
+for name, f in [("mean", np.mean), ("max", np.max), ("sum", np.sum)]:
+    print(f"{name:4s}: {f(nbrs_a)} vs {f(nbrs_b)} -> {'same' if f(nbrs_a) == f(nbrs_b) else 'different'}")
+# mean: 1.0 vs 1.0 -> same
+# max : 1.0 vs 1.0 -> same
+# sum : 2.0 vs 1.0 -> different
+```
+
+In words: a node with two identical neighbours and a node with one get the same mean (1.0) and the same max (1.0), so a GNN using either cannot tell them apart; the sum (2.0 against 1.0) can. Xu et al. (2019) proved that sum aggregation followed by an MLP is as powerful as any message-passing GNN at telling graphs apart, which matches the Weisfeiler-Lehman graph isomorphism test. Mean is still common because it keeps values on the same scale for nodes of very different degree, and it describes the mix of a neighbourhood rather than its size; max picks out the most salient neighbour.
+
+## Depth sets the range
+
+One layer mixes in the direct neighbours. The second layer mixes in the neighbours' new states, which already contain their neighbours, so after $k$ layers node $v$'s state depends on every node within $k$ edges: its **$k$-hop neighbourhood**, or receptive field. This is the graph counterpart of a CNN's receptive field growing with depth.
+
+<MessageHops />
+
+## Over-smoothing
+
+Depth cannot be raised freely. Mean aggregation is an averaging operator, and averaging repeatedly over a connected graph drives every node towards the same value, as in a diffusion process. After many layers the states carry little about the node itself, and nodes from different classes become indistinguishable. This is **over-smoothing**, and it is why typical GNNs have 2 to 4 layers, while CNNs and transformers have dozens. Residual connections, normalization between layers and mixing in the input features at every layer slow it down. A related problem, **over-squashing**, is that information from an exponentially growing neighbourhood has to fit into one fixed-size vector, so distant signals get lost even when the receptive field reaches them.
+
+<OverSmooth />
+
+<Callout type="pitfall">
+Adding layers to reach further nodes often makes a GNN worse, not better. Validation accuracy on node classification commonly peaks at 2 or 3 layers and then falls, while training loss may also stop improving. Before going deeper, check whether the task really needs long-range information; if it does, use residual or jumping-knowledge connections, or add a few long-range edges or a global node rather than stacking plain layers.
+</Callout>
+
+## Computing it on an edge list
+
+Graphs are stored as edge lists, and a layer is computed directly on them: gather the source node's state for every edge, then add each message into its target node, a **scatter-add**.
+
+```python
+import numpy as np
+
+# message passing on an edge list, the way GNN libraries store graphs
+edges = np.array([[0, 1], [1, 0], [0, 2], [2, 0], [1, 2], [2, 1], [2, 3], [3, 2]])
+src, dst = edges[:, 0], edges[:, 1]
+H = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 0.0]])
+
+agg = np.zeros_like(H)
+np.add.at(agg, dst, H[src])                      # scatter-add: one message per edge
+deg = np.bincount(dst, minlength=len(H))[:, None]
+print("sum :", agg.tolist())
+print("mean:", np.round(agg / deg, 2).tolist())
+
+A = np.zeros((4, 4)); A[dst, src] = 1            # same thing as a dense product
+print("equals A @ H:", np.allclose(agg, A @ H))
+# sum : [[1.0, 2.0], [2.0, 1.0], [3.0, 1.0], [1.0, 1.0]]
+# mean: [[0.5, 1.0], [1.0, 0.5], [1.0, 0.33], [1.0, 1.0]]
+# equals A @ H: True
+```
+
+In words: node 2 has neighbours 0, 1 and 3, so its sum is $(1,0) + (0,1) + (2,0) = (3, 1)$ and its mean $(1, 0.33)$. The scatter-add result equals the dense product $AH$, but its cost is proportional to the number of edges, not $n^2$. Each undirected edge appears twice, once per direction. Messages that depend on the edge (a bond type, a distance) are computed per edge before the scatter, which a dense product cannot do.
+
+## Transformers as message passing
+
+[Self-attention](../../attention-transformers/self-attention/) fits this template exactly. Each token is a node, every token is connected to every other (a complete graph), the message from $u$ to $v$ is $u$'s value vector, and the aggregation is a weighted sum whose weights come from a softmax over query-key scores. A transformer is a message-passing network on a complete graph with attention as the aggregator; a GNN restricts the messages to the edges of a given graph. [GCN and GAT](../gcn-and-gat/) are the two standard ways of choosing the weights on those edges.
+
+<Callout type="key">
+A message-passing layer updates each node from its own state and an order-independent aggregate (sum, mean or max) of messages from its neighbours, with weights shared by all nodes. Sum is the most expressive aggregate. $k$ layers reach the $k$-hop neighbourhood, but too many layers over-smooth the states, so GNNs stay shallow. In practice it is a scatter-add over the edge list, and a transformer is the special case of a complete graph.
+</Callout>

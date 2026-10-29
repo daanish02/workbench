@@ -1,0 +1,135 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Very different data, one format"
+  caption="Three kinds of data written as nodes, edges and features. In a molecule (ethanol) nodes are atoms coloured by element and edges are bonds. In a social network nodes are people and edges friendships; the two colours are two friend groups, the kind of label a GNN predicts. In a mesh, nodes are vertices with 3D positions and edges are the sides of triangles. Switch between them: the readout gives what each part means and a typical task."
+>
+  <graph-zoo>
+    <input type="hidden" data-k value="mol" />
+    <span class="choice gz-ctl">
+      <button type="button" class="btn" data-choice="mol" aria-pressed="true">molecule</button>
+      <button type="button" class="btn" data-choice="social" aria-pressed="false">social network</button>
+      <button type="button" class="btn" data-choice="mesh" aria-pressed="false">mesh</button>
+    </span>
+    <svg class="gz-svg" viewBox="0 0 400 190" role="img" aria-label="An example graph of the chosen kind">
+      <g data-g></g>
+    </svg>
+    <p class="gz-stat" data-stat></p>
+  </graph-zoo>
+</Figure>
+
+<style>
+  .gz-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .gz-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .gz-svg :global(.gz-t) {
+    fill: var(--text);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .gz-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type G = { nodes: [number, number, string, string][]; edges: [number, number, number?][]; text: string };
+  const B = '#4285f4';
+  const R = '#ea4335';
+  const Gr = '#34a853';
+  const Y = '#fbbc05';
+  const GRAPHS: Record<string, G> = {
+    mol: {
+      // C, C, O and hydrogens; edge third value = bond order
+      nodes: [
+        [150, 95, 'C', B],
+        [230, 95, 'C', B],
+        [300, 60, 'O', R],
+        [350, 85, 'H', 'var(--text-faint)'],
+        [110, 45, 'H', 'var(--text-faint)'],
+        [100, 125, 'H', 'var(--text-faint)'],
+        [160, 160, 'H', 'var(--text-faint)'],
+        [230, 30, 'H', 'var(--text-faint)'],
+        [240, 160, 'H', 'var(--text-faint)'],
+      ],
+      edges: [[0, 1], [1, 2], [2, 3], [0, 4], [0, 5], [0, 6], [1, 7], [1, 8]],
+      text: 'nodes: 9 atoms (element, charge) · edges: 8 bonds (type) · task: predict a property of the whole molecule',
+    },
+    social: {
+      nodes: [
+        [60, 50, '', B],
+        [120, 30, '', B],
+        [140, 100, '', B],
+        [70, 130, '', B],
+        [30, 95, '', B],
+        [260, 60, '', Y],
+        [330, 40, '', Y],
+        [350, 120, '', Y],
+        [270, 150, '', Y],
+      ],
+      edges: [[0, 1], [0, 2], [1, 2], [2, 3], [3, 4], [0, 4], [1, 4], [2, 5], [5, 6], [5, 7], [6, 7], [7, 8], [5, 8]],
+      text: 'nodes: 9 people (profile features) · edges: 13 friendships · task: label each person, or predict new friendships',
+    },
+    mesh: {
+      nodes: Array.from({ length: 12 }, (_, i) => {
+        const r = Math.floor(i / 4);
+        const c = i % 4;
+        return [90 + c * 70 + (r % 2) * 35, 35 + r * 60, '', Gr] as [number, number, string, string];
+      }),
+      edges: (() => {
+        const e: [number, number][] = [];
+        for (let i = 0; i < 12; i++) {
+          const r = Math.floor(i / 4);
+          const c = i % 4;
+          if (c < 3) e.push([i, i + 1]);
+          if (r < 2) {
+            e.push([i, i + 4]);
+            if (r % 2 === 0 && c > 0) e.push([i, i + 3]);
+            if (r % 2 === 1 && c < 3) e.push([i, i + 5]);
+          }
+        }
+        return e;
+      })(),
+      text: 'nodes: 12 vertices (x, y, z position) · edges: triangle sides · task: per-vertex labels or simulate how the surface moves',
+    },
+  };
+
+  class GraphZoo extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const g = GRAPHS[this.querySelector<HTMLInputElement>('[data-k]')!.value];
+      let html = '';
+      for (const [a, b] of g.edges) {
+        const [x1, y1] = g.nodes[a];
+        const [x2, y2] = g.nodes[b];
+        html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(--text-faint);stroke-width:2"></line>`;
+      }
+      for (const [x, y, t, c] of g.nodes) {
+        const r = t ? 12 : 9;
+        html += `<circle cx="${x}" cy="${y}" r="${r}" style="fill:var(--bg)"></circle><circle cx="${x}" cy="${y}" r="${r}" style="fill:${c};fill-opacity:0.45;stroke:${c};stroke-width:2"></circle>`;
+        if (t) html += `<text x="${x}" y="${y}" class="gz-t">${t}</text>`;
+      }
+      this.querySelector('[data-g]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = g.text;
+    }
+  }
+  customElements.define('graph-zoo', GraphZoo);
+</script>

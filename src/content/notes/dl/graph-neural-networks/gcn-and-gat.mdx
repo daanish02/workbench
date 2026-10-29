@@ -3,6 +3,113 @@ title: "GCN & GAT"
 description: "Graph convolutional and graph attention networks, the two standard message-passing layers."
 order: 3
 tier: advanced
+takeaways:
+  - "A **GCN** layer is $H' = \\sigma(\\hat A H W)$ with $\\hat A = \\tilde D^{-1/2}(A + I)\\tilde D^{-1/2}$: add self-loops, then weight each edge by $1/\\sqrt{d_u d_v}$ so high-degree nodes do not dominate."
+  - "On Zachary's karate club with only the two leaders labelled, a linear classifier on raw one-hot features gets 0.50 test accuracy; after two GCN propagation steps it gets 0.97. Neighbourhood smoothing is what does the work."
+  - "A **GAT** layer learns the edge weights instead: $\\alpha_{uv} = \\operatorname{softmax}_u(\\operatorname{LeakyReLU}(a^\\top [W h_v \\,\\Vert\\, W h_u]))$, so a node can weight neighbours by their content, not just their degree."
+  - "GCN is cheap and a strong baseline on graphs where neighbours tend to share labels; GAT helps when neighbours differ in relevance. Both stay shallow, usually 2 layers."
+resources:
+  - title: "Semi-Supervised Classification with Graph Convolutional Networks (Kipf, Welling)"
+    url: "https://arxiv.org/abs/1609.02907"
+    note: "The GCN paper: the propagation rule, its spectral motivation, and the Cora and Citeseer results."
+  - title: "Graph Attention Networks (Veličković et al.)"
+    url: "https://arxiv.org/abs/1710.10903"
+    note: "The GAT layer with multi-head attention over neighbours."
+  - title: "Graph Convolutional Networks (Thomas Kipf)"
+    url: "https://tkipf.github.io/graph-convolutional-networks/"
+    note: "Short blog post with the karate-club demo of what an untrained GCN already separates."
 ---
 
-_Placeholder. Content not written yet._
+[Message passing](../message-passing/) leaves two choices open: how much weight each neighbour's message gets, and how the result is combined with the node's own state. The **graph convolutional network** (GCN, Kipf and Welling, 2017) fixes the weights from the node degrees; the **graph attention network** (GAT, Veličković et al., 2018) learns them with [attention](../../attention-transformers/the-attention-mechanism/). Together they are the standard baselines for node-level tasks. This note derives the GCN rule, shows how much its propagation alone achieves on a small real graph, then builds the GAT layer and compares the two. The GCN normalization uses the degree matrix from [graph theory basics](../../../math/discrete-math/graph-theory-basics/). Run the code with `uv run --with numpy --with networkx`.
+
+## The GCN layer
+
+Start from the plain neighbour sum $H' = \sigma(AHW)$ and fix its two problems. First, a node ignores its own state, so add **self-loops**: $\tilde A = A + I$. Second, a node with 1000 neighbours gets a sum 1000 times larger than a node with one, so normalize by degree. GCN uses the symmetric version:
+
+$$
+H' = \sigma\!\left(\hat A H W\right), \qquad \hat A = \tilde D^{-1/2} \tilde A \tilde D^{-1/2}, \qquad \hat A_{uv} = \frac{1}{\sqrt{\tilde d_u \tilde d_v}} \text{ for each edge (and self-loop)}.
+
+$$
+
+In words: every node takes a weighted sum of itself and its neighbours, then applies a shared linear map $W$ and a nonlinearity. The weight of an edge is $1/\sqrt{\tilde d_u \tilde d_v}$, where $\tilde d$ counts the self-loop: a message from a hub to a leaf is turned down because the hub sends to many nodes, and a message into a hub is turned down because the hub receives many. Kipf and Welling derived the rule as a first-order approximation of a spectral graph convolution, a filter on the eigenvectors of the graph Laplacian, but it reads just as well as normalized message passing.
+
+<GcnNorm />
+
+## What propagation alone does
+
+Zachary's karate club is a 34-member social network recorded in the 1970s, just before the club split in two after a dispute between the instructor (node 0) and the administrator (node 33). Labelling only those two leaders and predicting which side everyone else joined is a classic semi-supervised test. The experiment below gives each node a one-hot feature (no information beyond its identity), applies $K$ rounds of GCN propagation $\hat A^K X$ without any learned weights in between, and fits a logistic regression on the two labelled nodes only. This propagate-then-classify model is the simplified GCN of Wu et al. (2019).
+
+```python
+import networkx as nx
+import numpy as np
+
+# Zachary's karate club: which of two clubs each member joined after the split
+G = nx.karate_club_graph()
+n = G.number_of_nodes()
+y = np.array([G.nodes[v]["club"] == "Officer" for v in G]).astype(float)
+A = nx.to_numpy_array(G, weight=None) + np.eye(n)        # add self-loops
+d = A.sum(1)
+S = A / np.sqrt(np.outer(d, d))                          # D^-1/2 (A + I) D^-1/2
+
+train = [0, 33]                                          # only the two leaders are labelled
+test = [v for v in range(n) if v not in train]
+for K in [0, 1, 2, 3]:
+    X = np.linalg.matrix_power(S, K) @ np.eye(n)         # K rounds of GCN propagation
+    w = np.zeros(n)
+    for _ in range(500):                                 # logistic regression on 2 nodes
+        p = 1 / (1 + np.exp(-X[train] @ w))
+        w -= 1.0 * X[train].T @ (p - y[train])
+    acc = ((X[test] @ w > 0) == y[test]).mean()
+    print(f"K = {K} propagation steps: test accuracy {acc:.2f}")
+# K = 0 propagation steps: test accuracy 0.50
+# K = 1 propagation steps: test accuracy 0.94
+# K = 2 propagation steps: test accuracy 0.97
+# K = 3 propagation steps: test accuracy 0.97
+```
+
+In words: with raw one-hot features ($K = 0$) the 32 unlabelled members share nothing with the two leaders, and the classifier is at chance, 0.50. One propagation step makes each member's features a mix of its friends', so friends of the instructor look like the instructor: 0.94. Two or three steps reach 0.97, 31 of 32 members. The labels spread along edges because friends tend to join the same side, a property called **homophily**. That is the setting where GCN works best; on graphs where linked nodes tend to differ, plain neighbourhood averaging can hurt.
+
+## The GAT layer
+
+GCN's weights depend only on degrees, so a node cannot pay more attention to a relevant neighbour than an irrelevant one with the same degree. **GAT** computes the weights from the node states, with a small attention mechanism per edge:
+
+$$
+e_{vu} = \operatorname{LeakyReLU}\!\big(a^\top [W h_v \,\Vert\, W h_u]\big), \qquad \alpha_{vu} = \frac{\exp(e_{vu})}{\sum_{w \in N(v) \cup \{v\}} \exp(e_{vw})}, \qquad h_v' = \sigma\Big(\sum_{u} \alpha_{vu} W h_u\Big).
+
+$$
+
+In words: transform every node with a shared $W$, score each edge by applying a learned vector $a$ to the concatenation $\Vert$ of the two transformed states, softmax the scores over $v$'s neighbourhood (including itself), and take the weighted sum. It is attention restricted to the graph's edges, with a small additive score instead of a dot product. Like a transformer, GAT runs several heads and concatenates or averages them; the original used 8 heads in the hidden layer.
+
+```python
+import numpy as np
+
+# GAT attention of node 0 over itself and its neighbours 1, 2, 3
+rng = np.random.default_rng(0)
+H = rng.standard_normal((4, 3))                  # node features
+W = rng.standard_normal((3, 2))                  # shared linear map
+a = rng.standard_normal(4)                       # attention vector over [Wh_i || Wh_j]
+Z = H @ W
+e = np.array([a @ np.concatenate([Z[0], Z[j]]) for j in range(4)])
+e = np.where(e > 0, e, 0.2 * e)                  # LeakyReLU, slope 0.2
+alpha = np.exp(e - e.max()) / np.exp(e - e.max()).sum()
+print("raw scores :", np.round(e, 3))
+print("attention  :", np.round(alpha, 3), "sum", alpha.sum().round(3))
+# raw scores : [-0.091 -0.003 -0.175  0.174]
+# attention  : [0.232 0.253 0.213 0.302] sum 1.0
+```
+
+In words: node 0's four raw scores, after the LeakyReLU, become weights 0.232 (itself), 0.253, 0.213 and 0.302 that sum to 1. With random, untrained parameters they are close to uniform; training moves them apart where some neighbours are more useful. Because $a$ is applied to the concatenation, the score splits into a part that depends on $v$ and a part that depends on $u$; Brody et al. (2022) showed this limits GAT to ranking neighbours the same way for every node, and GATv2 fixes it by applying the LeakyReLU before $a$.
+
+<GatWeights />
+
+<Callout type="pitfall">
+Forgetting the self-loop in GCN, or computing the degree without it, is a common bug when implementing the layer by hand. Without the self-loop a node's new state ignores its own features entirely, and a node with no edges gets a division by zero. Libraries add self-loops by default (`add_self_loops=True` in PyTorch Geometric); hand-written versions should check that $\hat A$ has nonzero diagonal and that every row of $\tilde D$ is at least 1.
+</Callout>
+
+## Choosing between them
+
+On the citation benchmarks Cora, Citeseer and Pubmed, a 2-layer GCN reached 81.5%, 70.3% and 79.0% accuracy with 20 labels per class, and GAT 83.0%, 72.5% and 79.0%: a small gain for a layer that costs more per edge. GCN is the cheaper default when neighbours tend to share labels. GAT helps when neighbours differ in relevance, when degrees vary widely, or when the model must work on new graphs, since its weights are not tied to the training graph's degrees. Both are usually used with 2 layers; [graph tasks](../graph-tasks/) shows how either becomes a node, link or graph predictor.
+
+<Callout type="key">
+GCN aggregates over neighbours and itself with fixed weights $1/\sqrt{\tilde d_u \tilde d_v}$, then applies a shared linear map; its propagation alone carries two labels to 31 of 32 karate-club members. GAT replaces the fixed weights with attention computed from the node states, so each node learns which neighbours to listen to, at a higher cost per edge.
+</Callout>

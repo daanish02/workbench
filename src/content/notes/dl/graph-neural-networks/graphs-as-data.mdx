@@ -3,6 +3,92 @@ title: "Graphs as Data"
 description: "Representing molecules, social networks and meshes as graphs, and why ordinary networks do not fit them."
 order: 1
 tier: core
+takeaways:
+  - "A graph dataset has **nodes** with feature vectors (a matrix $X$, $n \\times f$), **edges** given by an adjacency matrix $A$ or an edge list, and sometimes edge features. Molecules, social networks, citation networks, road maps and 3D meshes all fit this form."
+  - "Node numbering is arbitrary: relabelling the nodes turns $A$ into $PAP^\\top$ and $X$ into $PX$ for a permutation matrix $P$, and it is still the same graph."
+  - "A model that flattens $A$ into a vector gives different outputs for the same graph under different numberings (2.394 against 0.227 in the note's example). It also cannot handle graphs of different sizes."
+  - "A GNN layer is built to be **permutation equivariant**: renumber the nodes and the node outputs are renumbered the same way. Summing over neighbours, $AX$, has this property."
+  - "Real graphs are sparse, so they are stored as edge lists: a million nodes with 10 neighbours each need 153 MiB as an edge list against 931 GiB as a dense matrix."
+resources:
+  - title: "A Gentle Introduction to Graph Neural Networks (Distill)"
+    url: "https://distill.pub/2021/gnn-intro/"
+    note: "Interactive article on what graph data looks like, the tasks, and how GNN layers are built."
+  - title: "CS224W: Machine Learning with Graphs (Stanford)"
+    url: "http://web.stanford.edu/class/cs224w/"
+    note: "Full course with slides: graph data, node embeddings, GNNs and their applications."
+  - title: "Introduction by Example (PyTorch Geometric)"
+    url: "https://pytorch-geometric.readthedocs.io/en/latest/get_started/introduction.html"
+    note: "How a graph is stored in practice: node features, edge_index and batching of many graphs."
 ---
 
-_Placeholder. Content not written yet._
+Images are grids and text is a sequence, and the networks for them, [convolutions](../../convolutional-networks/the-convolution-operation/) and [transformers](../../attention-transformers/the-transformer-architecture-in-full/), rely on that regular structure. Much data has no grid or order: a molecule is atoms joined by bonds, a social network is people joined by friendships, a road map is junctions joined by roads. These are **graphs**, and graph neural networks (GNNs) are the networks built for them. This note covers how graph data is represented, the property any model of it must respect, and why a standard network does not have it. It assumes the definitions from [graph theory basics](../../../math/discrete-math/graph-theory-basics/) and the storage formats from [graphs](../../../cs/data-structures/graphs/). Run the code with `uv run --with numpy`.
+
+## What a graph dataset holds
+
+A graph $G = (V, E)$ has $n$ nodes and a set of edges between them. For learning, it carries data at up to three levels:
+
+- **Node features**: a vector of $f$ numbers per node, stacked as a matrix $X$ of shape $n \times f$. For an atom, its element, charge and number of hydrogens; for a paper in a citation network, the words in its abstract.
+- **Structure**: the **adjacency matrix** $A$, with $A_{uv} = 1$ if there is an edge from $u$ to $v$, or the same information as a list of edges. Undirected graphs have a symmetric $A$.
+- **Edge and graph features**: a bond type or road length per edge, and sometimes a label for the whole graph, such as whether a molecule is toxic.
+
+Common examples: molecules (nodes are atoms, edges bonds, typically 10 to 100 nodes per graph and thousands of graphs per dataset); citation networks such as Cora (2708 papers, 5429 citation links, 1433 word features, 7 topics, one graph); social and recommendation graphs with millions to billions of nodes; 3D meshes (vertices and the triangle edges between them); and knowledge graphs, whose edges are typed relations such as "born in".
+
+<GraphRepr />
+
+## The numbering is arbitrary
+
+Nothing in a graph says which node is node 0. Renumbering the nodes with a permutation matrix $P$ turns the adjacency matrix into $PAP^\top$ and the features into $PX$; the drawing does not change at all. A model of graphs should give the same answer for the same graph however it is numbered. For a prediction about the whole graph that means **permutation invariance**, $f(PAP^\top, PX) = f(A, X)$; for one output per node it means **permutation equivariance**, the outputs are renumbered the same way as the inputs.
+
+```python
+import numpy as np
+
+# a 4-node path graph 0-1-2-3, one feature per node
+A = np.array([[0, 1, 0, 0],
+              [1, 0, 1, 0],
+              [0, 1, 0, 1],
+              [0, 0, 1, 0]])
+x = np.array([1.0, 2.0, 3.0, 4.0])
+perm = [2, 0, 3, 1]                              # renumber the nodes
+P = np.eye(4)[perm]
+A2, x2 = P @ A @ P.T, P @ x                      # same graph, new numbering
+
+rng = np.random.default_rng(0)
+W = rng.standard_normal(16 + 4)                  # an MLP-style layer on the flat input
+flat = lambda A, x: np.concatenate([A.ravel(), x]) @ W
+print(f"flattened model: {flat(A, x):.3f} vs {flat(A2, x2):.3f}")
+
+agg = lambda A, x: A @ x                         # each node sums its neighbours
+print("neighbour sums  :", agg(A, x), "->", agg(A2, x2))
+print("same per node   :", np.allclose(P @ agg(A, x), agg(A2, x2)))
+# flattened model: 2.394 vs 0.227
+# neighbour sums  : [2. 4. 6. 3.] -> [6. 2. 3. 4.]
+# same per node   : True
+```
+
+In words: a layer that flattens $A$ and $x$ into one vector and multiplies by weights gives 2.394 for one numbering of the path graph and 0.227 for another, though the graph is identical. It would have to learn all $n!$ numberings as separate cases, and its input size is fixed, so it cannot take a graph with 5 nodes. Summing each node's neighbours, $Ax$, gives $[2, 4, 6, 3]$, and under the new numbering exactly the same numbers in the new order: each node gets the same result whatever its label. GNN layers are built from operations like this. [Self-attention](../../attention-transformers/self-attention/) has the same property, for the same reason: it treats its input as a set.
+
+<Callout type="pitfall">
+Feeding node IDs, or the row of $A$ for each node, as input features breaks permutation equivariance and ties the model to one numbering. It can fit a single fixed graph well (a social network that never changes) but cannot transfer to new nodes or new graphs. Use features that describe the node itself, such as its attributes or degree; when there are none, constant or random features are a safer default than IDs.
+</Callout>
+
+## Sparse storage
+
+Real graphs are sparse: each node connects to a handful of others out of millions. A dense $n \times n$ adjacency matrix wastes almost all of its entries, so libraries store an **edge list**, two arrays of source and target node indices (PyTorch Geometric calls it `edge_index`, shape $2 \times |E|$):
+
+```python
+# memory of a dense adjacency matrix vs an edge list
+n, avg_degree = 1_000_000, 10
+dense = n * n * 1 / 2**30                        # 1 byte per entry, GiB
+edges = n * avg_degree                           # directed edges, both ways stored
+edge_list = edges * 2 * 8 / 2**20                # two int64 per edge, MiB
+print(f"dense: {dense:,.0f} GiB · edge list: {edge_list:,.0f} MiB · density {avg_degree / n:.0e}")
+# dense: 931 GiB · edge list: 153 MiB · density 1e-05
+```
+
+In words: a million nodes with 10 neighbours each fill one entry in 100,000 of the dense matrix ($10^{-5}$), which would take 931 GiB even at one byte per entry. The edge list stores only the 10 million directed edges, two 8-byte indices each, 153 MiB. An undirected edge is stored once in each direction, so that messages can flow both ways. Many small graphs, such as a batch of molecules, are combined into one large disconnected graph with a vector recording which graph each node belongs to, so a batch is again a single sparse graph.
+
+<GraphZoo />
+
+<Callout type="key">
+Graph data is node features $X$, structure $A$ (stored as an edge list), and optional edge and graph features. Node numbering is arbitrary, so a graph model must be permutation invariant (one answer per graph) or equivariant (one answer per node, renumbered with the input). Flattening $A$ fails both; aggregating over neighbours, as GNN layers do, satisfies them and works for any graph size.
+</Callout>

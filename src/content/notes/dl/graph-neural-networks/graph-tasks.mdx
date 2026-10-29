@@ -3,6 +3,87 @@ title: "Graph Tasks"
 description: "Node classification, link prediction and whole-graph prediction, and how each is set up."
 order: 4
 tier: core
+takeaways:
+  - "The same GNN layers serve three task levels. What changes is the **head** on top: a classifier per node, a score per pair of nodes, or a **readout** that pools all node vectors into one graph vector."
+  - "**Node classification** is often transductive: one graph, labels for a few nodes, predictions for the rest (Cora trains on 140 labelled papers out of 2708)."
+  - "**Link prediction** scores node pairs, for example by $z_u \\cdot z_v$, and trains against **negative samples** of pairs that are not linked."
+  - "Test edges must be removed from the graph the GNN propagates over. On the karate club, leaving them in lifts AUC from 0.876 to a meaningless 1.000."
+  - "**Graph classification** pools node vectors with an order-free readout (sum, mean or max) and predicts a property of the whole graph, such as a molecule's toxicity."
+resources:
+  - title: "Open Graph Benchmark"
+    url: "https://ogb.stanford.edu/"
+    note: "Standard node, link and graph datasets with fixed, realistic splits and leaderboards."
+  - title: "Inductive Representation Learning on Large Graphs (Hamilton, Ying, Leskovec)"
+    url: "https://arxiv.org/abs/1706.02216"
+    note: "GraphSAGE: neighbour sampling and inductive node embeddings for graphs too large to process whole."
+  - title: "Understanding Convolutions on Graphs (Distill)"
+    url: "https://distill.pub/2021/understanding-gnns/"
+    note: "Interactive companion article on how GNN layers produce node representations for downstream tasks."
 ---
 
-_Placeholder. Content not written yet._
+[Message passing](../message-passing/) and its standard layers, [GCN and GAT](../gcn-and-gat/), turn a graph into one vector per node. A task decides what is predicted from those vectors: a label per node, whether two nodes should be linked, or a property of the whole graph. This note covers how each of the three is set up, the head that goes on top, how data is split, and the leakage that most often makes graph results look better than they are. Run the code with `uv run --with numpy --with networkx`.
+
+<TaskLevels />
+
+## Node classification
+
+Each node gets a label, and the head is a linear layer with a softmax on each node's final vector $z_v$, trained with [cross-entropy](../../nn-foundations/loss-functions-for-deep-learning/) on the labelled nodes. Two setups are common:
+
+- **Transductive**: one fixed graph, all nodes and edges visible during training, labels known for only some of them. The model propagates over the whole graph and predicts the rest. Cora's standard split trains on 140 labelled papers, validates on 500 and tests on 1000 of its 2708; the karate-club experiment in the GCN note used 2 labels for 34 nodes.
+- **Inductive**: the model must work on nodes or graphs it has not seen, such as new users joining a network. Its layers must not depend on the training graph's node IDs, and on very large graphs it samples a fixed number of neighbours per node per layer, as in GraphSAGE.
+
+Examples: classifying papers by topic, accounts as bots or humans, proteins by function in an interaction network.
+
+## Link prediction
+
+The task is to predict which missing edges exist: friend suggestions, products a user will buy, interactions between drugs. A GNN computes node vectors, and a **decoder** scores a pair, most simply by the dot product $s_{uv} = z_u \cdot z_v$ (or an MLP on $[z_u \Vert z_v]$). Training needs examples of both classes: existing edges are positives, and **negative samples** are pairs drawn at random from the non-edges, since the graph never lists what is absent. The loss is binary cross-entropy, and the usual metrics are AUC (the probability that a random true edge outscores a random non-edge) or hits@k for ranking.
+
+The split is where link prediction goes wrong. The held-out edges are the answers, so they must also be removed from the graph the GNN propagates over; otherwise the model's input contains the edge it is asked to predict.
+
+```python
+import networkx as nx
+import numpy as np
+
+# link prediction on the karate club: hide 15% of edges, score node pairs
+rng = np.random.default_rng(0)
+G = nx.karate_club_graph()
+n = G.number_of_nodes()
+E = np.array(G.edges())
+rng.shuffle(E)
+k = int(0.15 * len(E))
+test_pos, train_pos = E[:k], E[k:]
+non = [(u, v) for u in range(n) for v in range(u + 1, n) if not G.has_edge(u, v)]
+test_neg = np.array(non)[rng.choice(len(non), k, replace=False)]
+
+def embed(edges):
+    # two rounds of normalized propagation of one-hot features
+    A = np.eye(n)
+    A[edges[:, 0], edges[:, 1]] = A[edges[:, 1], edges[:, 0]] = 1
+    d = A.sum(1)
+    S = A / np.sqrt(np.outer(d, d))
+    return S @ S
+
+def auc(Z):
+    pos = [Z[u] @ Z[v] for u, v in test_pos]
+    neg = [Z[u] @ Z[v] for u, v in test_neg]
+    return np.mean([p > q for p in pos for q in neg])
+
+print(f"test edges removed from the graph: AUC {auc(embed(train_pos)):.3f}")
+print(f"test edges left in (leakage)     : AUC {auc(embed(E)):.3f}")
+# test edges removed from the graph: AUC 0.876
+# test edges left in (leakage)     : AUC 1.000
+```
+
+In words: 11 of the 78 friendships are hidden, and node vectors come from two rounds of GCN propagation over one-hot features, with no training at all. Built from the remaining 67 edges, the dot-product scores rank a hidden friendship above a random non-friendship 87.6% of the time, because friends share friends. Built from the full graph, including the hidden edges, the AUC is a perfect 1.000: each test pair is directly connected in the input, so the score just reads the answer off. The real signal is 0.876; the 1.000 measures the bug.
+
+<Callout type="pitfall">
+In link prediction, the edges used as test (or validation) labels must be absent from the message-passing graph at test time, and the edges used as training labels should be held out of the graph during their own training step too. Library helpers such as PyTorch Geometric's `RandomLinkSplit` do this; hand-rolled splits that only remove test edges from the label list, not from `edge_index`, give near-perfect scores that disappear in deployment. For data with time stamps, split by time so the model never sees future edges.
+</Callout>
+
+## Graph classification and regression
+
+Here each example is a whole graph and the target belongs to it: whether a molecule is toxic or binds a protein (classification), its solubility or energy (regression), or the category of a 3D shape. After the GNN layers a **readout** pools the node vectors into one graph vector, $z_G = \sum_v z_v$ (or the mean or max), and an MLP predicts from it. The readout must be order-free, like the aggregation inside the layers, so that renumbering the atoms does not change the prediction; sum keeps the most information, as with aggregation, while mean is insensitive to graph size. Datasets hold many small graphs, which are batched as one large disconnected graph with a vector saying which graph each node belongs to, and pooled per graph. Splits should keep similar graphs apart: molecular benchmarks split by **scaffold** (the core ring structure) so test molecules are not near-copies of training ones.
+
+<Callout type="key">
+GNN layers produce node vectors; the task picks the head. Node classification puts a classifier on each node, link prediction scores pairs against negative samples, and graph classification pools all nodes with an order-free readout. The splits are part of the method: remove held-out edges from the graph in link prediction, and split graphs so that test examples are not near-duplicates of training ones.
+</Callout>

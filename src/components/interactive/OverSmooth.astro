@@ -1,0 +1,102 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Too many layers wash the signal out"
+  caption="Two communities joined by one edge. Each node starts with one feature: about +1 on the left (blue) and about −1 on the right (red). Each layer replaces every node's value with the mean over itself and its neighbours, the aggregation of a plain mean GNN. Drag the number of layers: after a few, the noise is smoothed away and the two groups are cleanly separated; after many, every node drifts to the same value and the groups can no longer be told apart."
+>
+  <over-smooth>
+    <label class="os-lbl">layers <input type="range" min="0" max="60" step="1" value="0" data-l /> <b data-lv>0</b></label>
+    <svg class="os-svg" viewBox="0 0 400 170" role="img" aria-label="Node values after repeated mean aggregation">
+      <g data-g></g>
+    </svg>
+    <p class="os-stat" data-stat></p>
+  </over-smooth>
+</Figure>
+
+<style>
+  .os-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .os-lbl input[type='range'] {
+    flex: 1;
+  }
+  .os-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .os-svg :global(.os-t) {
+    fill: var(--text);
+    font: 9px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .os-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const POS = [
+    [40, 50], [100, 30], [150, 80], [90, 130], [30, 115], [160, 145],
+    [240, 80], [300, 30], [360, 55], [355, 125], [290, 145], [235, 150],
+  ];
+  const EDGES = [
+    [0, 1], [0, 4], [1, 2], [1, 3], [2, 3], [3, 4], [2, 5], [3, 5], [0, 3],
+    [6, 7], [7, 8], [8, 9], [9, 10], [10, 11], [6, 11], [7, 10], [6, 10], [8, 10],
+    [2, 6],
+  ];
+  const N = POS.length;
+  const LEFT = 6;
+  const X0 = [1.3, 0.7, 1.1, 0.9, 1.4, 0.6, -0.8, -1.2, -0.6, -1.4, -1.0, -0.9];
+  const NB: number[][] = Array.from({ length: N }, (_, i) => [i]); // self-loop
+  for (const [a, b] of EDGES) {
+    NB[a].push(b);
+    NB[b].push(a);
+  }
+  const STATES: number[][] = [X0];
+  for (let l = 0; l < 60; l++) {
+    const h = STATES[l];
+    STATES.push(NB.map((nb) => nb.reduce((s, u) => s + h[u], 0) / nb.length));
+  }
+
+  class OverSmooth extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-l]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const l = +this.querySelector<HTMLInputElement>('[data-l]')!.value;
+      this.querySelector('[data-lv]')!.textContent = String(l);
+      const h = STATES[l];
+      let html = '';
+      for (const [a, b] of EDGES) html += `<line x1="${POS[a][0]}" y1="${POS[a][1]}" x2="${POS[b][0]}" y2="${POS[b][1]}" style="stroke:var(--border);stroke-width:2"></line>`;
+      POS.forEach(([x, y], i) => {
+        const v = h[i];
+        const c = v >= 0 ? `rgba(66,133,244,${Math.min(1, Math.abs(v)).toFixed(2)})` : `rgba(234,67,53,${Math.min(1, Math.abs(v)).toFixed(2)})`;
+        html += `<circle cx="${x}" cy="${y}" r="14" style="fill:var(--bg)"></circle><circle cx="${x}" cy="${y}" r="14" style="fill:${c};stroke:var(--text-faint)"></circle><text x="${x}" y="${y}" class="os-t">${v.toFixed(2)}</text>`;
+      });
+      this.querySelector('[data-g]')!.innerHTML = html;
+      const mean = (a: number[]) => a.reduce((s, v) => s + v, 0) / a.length;
+      const sd = (a: number[]) => Math.sqrt(mean(a.map((v) => (v - mean(a)) ** 2)));
+      const L = h.slice(0, LEFT);
+      const R = h.slice(LEFT);
+      const gap = mean(L) - mean(R);
+      const within = (sd(L) + sd(R)) / 2;
+      this.querySelector('[data-stat]')!.textContent =
+        `gap between group means ${gap.toFixed(3)} · spread within groups ${within.toFixed(3)} · ${gap > 0.5 ? 'groups separable' : gap > 0.1 ? 'groups merging' : 'over-smoothed'}`;
+    }
+  }
+  customElements.define('over-smooth', OverSmooth);
+</script>

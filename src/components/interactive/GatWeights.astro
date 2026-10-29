@@ -1,0 +1,97 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="GCN weights by degree, GAT weights by content"
+  caption="Node v and four neighbours with the same degree. Blue bars are GCN's weights, fixed by degree, so all four neighbours count equally whatever they contain. Green bars are GAT's attention weights, a softmax over scores computed from the features. Drag neighbour C's feature up (the direction the attention vector favours): its GAT weight rises and the others fall, while GCN does not change. The score here is a simple illustrative function, a·feature, not a trained model."
+>
+  <gat-weights>
+    <label class="gw-lbl">neighbour C's feature <input type="range" min="-2" max="2" step="0.05" value="0" data-f /> <b data-fv>0.00</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">weight</span>
+      <svg class="gw-svg" viewBox="0 0 400 180" data-grid='{"box":[30,10,390,150],"y":[0,1]}' role="img" aria-label="GCN and GAT weights of node v over itself and four neighbours">
+        <g data-bars></g>
+        <text x="24" y="14" class="ax-tick gw-end">1</text>
+        <text x="24" y="153" class="ax-tick gw-end">0</text>
+      </svg>
+      <span class="ax-x">neighbour</span>
+    </div>
+    <p class="gw-stat" data-stat></p>
+  </gat-weights>
+</Figure>
+
+<style>
+  .gw-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .gw-lbl input[type='range'] {
+    flex: 1;
+  }
+  .gw-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .gw-svg :global(.gw-l) {
+    fill: var(--text-muted);
+    font: 10px var(--font-mono);
+    text-anchor: middle;
+  }
+  .gw-end {
+    text-anchor: end;
+  }
+  .gw-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const NAMES = ['v (self)', 'A', 'B', 'C', 'D'];
+  const BASE = [0.2, 0.5, -0.4, 0, 0.1];
+  const A = 1.5; // illustrative attention slope
+
+  class GatWeights extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-f]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const f = +this.querySelector<HTMLInputElement>('[data-f]')!.value;
+      this.querySelector('[data-fv]')!.textContent = f.toFixed(2);
+      const feat = BASE.slice();
+      feat[3] = f;
+      const e = feat.map((x) => {
+        const s = A * x;
+        return s > 0 ? s : 0.2 * s; // LeakyReLU
+      });
+      const m = Math.max(...e);
+      const ex = e.map((v) => Math.exp(v - m));
+      const sum = ex.reduce((a, b) => a + b, 0);
+      const gat = ex.map((v) => v / sum);
+      const gcn = NAMES.map(() => 1 / NAMES.length); // equal degrees
+      const gw = 360 / NAMES.length;
+      let html = '';
+      NAMES.forEach((name, i) => {
+        const x = 30 + i * gw;
+        const h1 = gcn[i] * 140;
+        const h2 = gat[i] * 140;
+        html += `<rect x="${(x + 10).toFixed(1)}" y="${(150 - h1).toFixed(1)}" width="${(gw / 2 - 12).toFixed(1)}" height="${h1.toFixed(1)}" rx="2" style="fill:#4285f4;opacity:0.8"></rect>`;
+        html += `<rect x="${(x + gw / 2 + 2).toFixed(1)}" y="${(150 - h2).toFixed(1)}" width="${(gw / 2 - 12).toFixed(1)}" height="${h2.toFixed(1)}" rx="2" style="fill:#34a853;opacity:0.85;${i === 3 ? 'stroke:#fbbc05;stroke-width:2' : ''}"></rect>`;
+        html += `<text x="${(x + gw / 2).toFixed(1)}" y="166" class="gw-l">${name}</text>`;
+      });
+      this.querySelector('[data-bars]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent =
+        `C: GCN ${gcn[3].toFixed(2)} · GAT ${gat[3].toFixed(2)} · GAT range ${Math.min(...gat).toFixed(2)} to ${Math.max(...gat).toFixed(2)}`;
+    }
+  }
+  customElements.define('gat-weights', GatWeights);
+</script>
