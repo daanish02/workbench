@@ -1,0 +1,84 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Depth multiplies linear pieces, width only adds them"
+  caption="Composing the two-ReLU tent map with itself k times. Each extra layer of 2 ReLUs doubles the number of linear pieces, so k layers give 2ᵏ pieces from 2k units. One hidden layer adds at most one piece per unit, so it would need 2ᵏ − 1 units for the same sawtooth."
+>
+  <tent-depth>
+    <label class="td-lbl">depth k <input type="range" min="1" max="7" step="1" value="3" data-k /> <b data-kv>3</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">Tᵏ(x)</span>
+      <svg class="td-svg" viewBox="0 0 400 200" data-grid='{"box":[30,10,390,180],"x":[0,1],"y":[0,1]}' role="img" aria-label="The tent map composed k times, a sawtooth">
+        <path data-line class="td-line"></path>
+        <text x="30" y="196" class="ax-tick">0</text>
+        <text x="390" y="196" class="ax-tick td-end">1</text>
+        <text x="24" y="14" class="ax-tick td-end">1</text>
+      </svg>
+      <span class="ax-x">x</span>
+    </div>
+    <p class="td-stat" data-stat></p>
+  </tent-depth>
+</Figure>
+
+<style>
+  .td-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .td-lbl input[type='range'] {
+    flex: 1;
+  }
+  .td-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .td-line {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2;
+  }
+  .td-end {
+    text-anchor: end;
+  }
+  .td-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const tent = (x: number) => 2 * Math.max(x, 0) - 4 * Math.max(x - 0.5, 0);
+
+  class TentDepth extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-k]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const k = +this.querySelector<HTMLInputElement>('[data-k]')!.value;
+      this.querySelector('[data-kv]')!.textContent = `${k}`;
+      // the kinks sit at multiples of 1 / 2^k, so sampling exactly there draws it without error
+      const n = 2 ** k;
+      let d = '';
+      for (let i = 0; i <= n; i++) {
+        const x = i / n;
+        let y = x;
+        for (let j = 0; j < k; j++) y = tent(y);
+        d += `${i ? 'L' : 'M'}${(30 + x * 360).toFixed(2)},${(180 - y * 170).toFixed(2)}`;
+      }
+      this.querySelector('[data-line]')!.setAttribute('d', d);
+      this.querySelector('[data-stat]')!.textContent =
+        `depth ${k} · ${2 * k} ReLUs · ${n} linear pieces · one hidden layer would need ≥ ${n - 1} ReLUs`;
+    }
+  }
+  customElements.define('tent-depth', TentDepth);
+</script>

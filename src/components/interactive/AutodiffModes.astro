@@ -1,0 +1,186 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Forward mode needs a pass per input, reverse mode one"
+  caption="f(x, y) = x·y + sin x at x = 2, y = 3. Forward mode carries a tangent (green, the derivative with respect to the seeded input) along with each value, so it needs one full pass for ∂f/∂x and another for ∂f/∂y. Reverse mode runs the values forward once, then sends one adjoint (green, ∂f/∂node) backwards and gets both partial derivatives in a single sweep. The current node is yellow."
+>
+  <autodiff-modes>
+    <div class="am-ctl">
+      <input type="hidden" data-mode value="fx" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="fx" aria-pressed="true">forward, seed x</button>
+        <button type="button" class="btn" data-choice="fy" aria-pressed="false">forward, seed y</button>
+        <button type="button" class="btn" data-choice="rev" aria-pressed="false">reverse</button>
+      </span>
+    </div>
+    <div class="am-ctl">
+      <button type="button" class="btn primary" data-step-btn>Step</button>
+      <button type="button" class="btn" data-auto-step aria-pressed="false">Auto</button>
+      <button type="button" class="btn" data-reset>Reset</button>
+    </div>
+    <svg class="am-svg" viewBox="0 0 400 220" role="img" aria-label="Graph of f = x y + sin x with values and derivatives at each node">
+      <g data-edges></g>
+      <g data-nodes></g>
+    </svg>
+    <p class="am-stat" data-stat aria-live="polite"></p>
+  </autodiff-modes>
+</Figure>
+
+<style>
+  .am-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .am-svg {
+    display: block;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .am-svg :global(.am-edge) {
+    stroke: var(--border);
+    stroke-width: 1.5;
+  }
+  .am-svg :global(.am-edge.on) {
+    stroke: var(--g-green);
+  }
+  .am-svg :global(.am-bg) {
+    fill: var(--bg);
+  }
+  .am-svg :global(.am-node) {
+    fill: rgba(66, 133, 244, 0.16);
+    stroke: var(--g-blue);
+    stroke-width: 1.5;
+  }
+  .am-svg :global(.am-node.now) {
+    stroke: var(--g-yellow);
+    stroke-width: 2.5;
+  }
+  .am-svg :global(.am-op) {
+    fill: var(--text);
+    font: 600 13px var(--font-mono);
+    text-anchor: middle;
+    dominant-baseline: central;
+  }
+  .am-svg :global(.am-val) {
+    fill: var(--g-blue-l);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+  }
+  .am-svg :global(.am-der) {
+    fill: var(--g-green-l);
+    font: 12px var(--font-mono);
+    text-anchor: middle;
+  }
+  .am-stat {
+    margin: 10px 0 0;
+    font: 0.8125rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+    min-height: 3.2em;
+  }
+</style>
+
+<script>
+  type N = { id: string; x: number; y: number; op: string; val: number };
+  const C2 = Math.cos(2);
+  const S2 = Math.sin(2);
+  const NODES: N[] = [
+    { id: 'x', x: 45, y: 70, op: 'x', val: 2 },
+    { id: 'y', x: 45, y: 170, op: 'y', val: 3 },
+    { id: 's', x: 195, y: 45, op: 'sin', val: S2 },
+    { id: 'u', x: 195, y: 150, op: '×', val: 6 },
+    { id: 'f', x: 345, y: 100, op: '+', val: 6 + S2 },
+  ];
+  const EDGES: [string, string][] = [['x', 's'], ['x', 'u'], ['y', 'u'], ['s', 'f'], ['u', 'f']];
+  type Step = { show: Record<string, number>; now: string[]; msg: string; vals?: string[] };
+  // Each mode is a list of steps; `show` adds derivatives, `vals` adds values.
+  const MODES: Record<string, Step[]> = {
+    fx: [
+      { vals: ['x', 'y'], show: { x: 1, y: 0 }, now: ['x', 'y'], msg: 'seed: ẋ = 1, ẏ = 0 (we want ∂f/∂x)' },
+      { vals: ['s'], show: { s: C2 }, now: ['s'], msg: 's = sin x, ṡ = cos x · ẋ = −0.416' },
+      { vals: ['u'], show: { u: 3 }, now: ['u'], msg: 'u = x·y, u̇ = y·ẋ + x·ẏ = 3' },
+      { vals: ['f'], show: { f: 3 + C2 }, now: ['f'], msg: 'f = u + s, ḟ = u̇ + ṡ = 2.584 = ∂f/∂x. ∂f/∂y needs a second pass.' },
+    ],
+    fy: [
+      { vals: ['x', 'y'], show: { x: 0, y: 1 }, now: ['x', 'y'], msg: 'seed: ẋ = 0, ẏ = 1 (we want ∂f/∂y)' },
+      { vals: ['s'], show: { s: 0 }, now: ['s'], msg: 'ṡ = cos x · ẋ = 0' },
+      { vals: ['u'], show: { u: 2 }, now: ['u'], msg: 'u̇ = y·ẋ + x·ẏ = 2' },
+      { vals: ['f'], show: { f: 2 }, now: ['f'], msg: 'ḟ = u̇ + ṡ = 2 = ∂f/∂y. Two inputs took two full passes.' },
+    ],
+    rev: [
+      { vals: ['x', 'y', 's', 'u', 'f'], show: {}, now: ['f'], msg: 'forward pass: every value computed and stored on the tape' },
+      { show: { f: 1 }, now: ['f'], msg: 'seed the output: f̄ = ∂f/∂f = 1' },
+      { show: { s: 1, u: 1 }, now: ['s', 'u'], msg: 'an add passes the adjoint through: s̄ = ū = 1' },
+      { show: { y: 2 }, now: ['y'], msg: 'ȳ = ū · x = 2' },
+      { show: { x: 3 + C2 }, now: ['x'], msg: 'x̄ = ū · y + s̄ · cos x = 3 − 0.416 = 2.584. Both partials from one backward sweep.' },
+    ],
+  };
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const fmt = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? `${Math.round(v)}` : v.toFixed(3)).replace('-', '−');
+
+  class AutodiffModes extends HTMLElement {
+    i = 0;
+    connectedCallback() {
+      this.querySelector('[data-step-btn]')!.addEventListener('click', () => this.step());
+      this.querySelector('[data-reset]')!.addEventListener('click', () => this.reset());
+      this.querySelector('[data-mode]')!.addEventListener('input', () => this.reset());
+      this.reset();
+    }
+    steps() {
+      return MODES[this.querySelector<HTMLInputElement>('[data-mode]')!.value];
+    }
+    reset() {
+      this.i = 0;
+      (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = false;
+      this.draw();
+      this.querySelector('[data-stat]')!.textContent = 'Press Step.';
+    }
+    step() {
+      const st = this.steps();
+      if (this.i >= st.length) return;
+      this.i++;
+      this.draw();
+      this.querySelector('[data-stat]')!.textContent = st[this.i - 1].msg;
+      if (this.i >= st.length) (this.querySelector('[data-step-btn]') as HTMLButtonElement).disabled = true;
+    }
+    draw() {
+      const mode = this.querySelector<HTMLInputElement>('[data-mode]')!.value;
+      const st = this.steps().slice(0, this.i);
+      const vals = new Set(st.flatMap((s) => s.vals ?? []));
+      const ders: Record<string, number> = Object.assign({}, ...st.map((s) => s.show));
+      const now = st.length ? st[st.length - 1].now : [];
+      const at = (id: string) => NODES.find((n) => n.id === id)!;
+      const edges = this.querySelector('[data-edges]')!;
+      edges.replaceChildren();
+      for (const [a, b] of EDGES) {
+        const l = document.createElementNS(NS, 'line');
+        const p = at(a);
+        const q = at(b);
+        l.setAttribute('x1', `${p.x}`);
+        l.setAttribute('y1', `${p.y}`);
+        l.setAttribute('x2', `${q.x}`);
+        l.setAttribute('y2', `${q.y}`);
+        l.setAttribute('class', a in ders && b in ders ? 'am-edge on' : 'am-edge');
+        edges.append(l);
+      }
+      const sym = mode === 'rev' ? (id: string) => `${id}̄=` : (id: string) => `${id}̇=`;
+      this.querySelector('[data-nodes]')!.innerHTML = NODES.map((n) => {
+        const r = n.op === 'sin' ? 24 : 20;
+        return (
+          `<circle cx="${n.x}" cy="${n.y}" r="${r}" class="am-bg"></circle>` +
+          `<circle cx="${n.x}" cy="${n.y}" r="${r}" class="am-node${now.includes(n.id) ? ' now' : ''}"></circle>` +
+          `<text x="${n.x}" y="${n.y}" class="am-op">${n.op}</text>` +
+          (vals.has(n.id) ? `<text x="${n.x}" y="${n.y - r - 8}" class="am-val">${n.id}=${fmt(n.val)}</text>` : '') +
+          (n.id in ders ? `<text x="${n.x}" y="${n.y + r + 17}" class="am-der">${sym(n.id)}${fmt(ders[n.id])}</text>` : '')
+        );
+      }).join('');
+    }
+  }
+  customElements.define('autodiff-modes', AutodiffModes);
+</script>

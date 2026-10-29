@@ -1,0 +1,118 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Where each regression loss puts its best constant"
+  caption="The data from the note: 1, 2, 2, 3, 3, 4 and one outlier at 50. Each curve is the mean loss of predicting one constant c for every point. MSE's minimum (the mean, 9.29) is dragged towards the outlier; MAE's (the median, 3.00) and Huber's (2.75 at δ = 1) stay with the bulk. Drag δ: a large δ makes Huber behave like MSE, a small one like MAE."
+>
+  <robust-losses>
+    <label class="rl-lbl">Huber δ <input type="range" min="0.2" max="20" step="0.1" value="1" data-d /> <b data-dv>1.0</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">mean loss (each curve scaled to its own range)</span>
+      <svg class="rl-svg" viewBox="0 0 400 210" data-grid='{"box":[30,10,390,190],"x":[0,15],"y":[0,1]}' role="img" aria-label="Mean MSE, MAE and Huber loss as a function of the predicted constant">
+        <path data-mse class="rl-mse"></path>
+        <path data-mae class="rl-mae"></path>
+        <path data-hub class="rl-hub"></path>
+        <g data-mins></g>
+        <text x="30" y="205" class="ax-tick">0</text>
+        <text x="390" y="205" class="ax-tick rl-end">15</text>
+      </svg>
+      <span class="ax-x">predicted constant c</span>
+    </div>
+    <p class="rl-stat" data-stat></p>
+  </robust-losses>
+</Figure>
+
+<style>
+  .rl-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .rl-lbl input[type='range'] {
+    flex: 1;
+  }
+  .rl-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .rl-mse,
+  .rl-mae,
+  .rl-hub {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .rl-mse {
+    stroke: var(--g-red);
+  }
+  .rl-mae {
+    stroke: var(--g-blue);
+  }
+  .rl-hub {
+    stroke: var(--g-green);
+  }
+  .rl-svg :global(.rl-min) {
+    stroke-width: 1.5;
+    stroke-dasharray: 3 3;
+  }
+  .rl-end {
+    text-anchor: end;
+  }
+  .rl-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const Y = [1, 2, 2, 3, 3, 4, 50];
+  const C = Array.from({ length: 1501 }, (_, i) => i / 100);
+  const mean = (f: (r: number) => number, c: number) => Y.reduce((s, y) => s + f(y - c), 0) / Y.length;
+  const huber = (d: number) => (r: number) => (Math.abs(r) <= d ? 0.5 * r * r : d * (Math.abs(r) - 0.5 * d));
+  const px = (c: number) => 30 + (c / 15) * 360;
+  const COLORS: Record<string, string> = { mse: 'var(--g-red)', mae: 'var(--g-blue)', hub: 'var(--g-green)' };
+
+  // Each curve is rescaled to [0, 1] over the plotted range so their shapes can be compared.
+  function curve(f: (r: number) => number): [string, number] {
+    const v = C.map((c) => mean(f, c));
+    const lo = Math.min(...v);
+    const hi = Math.max(...v);
+    let best = 0;
+    v.forEach((x, i) => {
+      if (x < v[best]) best = i;
+    });
+    const d = v.map((x, i) => `${i ? 'L' : 'M'}${px(C[i]).toFixed(1)},${(190 - ((x - lo) / (hi - lo)) * 180).toFixed(1)}`).join('');
+    return [d, C[best]];
+  }
+
+  class RobustLosses extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-d]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const d = +this.querySelector<HTMLInputElement>('[data-d]')!.value;
+      this.querySelector('[data-dv]')!.textContent = d.toFixed(1);
+      const res: Record<string, number> = {};
+      for (const [key, f] of [['mse', (r: number) => r * r], ['mae', Math.abs], ['hub', huber(d)]] as const) {
+        const [path, best] = curve(f);
+        this.querySelector(`[data-${key}]`)!.setAttribute('d', path);
+        res[key] = best;
+      }
+      // the mean (9.29) is inside the 0–15 window, so every minimum is drawn
+      this.querySelector('[data-mins]')!.innerHTML = Object.entries(res)
+        .map(([k, c]) => `<line x1="${px(c)}" x2="${px(c)}" y1="10" y2="190" class="rl-min" style="stroke:${COLORS[k]}"></line>`)
+        .join('');
+      this.querySelector('[data-stat]')!.textContent =
+        `best constant · MSE ${res.mse.toFixed(2)} · MAE ${res.mae.toFixed(2)} · Huber (δ = ${d.toFixed(1)}) ${res.hub.toFixed(2)}`;
+    }
+  }
+  customElements.define('robust-losses', RobustLosses);
+</script>

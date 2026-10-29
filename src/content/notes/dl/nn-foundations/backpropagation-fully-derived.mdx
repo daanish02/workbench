@@ -28,7 +28,12 @@ resources:
 A batch of $n$ examples with $d$ features is a matrix $X$ of shape $n \times d$, one example per row. A two-layer network with $h$ hidden units and $k$ classes computes
 
 $$
-Z_1 = X W_1 + b_1, \quad A_1 = \operatorname{relu}(Z_1), \quad Z_2 = A_1 W_2 + b_2, \quad P = \operatorname{softmax}(Z_2),
+\begin{aligned}
+Z_1 &= X W_1 + b_1, \
+A_1 &= \operatorname{relu}(Z_1), \
+Z_2 &= A_1 W_2 + b_2, \
+P &= \operatorname{softmax}(Z_2),
+\end{aligned}
 
 $$
 
@@ -124,7 +129,13 @@ The backward pass never forms a full Jacobian. The Jacobian of $Z \mapsto AW$ wi
 Chaining the rules from the loss down gives the whole backward pass of the two-layer network:
 
 $$
-\bar Z_2 = \tfrac{1}{n}(P - Y), \quad \bar W_2 = A_1^\top \bar Z_2, \quad \bar A_1 = \bar Z_2 W_2^\top, \quad \bar Z_1 = \bar A_1 \odot \mathbb{1}[Z_1 > 0], \quad \bar W_1 = X^\top \bar Z_1.
+\begin{aligned}
+\bar Z_2 &= \tfrac{1}{n}(P - Y), \
+\bar W_2 &= A_1^\top \bar Z_2, \
+\bar A_1 &= \bar Z_2 W_2^\top, \
+\bar Z_1 &= \bar A_1 \odot \mathbb{1}[Z_1 > 0], \
+\bar W_1 &= X^\top \bar Z_1.
+\end{aligned}
 
 $$
 
@@ -217,12 +228,18 @@ for step in range(2001):
 
 In words: the loss starts at 0.660, close to $\ln 2 \approx 0.693$ for a network that is nearly guessing, and falls to 0.017 after 2000 steps while accuracy reaches 1.00 on the training set. The update lines are the full gradient from the previous section and nothing else; this is all a framework does for a dense network, except that it derives the backward lines itself, as [Automatic Differentiation](../automatic-differentiation/) explains.
 
+<MoonsTrainer />
+
 ## The general recursion
 
 Naming $\delta_\ell = \bar Z_\ell$ for layer $\ell$ of an $L$-layer network with activation $\sigma$, the derivation above is the textbook recursion:
 
 $$
-\delta_L = \tfrac{1}{n}(P - Y), \qquad \delta_\ell = \left(\delta_{\ell + 1} W_{\ell + 1}^\top\right) \odot \sigma'(Z_\ell), \qquad \bar W_\ell = A_{\ell - 1}^\top \delta_\ell.
+\begin{aligned}
+\delta_L &= \tfrac{1}{n}(P - Y), \
+\delta_\ell &= \left(\delta_{\ell + 1} W_{\ell + 1}^\top\right) \odot \sigma'(Z_\ell), \
+\bar W_\ell &= A_{\ell - 1}^\top \delta_\ell.
+\end{aligned}
 
 $$
 

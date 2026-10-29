@@ -1,0 +1,126 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Cross-entropy pushes hardest when the model is most wrong"
+  caption="One example with target y = 1 and logit z, through a sigmoid. The curves show the gradient each loss sends to z (its size; both point the same way). Cross-entropy's gradient |p − 1| grows towards 1 as the prediction gets worse; MSE's is multiplied by the sigmoid's slope and fades to nothing on the left, exactly where learning is needed. Drag z to read both."
+>
+  <loss-gradient-curve>
+    <label class="lg-lbl">logit z <input type="range" min="-6" max="6" step="0.1" value="-4" data-z /> <b data-zv>-4.0</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">gradient size |∂L/∂z|</span>
+      <svg class="lg-svg" viewBox="0 0 400 210" data-grid='{"box":[30,10,390,190],"x":[-6,6],"y":[0,1]}' role="img" aria-label="Gradient magnitude of cross-entropy and MSE against the logit">
+        <path data-ce class="lg-ce"></path>
+        <path data-mse class="lg-mse"></path>
+        <line data-mark y1="10" y2="190" class="lg-mark"></line>
+        <circle data-dce r="4" class="lg-dce"></circle>
+        <circle data-dmse r="4" class="lg-dmse"></circle>
+        <text x="30" y="205" class="ax-tick">−6</text>
+        <text x="390" y="205" class="ax-tick lg-end">6</text>
+        <text x="24" y="14" class="ax-tick lg-end">1</text>
+        <text x="40" y="26" class="lg-name lg-c">cross-entropy</text>
+        <text x="40" y="42" class="lg-name lg-m">MSE</text>
+      </svg>
+      <span class="ax-x">logit z (target class 1; left = confidently wrong)</span>
+    </div>
+    <p class="lg-stat" data-stat></p>
+  </loss-gradient-curve>
+</Figure>
+
+<style>
+  .lg-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .lg-lbl input[type='range'] {
+    flex: 1;
+  }
+  .lg-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .lg-ce,
+  .lg-mse {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .lg-ce {
+    stroke: var(--g-green);
+  }
+  .lg-mse {
+    stroke: var(--g-red);
+  }
+  .lg-mark {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .lg-dce {
+    fill: var(--g-green);
+  }
+  .lg-dmse {
+    fill: var(--g-red);
+  }
+  .lg-name {
+    font: 0.75rem var(--font-mono);
+  }
+  .lg-c {
+    fill: var(--g-green-l);
+  }
+  .lg-m {
+    fill: var(--g-red-l);
+  }
+  .lg-end {
+    text-anchor: end;
+  }
+  .lg-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const sig = (z: number) => 1 / (1 + Math.exp(-z));
+  const ce = (z: number) => 1 - sig(z);
+  const mse = (z: number) => {
+    const p = sig(z);
+    return 2 * (1 - p) * p * (1 - p);
+  };
+  const px = (z: number) => 30 + ((z + 6) / 12) * 360;
+  const py = (g: number) => 190 - g * 180;
+  const path = (f: (z: number) => number) =>
+    Array.from({ length: 241 }, (_, i) => -6 + i * 0.05)
+      .map((z, i) => `${i ? 'L' : 'M'}${px(z).toFixed(1)},${py(f(z)).toFixed(1)}`)
+      .join('');
+
+  class LossGradientCurve extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-ce]')!.setAttribute('d', path(ce));
+      this.querySelector('[data-mse]')!.setAttribute('d', path(mse));
+      this.querySelector('[data-z]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const z = +this.querySelector<HTMLInputElement>('[data-z]')!.value;
+      this.querySelector('[data-zv]')!.textContent = z.toFixed(1);
+      const m = this.querySelector('[data-mark]')!;
+      m.setAttribute('x1', px(z).toFixed(1));
+      m.setAttribute('x2', px(z).toFixed(1));
+      for (const [sel, f] of [['[data-dce]', ce], ['[data-dmse]', mse]] as const) {
+        const c = this.querySelector(sel)!;
+        c.setAttribute('cx', px(z).toFixed(1));
+        c.setAttribute('cy', py(f(z)).toFixed(1));
+      }
+      this.querySelector('[data-stat]')!.textContent =
+        `z = ${z.toFixed(1)} · p = ${sig(z).toFixed(4)} · cross-entropy ${ce(z).toFixed(4)} · MSE ${mse(z).toFixed(4)} · ratio ${(ce(z) / mse(z)).toFixed(1)}×`;
+    }
+  }
+  customElements.define('loss-gradient-curve', LossGradientCurve);
+</script>
