@@ -3,6 +3,128 @@ title: "Learning Rate Schedules"
 description: "Warmup, decay and cyclical learning rates, and when to use each."
 order: 7
 tier: core
+takeaways:
+  - "A **learning rate schedule** changes the step size during training: large early to make fast progress, small late to settle into a minimum instead of bouncing around it."
+  - "With noisy gradients a constant step stalls at a **noise floor**: on a noisy quadratic, a constant 0.2 ends at a loss of 0.995, a constant 0.02 at 0.075, and cosine decay from 0.2 at 0.039."
+  - "**Warmup** ramps the learning rate up from near zero over the first few hundred or thousand steps. It protects the start of training, when gradients are large, Adam's statistics are new and the network is far from any sensible region."
+  - "Standard shapes: **step decay** (CNNs), **cosine** and **linear** decay (most transformers), and **warmup-stable-decay** (WSD), which holds the peak and decays only at the end, so a run can be extended or checkpointed mid-way."
+  - "The peak learning rate matters more than the shape. Tune it first; then a warmup of 1 to 5 % of training and decay to about a tenth of the peak are safe defaults."
+resources:
+  - title: "SGDR: Stochastic Gradient Descent with Warm Restarts (Loshchilov and Hutter)"
+    url: "https://arxiv.org/abs/1608.03983"
+    note: "Introduced the cosine schedule, with and without restarts."
+  - title: "Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour (Goyal et al.)"
+    url: "https://arxiv.org/abs/1706.02677"
+    note: "The linear scaling rule for batch size and the gradual warmup that makes it work."
+  - title: "MiniCPM: Unveiling the Potential of Small Language Models (Hu et al.)"
+    url: "https://arxiv.org/abs/2404.06395"
+    note: "The warmup-stable-decay schedule and why its short final decay gives most of cosine's benefit."
 ---
 
-_Placeholder. Content not written yet._
+The learning rate is the most important hyperparameter in deep learning, and its best value changes during training. Early on, the network is far from any good solution and large steps make fast progress; later, the gradient is mostly mini-batch noise around a minimum and large steps just bounce. A **learning rate schedule** encodes that change. This note shows why decay is necessary with noisy gradients, why nearly every modern run begins with warmup, and compares the standard shapes. It builds on [Stochastic Gradient Descent](../../../math/optimization/stochastic-gradient-descent/), which proves that a constant step has a noise floor, and on [Deep Net Optimizers](../optimizers-revisited-for-deep-nets/). Run the code with `uv run --with numpy`.
+
+## Why decay
+
+With mini-batch gradients each step is the true gradient plus noise. Near the minimum the true gradient is small but the noise is not, so with a constant learning rate $\eta$ the parameters keep jittering in a region whose size grows with $\eta$. Shrinking $\eta$ shrinks the jitter. The code runs SGD on a 20-dimensional quadratic with unit gradient noise, with three choices of learning rate.
+
+```python
+import math
+import numpy as np
+
+# noisy SGD on a quadratic: a constant step stalls at a noise floor, decay goes below it
+def run(schedule, steps=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    w = np.full(20, 5.0)
+    h = np.linspace(0.5, 2.0, 20)                 # curvatures of the quadratic
+    for s in range(steps):
+        g = h * w + rng.normal(scale=1.0, size=20)  # gradient plus mini-batch noise
+        w -= schedule(s) * g
+    return 0.5 * np.sum(h * w * w)                # final loss, the minimum is 0
+
+peak = 0.2
+print(f"constant 0.2:    final loss {run(lambda s: peak):.4f}")
+print(f"constant 0.02:   final loss {run(lambda s: peak / 10):.4f}")
+print(f"cosine 0.2 -> 0: final loss {run(lambda s: 0.5 * peak * (1 + math.cos(math.pi * s / 2000))):.4f}")
+# constant 0.2:    final loss 0.9953
+# constant 0.02:   final loss 0.0749
+# cosine 0.2 -> 0: final loss 0.0385
+```
+
+In words: a constant step of 0.2 gets close to the minimum fast but then jitters at a loss of about 1.0. A constant 0.02 jitters ten times less, ending at 0.075, but it would take ten times longer to get there from a distant start. Cosine decay from 0.2 to 0 takes the large steps early and the small ones late and ends lowest, at 0.039. Every schedule is a compromise of this kind between speed early and precision late.
+
+## Warmup
+
+**Warmup** increases the learning rate linearly from near zero to its peak over the first $W$ steps, typically a few hundred to a few thousand, or 1 to 5 % of training. Reasons it is needed, roughly in order of how well established they are:
+
+- **The start is the most dangerous region.** Freshly initialised networks can have large, rapidly changing gradients and sharp curvature; a full-size step there can push activations into saturation or produce a loss spike the run never recovers from. Training at a large peak learning rate only becomes stable after the network has moved to flatter regions, which small early steps let it do.
+- **Large batches.** Goyal et al. trained ImageNet with batches of 8192 by scaling the learning rate linearly with batch size; without a 5-epoch warmup the scaled rate diverged at the start.
+- **Adam and post-norm transformers.** Adam's second-moment estimate starts from a handful of samples, and the original post-norm transformer was very hard to train without warmup. Pre-norm transformers tolerate shorter warmup, but nearly all recipes keep some.
+
+Warmup is cheap insurance: a few percent of steps at a reduced rate costs almost nothing, and skipping it is a common cause of an early loss spike or `nan`.
+
+## The common shapes
+
+After warmup, a schedule decides how the rate moves from the peak $\eta_{\max}$ to a final value $\eta_{\min}$ over progress $t \in [0, 1]$. **Cosine** decay is the most common:
+
+$$
+\eta(t) = \eta_{\min} + \tfrac{1}{2} (\eta_{\max} - \eta_{\min}) \left( 1 + \cos(\pi t) \right).
+
+$$
+
+In words: the rate stays near the peak for a while, falls fastest in the middle and flattens out as it approaches $\eta_{\min}$. The code evaluates five schedules with a peak of $10^{-3}$, a final value of $10^{-4}$, 500 warmup steps and 10,000 steps in total.
+
+```python
+import math
+
+def lr_at(step, kind, peak=1e-3, total=10000, warmup=500, final=1e-4):
+    if step < warmup:
+        return peak * (step + 1) / warmup                    # linear warmup
+    t = (step - warmup) / (total - warmup)                   # progress after warmup, 0 to 1
+    if kind == "constant":
+        return peak
+    if kind == "step":
+        return peak * 0.1 ** (min(int(t * 3), 2) / 2)         # two drops of sqrt(10) to final
+    if kind == "cosine":
+        return final + 0.5 * (peak - final) * (1 + math.cos(math.pi * t))
+    if kind == "linear":
+        return peak + (final - peak) * t
+    if kind == "wsd":                                        # warmup, stable, decay last 20%
+        return peak if t < 0.8 else peak + (final - peak) * (t - 0.8) / 0.2
+
+for kind in ["constant", "step", "cosine", "linear", "wsd"]:
+    row = [lr_at(s, kind) for s in [0, 250, 500, 2500, 5000, 7500, 9000, 9999]]
+    print(f"{kind:8s}", " ".join(f"{v:.1e}" for v in row))
+# constant 2.0e-06 5.0e-04 1.0e-03 1.0e-03 1.0e-03 1.0e-03 1.0e-03 1.0e-03
+# step     2.0e-06 5.0e-04 1.0e-03 1.0e-03 3.2e-04 1.0e-04 1.0e-04 1.0e-04
+# cosine   2.0e-06 5.0e-04 1.0e-03 9.1e-04 5.9e-04 2.5e-04 1.2e-04 1.0e-04
+# linear   2.0e-06 5.0e-04 1.0e-03 8.1e-04 5.7e-04 3.4e-04 1.9e-04 1.0e-04
+# wsd      2.0e-06 5.0e-04 1.0e-03 1.0e-03 1.0e-03 1.0e-03 5.7e-04 1.0e-04
+```
+
+In words: all five start at $2 \times 10^{-6}$, reach half the peak at step 250 and the full $10^{-3}$ at step 500. Then they differ. Step decay holds the peak and drops in jumps, here to $3.2 \times 10^{-4}$ and then $10^{-4}$. Cosine is still at $9.1 \times 10^{-4}$ at step 2500 and passes through $5.9 \times 10^{-4}$ at the midpoint; linear falls steadily. WSD stays at the peak until 80 % of training and then decays to $10^{-4}$ within the last 20 %.
+
+<LrSchedulePlot />
+
+| Schedule | Typical use | Notes |
+|---|---|---|
+| Step decay | ResNet-style CNNs (divide by 10 at fixed epochs) | Simple; loss drops sharply at each step |
+| Cosine | Most transformers and LLMs, many vision models | Needs the total number of steps in advance |
+| Linear decay | BERT-style fine-tuning, many LLM recipes | Similar to cosine in practice |
+| Warmup-stable-decay | Recent LLM pretraining | Constant phase can be extended; decay from any checkpoint |
+| One-cycle / cyclical | Fast training of CNNs | Rate rises then falls (or repeats); popularised by fast.ai |
+
+**WSD** solves a practical problem with cosine: the cosine curve depends on the total step count, so a run cannot be extended once the schedule has been set, and an intermediate checkpoint mid-decay is not a finished model. With WSD, the stable phase can run as long as wanted, and a short decay from any checkpoint produces a usable model, at loss close to a full cosine run of the same length.
+
+<Callout type="pitfall">
+Schedulers in PyTorch count calls to `scheduler.step()`, not optimizer steps. Calling it once per epoch for a schedule defined in steps (or the reverse) stretches or squashes it by a factor of the number of batches per epoch: a warmup meant to last 1000 steps can end up lasting 1000 epochs. When resuming from a checkpoint, restore the scheduler's state too, or the rate jumps back to its starting value.
+</Callout>
+
+## Choosing in practice
+
+1. **Find the peak first.** The peak rate matters far more than the shape. A short **learning-rate range test**, which raises the rate exponentially over a few hundred steps and watches where the loss stops falling, gives a starting point; then try a few values a factor of 2 to 3 apart. See [Tuning Deep Nets](../hyperparameter-tuning-for-deep-nets/).
+2. **Then add warmup and decay.** Warmup of 1 to 5 % of steps, cosine or linear decay to about 10 % of the peak (or to 0), is a robust default for transformers. Step decay at 50 % and 75 % of training is the classic CNN recipe.
+3. **Batch size couples to the rate.** For SGD, doubling the batch size roughly allows doubling the learning rate (the linear scaling rule) up to a limit; for Adam the square-root rule is a common starting point. Longer warmup helps at large batch sizes.
+
+<Callout type="key">
+Decay is needed because noisy gradients make a constant step stall at a noise floor; warmup is needed because the start of training is fragile. Warmup then cosine, linear or WSD decay to about a tenth of the peak covers most modern training; tune the peak first.
+</Callout>

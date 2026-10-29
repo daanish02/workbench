@@ -1,0 +1,124 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Learning rate schedules over one training run"
+  caption="Pick a schedule and drag the warmup length. Every schedule starts with a linear warmup from near zero to the peak, then holds or decays it to a final value of a tenth of the peak. The shaded area is proportional to the total distance the optimizer is allowed to move."
+>
+  <lr-schedule>
+    <div class="ls-ctl">
+      <input type="hidden" data-kind value="cosine" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="constant" aria-pressed="false">constant</button>
+        <button type="button" class="btn" data-choice="step" aria-pressed="false">step</button>
+        <button type="button" class="btn" data-choice="cosine" aria-pressed="true">cosine</button>
+        <button type="button" class="btn" data-choice="linear" aria-pressed="false">linear</button>
+        <button type="button" class="btn" data-choice="wsd" aria-pressed="false">WSD</button>
+      </span>
+    </div>
+    <label class="ls-lbl">warmup <input type="range" min="0" max="30" step="1" value="5" data-w /> <b data-wv>5 %</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">learning rate (× peak)</span>
+      <svg class="ls-svg" viewBox="0 0 400 200" data-grid='{"box":[30,10,390,180],"x":[0,100],"y":[0,1]}' role="img" aria-label="Learning rate against training progress for the chosen schedule">
+        <path data-area class="ls-area"></path>
+        <path data-line class="ls-line"></path>
+        <line data-wline y1="10" y2="180" class="ls-warm"></line>
+        <text x="30" y="196" class="ax-tick">0</text>
+        <text x="390" y="196" class="ax-tick ls-end">100 %</text>
+        <text x="24" y="14" class="ax-tick ls-end">1</text>
+      </svg>
+      <span class="ax-x">training progress (% of steps)</span>
+    </div>
+    <p class="ls-stat" data-stat></p>
+  </lr-schedule>
+</Figure>
+
+<style>
+  .ls-ctl {
+    margin-bottom: 10px;
+  }
+  .ls-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ls-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ls-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ls-line {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .ls-area {
+    fill: rgba(66, 133, 244, 0.16);
+  }
+  .ls-warm {
+    stroke: var(--g-yellow);
+    stroke-dasharray: 4 4;
+  }
+  .ls-end {
+    text-anchor: end;
+  }
+  .ls-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const FINAL = 0.1;
+  // Learning rate as a fraction of the peak at progress t in [0, 1], same shapes as the note's code.
+  function lr(kind: string, t: number, w: number): number {
+    if (t < w) return (t + 1e-3) / (w + 1e-3);
+    const u = w < 1 ? (t - w) / (1 - w) : 1;
+    if (kind === 'constant') return 1;
+    if (kind === 'step') return Math.pow(0.1, Math.min(2, Math.floor(u * 3)) / 2);
+    if (kind === 'cosine') return FINAL + 0.5 * (1 - FINAL) * (1 + Math.cos(Math.PI * u));
+    if (kind === 'linear') return 1 + (FINAL - 1) * u;
+    return u < 0.8 ? 1 : 1 + (FINAL - 1) * ((u - 0.8) / 0.2);
+  }
+  const px = (t: number) => 30 + t * 360;
+  const py = (v: number) => 180 - v * 170;
+
+  class LrSchedule extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-kind]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-w]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const kind = this.querySelector<HTMLInputElement>('[data-kind]')!.value;
+      const w = +this.querySelector<HTMLInputElement>('[data-w]')!.value / 100;
+      this.querySelector('[data-wv]')!.textContent = `${Math.round(w * 100)} %`;
+      let d = '';
+      let area = 0;
+      const N = 400;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const v = lr(kind, t, w);
+        if (i < N) area += v / N;
+        d += `${i ? 'L' : 'M'}${px(t).toFixed(1)},${py(v).toFixed(1)}`;
+      }
+      this.querySelector('[data-line]')!.setAttribute('d', d);
+      this.querySelector('[data-area]')!.setAttribute('d', `${d}L390,180L30,180Z`);
+      const wl = this.querySelector('[data-wline]')!;
+      wl.setAttribute('x1', px(w).toFixed(1));
+      wl.setAttribute('x2', px(w).toFixed(1));
+      this.querySelector('[data-stat]')!.textContent =
+        `${kind} · warmup ${Math.round(w * 100)} % · final lr ${lr(kind, 1, w).toFixed(2)} × peak · average lr ${area.toFixed(2)} × peak`;
+    }
+  }
+  customElements.define('lr-schedule', LrSchedule);
+</script>

@@ -3,6 +3,126 @@ title: "Tuning Deep Nets"
 description: "How this differs from classical ML's grid/random search at this scale."
 order: 8
 tier: core
+takeaways:
+  - "Deep nets cost hours to weeks per run, so tuning budgets are tens of runs, not thousands. Spend them on the hyperparameters that matter: **learning rate** first, then batch size, schedule, weight decay; architecture details last."
+  - "Prefer **random search** to grid search: with 9 trials and one important hyperparameter, a grid tests only 3 learning rates, random search tests 9 and found a loss of 0.0009 against the grid's 0.0901."
+  - "Sample scale parameters **log-uniformly**: drawing a learning rate uniformly from $[10^{-5}, 10^{-1}]$ puts 89.7 % of trials in the top decade; log-uniform puts about 25 % in each."
+  - "**Successive halving** and Hyperband stop bad runs early: 81 configurations narrowed by a factor of 3 per round cost 405 epochs instead of 6561 and still kept the best one."
+  - "Tune on a small model or short run, then transfer carefully: the best learning rate usually shrinks as width grows, unless the model is parametrized for transfer (μP)."
+resources:
+  - title: "Deep Learning Tuning Playbook (Google Research)"
+    url: "https://github.com/google-research/tuning_playbook"
+    note: "A practical, opinionated process for tuning deep nets: what to tune first, how to run studies and how to read the results."
+  - title: "Random Search for Hyper-Parameter Optimization (Bergstra and Bengio, JMLR)"
+    url: "https://www.jmlr.org/papers/v13/bergstra12a.html"
+    note: "Why random search beats grid search when only a few hyperparameters matter."
+  - title: "Hyperband (Li et al.)"
+    url: "https://arxiv.org/abs/1603.06560"
+    note: "Successive halving with several brackets, so the early-stopping aggressiveness does not need to be tuned itself."
 ---
 
-_Placeholder. Content not written yet._
+[Hyperparameter Tuning](../../../ml/model-evaluation/hyperparameter-tuning/) in classical machine learning can afford a cross-validated grid of hundreds of settings, because each fit takes seconds. One training run of a deep network takes hours to weeks, so the whole tuning budget may be twenty runs. That changes the strategy: decide which hyperparameters are worth searching, sample them well, stop bad runs early, and tune on a cheaper proxy where possible. This note covers each step with small simulations; the learning rate and its schedule come from [Learning Rate Schedules](../learning-rate-schedules/). Run the code with `uv run --with numpy`.
+
+## What to tune first
+
+Hyperparameters are not equally important. A rough order, from the Google tuning playbook and common experience:
+
+1. **Learning rate** (peak value). Almost always the most important; off by a factor of 3 can cost more than any other choice.
+2. **Batch size**, usually fixed by hardware, with the learning rate retuned when it changes.
+3. **Schedule** (warmup length, decay shape), **weight decay**, **Adam's $\beta_2$**.
+4. **Regularization** (dropout, augmentation strength, label smoothing), which matters when the model overfits.
+5. **Architecture** (depth, width), usually decided by the compute budget rather than searched.
+
+Before searching, fix everything else to a known-good recipe from a similar published model. A deep net trained from someone else's working configuration with only the learning rate tuned is a much stronger baseline than a broad search from scratch.
+
+## Random beats grid
+
+When only one or two hyperparameters matter and the others barely do, a grid wastes most of its trials re-testing the same values of the important one. Random search gives every trial a new value of every hyperparameter.
+
+```python
+import numpy as np
+
+# validation loss that depends strongly on log10(lr) and barely on dropout
+def val_loss(lr, dropout):
+    return (np.log10(lr) + 2.7) ** 2 + 0.05 * (dropout - 0.2) ** 2
+
+rng = np.random.default_rng(0)
+grid = [(lr, d) for lr in [1e-4, 1e-3, 1e-2] for d in [0.0, 0.25, 0.5]]
+rand = [(10 ** rng.uniform(-4, -2), rng.uniform(0, 0.5)) for _ in range(9)]
+for name, trials in [("grid  ", grid), ("random", rand)]:
+    best = min(trials, key=lambda t: val_loss(*t))
+    distinct = len({round(lr, 12) for lr, _ in trials})
+    print(f"{name}: {distinct} distinct learning rates, best lr {best[0]:.2e}, loss {val_loss(*best):.4f}")
+# grid  : 3 distinct learning rates, best lr 1.00e-03, loss 0.0901
+# random: 9 distinct learning rates, best lr 1.88e-03, loss 0.0009
+```
+
+In words: the loss here has its optimum at a learning rate of $10^{-2.7} \approx 2 \times 10^{-3}$ and hardly depends on dropout. A 3 × 3 grid spends its 9 runs on only 3 learning rates, and its best is $10^{-3}$ with a loss of 0.0901. Nine random trials test 9 different learning rates and find $1.88 \times 10^{-3}$, with a loss 100 times lower. With more hyperparameters the gap widens, since a grid's number of distinct values per axis shrinks as the number of axes grows.
+
+## Sample on a log scale
+
+Learning rate, weight decay and similar parameters act multiplicatively: going from $10^{-4}$ to $10^{-3}$ matters as much as from $10^{-3}$ to $10^{-2}$. Sampling them uniformly wastes the search on the top of the range.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+lin = rng.uniform(1e-5, 1e-1, 10000)
+log = 10 ** rng.uniform(-5, -1, 10000)
+for name, s in [("uniform    ", lin), ("log-uniform", log)]:
+    shares = [np.mean((s >= 10.0**k) & (s < 10.0 ** (k + 1))) for k in range(-5, -1)]
+    print(name, " ".join(f"[1e{k},1e{k+1}): {v:.3f}" for k, v in zip(range(-5, -1), shares)))
+# uniform     [1e-5,1e-4): 0.001 [1e-4,1e-3): 0.008 [1e-3,1e-2): 0.094 [1e-2,1e-1): 0.897
+# log-uniform [1e-5,1e-4): 0.237 [1e-4,1e-3): 0.257 [1e-3,1e-2): 0.252 [1e-2,1e-1): 0.254
+```
+
+In words: drawing uniformly between $10^{-5}$ and $10^{-1}$ puts 89.7 % of the samples in the top decade and 0.1 % in the bottom one, so the range where Adam's learning rate usually lives, $10^{-4}$ to $10^{-3}$, gets 0.8 % of the trials. Log-uniform sampling gives each decade about a quarter. Dropout rate and momentum-like values near 1 (sample $1 - \beta$ on a log scale) need similar care.
+
+<Callout type="pitfall">
+Check where the best trial landed. If it is at the edge of the search range, the optimum may lie outside it, and the range must be extended before concluding anything. Also rerun the winner with a few different seeds: run-to-run noise in deep learning can be as large as the differences between the top trials.
+</Callout>
+
+## Stop bad runs early
+
+Most configurations are clearly bad long before training ends. **Successive halving** starts many configurations on a small budget, keeps the best fraction $1/\eta$, gives the survivors $\eta$ times more budget, and repeats.
+
+```python
+import numpy as np
+
+# successive halving: start many configs on a small budget, keep the best third each round
+rng = np.random.default_rng(0)
+n, eta, min_epochs, max_epochs = 81, 3, 1, 81
+quality = rng.normal(size=n)                       # each config's true final loss (lower is better)
+alive = np.arange(n)
+epochs, total = min_epochs, 0
+while True:
+    total += len(alive) * epochs
+    # loss seen after `epochs`: true quality plus noise that shrinks with training
+    seen = quality[alive] + rng.normal(scale=1.0 / np.sqrt(epochs), size=len(alive))
+    print(f"{len(alive):2d} configs x {epochs:2d} epochs")
+    if len(alive) == 1 or epochs >= max_epochs:
+        break
+    alive = alive[np.argsort(seen)[: max(1, len(alive) // eta)]]
+    epochs *= eta
+print(f"total {total} epochs vs {n * max_epochs} to train all {n} fully")
+print(f"winner's true rank among 81: {int(np.sum(quality < quality[alive[0]])) + 1}")
+# 81 configs x  1 epochs
+# 27 configs x  3 epochs
+#  9 configs x  9 epochs
+#  3 configs x 27 epochs
+#  1 configs x 81 epochs
+# total 405 epochs vs 6561 to train all 81 fully
+# winner's true rank among 81: 1
+```
+
+In words: 81 configurations get 1 epoch each, the best 27 get 3, the best 9 get 9, the best 3 get 27 and the winner the full 81. Every round costs 81 epochs, 405 in total, against 6561 to train everything fully, a 16-fold saving, and in this simulation the survivor is the truly best configuration. The risk is configurations that start slowly and finish well, such as a small learning rate; **Hyperband** runs several such brackets with different starting budgets to hedge against that, and ASHA is its asynchronous version for clusters.
+
+## Tune small, then transfer
+
+Searching at full scale is often impossible, so tuning happens on a smaller model or a shorter run and the result is transferred. Some hyperparameters transfer well (the shape of the schedule, $\beta$ values, warmup fraction). The learning rate often does not: in a standard parametrization the best rate shrinks as the model gets wider. **μP** (maximal update parametrization) rescales initialization and per-layer learning rates with width so that the best learning rate stays roughly fixed, and has been used to tune GPT-scale models on small proxies. Without it, a common practice is to tune on two or three small sizes and extrapolate the trend.
+
+A quick way to set the learning-rate range itself is the **learning-rate range test**: train for a few hundred steps while increasing the rate exponentially, plot the loss against the rate, and take the peak somewhat below where the loss stops falling. It is a starting point for the search, not a replacement for it.
+
+<Callout type="key">
+With only tens of runs: start from a known-good recipe, tune the learning rate first, sample scale parameters log-uniformly at random rather than on a grid, kill bad runs early with successive halving, and confirm the winner across seeds.
+</Callout>

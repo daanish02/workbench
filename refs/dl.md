@@ -30,6 +30,8 @@ _(Picks up exactly where `ml/shallow-neural-networks` left off — this is where
 
 ## 2. Training Dynamics & Optimization
 
+_Status 2026-10-29: all 8 notes written (numpy only). Figures: GradientFlow, ClipVector, NormAxes, LrSchedulePlot; the optimizer race already exists in math (OptimizerRace), so it is linked rather than rebuilt. Mixed precision lives in practical-training._
+
 1. **Optimizers revisited for deep nets** — SGD, mini-batch gradient descent, momentum, RMSProp, Adam — at an implementation level, deeper than the Math KB's conceptual treatment
 2. **Vanishing and exploding gradients** — why depth itself makes training hard, the central motivating problem for most of this section
 3. **Batch normalization** — what it actually does to the loss landscape, why it helps
