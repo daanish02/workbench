@@ -3,6 +3,195 @@ title: "Batch Normalization"
 description: "What it actually does to the loss landscape, why it helps."
 order: 4
 tier: core
+takeaways:
+  - "**Batch normalization** standardises each feature over the mini-batch, $\\hat z = (z - \\mu_B)/\\sqrt{\\sigma_B^2 + \\epsilon}$, then rescales it with learned $\\gamma$ and $\\beta$, so every layer sees inputs of a controlled scale whatever the weights do."
+  - "It behaves differently in training and inference: training uses the batch's own statistics and updates **running averages**; inference uses the running averages. Forgetting `model.eval()` turns a single example into all zeros."
+  - "It makes training far less sensitive to initialization and learning rate. A 6-layer tanh network with badly scaled weights reaches a loss of 0.115 without it and 0.020 with it."
+  - "The original explanation, reducing internal covariate shift, is doubted; the better-supported one is that it makes the loss surface smoother, so larger steps are safe."
+  - "It depends on the batch: small batches give noisy statistics, and examples in a batch influence each other. Sequence models and small-batch training use layer norm instead."
+resources:
+  - title: "Batch Normalization (Ioffe and Szegedy)"
+    url: "https://arxiv.org/abs/1502.03167"
+    note: "The original paper: the transform, the inference-time running statistics and the training speedups on ImageNet."
+  - title: "How Does Batch Normalization Help Optimization? (Santurkar et al.)"
+    url: "https://arxiv.org/abs/1805.11604"
+    note: "Evidence against the covariate-shift story and for a smoother loss landscape with more predictive gradients."
+  - title: "BatchNorm1d (PyTorch docs)"
+    url: "https://docs.pytorch.org/docs/stable/generated/torch.nn.BatchNorm1d.html"
+    note: "Exact formula, the momentum convention for running statistics, and train versus eval behaviour."
 ---
 
-_Placeholder. Content not written yet._
+[Weight Initialization](../../nn-foundations/weight-initialization/) chose weights so activations keep a sensible scale at the start of training. But the weights change with every step, and nothing keeps the scale sensible after that. **Batch normalization** (batch norm, BN) enforces it during training: after a linear layer, it standardises each feature using the statistics of the current mini-batch, then lets the network rescale it with two learned parameters. Introduced in 2015, it made deep CNNs train several times faster and at much higher learning rates. This note implements it, covers the train/eval split that causes most of its bugs, measures its effect, and discusses why it works. It answers part of the problem in [Unstable Gradients](../vanishing-and-exploding-gradients/); run the code with `uv run --with numpy`.
+
+## The transform
+
+For a mini-batch of pre-activations $Z$ (shape batch × features), batch norm computes, separately for each feature $j$,
+
+$$
+\mu_j = \frac{1}{n} \sum_{i=1}^{n} Z_{ij}, \quad \sigma_j^{2} = \frac{1}{n} \sum_{i=1}^{n} (Z_{ij} - \mu_j)^{2}, \quad \operatorname{BN}(Z)_{ij} = \gamma_j \frac{Z_{ij} - \mu_j}{\sqrt{\sigma_j^{2} + \epsilon}} + \beta_j.
+
+$$
+
+In words: subtract the feature's batch mean, divide by its batch standard deviation (with a small $\epsilon$ for safety), then multiply by a learned scale $\gamma_j$ and add a learned shift $\beta_j$. The standardisation fixes the scale; $\gamma$ and $\beta$ give back the freedom to choose any mean and spread, including undoing the normalization ($\gamma = \sigma$, $\beta = \mu$) if that is what training prefers. Because $\beta$ plays the role of a bias, the linear layer before batch norm usually has none.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+Z = rng.normal(loc=[5.0, -2.0, 0.0], scale=[10.0, 0.1, 1.0], size=(256, 3))  # 3 features
+
+def batchnorm(Z, gamma, beta, eps=1e-5):
+    mu = Z.mean(axis=0)                # one mean per feature, over the batch
+    var = Z.var(axis=0)
+    Zhat = (Z - mu) / np.sqrt(var + eps)
+    return gamma * Zhat + beta
+
+out = batchnorm(Z, gamma=np.ones(3), beta=np.zeros(3))
+print("before: mean", Z.mean(0).round(2), " std", Z.std(0).round(2))
+print("after:  mean", out.mean(0).round(2) + 0.0, " std", out.std(0).round(2))
+out2 = batchnorm(Z, gamma=np.array([2.0, 1.0, 0.5]), beta=np.array([1.0, 0.0, -1.0]))
+print("with gamma, beta: mean", out2.mean(0).round(2), " std", out2.std(0).round(2))
+# before: mean [ 4.01 -1.99 -0.01]  std [10.1   0.1   0.98]
+# after:  mean [0. 0. 0.]  std [1. 1. 1.]
+# with gamma, beta: mean [ 1.  0. -1.]  std [2.  1.  0.5]
+```
+
+In words: three features with means near 4, −2 and 0 and spreads of 10.1, 0.1 and 0.98 all come out with mean 0 and standard deviation 1. With $\gamma = (2, 1, 0.5)$ and $\beta = (1, 0, -1)$ the outputs have exactly those spreads and means. The next layer always sees features of the scale the network chose, however the previous layer's weights drift.
+
+## Training versus inference
+
+At inference there may be one example, and its prediction should not depend on what else is in the batch. So batch norm keeps **running averages** of the mean and variance during training, an exponential moving average updated each step, and uses those fixed values at inference. In PyTorch, `model.train()` and `model.eval()` switch between the two modes.
+
+```python
+import numpy as np
+
+class BatchNorm:
+    def __init__(self, n, momentum=0.1, eps=1e-5):
+        self.gamma, self.beta = np.ones(n), np.zeros(n)
+        self.run_mean, self.run_var = np.zeros(n), np.ones(n)
+        self.m, self.eps, self.training = momentum, eps, True
+    def __call__(self, Z):
+        if self.training:
+            mu, var = Z.mean(0), Z.var(0)
+            self.run_mean += self.m * (mu - self.run_mean)   # remembered for inference
+            self.run_var += self.m * (var - self.run_var)
+        else:
+            mu, var = self.run_mean, self.run_var
+        return self.gamma * (Z - mu) / np.sqrt(var + self.eps) + self.beta
+
+rng = np.random.default_rng(0)
+bn = BatchNorm(2)
+for _ in range(200):                  # training batches from the same distribution
+    bn(rng.normal(loc=[3.0, -1.0], scale=[2.0, 0.5], size=(64, 2)))
+print("running mean", bn.run_mean.round(2), " running var", bn.run_var.round(2))
+
+x = np.array([[5.0, -1.5]])           # one example at inference time
+print("train mode, batch of 1:", bn(x).round(3))
+bn.training = False
+print("eval mode,  batch of 1:", bn(x).round(3))
+# running mean [ 3.02 -0.99]  running var [3.89 0.24]
+# train mode, batch of 1: [[0. 0.]]
+# eval mode,  batch of 1: [[ 0.954 -0.993]]
+```
+
+In words: after 200 batches the running statistics match the data, mean $(3.02, -0.99)$ and variance $(3.89, 0.24)$ against the true $(3, -1)$ and $(4, 0.25)$. In eval mode the example $(5, -1.5)$ is normalised with them to $(0.954, -0.993)$: one standard deviation above the mean on the first feature, one below on the second. In train mode a batch of one example is its own mean, so every feature becomes exactly 0 and the prediction no longer depends on the input at all.
+
+<Callout type="pitfall">
+Forgetting `model.eval()` before validation or inference is the most common batch norm bug: predictions change with batch composition and collapse for batch size 1, and the running statistics keep updating on test data. The reverse also hurts: fine-tuning with `model.eval()` on, or with tiny batches in train mode, leaves running statistics that do not match the data.
+</Callout>
+
+## The effect on training
+
+The backward pass through batch norm is more involved than for an elementwise layer, because every output depends on every example through $\mu$ and $\sigma$. With $\hat z = (z - \mu)/\sqrt{\sigma^2 + \epsilon}$ and incoming gradient $\bar{\hat z}$, the gradient for each feature is
+
+$$
+\bar z = \frac{1}{n \sqrt{\sigma^{2} + \epsilon}} \left( n \, \bar{\hat z} - \sum_i \bar{\hat z}_i - \hat z \sum_i \bar{\hat z}_i \hat z_i \right).
+
+$$
+
+In words: the incoming gradient minus its batch mean and minus its component along $\hat z$, divided by the standard deviation. Batch norm removes from the gradient any part that would only shift or scale the whole batch, which the normalization would undo anyway. The code trains a 6-layer tanh network whose weights are drawn with standard deviation 1, far too large for width 32, with and without batch norm.
+
+```python
+import numpy as np
+
+def moons(rng):
+    t = rng.uniform(0, np.pi, 256)
+    X = np.vstack([np.c_[np.cos(t[:128]), np.sin(t[:128])],
+                   np.c_[1 - np.cos(t[128:]), 0.5 - np.sin(t[128:])]])
+    return X + rng.normal(scale=0.2, size=X.shape), np.r_[np.zeros(128, int), np.ones(128, int)]
+
+def train(use_bn, depth=6, width=32, steps=300, lr=0.5, eps=1e-5):
+    rng = np.random.default_rng(0)
+    X, y = moons(rng)
+    sizes = [2] + [width] * depth
+    Ws = [rng.normal(size=(a, b)) for a, b in zip(sizes, sizes[1:])]   # badly scaled: std 1
+    gs = [np.ones(width) for _ in range(depth)]
+    bs = [np.zeros(width) for _ in range(depth)]
+    Wout = rng.normal(size=(width, 2)) * 0.1
+    for _ in range(steps):
+        h, cache = X, []
+        for W, g, b in zip(Ws, gs, bs):
+            z = h @ W
+            if use_bn:
+                mu, var = z.mean(0), z.var(0)
+                zhat = (z - mu) / np.sqrt(var + eps)
+                z2 = g * zhat + b
+            else:
+                zhat, var, z2 = None, None, z
+            a = np.tanh(z2)
+            cache.append((h, zhat, var, a))
+            h = a
+        logits = h @ Wout
+        P = np.exp(logits - logits.max(1, keepdims=True))
+        P /= P.sum(1, keepdims=True)
+        loss = -np.mean(np.log(P[np.arange(len(y)), y]))
+        d = (P - np.eye(2)[y]) / len(y)
+        dWout = h.T @ d
+        dh = d @ Wout.T
+        for i in range(depth - 1, -1, -1):
+            hin, zhat, var, a = cache[i]
+            dz2 = dh * (1 - a**2)
+            if use_bn:
+                n = len(dz2)
+                dg, db = (dz2 * zhat).sum(0), dz2.sum(0)
+                dzhat = dz2 * gs[i]
+                # batch norm backward: the mean and variance depend on every example
+                dz = (n * dzhat - dzhat.sum(0) - zhat * (dzhat * zhat).sum(0)) / (n * np.sqrt(var + eps))
+                gs[i] -= lr * dg
+                bs[i] -= lr * db
+            else:
+                dz = dz2
+            dh = dz @ Ws[i].T
+            Ws[i] -= lr * hin.T @ dz
+        Wout -= lr * dWout
+    return loss, np.mean(P.argmax(1) == y)
+
+for use_bn in [False, True]:
+    loss, acc = train(use_bn)
+    print(f"batch norm {str(use_bn):5s}: loss {loss:.3f}, accuracy {acc:.2f}")
+# batch norm False: loss 0.115, accuracy 0.95
+# batch norm True : loss 0.020, accuracy 0.99
+```
+
+In words: with the same badly scaled weights, learning rate and 300 steps, the plain network reaches a loss of 0.115 and 95 % training accuracy; with batch norm it reaches 0.020 and 99 %. Without batch norm, weights of std 1 on 32 inputs give pre-activations with std around 5, so most tanh units are saturated and pass little gradient; batch norm rescales them to std 1 at every layer, whatever the weights.
+
+## Why it helps
+
+The 2015 paper argued that batch norm reduces **internal covariate shift**, the change in each layer's input distribution as earlier layers train. Later experiments (Santurkar et al., 2018) found that injecting noise to increase that shift after batch norm did not hurt training, and that networks with batch norm do not necessarily have less of it. The better-supported explanation is about the loss surface: batch norm makes the loss and its gradient change more smoothly with the weights (smaller Lipschitz constants), so a gradient step goes about as far as predicted and larger learning rates are safe. Two further effects contribute:
+
+- **Scale invariance.** For a linear layer followed by batch norm, multiplying the weights by any constant does not change the output, so the weights' scale stops mattering for the forward pass, which removes much of the sensitivity to initialization.
+- **Regularization.** Each example is normalised with statistics that depend on the random other examples in its batch, a form of noise that acts like a mild regularizer.
+
+## Limits
+
+Batch norm couples the examples of a batch, which causes problems in exactly the settings that grew in importance after 2015:
+
+- **Small batches.** With a batch of 2 to 8, the batch mean and variance are noisy estimates, and accuracy drops. Large models, high-resolution images and long sequences force small per-GPU batches.
+- **Sequences.** In variable-length sequences, padding and different lengths make per-position batch statistics awkward, and recurrent models would need separate statistics per time step.
+- **Distributed training.** Each GPU sees only its slice of the batch, so the statistics differ unless they are synchronised (SyncBatchNorm), which costs communication.
+
+[Normalization Layers](../normalization-layers/) covers layer norm, RMSNorm and group norm, which normalise within each example and avoid all three. Batch norm remains standard in convolutional networks for vision, where batches are large.
+
+<Callout type="key">
+Batch norm standardises each feature over the batch and lets $\gamma$, $\beta$ choose the final scale. It uses batch statistics in training and running averages in inference, so switch modes with `train()` and `eval()`. It works mainly by smoothing the loss surface, which tolerates worse initialization and larger learning rates.
+</Callout>

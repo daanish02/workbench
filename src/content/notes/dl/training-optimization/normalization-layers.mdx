@@ -3,6 +3,148 @@ title: "Normalization Layers"
 description: "LayerNorm, RMSNorm and GroupNorm: normalising without depending on the batch."
 order: 5
 tier: advanced
+takeaways:
+  - "All normalization layers standardise some set of numbers to mean 0 and variance 1 and then apply a learned scale (and usually shift). They differ only in **which axes** the statistics are computed over."
+  - "**Batch norm** averages over the batch; **layer norm** over all features of one example; **instance norm** over one channel of one example; **group norm** over a group of channels of one example. Only batch norm mixes examples."
+  - "**RMSNorm** drops the mean subtraction and the bias and divides by the root mean square. It is cheaper and works as well in transformers, so LLaMA, Mistral and most recent LLMs use it."
+  - "**Group norm** (32 groups by default) is the choice for CNNs trained with small batches, such as detection and segmentation, where batch statistics are too noisy."
+  - "Where the norm sits matters: **pre-norm** transformers normalise each branch's input and are stable to train deep, but the residual stream grows (std 1.17 after 1 block, 4.50 after 48); **post-norm** keeps it at 1.00 but is harder to train."
+resources:
+  - title: "Layer Normalization (Ba, Kiros, Hinton)"
+    url: "https://arxiv.org/abs/1607.06450"
+    note: "Normalising across features within one example, introduced for recurrent networks."
+  - title: "Group Normalization (Wu and He)"
+    url: "https://arxiv.org/abs/1803.08494"
+    note: "The paper's figure of the four normalization axes, and results showing group norm holding its accuracy at batch size 2."
+  - title: "Root Mean Square Layer Normalization (Zhang and Sennrich)"
+    url: "https://arxiv.org/abs/1910.07467"
+    note: "RMSNorm: why re-centring is unnecessary and the speedup from dropping it."
 ---
 
-_Placeholder. Content not written yet._
+[Batch Normalization](../batch-normalization/) standardises each feature over the mini-batch, which works well for image classifiers with large batches and fails in three common situations: small batches, variable-length sequences and inference on single examples. The fix is to compute the same mean and variance over a different set of numbers, one that lies within a single example. This note shows the four standard choices on one tensor, then covers the two that matter most today: **layer norm** and its simplification **RMSNorm** in transformers, and **group norm** in small-batch CNNs. It ends with where the normalization goes in a residual block, which changes how deep a network can be trained. Run the code with `uv run --with numpy`.
+
+## Four choices of axes
+
+Every normalization layer computes $\hat x = (x - \mu) / \sqrt{\sigma^{2} + \epsilon}$ and then $\gamma \hat x + \beta$ with learned per-channel $\gamma$, $\beta$. For an image batch of shape $(N, C, H, W)$ (examples, channels, height, width) they differ in which axes $\mu$ and $\sigma^{2}$ average over:
+
+| Layer | Averages over | One statistic per | Mixes examples? |
+|---|---|---|---|
+| Batch norm | $N, H, W$ | channel | yes |
+| Layer norm | $C, H, W$ | example | no |
+| Instance norm | $H, W$ | example and channel | no |
+| Group norm | $C/G, H, W$ | example and group of channels | no |
+
+In words: batch norm is the only one that looks across examples. The other three use only the example being normalised, so they behave identically in training and inference, need no running averages and work with a batch of one.
+
+```python
+import numpy as np
+
+x = np.random.default_rng(0).normal(size=(8, 32, 16, 16))  # N, C, H, W: a batch of feature maps
+
+axes = {
+    "batch norm": (0, 2, 3),      # per channel, over batch and space
+    "layer norm": (1, 2, 3),      # per example, over everything else
+    "instance norm": (2, 3),      # per example and channel
+}
+for name, ax in axes.items():
+    mu = x.mean(axis=ax, keepdims=True)
+    print(f"{name:13s} statistics shape {mu.shape}, each from {x.size // mu.size} numbers")
+
+G = 8                              # group norm: channels split into 8 groups of 4
+xg = x.reshape(8, G, 32 // G, 16, 16)
+mu = xg.mean(axis=(2, 3, 4), keepdims=True)
+print(f"{'group norm':13s} statistics shape {mu.shape[:2]}, each from {x.size // mu.size} numbers")
+# batch norm    statistics shape (1, 32, 1, 1), each from 2048 numbers
+# layer norm    statistics shape (8, 1, 1, 1), each from 8192 numbers
+# instance norm statistics shape (8, 32, 1, 1), each from 256 numbers
+# group norm    statistics shape (8, 8), each from 1024 numbers
+```
+
+In words: for 8 examples with 32 channels of 16 × 16, batch norm computes 32 means, each from 2048 numbers spread over all 8 examples; layer norm 8 means, one per example from 8192 numbers; instance norm 256 means from 256 numbers each; group norm with 8 groups 64 means from 1024 numbers each. Group norm sits between layer norm ($G = 1$) and instance norm ($G = C$).
+
+<NormAxes />
+
+## Layer norm and RMSNorm
+
+In a transformer the activations have shape (batch, tokens, features), and **layer norm** normalises each token's feature vector of size $d$ on its own. Sequences of different lengths, padding and generating one token at a time cause no trouble, because no statistic crosses tokens or examples.
+
+**RMSNorm** removes the mean subtraction and the shift $\beta$:
+
+$$
+\operatorname{RMSNorm}(x) = \gamma \odot \frac{x}{\sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^{2} + \epsilon}}.
+
+$$
+
+In words: divide the vector by its root mean square so its typical entry has size 1, then scale each feature by a learned $\gamma_i$. It keeps the property that matters, a fixed scale, and skips re-centring, which experiments found unnecessary. One fewer reduction over $d$ makes it measurably faster on GPUs, where normalization is memory-bound.
+
+```python
+import numpy as np
+
+def layer_norm(x, g, b, eps=1e-5):
+    mu = x.mean(-1, keepdims=True)
+    var = x.var(-1, keepdims=True)
+    return g * (x - mu) / np.sqrt(var + eps) + b
+
+def rms_norm(x, g, eps=1e-6):
+    # no mean subtraction, no bias: divide by the root mean square only
+    return g * x / np.sqrt((x * x).mean(-1, keepdims=True) + eps)
+
+rng = np.random.default_rng(0)
+x = rng.normal(loc=2.0, scale=3.0, size=(2, 4, 8))    # batch, tokens, features
+d = x.shape[-1]
+ln = layer_norm(x, np.ones(d), np.zeros(d))
+rn = rms_norm(x, np.ones(d))
+print("layer norm per token: mean", ln[0, 0].mean().round(3) + 0.0, " std", ln[0, 0].std().round(3))
+print("RMS norm per token:   mean", rn[0, 0].mean().round(3), " rms", np.sqrt((rn[0, 0] ** 2).mean()).round(3))
+
+# independence: change another example in the batch, this token's output is unchanged
+x2 = x.copy()
+x2[1] *= 100
+print("layer norm output unchanged:", np.allclose(layer_norm(x2, np.ones(d), np.zeros(d))[0], ln[0]))
+# layer norm per token: mean 0.0  std 1.0
+# RMS norm per token:   mean 0.878  rms 1.0
+# layer norm output unchanged: True
+```
+
+In words: layer norm gives each token mean 0 and standard deviation 1. RMSNorm gives root mean square 1 but leaves the mean at 0.878, because these features had a mean of about 2 that it does not remove. Multiplying the other example in the batch by 100 leaves the first example's output unchanged, which would not be true of batch norm.
+
+## Group norm
+
+For convolutional networks, layer norm (one statistic over all channels) works worse than batch norm, because different channels detect different things and have very different scales. Instance norm (each channel alone) removes too much: the relative strength of a channel in an image is information, and it is used mainly in style transfer, where removing per-image contrast is the goal. **Group norm** splits the $C$ channels into $G$ groups, by default $G = 32$, and normalises each group of each example, so channels that are normalised together are few enough to be similar and many enough to give stable statistics.
+
+Its advantage is independence from the batch size. Wu and He report that a ResNet-50 on ImageNet with batch norm loses accuracy steadily as the batch shrinks per GPU, while group norm's accuracy is nearly the same from 32 images down to 2. That makes it the standard choice for object detection and segmentation, where high-resolution images allow only one or two per GPU.
+
+<Callout type="pitfall">
+Group norm needs $C$ divisible by $G$, and the default of 32 groups assumes layers with at least 32 channels; with 16 channels, 32 groups is impossible and 16 groups is instance norm. Choose $G$ per layer width, and do not swap group norm into a pretrained batch-norm network without retraining, because the learned $\gamma$ and $\beta$ were fit to different statistics.
+</Callout>
+
+## Pre-norm and post-norm
+
+In a residual block the normalization can go after the residual sum (**post-norm**, the original transformer: $x \leftarrow \operatorname{LN}(x + F(x))$) or on the branch's input (**pre-norm**, GPT-2 onwards: $x \leftarrow x + F(\operatorname{LN}(x))$).
+
+```python
+import numpy as np
+
+def ln(x):
+    return (x - x.mean(-1, keepdims=True)) / x.std(-1, keepdims=True)
+
+rng = np.random.default_rng(0)
+d, layers = 256, 48
+Ws = [rng.normal(size=(d, d)) / np.sqrt(d) for _ in range(layers)]
+x0 = rng.normal(size=(16, d))
+pre, post = x0.copy(), x0.copy()
+for l, W in enumerate(Ws, 1):
+    pre = pre + np.tanh(ln(pre) @ W)        # pre-norm: normalise the branch input
+    post = ln(post + np.tanh(post @ W))     # post-norm: normalise after the sum
+    if l in (1, 12, 48):
+        print(f"after {l:2d} blocks: residual stream std  pre-norm {pre.std():5.2f}  post-norm {post.std():5.2f}")
+# after  1 blocks: residual stream std  pre-norm  1.17  post-norm  1.00
+# after 12 blocks: residual stream std  pre-norm  2.36  post-norm  1.00
+# after 48 blocks: residual stream std  pre-norm  4.50  post-norm  1.00
+```
+
+In words: post-norm holds the residual stream at standard deviation 1.00 at every depth, but every block's output passes through a normalization, so the gradient to early layers no longer has a clean identity path and deep post-norm transformers need careful learning-rate warmup to train at all. Pre-norm leaves the identity path untouched, which makes training stable, at the price of a residual stream that grows with depth, from 1.17 after one block to 4.50 after 48, roughly as $\sqrt{\text{depth}}$. Pre-norm models add one final normalization before the output layer to undo that growth. Almost all current LLMs use pre-norm with RMSNorm.
+
+<Callout type="key">
+Choose the axes to fit the data: batch norm for CNNs with large batches, group norm for CNNs with small batches, layer norm or RMSNorm for transformers and sequences. Put it on the branch input (pre-norm) for stable deep training.
+</Callout>

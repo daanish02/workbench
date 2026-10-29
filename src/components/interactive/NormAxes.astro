@@ -1,0 +1,118 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Which numbers share one mean and variance"
+  caption="A batch of 6 examples (rows) with 12 channels (columns); each cell stands for one channel's whole feature map (H × W numbers, or one feature of a token). Pick a normalization and click a cell: the yellow cells are normalized together with it. Batch norm groups down a column, across the batch; layer, instance and group norm stay within one row, so no example affects another."
+>
+  <norm-axes>
+    <div class="na-ctl">
+      <input type="hidden" data-kind value="batch" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="batch" aria-pressed="true">Batch</button>
+        <button type="button" class="btn" data-choice="layer" aria-pressed="false">Layer</button>
+        <button type="button" class="btn" data-choice="instance" aria-pressed="false">Instance</button>
+        <button type="button" class="btn" data-choice="group" aria-pressed="false">Group (4 groups)</button>
+      </span>
+    </div>
+    <svg class="na-svg" viewBox="0 0 400 230" role="img" aria-label="Grid of examples by channels with the cells that share normalization statistics highlighted">
+      <g data-cells></g>
+      <text x="215" y="224" class="na-lab">channels C →</text>
+      <text x="14" y="110" class="na-lab" transform="rotate(-90 14 110)">batch N →</text>
+    </svg>
+    <p class="na-stat" data-stat></p>
+  </norm-axes>
+</Figure>
+
+<style>
+  .na-ctl {
+    margin-bottom: 10px;
+  }
+  .na-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+    margin: 0 auto;
+  }
+  .na-svg :global(rect) {
+    cursor: pointer;
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+  .na-svg :global(.na-a) {
+    fill: rgba(66, 133, 244, 0.32);
+  }
+  .na-svg :global(.na-b) {
+    fill: rgba(52, 168, 83, 0.22);
+  }
+  .na-svg :global(.na-on) {
+    fill: rgba(251, 188, 5, 0.75);
+    stroke: var(--g-yellow);
+  }
+  .na-lab {
+    fill: var(--text-muted);
+    font: 500 11px var(--font-mono);
+    text-anchor: middle;
+  }
+  .na-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const N = 6;
+  const C = 12;
+  const G = 4;
+  const CW = 28;
+  const CH = 30;
+  const X0 = 36;
+  const Y0 = 10;
+  // Which statistics group a cell (example n, channel c) belongs to.
+  const GROUP: Record<string, (n: number, c: number) => string> = {
+    batch: (_n, c) => `c${c}`,
+    layer: (n) => `n${n}`,
+    instance: (n, c) => `n${n}c${c}`,
+    group: (n, c) => `n${n}g${Math.floor(c / (C / G))}`,
+  };
+  const TEXT: Record<string, string> = {
+    batch: `${C} means (one per channel), each over N × H × W`,
+    layer: `${N} means (one per example), each over C × H × W`,
+    instance: `${N * C} means (one per example and channel), each over H × W`,
+    group: `${N * G} means (one per example and group), each over C/G × H × W`,
+  };
+
+  class NormAxes extends HTMLElement {
+    sel: [number, number] = [2, 5];
+    connectedCallback() {
+      this.querySelector('[data-kind]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-cells]')!.addEventListener('click', (e) => {
+        const r = (e.target as Element).closest('rect');
+        if (!r) return;
+        this.sel = [+r.getAttribute('data-n')!, +r.getAttribute('data-c')!];
+        this.draw();
+      });
+      this.draw();
+    }
+    draw() {
+      const kind = this.querySelector<HTMLInputElement>('[data-kind]')!.value;
+      const key = GROUP[kind];
+      const target = key(...this.sel);
+      let html = '';
+      for (let n = 0; n < N; n++)
+        for (let c = 0; c < C; c++) {
+          const k = key(n, c);
+          // alternate tints between neighbouring groups so their borders are visible
+          const parity = kind === 'batch' ? c % 2 : kind === 'layer' ? n % 2 : (n + (kind === 'group' ? Math.floor(c / (C / G)) : c)) % 2;
+          const cls = k === target ? 'na-on' : parity ? 'na-b' : 'na-a';
+          html += `<rect x="${X0 + c * CW}" y="${Y0 + n * CH}" width="${CW - 2}" height="${CH - 2}" rx="3" class="${cls}" data-n="${n}" data-c="${c}"></rect>`;
+        }
+      this.querySelector('[data-cells]')!.innerHTML = html;
+      this.querySelector('[data-stat]')!.textContent = `${kind} norm · ${TEXT[kind]}`;
+    }
+  }
+  customElements.define('norm-axes', NormAxes);
+</script>

@@ -3,6 +3,157 @@ title: "Dropout"
 description: "Regularization specific to deep nets, what it does during training vs. inference."
 order: 6
 tier: core
+takeaways:
+  - "**Dropout** sets each unit's output to zero with probability $p$ on every training step, so no unit can rely on any particular other unit being present."
+  - "**Inverted dropout** scales the kept units by $1/(1-p)$ during training, so the expected activation is unchanged and inference needs no change at all: dropout is simply switched off."
+  - "On a 40-example dataset a wide network without dropout reaches a training loss of 0.044 but a test loss of 0.877; with $p = 0.5$ the training loss is 0.198 and the test loss 0.572."
+  - "It can be read as training an ensemble of thinned networks that share weights; the inference network approximates their average, exactly only for linear layers."
+  - "Common rates: 0.1 in transformers, 0.5 in large fully connected layers. Large pretrained LLMs often use none, because they see each example about once and do not overfit."
+resources:
+  - title: "Dropout: A Simple Way to Prevent Neural Networks from Overfitting (Srivastava et al., JMLR)"
+    url: "https://jmlr.org/papers/v15/srivastava14a.html"
+    note: "The full paper: the ensemble view, the weight-scaling rule and experiments across vision, speech and text."
+  - title: "Dropout as a Bayesian Approximation (Gal and Ghahramani)"
+    url: "https://arxiv.org/abs/1506.02142"
+    note: "Monte Carlo dropout: keeping dropout on at inference to estimate model uncertainty."
+  - title: "Dropout (PyTorch docs)"
+    url: "https://docs.pytorch.org/docs/stable/generated/torch.nn.Dropout.html"
+    note: "The inverted-dropout convention and the train/eval switch."
 ---
 
-_Placeholder. Content not written yet._
+A network with millions of parameters can memorise a training set, fitting noise as well as signal. Classical [regularization](../../../ml/supervised-regression/regularization-ridge-and-lasso/) penalises large weights. **Dropout** attacks a different symptom: units that only work in particular combinations with other units, known as co-adaptation. During training it randomly removes units, so every unit has to be useful on its own and in many different company. This note implements dropout as frameworks do, explains why training and inference differ, measures its effect on a small dataset, and covers the ensemble view, Monte Carlo dropout and when to use it. Its relatives, [weight decay](../../regularization/weight-decay-in-deep-nets/) and [data augmentation](../../regularization/data-augmentation/), live in the regularization section; dropout is here because it changes the training loop itself. Run the code with `uv run --with numpy`.
+
+## The mechanism
+
+On each training step, for each unit in a dropout layer, draw a mask bit that is 0 with probability $p$ (the **dropout rate**) and 1 otherwise, and multiply the unit's output by it. A fresh mask is drawn for every example and every step. **Inverted dropout**, the form every framework uses, also divides the kept outputs by $1 - p$:
+
+$$
+\tilde h = \frac{m \odot h}{1 - p}, \qquad m_i \sim \operatorname{Bernoulli}(1 - p), \qquad \mathbb{E}[\tilde h] = h.
+
+$$
+
+In words: drop each unit with probability $p$ and scale the survivors up so the expected output equals the original. At inference the layer does nothing, and the next layer sees activations of the same average size it saw during training.
+
+```python
+import numpy as np
+
+def dropout(h, p, training, rng):
+    if not training or p == 0:
+        return h                                  # inference: identity
+    mask = rng.random(h.shape) >= p               # keep each unit with probability 1 - p
+    return h * mask / (1 - p)                     # inverted dropout: rescale now
+
+rng = np.random.default_rng(0)
+h = np.ones((10000, 8))
+out = dropout(h, p=0.5, training=True, rng=rng)
+print("one row in training:", out[0])
+print("fraction zeroed:", round(np.mean(out == 0), 4), " mean value:", round(out.mean(), 4))
+print("inference:", dropout(h, 0.5, training=False, rng=rng)[0])
+# one row in training: [2. 0. 0. 0. 2. 2. 2. 2.]
+# fraction zeroed: 0.5011  mean value: 0.9977
+# inference: [1. 1. 1. 1. 1. 1. 1. 1.]
+```
+
+In words: with $p = 0.5$ a row of ones becomes zeros and twos; over 80,000 values 50.11 % are zeroed and the mean stays at 0.9977, essentially 1. At inference the same layer passes the ones through unchanged. In the backward pass the same mask multiplies the gradient, so dropped units receive no gradient on that step.
+
+<Callout type="pitfall">
+Dropout must be off at evaluation. In PyTorch that is `model.eval()`; forgetting it makes validation scores noisy and too low, and every prediction random. The opposite mistake appears in hand-written code: using the old, non-inverted form (no $1/(1-p)$ in training) without multiplying by $1 - p$ at inference gives activations at inference that are $1/(1-p)$ times too large.
+</Callout>
+
+## Effect on overfitting
+
+A network with two hidden layers of 256 units trained on only 40 noisy examples of the two half-moons, with and without dropout after each hidden layer, then evaluated on 2000 fresh examples.
+
+```python
+import numpy as np
+
+def moons(rng, n):
+    t = rng.uniform(0, np.pi, n)
+    half = n // 2
+    X = np.vstack([np.c_[np.cos(t[:half]), np.sin(t[:half])],
+                   np.c_[1 - np.cos(t[half:]), 0.5 - np.sin(t[half:])]])
+    return X + rng.normal(scale=0.3, size=X.shape), np.r_[np.zeros(half, int), np.ones(n - half, int)]
+
+def run(p, steps=3000, width=256, lr=0.1):
+    rng = np.random.default_rng(0)
+    X, y = moons(rng, 40)                       # tiny training set
+    Xt, yt = moons(rng, 2000)                   # held-out data
+    W1, b1 = rng.normal(size=(2, width)), np.zeros(width)
+    W2, b2 = rng.normal(size=(width, width)) * np.sqrt(2 / width), np.zeros(width)
+    W3 = rng.normal(size=(width, 2)) * 0.01
+    def forward(X, train):
+        h1 = np.maximum(X @ W1 + b1, 0)
+        m1 = (rng.random(h1.shape) >= p) / (1 - p) if train else 1.0
+        h1d = h1 * m1
+        h2 = np.maximum(h1d @ W2 + b2, 0)
+        m2 = (rng.random(h2.shape) >= p) / (1 - p) if train else 1.0
+        h2d = h2 * m2
+        Z = h2d @ W3
+        P = np.exp(Z - Z.max(1, keepdims=True))
+        return P / P.sum(1, keepdims=True), (h1, m1, h1d, h2, m2, h2d)
+    loss = lambda P, y: -np.mean(np.log(P[np.arange(len(y)), y] + 1e-12))
+    for _ in range(steps):
+        P, (h1, m1, h1d, h2, m2, h2d) = forward(X, True)
+        d = (P - np.eye(2)[y]) / len(y)
+        dh2 = (d @ W3.T) * m2 * (h2 > 0)        # the same mask gates the gradient
+        dh1 = (dh2 @ W2.T) * m1 * (h1 > 0)
+        W3 -= lr * h2d.T @ d
+        W2 -= lr * h1d.T @ dh2
+        b2 -= lr * dh2.sum(0)
+        W1 -= lr * X.T @ dh1
+        b1 -= lr * dh1.sum(0)
+    Ptr, _ = forward(X, False)
+    Pte, _ = forward(Xt, False)
+    return loss(Ptr, y), loss(Pte, yt), np.mean(Pte.argmax(1) == yt)
+
+for p in [0.0, 0.5]:
+    tr, te, acc = run(p)
+    print(f"dropout {p}: train loss {tr:.3f}  test loss {te:.3f}  test accuracy {acc:.3f}")
+# dropout 0.0: train loss 0.044  test loss 0.877  test accuracy 0.880
+# dropout 0.5: train loss 0.198  test loss 0.572  test accuracy 0.873
+```
+
+In words: without dropout the network drives its training loss to 0.044, essentially memorising 40 points, and its test loss is 0.877: it is confidently wrong on many new points. With $p = 0.5$ the training loss stays higher at 0.198 and the test loss falls to 0.572, a much better model of the probabilities. Test accuracy is nearly the same (0.880 against 0.873), so here dropout mainly stopped overconfidence rather than changing which side of the boundary points fall on. Regularization does not guarantee higher accuracy; it reduces the gap between training and test behaviour, and its best rate has to be tuned on validation data.
+
+## Why it works
+
+Each mask defines a **thinned network**, the original with some units removed. With $n$ droppable units there are $2^{n}$ of them, all sharing weights, and each training step trains one of them on one batch. Dropout therefore trains a huge ensemble at the cost of one network, and the inference network, with every unit present and the scaling already applied, approximates the ensemble's average prediction. The approximation is exact for a layer followed only by linear operations, and only approximate after a nonlinearity.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+W1 = rng.normal(size=(4, 64)) * 0.7
+W2 = rng.normal(size=(64, 1)) * 0.2
+x = np.array([0.5, -1.0, 2.0, 0.3])
+p = 0.5
+
+h = np.tanh(x @ W1)
+out = lambda hd: np.tanh(hd @ W2).item()         # a nonlinearity after the dropped layer
+eval_out = out(h)                                # inference: dropout off
+samples = [out(h * (rng.random(64) >= p) / (1 - p)) for _ in range(20000)]
+print(f"eval output {eval_out:.4f}, average of 20000 dropout passes {np.mean(samples):.4f}")
+print(f"spread of the dropout passes (MC dropout std): {np.std(samples):.4f}")
+# eval output -0.5082, average of 20000 dropout passes -0.3448
+# spread of the dropout passes (MC dropout std): 0.5509
+```
+
+In words: with a tanh after the dropped layer, the single inference pass gives −0.5082 while the average of 20,000 random thinned networks is −0.3448, so the shortcut is a real approximation. The passes also disagree with each other, with a standard deviation of 0.5509. **Monte Carlo dropout** uses that spread on purpose: keep dropout on at test time, run the input several times, and read the standard deviation of the outputs as an estimate of the model's uncertainty.
+
+The co-adaptation view says the same thing from the unit's side: a unit cannot rely on a specific partner being present, so it learns features that are useful on their own, which tend to be more robust.
+
+## Using it well
+
+| Where | Typical rate |
+|---|---|
+| Large fully connected layers (classic MLPs, the head of a CNN) | 0.5 |
+| Transformers: after attention weights, after each sublayer, on embeddings | 0.1 |
+| Inputs | 0 to 0.2, if at all |
+| Convolutional layers | rarely; batch norm and data augmentation usually suffice, or use spatial dropout, which drops whole channels |
+| Pretraining very large models on huge data | often 0 |
+
+Dropout slows training, because each step trains a weaker network and the gradient is noisier, so a model with dropout usually needs more steps. It also interacts with batch norm: dropout before a batch norm layer changes the variance batch norm sees between training and inference, so the usual order is to put dropout after the normalization and activation, or only near the output. For the largest language models, which see most training tokens only once, overfitting is not the limiting problem and dropout is commonly disabled.
+
+<Callout type="key">
+Dropout zeroes units at random in training and rescales the rest by $1/(1-p)$, so inference just turns it off. It trains an ensemble of thinned networks with shared weights, which reduces overfitting on small data. Turn it off with `model.eval()`, or keep it on deliberately for Monte Carlo uncertainty.
+</Callout>
