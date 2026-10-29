@@ -3,6 +3,154 @@ title: "Modern Activations"
 description: "Beyond ReLU: GELU, SiLU and gated units such as SwiGLU, and why transformers use them."
 order: 5
 tier: core
+takeaways:
+  - "Sigmoid and tanh **saturate**: their slope is near 0 for large inputs, and sigmoid's never exceeds 0.25, so gradients shrink layer after layer."
+  - "**ReLU** $\\max(x, 0)$ has slope exactly 1 or 0. It fixed vanishing gradients for deep nets, but a unit pushed negative for every input gets zero gradient and **dies**."
+  - "**GELU** $x \\Phi(x)$ and **SiLU** (Swish) $x \\sigma(x)$ are smooth versions of ReLU: near $x$ for large positive inputs, near 0 for large negative ones, with a small dip below zero (minimum −0.170 for GELU, −0.278 for SiLU)."
+  - "A **gated linear unit** multiplies one linear projection by an activated second one. **SwiGLU** $(\\operatorname{SiLU}(x W) \\odot x V) W_2$ is the feed-forward block of LLaMA and most recent LLMs."
+  - "A SwiGLU block has three weight matrices instead of two, so its hidden size is cut to about $\\tfrac{8}{3} d$ to keep the parameter count of a $4d$ standard block: 135.3 M against 134.2 M for $d = 4096$."
+resources:
+  - title: "Gaussian Error Linear Units (Hendrycks and Gimpel)"
+    url: "https://arxiv.org/abs/1606.08415"
+    note: "The GELU paper: the definition, its tanh approximation and the comparison with ReLU and ELU."
+  - title: "GLU Variants Improve Transformer (Noam Shazeer)"
+    url: "https://arxiv.org/abs/2002.05202"
+    note: "Two pages that introduced SwiGLU and GEGLU in the transformer feed-forward layer, with the 2/3 hidden-size adjustment."
+  - title: "Searching for Activation Functions (Ramachandran, Zoph, Le)"
+    url: "https://arxiv.org/abs/1710.05941"
+    note: "Found Swish, x times sigmoid(x), by automated search; the same function was proposed earlier as SiLU."
 ---
 
-_Placeholder. Content not written yet._
+An **activation function** is the nonlinearity applied after each linear layer. Without one, a stack of layers collapses into a single linear map; with one, the network can approximate almost any function (see [Universal Approximation Proof](../universal-approximation-theorem-proof-sketch/)). The [activation functions](../../../ml/shallow-neural-networks/activation-functions/) note introduced sigmoid, tanh and ReLU. This note explains why deep networks moved from sigmoid to ReLU, what is wrong with ReLU, and the smooth functions (GELU, SiLU) and gated units (SwiGLU) that modern transformers use instead. The key quantity throughout is the derivative, the factor [Backpropagation Derived](../backpropagation-fully-derived/) multiplies by at every layer.
+
+## Saturation and ReLU
+
+The **sigmoid** $\sigma(x) = 1 / (1 + e^{-x})$ squashes inputs into $(0, 1)$. Its derivative $\sigma(x)(1 - \sigma(x))$ is at most $0.25$, at $x = 0$, and falls towards 0 for large $\lvert x \rvert$, where the function is flat: the unit is **saturated**. Backpropagation multiplies by this derivative once per layer, so ten sigmoid layers scale the gradient by at most $0.25^{10} \approx 10^{-6}$. tanh, a rescaled sigmoid with slope up to 1, is better but saturates the same way.
+
+The **ReLU** $\max(x, 0)$ has derivative exactly 1 for positive inputs. Gradients pass through active units unchanged, which is what made training networks of tens of layers practical around 2010 to 2012. It is also cheap: a comparison, no exponential.
+
+ReLU's derivative is exactly 0 for negative inputs. If a unit's pre-activation is negative for every input in the data, often after one large update pushed its bias far negative, it outputs 0, receives 0 gradient and never recovers. That is a **dead ReLU**.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(1000, 64))
+W = rng.normal(size=(64, 128)) * np.sqrt(2 / 64)
+
+# a large negative bias, as one oversized update can leave behind
+for shift in [0.0, -4.0, -5.0, -6.0]:
+    Z = X @ W + shift
+    dead = (Z <= 0).all(axis=0)  # unit outputs 0 for every input
+    grad_in = (Z[:, dead] > 0).sum()  # relu' summed over the dead units
+    print(f"bias {shift:4.1f}: dead units {dead.mean():4.0%}, ReLU gradient into them {grad_in}")
+# bias  0.0: dead units   0%, ReLU gradient into them 0
+# bias -4.0: dead units  19%, ReLU gradient into them 0
+# bias -5.0: dead units  74%, ReLU gradient into them 0
+# bias -6.0: dead units  98%, ReLU gradient into them 0
+```
+
+In words: with He-scaled weights, pre-activations have a standard deviation around 1.4 here. A bias of −4 kills 19 % of the 128 units on all 1000 inputs, −5 kills 74 %, −6 kills 98 %. The gradient reaching a dead unit is exactly 0, so no update can bring it back. **Leaky ReLU**, $\max(x, \alpha x)$ with a small $\alpha$ such as 0.01, keeps a small slope on the negative side for exactly this reason.
+
+<Callout type="pitfall">
+A large learning rate is the usual cause of dead ReLUs: one big step moves many biases far negative at once. If a growing share of a layer's activations is exactly zero on every batch, lower the learning rate or switch to an activation with a nonzero negative slope before adding capacity.
+</Callout>
+
+## GELU and SiLU
+
+Both modern smooth activations multiply $x$ by a number between 0 and 1 that depends on $x$, a soft gate instead of ReLU's hard 0 or 1. The **GELU** (Gaussian error linear unit) uses the standard normal CDF $\Phi$, and **SiLU** (sigmoid linear unit, also called **Swish**) uses the sigmoid:
+
+$$
+\operatorname{GELU}(x) = x \, \Phi(x), \qquad \operatorname{SiLU}(x) = x \, \sigma(x).
+
+$$
+
+In words: for large positive $x$ the gate is near 1 and the output is near $x$, like ReLU; for large negative $x$ the gate is near 0 and so is the output. In between both are smooth, have a nonzero slope for negative inputs, and are not monotone: they dip slightly below zero before returning to it. GELU's gate has a probabilistic reading: keep the input with the probability that a standard normal falls below it.
+
+```python
+import math
+
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
+
+acts = {
+    "relu": lambda x: max(x, 0.0),
+    "gelu": lambda x: x * 0.5 * (1 + math.erf(x / math.sqrt(2))),  # x * Phi(x)
+    "gelu_tanh": lambda x: 0.5 * x * (1 + math.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * x**3))),
+    "silu": lambda x: x * sigmoid(x),
+}
+xs = [-3.0, -1.0, -0.5, 0.0, 0.5, 1.0, 3.0]
+print("x        ", "  ".join(f"{x:6.2f}" for x in xs))
+for name, f in acts.items():
+    print(f"{name:9s}", "  ".join(f"{f(x):6.3f}" for x in xs))
+# minimum of each smooth activation: they dip below zero
+for name in ["gelu", "silu"]:
+    grid = [i / 1000 for i in range(-4000, 1)]
+    xm = min(grid, key=acts[name])
+    print(f"{name} minimum {acts[name](xm):.4f} at x = {xm}")
+# x          -3.00   -1.00   -0.50    0.00    0.50    1.00    3.00
+# relu       0.000   0.000   0.000   0.000   0.500   1.000   3.000
+# gelu      -0.004  -0.159  -0.154   0.000   0.346   0.841   2.996
+# gelu_tanh -0.004  -0.159  -0.154   0.000   0.346   0.841   2.996
+# silu      -0.142  -0.269  -0.189   0.000   0.311   0.731   2.858
+# gelu minimum -0.1700 at x = -0.752
+# silu minimum -0.2785 at x = -1.278
+```
+
+In words: at $x = 3$ GELU gives 2.996, almost ReLU's 3, and at $x = -1$ it gives −0.159 where ReLU gives 0. The tanh approximation, used in the original BERT and GPT-2 code because `erf` was slow on some hardware, agrees to three decimals at every point shown. SiLU gates more softly: 2.858 at $x = 3$ and a deeper minimum, −0.278 at $x = -1.278$, against GELU's −0.170 at $x = -0.752$.
+
+<ActivationCurves />
+
+Why use them? Their derivative is continuous, which gives smoother loss surfaces, and the negative region keeps a small gradient, so units do not die. Empirically they train slightly better than ReLU in transformers. GELU became the default in BERT, GPT-2 and vision transformers; SiLU is used in many convolutional networks and inside SwiGLU. The cost is an exponential or `erf` per element, small next to the matrix multiplies.
+
+## Gated linear units
+
+A **gated linear unit** (GLU) computes two linear projections of the same input and uses one, passed through an activation, to scale the other elementwise:
+
+$$
+\operatorname{GLU}(x) = \sigma(x W) \odot (x V), \qquad \operatorname{SwiGLU}(x) = \operatorname{SiLU}(x W) \odot (x V).
+
+$$
+
+In words: $x V$ is the content and $\operatorname{SiLU}(x W)$ decides, per hidden unit and per input, how much of it passes. The gate is learned separately from the content, which gives the layer multiplicative interactions a single activation does not have. Replacing $\sigma$ by GELU gives GEGLU, by SiLU (Swish) gives SwiGLU.
+
+In a transformer, the **feed-forward block** maps each token's vector of size $d$ up to a hidden size and back. The standard block and the SwiGLU block are
+
+$$
+\operatorname{FFN}(x) = \operatorname{GELU}(x W_1) W_2, \qquad \operatorname{FFN}_{\text{SwiGLU}}(x) = \left(\operatorname{SiLU}(x W) \odot x V\right) W_2.
+
+$$
+
+In words: SwiGLU adds a third weight matrix $V$. To keep the parameter count fixed, the hidden size is reduced from $4d$ to about $\tfrac{2}{3} \cdot 4d = \tfrac{8}{3} d$, usually rounded to a multiple of 256 for hardware efficiency.
+
+```python
+d = 4096
+standard = 2 * d * (4 * d)           # W1: d x 4d, W2: 4d x d
+h = 11008                             # LLaMA's SwiGLU hidden size for d = 4096
+swiglu = 3 * d * h                    # W, V: d x h, W2: h x d
+print(f"standard FFN params: {standard / 1e6:.1f} M")
+print(f"SwiGLU FFN params:   {swiglu / 1e6:.1f} M  (h = {h}, about 8d/3 = {8 * d / 3:.0f})")
+# standard FFN params: 134.2 M
+# SwiGLU FFN params:   135.3 M  (h = 11008, about 8d/3 = 10923)
+```
+
+In words: LLaMA's 7B model uses $d = 4096$ and a SwiGLU hidden size of 11008, $\tfrac{8}{3} d = 10923$ rounded up to a multiple of 256. Its three matrices hold 135.3 million parameters per layer, within 1 % of the 134.2 million of a standard $4d$ block. At equal parameters and compute, the gated block gives lower loss, which is why PaLM, LLaMA, Mistral and most later LLMs use it.
+
+<Callout type="pitfall">
+When reading a model config, the hidden ("intermediate") size of a SwiGLU model is not $4d$, and its feed-forward block has three matrices, not two. Counting parameters or FLOPs with the standard formula gives the wrong answer for both the hidden size and the number of matrices.
+</Callout>
+
+## Choosing an activation
+
+| Use | Default |
+|---|---|
+| Hidden layers of an MLP or CNN | ReLU; Leaky ReLU or SiLU if units die |
+| Transformer feed-forward block | SwiGLU (recent LLMs) or GELU (BERT, GPT-2, ViT) |
+| Output for a probability | sigmoid (one class) or softmax (several), applied in the loss, see [Deep Learning Losses](../loss-functions-for-deep-learning/) |
+| Gates inside LSTMs and GRUs | sigmoid and tanh, where saturation is the point |
+
+The choice of activation interacts with [initialization](../weight-initialization/): He's $2 / n_{\text{in}}$ assumes ReLU halves the signal, and GELU and SiLU behave close enough to ReLU for it to work.
+
+<Callout type="key">
+The activation's derivative is what backpropagation multiplies by. Saturating functions shrink it, ReLU keeps it at 1 or kills it, and GELU and SiLU keep it smooth and nonzero. Gating, as in SwiGLU, adds a learned multiplicative interaction at the same parameter budget.
+</Callout>

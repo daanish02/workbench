@@ -2,7 +2,176 @@
 title: "Weight Initialization"
 description: "Why it matters at all, Xavier/Glorot and He initialization."
 order: 4
-tier: advanced
+tier: core
+takeaways:
+  - "Weights must start **random**: if all units in a layer start equal, they get equal gradients and stay equal forever (the **symmetry** problem). Biases can start at 0."
+  - "The scale matters as much as the randomness. A layer with $n_{\\text{in}}$ inputs multiplies the activation variance by $n_{\\text{in}} \\operatorname{Var}(w)$ (times a factor for the activation), so over 20 layers a slightly wrong scale shrinks or grows signals exponentially."
+  - "**Xavier (Glorot)** sets $\\operatorname{Var}(w) = 2 / (n_{\\text{in}} + n_{\\text{out}})$ for tanh-like activations. **He (Kaiming)** sets $\\operatorname{Var}(w) = 2 / n_{\\text{in}}$ for ReLU, which zeroes half its inputs."
+  - "In a 20-layer ReLU network of width 256, std 0.01 leaves activations at $6 \\times 10^{-20}$, Xavier at $9 \\times 10^{-4}$, He at 0.54 and std 0.1 at 8.9."
+  - "Normalization layers and residual connections make modern networks far less sensitive to initialization, but the defaults in every framework still come from these formulas."
+resources:
+  - title: "Understanding the difficulty of training deep feedforward neural networks (Glorot and Bengio, 2010)"
+    url: "https://proceedings.mlr.press/v9/glorot10a.html"
+    note: "The paper behind Xavier initialization, with plots of activations and gradients saturating layer by layer."
+  - title: "Delving Deep into Rectifiers (He et al., 2015)"
+    url: "https://arxiv.org/abs/1502.01852"
+    note: "Derives the 2/n_in variance for ReLU networks and trains a 30-layer network from scratch with it."
+  - title: "Initializing neural networks (deeplearning.ai)"
+    url: "https://www.deeplearning.ai/ai-notes/initialization/index.html"
+    note: "Interactive explanation: change the initialization and watch training succeed or stall."
 ---
 
-_Placeholder. Content not written yet._
+[Backpropagation Derived](../backpropagation-fully-derived/) showed that the gradient at a layer is a product of one weight matrix and one activation slope for every layer above it. A product of twenty factors that are each a little below 1 is nearly 0; a little above 1, it is huge. Where the factors start is decided by the **initial weights**, before any learning happens. A bad choice gives a network that cannot train at all: the loss stays flat at its starting value. This note explains why weights must be random, derives the scale that keeps signals stable through depth, and compares the standard schemes, Xavier and He, on real networks. It uses [variance](../../../math/probability/expectation-and-variance/) of sums of independent variables.
+
+## Breaking symmetry
+
+Suppose every weight in a layer starts at the same value. Then every hidden unit computes the same function of the input, receives the same gradient, and gets the same update. They stay identical forever, so a layer of 512 units behaves like one unit. Random initialization **breaks the symmetry**.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(16, 3))
+y = rng.normal(size=(16, 1))
+
+for name, W1 in [("zeros", np.zeros((3, 4))), ("constant 0.5", np.full((3, 4), 0.5)),
+                 ("random", rng.normal(size=(3, 4)) * 0.5)]:
+    W2 = np.full((4, 1), 0.5) if name != "random" else rng.normal(size=(4, 1)) * 0.5
+    A1 = np.tanh(X @ W1)
+    dZ1 = ((A1 @ W2 - y) / len(X)) @ W2.T * (1 - A1**2)
+    dW1 = X.T @ dZ1
+    # identical columns mean identical hidden units, now and after every update
+    print(f"{name:12s} hidden units identical: {np.allclose(dW1, dW1[:, :1])}")
+# zeros        hidden units identical: True
+# constant 0.5 hidden units identical: True
+# random       hidden units identical: False
+```
+
+In words: with all-zero or all-0.5 first-layer weights, the gradient columns for the four hidden units are identical, so the units move in lockstep. Only random weights give each unit its own gradient. Biases do not have this problem, because the random weights already make the units differ, so biases usually start at 0.
+
+## Variance through layers
+
+Randomness alone is not enough; the **scale** decides whether a deep network trains. Take one unit $z = \sum_{i=1}^{n_{\text{in}}} w_i x_i$ with independent, zero-mean weights of variance $\operatorname{Var}(w)$, independent of the inputs. Variances of independent terms add, so
+
+$$
+\operatorname{Var}(z) = n_{\text{in}} \operatorname{Var}(w) \, \mathbb{E}[x^{2}].
+
+$$
+
+In words: each layer multiplies the signal's variance by $n_{\text{in}} \operatorname{Var}(w)$, times whatever the activation does to $\mathbb{E}[x^{2}]$. If that factor is 0.9, twenty layers multiply the variance by $0.9^{20} \approx 0.12$; if it is 0.5, by about $10^{-6}$. The backward pass has the same structure with $n_{\text{out}}$ in place of $n_{\text{in}}$, because gradients flow through $W^\top$. A stable network needs the factor close to 1 in both directions.
+
+## Xavier and He
+
+For an activation that is roughly linear near 0, such as tanh, $\mathbb{E}[x^{2}] \approx \operatorname{Var}(z_{\text{prev}})$. Keeping forward variance needs $\operatorname{Var}(w) = 1 / n_{\text{in}}$ and keeping backward variance needs $1 / n_{\text{out}}$. **Xavier (Glorot) initialization** takes the compromise
+
+$$
+\operatorname{Var}(w) = \frac{2}{n_{\text{in}} + n_{\text{out}}}.
+
+$$
+
+In words: scale the weights down by the square root of the layer's average fan, the number of connections into and out of a unit. For a square layer it is $1 / n$.
+
+ReLU sets every negative pre-activation to 0. For a symmetric $z$ this halves the second moment: $\mathbb{E}[\operatorname{relu}(z)^{2}] = \tfrac{1}{2} \operatorname{Var}(z)$. To compensate, **He (Kaiming) initialization** doubles the variance:
+
+$$
+\operatorname{Var}(w) = \frac{2}{n_{\text{in}}}.
+
+$$
+
+In words: twice the Xavier variance for a square layer, exactly enough to cancel ReLU discarding half the signal. Either formula is used with a normal distribution, or with a uniform one on $[-a, a]$ where $a = \sqrt{3 \operatorname{Var}(w)}$ gives the same variance.
+
+The code pushes 512 random inputs through 20 layers of width 256 with no training and reports the spread of the last layer's activations.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(0)
+width, depth = 256, 20
+x0 = rng.normal(size=(512, width))
+
+schemes = {
+    "std 0.01": lambda n_in, n_out: 0.01,
+    "Xavier": lambda n_in, n_out: np.sqrt(2 / (n_in + n_out)),
+    "He": lambda n_in, n_out: np.sqrt(2 / n_in),
+    "std 0.1": lambda n_in, n_out: 0.1,
+}
+for act_name, act in [("tanh", np.tanh), ("relu", lambda z: np.maximum(z, 0))]:
+    for name, std in schemes.items():
+        a = x0
+        for _ in range(depth):
+            a = act(a @ (rng.normal(size=(width, width)) * std(width, width)))
+        print(f"{act_name:4s} {name:8s} activation std after {depth} layers: {a.std():.2e}")
+# tanh std 0.01 activation std after 20 layers: 1.14e-16
+# tanh Xavier   activation std after 20 layers: 1.61e-01
+# tanh He       activation std after 20 layers: 5.52e-01
+# tanh std 0.1  activation std after 20 layers: 6.29e-01
+# relu std 0.01 activation std after 20 layers: 6.24e-20
+# relu Xavier   activation std after 20 layers: 8.82e-04
+# relu He       activation std after 20 layers: 5.42e-01
+# relu std 0.1  activation std after 20 layers: 8.93e+00
+```
+
+In words: a fixed std of 0.01 kills the signal in both networks, down to $10^{-16}$ and $10^{-20}$. For ReLU, Xavier loses a factor of $\sqrt{2}$ per layer and ends at $8.8 \times 10^{-4}$, He holds it at 0.54, and std 0.1, a factor $0.1^{2} \times 256 / 2 = 1.28$ in variance per layer, grows it to 8.9. tanh is more forgiving because it saturates at $\pm 1$ instead of growing, but a saturated tanh has slope near 0, so the gradient vanishes instead.
+
+<InitDepth />
+
+## Effect on training
+
+The variance argument predicts which networks can learn. The code trains an 8-layer ReLU network, 64 units wide, on the two half-moons from [Backpropagation Derived](../backpropagation-fully-derived/), with three initializations and everything else equal.
+
+```python
+import numpy as np
+
+def moons(rng):
+    t = rng.uniform(0, np.pi, 200)
+    X = np.vstack([np.c_[np.cos(t[:100]), np.sin(t[:100])],
+                   np.c_[1 - np.cos(t[100:]), 0.5 - np.sin(t[100:])]])
+    return X + rng.normal(scale=0.2, size=X.shape), np.r_[np.zeros(100, int), np.ones(100, int)]
+
+def train(std_fn, depth=8, width=64, steps=500, lr=0.1):
+    rng = np.random.default_rng(0)
+    X, y = moons(rng)
+    sizes = [2] + [width] * depth + [2]
+    Ws = [rng.normal(size=(a, b)) * std_fn(a, b) for a, b in zip(sizes, sizes[1:])]
+    for _ in range(steps):
+        acts = [X]
+        for W in Ws[:-1]:
+            acts.append(np.maximum(acts[-1] @ W, 0))
+        Z = acts[-1] @ Ws[-1]
+        P = np.exp(Z - Z.max(1, keepdims=True))
+        P /= P.sum(1, keepdims=True)
+        loss = -np.mean(np.log(P[np.arange(len(y)), y] + 1e-12))
+        dZ = (P - np.eye(2)[y]) / len(y)
+        for i in range(len(Ws) - 1, -1, -1):
+            dW = acts[i].T @ dZ
+            dZ = (dZ @ Ws[i].T) * (acts[i] > 0)
+            Ws[i] -= lr * dW
+    return loss
+
+for name, fn in [("std 0.01", lambda a, b: 0.01), ("Xavier", lambda a, b: np.sqrt(2 / (a + b))),
+                 ("He", lambda a, b: np.sqrt(2 / a))]:
+    print(f"{name:8s} loss after 500 steps: {train(fn):.3f}")
+# std 0.01 loss after 500 steps: 0.693
+# Xavier   loss after 500 steps: 0.264
+# He       loss after 500 steps: 0.240
+```
+
+In words: with std 0.01 the loss is still 0.693, which is $\ln 2$, the loss of a network that outputs 50/50 for everything: the gradients reaching the early layers are too small to move them. Xavier and He both train, to 0.264 and 0.240. At 8 layers Xavier's $\sqrt{2}$ loss per layer costs only a factor of 16; at 50 layers it would be about $3 \times 10^{7}$, and He's advantage would be decisive.
+
+<Callout type="pitfall">
+Framework defaults are not always He. PyTorch's `nn.Linear` and `nn.Conv2d` draw from a uniform distribution with variance $1 / (3 n_{\text{in}})$, a sixth of He's $2 / n_{\text{in}}$, a choice kept for backward compatibility. That works with normalization layers in between, but for a deep plain ReLU stack, call `nn.init.kaiming_normal_` (or `kaiming_uniform_`) on the weights explicitly.
+</Callout>
+
+## Modern practice
+
+Three developments made initialization less fragile without making it irrelevant:
+
+- **Normalization layers** (batch norm, layer norm) rescale activations at every layer, so a wrong scale is corrected as it happens instead of compounding.
+- **Residual connections** compute $x + f(x)$, so the identity path carries the signal and gradient even if $f$ starts tiny. Many transformers initialise the last layer of each residual block at a small scale, or at zero, so each block starts close to the identity.
+- **Scaled initialization for depth**: GPT-2 scales the weights of residual output projections by $1 / \sqrt{N}$ for $N$ residual layers, so the sum of $N$ block outputs keeps unit variance.
+
+All three follow the same rule this note derived: keep the variance of the signal, forward and backward, close to constant through depth.
+
+<Callout type="key">
+Random to break symmetry, scaled to keep variance: $\operatorname{Var}(w) = 2 / (n_{\text{in}} + n_{\text{out}})$ for tanh-like activations, $2 / n_{\text{in}}$ for ReLU. If a deep network's loss does not move from its starting value, check the initialization first.
+</Callout>

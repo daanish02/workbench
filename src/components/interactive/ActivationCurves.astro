@@ -1,0 +1,153 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Activation functions and their slopes"
+  caption="Pick an activation. Blue is the function, green dashed is its derivative, the slope backpropagation multiplies by. Drag x to read both. Sigmoid's slope never exceeds 0.25; ReLU's is exactly 0 for every negative input; GELU and SiLU are smooth, dip slightly below zero and keep a small slope there."
+>
+  <activation-curves>
+    <div class="ac-ctl">
+      <input type="hidden" data-fn value="gelu" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="sigmoid" aria-pressed="false">sigmoid</button>
+        <button type="button" class="btn" data-choice="tanh" aria-pressed="false">tanh</button>
+        <button type="button" class="btn" data-choice="relu" aria-pressed="false">ReLU</button>
+        <button type="button" class="btn" data-choice="leaky" aria-pressed="false">Leaky ReLU</button>
+        <button type="button" class="btn" data-choice="gelu" aria-pressed="true">GELU</button>
+        <button type="button" class="btn" data-choice="silu" aria-pressed="false">SiLU</button>
+      </span>
+    </div>
+    <label class="ac-lbl">x <input type="range" min="-4" max="4" step="0.05" value="-0.75" data-x /> <b data-xv>-0.75</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">y</span>
+      <svg class="ac-svg" viewBox="0 0 400 230" data-grid='{"box":[20,10,390,210],"x":[-4,4],"y":[-1.5,3.5]}' role="img" aria-label="The chosen activation function and its derivative from x = -4 to 4">
+        <line x1="20" y1="150" x2="390" y2="150" class="ac-axis"></line>
+        <line x1="205" y1="10" x2="205" y2="210" class="ac-axis"></line>
+        <path data-f class="ac-f"></path>
+        <path data-df class="ac-df"></path>
+        <line data-mark y1="10" y2="210" class="ac-mark"></line>
+        <circle data-dot r="4" class="ac-dot"></circle>
+        <text x="24" y="226" class="ax-tick">−4</text>
+        <text x="386" y="226" class="ax-tick ac-end">4</text>
+      </svg>
+      <span class="ax-x">x</span>
+    </div>
+    <p class="ac-stat" data-stat></p>
+  </activation-curves>
+</Figure>
+
+<style>
+  .ac-ctl {
+    margin-bottom: 10px;
+  }
+  .ac-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .ac-lbl input[type='range'] {
+    flex: 1;
+  }
+  .ac-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .ac-axis {
+    stroke: var(--text-faint);
+    stroke-width: 1;
+  }
+  .ac-f {
+    fill: none;
+    stroke: var(--g-blue);
+    stroke-width: 2.5;
+  }
+  .ac-df {
+    fill: none;
+    stroke: var(--g-green);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+  }
+  .ac-mark {
+    stroke: var(--g-yellow);
+    stroke-width: 1.5;
+    opacity: 0.7;
+  }
+  .ac-dot {
+    fill: var(--g-yellow);
+  }
+  .ac-end {
+    text-anchor: end;
+  }
+  .ac-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  // Abramowitz and Stegun 7.1.26, absolute error below 1.5e-7: enough for a plot.
+  function erf(x: number): number {
+    const s = Math.sign(x);
+    const a = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * a);
+    const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-a * a);
+    return s * y;
+  }
+  const sig = (x: number) => 1 / (1 + Math.exp(-x));
+  const Phi = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
+  const phi = (x: number) => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+
+  const FNS: Record<string, [(x: number) => number, (x: number) => number]> = {
+    sigmoid: [sig, (x) => sig(x) * (1 - sig(x))],
+    tanh: [Math.tanh, (x) => 1 - Math.tanh(x) ** 2],
+    relu: [(x) => Math.max(x, 0), (x) => (x > 0 ? 1 : 0)],
+    leaky: [(x) => (x > 0 ? x : 0.1 * x), (x) => (x > 0 ? 1 : 0.1)],
+    gelu: [(x) => x * Phi(x), (x) => Phi(x) + x * phi(x)],
+    silu: [(x) => x * sig(x), (x) => sig(x) * (1 + x * (1 - sig(x)))],
+  };
+
+  // Plot area [20, 10]–[390, 210] for x in [−4, 4] and y in [−1.5, 3.5].
+  const px = (x: number) => 20 + ((x + 4) / 8) * 370;
+  const py = (y: number) => 210 - ((y + 1.5) / 5) * 200;
+
+  function path(f: (x: number) => number): string {
+    let d = '';
+    for (let i = 0; i <= 400; i++) {
+      const x = -4 + (i / 400) * 8;
+      const y = Math.max(-1.5, Math.min(3.5, f(x)));
+      d += `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(y).toFixed(1)}`;
+    }
+    return d;
+  }
+
+  class ActivationCurves extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-fn]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-x]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const name = this.querySelector<HTMLInputElement>('[data-fn]')!.value;
+      const x = +this.querySelector<HTMLInputElement>('[data-x]')!.value;
+      this.querySelector('[data-xv]')!.textContent = x.toFixed(2);
+      const [f, df] = FNS[name];
+      this.querySelector('[data-f]')!.setAttribute('d', path(f));
+      this.querySelector('[data-df]')!.setAttribute('d', path(df));
+      const mark = this.querySelector('[data-mark]')!;
+      mark.setAttribute('x1', px(x).toFixed(1));
+      mark.setAttribute('x2', px(x).toFixed(1));
+      const dot = this.querySelector('[data-dot]')!;
+      dot.setAttribute('cx', px(x).toFixed(1));
+      dot.setAttribute('cy', py(f(x)).toFixed(1));
+      this.querySelector('[data-stat]')!.textContent = `x = ${x.toFixed(2)} · f(x) = ${f(x).toFixed(3)} · f′(x) = ${df(x).toFixed(3)}`;
+    }
+  }
+  customElements.define('activation-curves', ActivationCurves);
+</script>

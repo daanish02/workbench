@@ -1,0 +1,177 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="Initialization decides whether signals survive depth"
+  caption="A 20-layer network, 128 units wide, run on 64 random inputs. Blue is the spread (std) of the activations after each layer going forward; green is the std of the gradient arriving at each layer going backward. Both should stay roughly flat. Pick a scheme and activation: too small a scale shrinks both towards zero, too large blows them up, and He keeps ReLU flat where Xavier slowly fades."
+>
+  <init-depth>
+    <div class="id-ctl">
+      <input type="hidden" data-scheme value="he" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="small" aria-pressed="false">std 0.01</button>
+        <button type="button" class="btn" data-choice="xavier" aria-pressed="false">Xavier</button>
+        <button type="button" class="btn" data-choice="he" aria-pressed="true">He</button>
+        <button type="button" class="btn" data-choice="large" aria-pressed="false">std 0.2</button>
+      </span>
+      <input type="hidden" data-act value="relu" />
+      <span class="choice">
+        <button type="button" class="btn" data-choice="relu" aria-pressed="true">ReLU</button>
+        <button type="button" class="btn" data-choice="tanh" aria-pressed="false">tanh</button>
+      </span>
+    </div>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">std (log scale)</span>
+      <svg class="id-svg" viewBox="0 0 400 220" data-grid='{"box":[40,10,390,190],"x":[0,20,"major"],"y":[1e-6,100,"log"]}' role="img" aria-label="Activation and gradient standard deviation per layer on a log scale">
+        <path data-act-line class="id-act"></path>
+        <path data-grad-line class="id-grad"></path>
+        <text x="40" y="206" class="ax-tick">0</text>
+        <text x="390" y="206" class="ax-tick id-end">20</text>
+        <text x="34" y="16" class="ax-tick id-end">10²</text>
+        <text x="34" y="192" class="ax-tick id-end">10⁻⁶</text>
+        <text x="34" y="59" class="ax-tick id-end">1</text>
+      </svg>
+      <span class="ax-x">layer</span>
+    </div>
+    <p class="id-stat" data-stat></p>
+  </init-depth>
+</Figure>
+
+<style>
+  .id-ctl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-bottom: 10px;
+  }
+  .id-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .id-act,
+  .id-grad {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .id-act {
+    stroke: var(--g-blue);
+  }
+  .id-grad {
+    stroke: var(--g-green);
+    stroke-dasharray: 6 4;
+  }
+  .id-end {
+    text-anchor: end;
+  }
+  .id-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  const WIDTH = 128;
+  const BATCH = 64;
+  const DEPTH = 20;
+  const LO = -6;
+  const HI = 2;
+  const STD: Record<string, number> = {
+    small: 0.01,
+    xavier: Math.sqrt(2 / (WIDTH + WIDTH)),
+    he: Math.sqrt(2 / WIDTH),
+    large: 0.2,
+  };
+
+  // Seeded normal samples so every visit draws the same network.
+  function rng(seed: number) {
+    let s = seed >>> 0;
+    const u = () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return () => Math.sqrt(-2 * Math.log(u() + 1e-12)) * Math.cos(2 * Math.PI * u());
+  }
+
+  function std(a: Float64Array): number {
+    let m = 0;
+    for (const v of a) m += v;
+    m /= a.length;
+    let s = 0;
+    for (const v of a) s += (v - m) ** 2;
+    return Math.sqrt(s / a.length);
+  }
+
+  // out = a (rows × n) times W (n × n), or times Wᵀ when t is set
+  function matmul(a: Float64Array, W: Float64Array, rows: number, n: number, t: boolean): Float64Array {
+    const out = new Float64Array(rows * n);
+    for (let i = 0; i < rows; i++)
+      for (let k = 0; k < n; k++) {
+        const v = a[i * n + k];
+        if (v === 0) continue;
+        for (let j = 0; j < n; j++) out[i * n + j] += v * (t ? W[j * n + k] : W[k * n + j]);
+      }
+    return out;
+  }
+
+  const px = (layer: number) => 40 + (layer / DEPTH) * 350;
+  const py = (v: number) => {
+    const l = Math.min(HI, Math.max(LO, Math.log10(Math.max(v, 1e-300))));
+    return 190 - ((l - LO) / (HI - LO)) * 180;
+  };
+
+  class InitDepth extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-scheme]')!.addEventListener('input', () => this.draw());
+      this.querySelector('[data-act]')!.addEventListener('input', () => this.draw());
+      this.draw();
+    }
+    draw() {
+      const scheme = this.querySelector<HTMLInputElement>('[data-scheme]')!.value;
+      const act = this.querySelector<HTMLInputElement>('[data-act]')!.value;
+      const g = rng(7);
+      const sd = STD[scheme];
+      const Ws: Float64Array[] = [];
+      for (let l = 0; l < DEPTH; l++) Ws.push(Float64Array.from({ length: WIDTH * WIDTH }, () => g() * sd));
+
+      // forward: keep pre-activations for the backward slopes
+      let a = Float64Array.from({ length: BATCH * WIDTH }, () => g());
+      const actStd = [std(a)];
+      const pre: Float64Array[] = [];
+      for (const W of Ws) {
+        const z = matmul(a, W, BATCH, WIDTH, false);
+        pre.push(z);
+        a = z.map((v) => (act === 'relu' ? Math.max(v, 0) : Math.tanh(v)));
+        actStd.push(std(a));
+      }
+
+      // backward: a random unit gradient at the top, through slope then Wᵀ
+      let grad = Float64Array.from({ length: BATCH * WIDTH }, () => g());
+      const gradStd = new Array<number>(DEPTH + 1);
+      gradStd[DEPTH] = std(grad);
+      for (let l = DEPTH - 1; l >= 0; l--) {
+        const z = pre[l];
+        const dz = grad.map((v, i) => v * (act === 'relu' ? (z[i] > 0 ? 1 : 0) : 1 - Math.tanh(z[i]) ** 2));
+        grad = matmul(dz, Ws[l], BATCH, WIDTH, true);
+        gradStd[l] = std(grad);
+      }
+
+      const line = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join('');
+      this.querySelector('[data-act-line]')!.setAttribute('d', line(actStd));
+      this.querySelector('[data-grad-line]')!.setAttribute('d', line(gradStd));
+
+      const last = actStd[DEPTH];
+      const first = gradStd[0];
+      const verdict = (v: number) => (v < 1e-2 ? 'vanishing' : v > 1e2 ? 'exploding' : 'healthy');
+      this.querySelector('[data-stat]')!.textContent =
+        `weight std ${sd.toFixed(3)} · activations at layer 20 ${last.toExponential(1)} (${verdict(last)}) · gradient at layer 0 ${first.toExponential(1)} (${verdict(first)})`;
+    }
+  }
+  customElements.define('init-depth', InitDepth);
+</script>
