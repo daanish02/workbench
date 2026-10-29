@@ -55,6 +55,8 @@ _Status 2026-10-29: all 8 notes written (numpy only). Figures: GradientFlow, Cli
 
 **Interactive:** convolution step-through (a kernel sliding across an image, the output feature map building up live, adjustable kernel values), CNN layer visualizer (feed a real image through a trained CNN, see what each layer's feature maps actually look like — the "early layers detect edges, later layers detect shapes" idea made visible), residual connection comparison (a very deep plain network vs. one with skip connections, training curves compared).
 
+_Status 2026-10-30: all 7 notes written and pushed (numpy only), with figures._
+
 ---
 
 ## 4. Recurrent Neural Networks & Sequence Modeling
@@ -67,6 +69,8 @@ _Status 2026-10-29: all 8 notes written (numpy only). Figures: GradientFlow, Cli
 6. **Sequence-to-sequence models** — encoder-decoder architecture, directly setting up the bottleneck that attention solves next
 
 **Interactive:** RNN unrolled-through-time visualizer (a sequence processed step by step, hidden state evolving, gradient flow shown flowing backward through time), LSTM gate visualizer (a sequence passes through, watch the forget/input/output gates activate differently depending on content), seq2seq bottleneck demo (show information loss as sequence length grows — the exact motivating problem for attention).
+
+_Status 2026-10-30: all 7 notes written (numpy only), incl. advanced state-space-models. Figures: ContextReach, RnnUnroll, GradThroughTime, RnnCliff, LstmCell, LstmGates, GruMix, CountCompare, Seq2SeqFlow, BottleneckCurve, SsmKernel, SelectiveState._
 
 ---
 
