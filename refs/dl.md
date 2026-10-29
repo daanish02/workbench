@@ -182,6 +182,8 @@ Stubs exist for everything here.
 
 **New section: Graph Neural Networks** (after Attention & Transformers): `graphs-as-data`, `message-passing`, `gcn-and-gat`, `graph-tasks`. Link `cs/data-structures/graphs`; note that a transformer is message passing on a complete graph.
 
+_Status 2026-10-30: all 4 notes written (numpy + networkx). Figures: GraphRepr, GraphZoo, MessageHops, OverSmooth, GcnNorm, GatWeights, TaskLevels._
+
 **New section: Representation Learning** (after Regularization): `contrastive-learning`, `metric-learning`, `self-supervised-objectives`. This is the general home of self-supervision; `ml/ml-foundations/semi-supervised-and-self-supervised-learning` introduces it and `applied-dl/modern-vision/self-supervised-vision` applies it.
 
 **Appendix pages:** `glossary`, `pytorch-guide`, `shapes-and-parameters`, `losses-and-activations`, `training-defaults`, `training-failures`.
