@@ -1,0 +1,231 @@
+---
+title: "Fuzzy Logic"
+description: "Fuzzy sets give each element a degree of membership between 0 and 1, fuzzy logic combines those degrees with min, max and 1 − x, and a small rule-based controller turns them back into one number."
+order: 5
+tier: core
+takeaways:
+  - "A **fuzzy set** is a **membership function** $\\mu : X \\to [0, 1]$. An ordinary (crisp) set is the special case where every degree is 0 or 1."
+  - "The standard operations are $\\min$ for AND, $\\max$ for OR and $1 - \\mu$ for NOT. They agree with Boolean logic on 0 and 1, but $A \\lor \\lnot A$ can be less than 1."
+  - "An **alpha-cut** $A_\\alpha = \\{x : \\mu_A(x) \\ge \\alpha\\}$ turns a fuzzy set back into a crisp one at a chosen threshold."
+  - "A **fuzzy controller** fuzzifies an input, fires rules like \"if warm then fan medium\", combines the clipped output sets and **defuzzifies** them, for example by the centroid. At 26 °C the example fan runs at 62.45 %."
+  - "A fuzzy degree measures how well a vague concept fits, not the chance that a crisp event happens. That is the difference from probability."
+resources:
+  - title: "Fuzzy Logic (Stanford Encyclopedia of Philosophy)"
+    url: "https://plato.stanford.edu/entries/logic-fuzzy/"
+    note: "The logical side: truth degrees, t-norms and how fuzzy logic relates to classical and many-valued logic."
+  - title: "Fuzzy set (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Fuzzy_set"
+    note: "Definitions of membership functions, alpha-cuts and the operations, with Zadeh's 1965 paper as the source."
+  - title: "Defuzzification (Wikipedia)"
+    url: "https://en.wikipedia.org/wiki/Defuzzification"
+    note: "Centroid, bisector and maximum methods side by side."
+---
+
+"Warm" has no sharp edge. If warm means 15 to 25 °C, then 24.9 °C is warm and 25.1 °C is not, which matches nobody's use of the word. **Fuzzy logic** keeps the vague concept and gives each value a degree of fit between 0 and 1. This note defines fuzzy sets, their operations and alpha-cuts, builds a three-rule fan controller by hand, and explains why a fuzzy degree is not a probability. It extends [Sets](../sets/) and [Functions](../functions/): a fuzzy set is a function into $[0, 1]$, and its operations generalise the connectives of [Propositional Logic](../propositional-logic/).
+
+## Membership functions
+
+A crisp set $A \subseteq X$ can be described by its indicator: 1 for elements in $A$, 0 for the rest. A **fuzzy set** $A$ on a universe $X$ replaces the indicator with a **membership function**
+
+$$
+\mu_A : X \to [0, 1].
+
+$$
+
+In words: every element gets a **degree of membership**. $\mu_A(x) = 1$ means $x$ fully belongs, $0$ means it does not belong at all, and values in between mean partial fit. A crisp set is the fuzzy set whose degrees are only 0 and 1.
+
+The most common shape is the **triangle** with feet at $a$ and $c$ and peak at $b$:
+
+$$
+\mu(x) = \max\left(0, \min\left(\frac{x - a}{b - a}, \frac{c - x}{c - b}\right)\right).
+
+$$
+
+In words: the degree rises linearly from 0 at $a$ to 1 at $b$ and falls back to 0 at $c$. When $a = b$ or $b = c$ one side is flat at 1, a **shoulder**, used for the open ends of a range such as "cold" or "hot". Trapezoids (a flat top) and Gaussians are the other usual shapes.
+
+The code below defines three temperature sets on 0 to 40 °C and compares fuzzy "warm" with a crisp "warm" of 15 to 25 °C.
+
+```python
+def tri(x, a, b, c):
+    # rises from a to the peak b, falls to c; a == b or b == c is a shoulder
+    if x < a or x > c:
+        return 0.0
+    if x <= b:
+        return 1.0 if a == b else (x - a) / (b - a)
+    return 1.0 if b == c else (c - x) / (c - b)
+
+def crisp_warm(x):
+    return 1.0 if 15 <= x <= 25 else 0.0
+
+for t in [14, 15, 20, 26]:
+    fuzzy = {name: round(tri(t, *abc), 2) for name, abc in
+             [("cold", (0, 0, 20)), ("warm", (10, 20, 30)), ("hot", (20, 40, 40))]}
+    print(t, "crisp warm:", crisp_warm(t), "fuzzy:", fuzzy)
+# 14 crisp warm: 0.0 fuzzy: {'cold': 0.3, 'warm': 0.4, 'hot': 0.0}
+# 15 crisp warm: 1.0 fuzzy: {'cold': 0.25, 'warm': 0.5, 'hot': 0.0}
+# 20 crisp warm: 1.0 fuzzy: {'cold': 0.0, 'warm': 1.0, 'hot': 0.0}
+# 26 crisp warm: 0.0 fuzzy: {'cold': 0.0, 'warm': 0.4, 'hot': 0.3}
+```
+
+In words: the crisp set jumps from 0 at 14 °C to 1 at 15 °C, while the fuzzy degree moves from 0.4 to 0.5. A value can belong to two sets at once: 26 °C is warm to degree 0.4 and hot to degree 0.3. The degrees of different sets need not add up to 1; here they add up to 0.7.
+
+<FuzzyMembership />
+
+## Linguistic variables
+
+A **linguistic variable** is a quantity described by words, each word a fuzzy set on the same universe: "temperature" with the terms cold, warm and hot above, or "fan speed" with low, medium and high on 0 to 100 %. The terms usually overlap, so a small change of input moves the degrees smoothly instead of flipping a label. The overlap is a design choice: with no overlap the sets act like crisp bins again.
+
+## Fuzzy AND, OR, NOT
+
+The standard operations, from Zadeh's 1965 paper, act pointwise on degrees:
+
+$$
+\mu_{A \cap B}(x) = \min(\mu_A(x), \mu_B(x)), \quad \mu_{A \cup B}(x) = \max(\mu_A(x), \mu_B(x)), \quad \mu_{\lnot A}(x) = 1 - \mu_A(x).
+
+$$
+
+In words: an AND is as true as its weakest part, an OR as true as its strongest part, and NOT flips the degree. On the values 0 and 1 these are exactly the truth tables of $\land$, $\lor$ and $\lnot$, so fuzzy logic contains Boolean logic as a special case.
+
+They are not the only choice. The **algebraic product** $ab$ is another AND and the **probabilistic sum** $a + b - ab$ another OR. Any operation that is commutative, associative, monotone and has 1 as its identity counts as an AND; such operations are called **t-norms**, and min is the largest of them. This note uses min and max throughout.
+
+```python
+a, b = 0.4, 0.3   # 26 degrees: warm 0.4, hot 0.3
+
+print("AND min:", min(a, b), " product:", round(a * b, 2))
+print("OR  max:", max(a, b), " prob. sum:", round(a + b - a * b, 2))
+print("NOT warm:", round(1 - a, 2))
+# a fuzzy statement and its negation need not cover everything
+print("warm OR NOT warm:", max(a, 1 - a))
+print("warm AND NOT warm:", min(a, 1 - a))
+# AND min: 0.3  product: 0.12
+# OR  max: 0.4  prob. sum: 0.58
+# NOT warm: 0.6
+# warm OR NOT warm: 0.6
+# warm AND NOT warm: 0.4
+```
+
+In words: "warm and hot" at 26 °C is 0.3 with min but only 0.12 with the product, so the choice of AND changes the numbers a controller sees. The last two lines show what fuzzy logic gives up: "warm or not warm" is only 0.6 and "warm and not warm" is 0.4, so the law of the excluded middle and the law of non-contradiction from propositional logic fail for any degree strictly between 0 and 1.
+
+<Callout type="pitfall">
+Boolean identities do not all carry over. With min, max and $1 - x$, De Morgan's laws, commutativity, associativity and distributivity still hold, but $A \lor \lnot A = 1$ and $A \land \lnot A = 0$ do not. Simplifying a fuzzy rule base with a Boolean identity can change its output.
+</Callout>
+
+## Alpha-cuts
+
+An **alpha-cut** turns a fuzzy set back into a crisp set at a chosen level $\alpha \in (0, 1]$:
+
+$$
+A_\alpha = \{ x \in X : \mu_A(x) \ge \alpha \}.
+
+$$
+
+In words: keep every element that belongs to $A$ at least to degree $\alpha$. A higher $\alpha$ gives a smaller set, and the cut at $\alpha = 1$ is the **core**, the elements that fully belong.
+
+```python
+def tri(x, a, b, c):
+    if x < a or x > c:
+        return 0.0
+    if x <= b:
+        return 1.0 if a == b else (x - a) / (b - a)
+    return 1.0 if b == c else (c - x) / (c - b)
+
+def alpha_cut(mu, xs, alpha):
+    # the crisp set of points whose degree reaches alpha
+    inside = [x for x in xs if mu(x) >= alpha]
+    return min(inside), max(inside)
+
+xs = [i / 10 for i in range(0, 401)]
+warm = lambda x: tri(x, 10, 20, 30)
+for alpha in [0.25, 0.5, 1.0]:
+    print("alpha", alpha, "-> warm cut", alpha_cut(warm, xs, alpha))
+# alpha 0.25 -> warm cut (12.5, 27.5)
+# alpha 0.5 -> warm cut (15.0, 25.0)
+# alpha 1.0 -> warm cut (20.0, 20.0)
+```
+
+In words: at $\alpha = 0.5$ fuzzy "warm" becomes exactly the crisp interval 15 to 25 °C from the first example, at 0.25 it widens to 12.5 to 27.5 °C, and at 1 it shrinks to the single peak 20 °C. The cuts are nested, and the whole family of cuts determines the fuzzy set, which is how fuzzy results are often reported as intervals.
+
+## A small controller
+
+A **fuzzy controller** (the Mamdani design) maps a crisp input to a crisp output in four steps:
+
+1. **Fuzzify**: compute the input's degree in each input set.
+2. **Fire the rules**: each rule "if temperature is warm then fan is medium" gets a **firing strength** equal to its condition's degree (with min for conditions joined by AND).
+3. **Aggregate**: clip each rule's output set at its firing strength, then combine the clipped sets with max.
+4. **Defuzzify**: reduce the combined set to one number. The usual method is the **centroid**, the balance point of the area under the curve:
+
+$$
+y^{*} = \frac{\int y \, \mu(y) \, dy}{\int \mu(y) \, dy}.
+
+$$
+
+In words: $y^{*}$ is the average output weighted by how strongly each output value is supported, the same formula as a centre of mass. The integrals are computed on a fine grid in practice.
+
+The fan controller has three rules: cold gives low, warm gives medium, hot gives high.
+
+```python
+def tri(x, a, b, c):
+    if x < a or x > c:
+        return 0.0
+    if x <= b:
+        return 1.0 if a == b else (x - a) / (b - a)
+    return 1.0 if b == c else (c - x) / (c - b)
+
+temp_sets = {"cold": (0, 0, 20), "warm": (10, 20, 30), "hot": (20, 40, 40)}
+fan_sets = {"low": (0, 0, 50), "mid": (25, 50, 75), "high": (50, 100, 100)}
+rules = [("cold", "low"), ("warm", "mid"), ("hot", "high")]
+
+def fan_speed(t, step=0.01):
+    strength = {out: tri(t, *temp_sets[inp]) for inp, out in rules}
+    num = den = 0.0
+    for i in range(int(100 / step) + 1):
+        y = i * step
+        # clip each output set at its rule strength, combine with max
+        mu = max(min(s, tri(y, *fan_sets[out])) for out, s in strength.items())
+        num += y * mu
+        den += mu
+    return strength, num / den
+
+for t in [8, 20, 26, 35]:
+    strength, speed = fan_speed(t)
+    print(t, {k: round(v, 2) for k, v in strength.items()}, "fan", round(speed, 2))
+# 8 {'low': 0.6, 'mid': 0.0, 'high': 0.0} fan 18.57
+# 20 {'low': 0.0, 'mid': 1.0, 'high': 0.0} fan 50.0
+# 26 {'low': 0.0, 'mid': 0.4, 'high': 0.3} fan 62.45
+# 35 {'low': 0.0, 'mid': 0.0, 'high': 0.75} fan 82.5
+```
+
+In words: at 26 °C the medium rule fires at 0.4 and the high rule at 0.3, the clipped sets overlap, and their centroid puts the fan at 62.45 %. At 20 °C only the medium rule fires, fully, so the output is its centre, 50 %. The output changes smoothly with temperature because the input sets overlap, which is the point of the design: no threshold makes the fan jump.
+
+The same computation with a library takes a few lines. The [Fuzzy Guide](../../appendix-libraries/fuzzy-guide/) covers scikit-fuzzy itself. Run it with `uv run --with numpy --with scikit-fuzzy --with networkx --with packaging`.
+
+```python
+import numpy as np
+import skfuzzy as fuzz
+
+y = np.arange(0, 100.01, 0.01)
+agg = np.fmax(np.fmin(0.4, fuzz.trimf(y, [25, 50, 75])),
+              np.fmin(0.3, fuzz.trimf(y, [50, 100, 100])))
+print("scikit-fuzzy centroid at 26 degrees:", round(fuzz.defuzz(y, agg, "centroid"), 2))
+# scikit-fuzzy centroid at 26 degrees: 62.45
+```
+
+In words: the library's centroid of the same clipped sets agrees with the hand-written controller, 62.45 %.
+
+<Callout type="key">
+The design choices live in the sets and the rules, not in the arithmetic. Moving the peak of "warm" or adding a rule changes the output curve; the four steps stay the same.
+</Callout>
+
+## Fuzzy versus probability
+
+Both put numbers in $[0, 1]$ on statements, but they answer different questions. A probability, as defined in [Probability Axioms](../../probability/probability-axioms/), measures how likely a crisp event is: "the temperature tomorrow is above 25 °C" is either true or false, and we are uncertain which. A fuzzy degree measures how well a fully known value fits a vague concept: today is 26 °C, no uncertainty, and "warm" fits it to degree 0.4.
+
+The rules differ too. Probabilities of disjoint events add, and $P(A) + P(\lnot A) = 1$ for every event, so $P(A \lor \lnot A) = 1$. Fuzzy OR uses max, and "warm or not warm" was 0.6 above. The two can be combined (fuzzy events with probabilities), but one does not replace the other.
+
+<Callout type="pitfall">
+"Warm to degree 0.4" does not mean "40 % chance of being warm". Reading membership degrees as probabilities, or the reverse, mixes two different kinds of number and gives results neither theory supports.
+</Callout>
+
+## Where it is used
+
+Fuzzy control spread in the 1980s and 1990s in places where engineers could state rules in words but had no exact model: the Sendai subway's automatic train operation, camera autofocus, washing machines, rice cookers and car transmissions. It remains in embedded controllers because the rules are readable and cheap to evaluate. For learning a mapping from data, machine learning models have mostly replaced hand-written fuzzy rule bases; neuro-fuzzy systems, which tune membership functions from data, sit between the two.

@@ -1,0 +1,191 @@
+---
+import Figure from '../Figure.astro';
+---
+
+<Figure
+  title="A fuzzy fan controller, from degrees to one speed"
+  caption="Drag the temperature. The top chart reads its degree in cold, warm and hot. Each degree clips the matching fan set in the bottom chart (low, medium, high); the shaded union of the clipped sets is balanced at its centroid, the fan speed. At 26 °C: warm 0.40, hot 0.30, fan 62.45 %."
+>
+  <fuzzy-membership>
+    <label class="fz-lbl">temperature <input type="range" min="0" max="40" step="0.5" value="26" data-t /> <b data-tv>26 °C</b></label>
+    <div class="axes" style="--ax-w: 440px">
+      <span class="ax-y">membership</span>
+      <svg class="fz-svg" viewBox="0 0 400 170" data-grid='{"box":[30,10,390,140],"x":[0,40],"y":[0,1]}' role="img" aria-label="Membership curves for cold, warm and hot over 0 to 40 degrees, with a marker at the chosen temperature">
+        <line x1="30" y1="140" x2="390" y2="140" class="fz-axis"></line>
+        <line x1="30" y1="10" x2="30" y2="140" class="fz-axis"></line>
+        <path data-in-cold class="fz-cold"></path>
+        <path data-in-warm class="fz-warm"></path>
+        <path data-in-hot class="fz-hot"></path>
+        <line data-mark y1="10" y2="140" class="fz-mark"></line>
+        <text x="30" y="156" class="ax-tick">0</text>
+        <text x="390" y="156" class="ax-tick fz-end">40</text>
+        <text x="24" y="14" class="ax-tick fz-end">1</text>
+        <text x="40" y="24" class="fz-name fz-c">cold</text>
+        <text x="210" y="24" class="fz-name fz-w">warm</text>
+        <text x="380" y="24" class="fz-name fz-h fz-end">hot</text>
+      </svg>
+      <span class="ax-x">temperature (°C)</span>
+    </div>
+    <div class="axes fz-gap" style="--ax-w: 440px">
+      <span class="ax-y">rule strength</span>
+      <svg class="fz-svg" viewBox="0 0 400 170" data-grid='{"box":[30,10,390,140],"x":[0,100],"y":[0,1]}' role="img" aria-label="Fan speed sets clipped at their rule strengths, with the centroid marked">
+        <line x1="30" y1="140" x2="390" y2="140" class="fz-axis"></line>
+        <line x1="30" y1="10" x2="30" y2="140" class="fz-axis"></line>
+        <path data-agg class="fz-agg"></path>
+        <path data-out-low class="fz-cold fz-dash"></path>
+        <path data-out-mid class="fz-warm fz-dash"></path>
+        <path data-out-high class="fz-hot fz-dash"></path>
+        <line data-cent y1="10" y2="140" class="fz-mark"></line>
+        <text x="30" y="156" class="ax-tick">0</text>
+        <text x="390" y="156" class="ax-tick fz-end">100</text>
+        <text x="24" y="14" class="ax-tick fz-end">1</text>
+      </svg>
+      <span class="ax-x">fan speed (%)</span>
+    </div>
+    <p class="fz-stat" data-stat></p>
+  </fuzzy-membership>
+</Figure>
+
+<style>
+  .fz-lbl {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .fz-lbl input[type='range'] {
+    flex: 1;
+  }
+  .fz-gap {
+    margin-top: 12px;
+  }
+  .fz-svg {
+    display: block;
+    width: 100%;
+    max-width: 440px;
+  }
+  .fz-axis {
+    stroke: var(--text-faint);
+    stroke-width: 1;
+  }
+  .fz-cold,
+  .fz-warm,
+  .fz-hot {
+    fill: none;
+    stroke-width: 2.5;
+  }
+  .fz-cold {
+    stroke: var(--g-blue);
+  }
+  .fz-warm {
+    stroke: var(--g-green);
+  }
+  .fz-hot {
+    stroke: var(--g-red);
+  }
+  .fz-dash {
+    stroke-width: 1.5;
+    stroke-dasharray: 4 4;
+    opacity: 0.7;
+  }
+  .fz-agg {
+    fill: rgba(66, 133, 244, 0.28);
+    stroke: var(--g-blue-l);
+    stroke-width: 1.5;
+  }
+  .fz-mark {
+    stroke: var(--g-yellow);
+    stroke-width: 2;
+  }
+  .fz-name {
+    font: 0.75rem var(--font-mono);
+  }
+  .fz-c {
+    fill: var(--g-blue-l);
+  }
+  .fz-w {
+    fill: var(--g-green-l);
+  }
+  .fz-h {
+    fill: var(--g-red-l);
+  }
+  .fz-end {
+    text-anchor: end;
+  }
+  .fz-stat {
+    margin: 10px 0 0;
+    font: 0.875rem/1.6 var(--font-mono);
+    color: var(--text-muted);
+    text-align: center;
+  }
+</style>
+
+<script>
+  type Tri = [number, number, number];
+  // Same sets as the note's code: triangles with shoulders at the ends.
+  const TEMP: Tri[] = [[0, 0, 20], [10, 20, 30], [20, 40, 40]];
+  const FAN: Tri[] = [[0, 0, 50], [25, 50, 75], [50, 100, 100]];
+
+  function tri(x: number, [a, b, c]: Tri): number {
+    if (x < a || x > c) return 0;
+    if (x <= b) return a === b ? 1 : (x - a) / (b - a);
+    return b === c ? 1 : (c - x) / (c - b);
+  }
+
+  // Plot area [30, 10]–[390, 140]; xMax is the right end of the data range.
+  const px = (x: number, xMax: number) => 30 + (x / xMax) * 360;
+  const py = (m: number) => 140 - m * 130;
+
+  function curve(f: (x: number) => number, xMax: number, n = 400): string {
+    let d = '';
+    for (let i = 0; i <= n; i++) {
+      const x = (i / n) * xMax;
+      d += `${i ? 'L' : 'M'}${px(x, xMax).toFixed(1)},${py(f(x)).toFixed(1)}`;
+    }
+    return d;
+  }
+
+  class FuzzyMembership extends HTMLElement {
+    connectedCallback() {
+      this.querySelector('[data-t]')!.addEventListener('input', () => this.draw());
+      const ins = ['cold', 'warm', 'hot'];
+      ins.forEach((k, i) => this.querySelector(`[data-in-${k}]`)!.setAttribute('d', curve((x) => tri(x, TEMP[i]), 40)));
+      ['low', 'mid', 'high'].forEach((k, i) =>
+        this.querySelector(`[data-out-${k}]`)!.setAttribute('d', curve((y) => tri(y, FAN[i]), 100)),
+      );
+      this.draw();
+    }
+    draw() {
+      const t = +this.querySelector<HTMLInputElement>('[data-t]')!.value;
+      this.querySelector('[data-tv]')!.textContent = `${t} °C`;
+      const s = TEMP.map((set) => tri(t, set));
+      const agg = (y: number) => Math.max(...FAN.map((set, i) => Math.min(s[i], tri(y, set))));
+
+      // Centroid on the same 0.01 grid as the note's code, so the readout matches it.
+      let num = 0;
+      let den = 0;
+      for (let i = 0; i <= 10000; i++) {
+        const y = i / 100;
+        const m = agg(y);
+        num += y * m;
+        den += m;
+      }
+      const speed = num / den;
+
+      const mx = px(t, 40).toFixed(1);
+      const mark = this.querySelector('[data-mark]')!;
+      mark.setAttribute('x1', mx);
+      mark.setAttribute('x2', mx);
+      this.querySelector('[data-agg]')!.setAttribute('d', `${curve(agg, 100)}L390,140L30,140Z`);
+      const cx = px(speed, 100).toFixed(1);
+      const cent = this.querySelector('[data-cent]')!;
+      cent.setAttribute('x1', cx);
+      cent.setAttribute('x2', cx);
+      this.querySelector('[data-stat]')!.textContent =
+        `cold ${s[0].toFixed(2)} · warm ${s[1].toFixed(2)} · hot ${s[2].toFixed(2)} · fan ${speed.toFixed(2)} %`;
+    }
+  }
+  customElements.define('fuzzy-membership', FuzzyMembership);
+</script>
